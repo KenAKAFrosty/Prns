@@ -1,6 +1,6 @@
 use core::future::Future;
 
-use embassy_futures::join::join3;
+use embassy_futures::join::join4;
 use personal_hopspot_core as hopspot;
 
 use crate::boards::selected as board;
@@ -22,11 +22,12 @@ pub(super) fn heartbeat_timing() -> &'static HeartbeatTiming {
 
 pub(super) async fn maintain() {}
 
-pub(super) fn run<I, L>(io: I, lora: L, gnss: board::Gnss) -> impl Future
+pub(super) fn run<I, L, R>(io: I, lora: L, remote_control: R, gnss: board::Gnss) -> impl Future
 where
     I: Future,
     L: Future,
+    R: Future,
 {
     board::control_gnss(hopspot::GnssReceiverCommand::Enable);
-    join3(io, lora, board::drive_gnss(gnss))
+    join4(io, lora, remote_control, board::drive_gnss(gnss))
 }

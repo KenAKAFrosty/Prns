@@ -288,6 +288,23 @@ impl<const TARGETS: usize> ServiceCatalog<TARGETS> {
         self.services.len()
     }
 
+    pub(super) fn resolution_counts(&self, now_ms: u64) -> (u8, u8, u8, u8) {
+        let mut resolved = 0u8;
+        let mut pending = 0u8;
+        let mut incompatible = 0u8;
+        let mut expired = 0u8;
+        for index in 0..self.services.len() {
+            match self.resolution_at(index, now_ms) {
+                ServiceResolution::Resolved => resolved = resolved.saturating_add(1),
+                ServiceResolution::Query(_) => pending = pending.saturating_add(1),
+                ServiceResolution::Incompatible => incompatible = incompatible.saturating_add(1),
+                ServiceResolution::Expired => expired = expired.saturating_add(1),
+                ServiceResolution::Missing => {}
+            }
+        }
+        (resolved, pending, incompatible, expired)
+    }
+
     pub(super) fn resolution_at(&self, index: usize, now_ms: u64) -> ServiceResolution {
         let Some(service) = self.services.get(index) else {
             return ServiceResolution::Missing;
@@ -357,7 +374,7 @@ fn record_expiry(now_ms: u64, ttl_seconds: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::super::codec::{
-        build_publication_packet, decode_name, encoded_name, read_u16, DNS_RECORD_COUNT,
+        build_publication_packet, decode_name, encoded_name, read_u16, DNS_CORE_RECORD_COUNT,
     };
     use super::*;
 
@@ -536,18 +553,18 @@ mod tests {
         ttl_seconds: u32,
     ) -> Vec<u8, { super::super::UDP_SERVICE_DISCOVERY_PACKET_BYTES }> {
         let mut packet = [0u8; super::super::UDP_SERVICE_DISCOVERY_PACKET_BYTES];
-        let length = build_publication_packet(&mut packet, instance, address, ttl_seconds)
+        let length = build_publication_packet(&mut packet, instance, address, None, ttl_seconds)
             .expect("publication fits");
         Vec::from_slice(&packet[..length]).expect("publication capacity matches output")
     }
 
     fn reorder_publication_records(
         packet: &[u8],
-        order: [usize; DNS_RECORD_COUNT as usize],
+        order: [usize; DNS_CORE_RECORD_COUNT as usize],
     ) -> Vec<u8, { super::super::UDP_SERVICE_DISCOVERY_PACKET_BYTES }> {
-        let mut ranges = Vec::<(usize, usize), { DNS_RECORD_COUNT as usize }>::new();
+        let mut ranges = Vec::<(usize, usize), { DNS_CORE_RECORD_COUNT as usize }>::new();
         let mut cursor = 12usize;
-        for _ in 0..DNS_RECORD_COUNT {
+        for _ in 0..DNS_CORE_RECORD_COUNT {
             let start = cursor;
             let (_, next_cursor) = decode_name(packet, cursor).expect("record name is valid");
             let data_length = usize::from(

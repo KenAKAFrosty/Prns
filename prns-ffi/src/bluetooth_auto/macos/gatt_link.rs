@@ -21,7 +21,7 @@ use super::{
 };
 
 const GATT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-const GATT_INBOUND_BUDGET_BYTES: usize = 128 * 1024;
+pub(super) const GATT_INBOUND_BUDGET_BYTES: usize = 128 * 1024;
 
 #[derive(Clone)]
 pub(super) struct GattInboundSender {
@@ -33,6 +33,12 @@ pub(super) struct GattInboundSender {
 pub(super) struct GattInboundReceiver {
     receiver: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
     queued_bytes: Arc<AtomicUsize>,
+}
+
+/// Capacity owned by an admitted write but not yet visible to the receiver.
+pub(super) struct GattInboundReservation {
+    sender: GattInboundSender,
+    data: Option<Box<[u8]>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -65,6 +71,13 @@ pub(super) fn gatt_inbound_channel_with_budget(
 
 impl GattInboundSender {
     pub(super) fn try_send(&self, data: Box<[u8]>) -> Result<(), GattInboundSendError> {
+        self.try_reserve(data)?.publish()
+    }
+
+    pub(super) fn try_reserve(
+        &self,
+        data: Box<[u8]>,
+    ) -> Result<GattInboundReservation, GattInboundSendError> {
         if self.sender.is_closed() {
             return Err(GattInboundSendError::Closed);
         }
@@ -90,18 +103,44 @@ impl GattInboundSender {
                 Err(actual) => queued = actual,
             }
         }
-        match self.sender.send(data) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                self.queued_bytes
-                    .fetch_sub(error.0.len().max(1), Ordering::AcqRel);
-                Err(GattInboundSendError::Closed)
-            }
-        }
+        Ok(GattInboundReservation {
+            sender: self.clone(),
+            data: Some(data),
+        })
     }
 
     pub(super) fn is_closed(&self) -> bool {
         self.sender.is_closed()
+    }
+}
+
+impl GattInboundReservation {
+    /// Publish after the whole batch has been admitted. A receiver disappearing
+    /// after reservation is delivery loss, not a partial batch-admission failure.
+    pub(super) fn commit(self) {
+        let _ = self.publish();
+    }
+
+    fn publish(mut self) -> Result<(), GattInboundSendError> {
+        let data = self.data.take().ok_or(GattInboundSendError::Closed)?;
+        match self.sender.sender.send(data) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                // Restore ownership so Drop refunds exactly this reservation.
+                self.data = Some(error.0);
+                Err(GattInboundSendError::Closed)
+            }
+        }
+    }
+}
+
+impl Drop for GattInboundReservation {
+    fn drop(&mut self) {
+        if let Some(data) = &self.data {
+            self.sender
+                .queued_bytes
+                .fetch_sub(data.len().max(1), Ordering::AcqRel);
+        }
     }
 }
 
@@ -574,5 +613,144 @@ mod source_lifecycle_tests {
         assert_eq!(source.recv_frame(&mut frame).await.unwrap(), 3);
         assert_eq!(frame, [7, 8, 9]);
         assert!(source.l2cap_end.is_none());
+    }
+}
+
+#[cfg(test)]
+mod inbound_reservation_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rollback_releases_unpublished_capacity_shared_by_sender_clones() {
+        let (sender, mut receiver) = gatt_inbound_channel_with_budget(5);
+        let other = sender.clone();
+        sender.try_send(Box::from([1, 2])).unwrap();
+        let reserved = other.try_reserve(Box::from([3, 4, 5])).unwrap();
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 5);
+        assert!(matches!(
+            sender.try_reserve(Box::from([6])),
+            Err(GattInboundSendError::BudgetExceeded)
+        ));
+        assert_eq!(receiver.recv().await.unwrap().as_ref(), &[1, 2]);
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 3);
+        assert_eq!(
+            receiver.receiver.try_recv(),
+            Err(tokio_mpsc::error::TryRecvError::Empty)
+        );
+        drop(reserved);
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 0);
+        assert!(other.try_reserve(Box::from([0; 5])).is_ok());
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn commit_publishes_in_order_without_charging_twice() {
+        let (sender, mut receiver) = gatt_inbound_channel_with_budget(3);
+        let first = sender.try_reserve(Box::from([1, 2])).unwrap();
+        let second = sender.try_reserve(Box::from([3])).unwrap();
+        assert_eq!(
+            receiver.receiver.try_recv(),
+            Err(tokio_mpsc::error::TryRecvError::Empty)
+        );
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 3);
+        first.commit();
+        second.commit();
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 3);
+        assert_eq!(receiver.recv().await.unwrap().as_ref(), &[1, 2]);
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 1);
+        assert_eq!(receiver.recv().await.unwrap().as_ref(), &[3]);
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn reservation_owns_its_sender_until_commit() {
+        let (sender, mut receiver) = gatt_inbound_channel_with_budget(1);
+        let reserved = sender.try_reserve(Box::from([7])).unwrap();
+        drop(sender);
+        assert_eq!(
+            receiver.receiver.try_recv(),
+            Err(tokio_mpsc::error::TryRecvError::Empty)
+        );
+        reserved.commit();
+        assert_eq!(receiver.recv().await.unwrap().as_ref(), &[7]);
+        assert_eq!(receiver.queued_bytes.load(Ordering::Acquire), 0);
+        assert!(receiver.recv().await.is_none());
+
+        let (sender, mut receiver) = gatt_inbound_channel_with_budget(1);
+        let reserved = sender.try_reserve(Box::from([8])).unwrap();
+        drop(sender);
+        drop(reserved);
+        assert_eq!(receiver.queued_bytes.load(Ordering::Acquire), 0);
+        assert!(receiver.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn empty_reservations_charge_one_byte_and_respect_zero_budget() {
+        let (zero, _receiver) = gatt_inbound_channel_with_budget(0);
+        assert!(matches!(
+            zero.try_reserve(Box::from([])),
+            Err(GattInboundSendError::BudgetExceeded)
+        ));
+        let (sender, mut receiver) = gatt_inbound_channel_with_budget(1);
+        let reserved = sender.try_reserve(Box::from([])).unwrap();
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 1);
+        assert_eq!(
+            sender.try_send(Box::from([])),
+            Err(GattInboundSendError::BudgetExceeded)
+        );
+        reserved.commit();
+        assert!(receiver.recv().await.unwrap().is_empty());
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 0);
+        drop(sender.try_reserve(Box::from([])).unwrap());
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn checked_reservation_charge_never_wraps() {
+        let (sender, _receiver) = gatt_inbound_channel_with_budget(usize::MAX);
+        // Model already-owned capacity without allocating an impossible payload.
+        sender.queued_bytes.store(usize::MAX - 1, Ordering::Release);
+        assert!(matches!(
+            sender.try_reserve(Box::from([1, 2])),
+            Err(GattInboundSendError::BudgetExceeded)
+        ));
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), usize::MAX - 1);
+        let last = sender.try_reserve(Box::from([])).unwrap();
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), usize::MAX);
+        assert!(matches!(
+            sender.try_reserve(Box::from([])),
+            Err(GattInboundSendError::BudgetExceeded)
+        ));
+        drop(last);
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), usize::MAX - 1);
+        sender.queued_bytes.store(0, Ordering::Release);
+    }
+
+    #[test]
+    fn closed_receiver_rejects_new_reservations_before_charging() {
+        let (sender, receiver) = gatt_inbound_channel_with_budget(0);
+        drop(receiver);
+        assert!(matches!(
+            sender.try_reserve(Box::from([])),
+            Err(GattInboundSendError::Closed)
+        ));
+        assert_eq!(
+            sender.try_send(Box::from([1])),
+            Err(GattInboundSendError::Closed)
+        );
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn receiver_close_after_reservation_refunds_without_rejecting_commit() {
+        let (sender, receiver) = gatt_inbound_channel_with_budget(2);
+        let committed = sender.try_reserve(Box::from([1])).unwrap();
+        let fallible = sender.try_reserve(Box::from([2])).unwrap();
+        drop(receiver);
+        committed.commit();
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 1);
+        // try_send uses this same publication path and retains its Closed result.
+        assert_eq!(fallible.publish(), Err(GattInboundSendError::Closed));
+        assert_eq!(sender.queued_bytes.load(Ordering::Acquire), 0);
     }
 }

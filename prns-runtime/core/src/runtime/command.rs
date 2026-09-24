@@ -13,10 +13,12 @@ use crate::identity::{
     IdentityHash, MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
     RetainIdentityOutcome,
 };
+use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::routing::links::LinkId;
 use crate::wire::{DestinationHash, TransportId};
 
 use super::request_endpoints::RespondToken;
+use super::RemoteControlControllerGrantControl;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClearAnnounceQueuesOutcome {
@@ -151,7 +153,7 @@ pub trait DestinationIdentityRetentionControl {
 ///
 /// [`issue`](Self::issue) returns a minted [`CommandId`] immediately, while awaited operations settle through that id. Platform-specific capabilities remain inherent methods on the concrete handle.
 #[allow(async_fn_in_trait)]
-pub trait PrnsNodeApi {
+pub trait PrnsNodeApi: RemoteControlControllerGrantControl {
     /// Queues an engine command and returns the [`CommandId`] it was minted under. If you're looking for its settlement, watch the event stream for the settlement tagged with that CommandId.
     ///
     /// You may not ever need this, since many operations have their own convenience methods, usually `await`able.
@@ -203,6 +205,14 @@ pub trait PrnsNodeApi {
     ) -> Result<(), SendError<SendGroupFailure>>;
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool;
+
+    async fn respond_rns_path_table(
+        &self,
+        _responder: RespondToken,
+        _request: RnsRemotePathTableRequest,
+    ) -> bool {
+        false
+    }
 
     fn close_link(&self, link_id: LinkId) -> bool;
 }

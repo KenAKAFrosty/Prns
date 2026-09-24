@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use personal_hopspot_builder::{BuildContext, BuildError, BuildIntent, BuildVersion, LtoMode};
+use personal_hopspot_builder::{
+    BuildContext, BuildError, BuildIntent, BuildVersion, LtoMode, RepositoryCommit, SourceCustody,
+};
 use serde_json::{json, Value};
 
 use super::model::{ByteDelta, MatrixSummary, ToolchainRelation};
@@ -8,7 +10,7 @@ use super::*;
 use crate::matrix::{Matrix, Target, TargetPlatform};
 use crate::report::build::{architecture_identity, build_identity, target_identity};
 use crate::report::contract;
-use crate::report::tests::report_value;
+use crate::report::tests::{refresh_build_fingerprint, report_value, retarget_executable};
 
 #[test]
 fn summary_merges_catalog_order_and_reports_numeric_deltas(
@@ -45,9 +47,10 @@ fn summary_merges_catalog_order_and_reports_numeric_deltas(
     std::fs::write(&cargo_metadata, b"not a resource report")?;
 
     let output = temporary.path().join("summary");
-    let outcome = summarize(&matrix, &context, &reports, &baseline, &output)?;
+    let source = source_custody()?;
+    let outcome = summarize(&matrix, &context, &reports, &baseline, &output, &source)?;
     let summary: MatrixSummary = serde_json::from_slice(&std::fs::read(outcome.json())?)?;
-    assert_eq!(outcome.targets(), 14);
+    assert_eq!(outcome.targets(), 15);
     assert_eq!(summary.schema_version, model::SCHEMA_VERSION);
     assert_eq!(
         summary
@@ -106,7 +109,7 @@ fn summary_rejects_duplicate_and_missing_fragment_targets_before_writing(
     std::fs::copy(&paths[0], &duplicate)?;
     let output = temporary.path().join("summary");
     assert!(matches!(
-        summarize(&matrix, &context, &reports, &baseline, &output),
+        summarize(&matrix, &context, &reports, &baseline, &output, &source_custody()?),
         Err(SummaryError::DuplicateTarget {
             set: EvidenceSet::Current,
             target,
@@ -125,20 +128,35 @@ fn summary_rejects_duplicate_and_missing_fragment_targets_before_writing(
         .join("linker.map");
     std::fs::remove_file(&linker_map)?;
     assert!(matches!(
-        summarize(&matrix, &context, &reports, &baseline, &output),
+        summarize(&matrix, &context, &reports, &baseline, &output, &source_custody()?),
         Err(SummaryError::LinkerMapMetadata { path, .. }) if path == linker_map
     ));
     assert!(!output.exists());
 
     std::fs::write(&linker_map, vec![0; 128])?;
+    let stack_evidence = last
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("report has no fragment root")?
+        .join("work")
+        .join("mesh-tower-v2")
+        .join("stack-evidence.json");
+    std::fs::remove_file(&stack_evidence)?;
+    assert!(matches!(
+        summarize(&matrix, &context, &reports, &baseline, &output, &source_custody()?),
+        Err(SummaryError::EvidenceArtifactMetadata { path, .. }) if path == stack_evidence
+    ));
+    assert!(!output.exists());
+
+    std::fs::write(&stack_evidence, b"mesh-tower-v2:stack")?;
     let missing = paths.last().ok_or("matrix produced no reports")?;
     std::fs::remove_file(missing)?;
     assert!(matches!(
-        summarize(&matrix, &context, &reports, &baseline, &output),
+        summarize(&matrix, &context, &reports, &baseline, &output, &source_custody()?),
         Err(SummaryError::MissingTarget {
             set: EvidenceSet::Current,
             target,
-        }) if target == "mesh-tower-v2"
+        }) if target == "muzi-base-duo"
     ));
     assert!(!output.exists());
     Ok(())
@@ -155,12 +173,13 @@ fn summary_rejects_stale_build_identity_before_writing() -> Result<(), Box<dyn s
     let reports = temporary.path().join("fragments");
     write_reports(&reports, &matrix, &context, |target, value| {
         if target.id() == "t114" {
-            value["build"]["fingerprint"] = Value::String("b".repeat(64));
+            value["build"]["binary"] = json!("stale-t114");
+            refresh_build_fingerprint(value).expect("stale build fixture must remain valid");
         }
     })?;
     let output = temporary.path().join("summary");
     assert!(matches!(
-        summarize(&matrix, &context, &reports, &baseline, &output),
+        summarize(&matrix, &context, &reports, &baseline, &output, &source_custody()?),
         Err(SummaryError::CanonicalReport(CanonicalReportError::StaleTarget {
             target,
             dimension: "build recipe",
@@ -171,6 +190,8 @@ fn summary_rejects_stale_build_identity_before_writing() -> Result<(), Box<dyn s
 }
 
 fn context<'a>(repository: &'a Path, output: &'a Path) -> Result<BuildContext<'a>, BuildError> {
+    crate::report::tests::copy_build_manifests(repository)
+        .map_err(|error| BuildError::Manifest(error.to_string()))?;
     BuildContext::new(repository, output, BuildVersion::Developer("0.1.0")).map(|context| {
         context.with_intent(BuildIntent::ResourceReport {
             lto: LtoMode::Configured,
@@ -185,9 +206,15 @@ fn prepare_baseline(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let reports = root.join("baseline-reports");
     let paths = write_reports(&reports, matrix, context, |_, _| {})?;
-    Ok(baseline::refresh_baseline(root, matrix, context, &paths)?
-        .path()
-        .to_path_buf())
+    Ok(
+        baseline::refresh_baseline(root, matrix, context, &paths, &source_custody()?)?
+            .path()
+            .to_path_buf(),
+    )
+}
+
+fn source_custody() -> Result<SourceCustody, personal_hopspot_builder::SourceCaptureError> {
+    RepositoryCommit::parse("c".repeat(40)).map(|commit| SourceCustody::CleanCommit { commit })
 }
 
 fn write_reports(
@@ -202,26 +229,24 @@ fn write_reports(
             let mut report: ResourceReport = serde_json::from_value(report_value())?;
             report.target = target_identity(target);
             report.architecture = architecture_identity(target);
+            retarget_executable(&mut report, target);
             report.build = build_identity(context, target.recipe_identity())?;
             report.memory_contract = contract::identity(target.profile())?;
             let mut value = serde_json::to_value(report)?;
             mutate(target, &mut value);
-            let report: ResourceReport = serde_json::from_value(value)?;
+            let mut report: ResourceReport = serde_json::from_value(value)?;
             let platform = match target.platform() {
                 TargetPlatform::Esp => "embedded-resources-esp",
                 TargetPlatform::Nrf52840 => "embedded-resources-nrf52840",
             };
-            let path = root
-                .join(platform)
+            let fragment = root.join(platform);
+            write_evidence_artifacts(&fragment, target.id(), &mut report)?;
+            let path = fragment
                 .join("reports")
                 .join(format!("{}.json", target.id()));
             std::fs::create_dir_all(path.parent().ok_or("report has no parent")?)?;
             std::fs::write(&path, serde_json::to_vec(&report)?)?;
-            let linker_map = root
-                .join(platform)
-                .join("work")
-                .join(target.id())
-                .join("linker.map");
+            let linker_map = fragment.join("work").join(target.id()).join("linker.map");
             std::fs::create_dir_all(linker_map.parent().ok_or("map has no parent")?)?;
             std::fs::write(
                 linker_map,
@@ -230,4 +255,42 @@ fn write_reports(
             Ok(path)
         })
         .collect()
+}
+
+fn write_evidence_artifacts(
+    fragment: &Path,
+    target: &str,
+    report: &mut ResourceReport,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let executable = match &mut report.analysis.executable {
+        Evidence::Complete(executable) => executable,
+        Evidence::Partial(_) | Evidence::Unavailable => {
+            return Err("fixture has no complete executable evidence".into());
+        }
+    };
+    write_evidence_artifact(
+        fragment,
+        &format!("{target}:functions"),
+        &mut executable.functions.boundaries_artifact,
+    )?;
+    let stack = match &mut executable.stack {
+        Evidence::Complete(stack) | Evidence::Partial(stack) => stack,
+        Evidence::Unavailable => return Err("fixture has no stack evidence".into()),
+    };
+    write_evidence_artifact(fragment, &format!("{target}:stack"), &mut stack.artifact)
+}
+
+fn write_evidence_artifact(
+    fragment: &Path,
+    content: &str,
+    artifact: &mut super::super::model::EvidenceArtifactIdentity,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = content.as_bytes();
+    artifact.bytes = u64::try_from(bytes.len())?;
+    artifact.fingerprint =
+        crate::report::Fingerprint::parse(prns_flash_manifest::sha256_hex(bytes))?;
+    let path = fragment.join(&artifact.path);
+    std::fs::create_dir_all(path.parent().ok_or("evidence artifact has no parent")?)?;
+    std::fs::write(path, bytes)?;
+    Ok(())
 }

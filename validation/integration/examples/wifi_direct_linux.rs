@@ -131,7 +131,7 @@ mod linux_only {
             remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             transport_identity: None,
             pre_configured_destinations: [single_a],
-            app_state: (),
+            app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: request_endpoints![],
             on_event: |_event, _state| {},
@@ -175,7 +175,7 @@ mod linux_only {
             remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             transport_identity: None,
             pre_configured_destinations: [single(secret(LISTENER_SECRET))],
-            app_state: (),
+            app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: request_endpoints![],
             on_event: move |event, _state| {

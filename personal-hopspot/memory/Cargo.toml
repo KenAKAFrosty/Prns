@@ -9,5 +9,8 @@ rust-version.workspace = true
 publish = false
 description = "Typed embedded memory contracts for Personal Hopspot firmware targets."
 
+[features]
+linker-addresses = []
+
 [lints]
 workspace = true

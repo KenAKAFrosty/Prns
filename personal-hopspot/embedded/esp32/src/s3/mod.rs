@@ -2,11 +2,13 @@ mod board;
 pub mod boards;
 mod entropy;
 mod gnss;
+mod remote_control;
 
 use alloc::string::{String, ToString};
+#[cfg(feature = "remote-control-pairing")]
+use core::cell::RefCell;
 use core::fmt::Write as _;
 use esp_backtrace as _;
-use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::base_mac_address;
 use esp_hal::gpio::Input;
@@ -22,7 +24,11 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
 use embassy_executor::Spawner;
+#[cfg(feature = "remote-control-pairing")]
+use embassy_futures::select::{select, select5, Either, Either5};
 use embassy_futures::select::{select3, Either3};
+#[cfg(not(feature = "remote-control-pairing"))]
+use embassy_futures::select::{select4, Either4};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
@@ -31,12 +37,16 @@ use embassy_net::{
 };
 use embassy_net::{IpAddress, Ipv4Address, Ipv4Cidr, StaticConfigV4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+#[cfg(feature = "remote-control-pairing")]
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::with_timeout;
 #[cfg(feature = "lora")]
 use embassy_time::Delay;
+#[cfg(feature = "remote-control-pairing")]
+use embassy_time::Instant;
 use embassy_time::{Duration, Ticker, Timer};
 #[cfg(feature = "lora")]
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -89,6 +99,8 @@ use personal_rns::runtime::{
     EmbassyInterfaceStore, Fleet, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle,
     PrnsNodeRecipe, SharedNorFlash, StaticManifoldLane,
 };
+#[cfg(feature = "remote-control-pairing")]
+use personal_rns::runtime::{Diagnostic, Message, RemoteControlPairingControl};
 use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::{
     TcpClient, TcpClientInput, TcpClientTarget, TcpSocketBuffers, TCP_DNS_HOSTNAME_MAX_BYTES,
@@ -106,6 +118,10 @@ use personal_rns::wifi_auto::{
 };
 use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_CAPACITY;
 
+#[cfg(feature = "remote-control-pairing")]
+use crate::remote_control_composition::{
+    RemoteControlComposition, RemoteControlCompositionEffects, StableTargetAnnouncementSettlement,
+};
 use crate::station_recovery::{
     AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, DiscoveryScope,
     ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
@@ -130,7 +146,7 @@ pub(crate) use entropy::{
 };
 pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 
-esp_app_desc!();
+firmware_app_descriptor!();
 
 const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
 const CAPTIVE_PORTAL_HOST: &str = "192.168.4.1";
@@ -213,13 +229,13 @@ const RENDER_TICKS_PER_BATTERY_SAMPLE: u8 = (BATTERY_SAMPLE_INTERVAL_MS / RENDER
 const RENDER_TICKS_PER_BATTERY_DISPLAY: u8 =
     (BATTERY_DISPLAY_INTERVAL_MS / RENDER_INTERVAL_MS) as u8;
 const NOTICE_MS: u64 = 900;
-const DISPLAY_SLEEP_DELAY_MS: u64 = 2_500;
-
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 type Mtx = CriticalSectionRawMutex;
 type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
+type RemoteControlHandle =
+    screen::HopspotCommandHandle<{ remote_control::REMOTE_CONTROL_COMMAND_DEPTH }>;
 type UsbSeam =
     EmbassyInterfaceSeam<'static, Mtx, S3EntropySource, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 #[cfg(feature = "lora")]
@@ -241,9 +257,9 @@ type InterfaceStore = EmbassyInterfaceStore<
 >;
 /// The fully-spelled node type, so it can ride to core 1 as a concrete `#[task]` argument.
 type S3Node = PrnsNode<
-    (),
+    RemoteControlHandle,
     screen::node_pages::NodePageRoutes,
-    for<'a> fn(PrnsEvent<'a>, &()),
+    for<'a> fn(PrnsEvent<'a>, &RemoteControlHandle),
     EngineStorageType,
     EmbassyHost<Mtx, S3EntropySource>,
     Mtx,
@@ -268,7 +284,7 @@ mod connectivity;
 mod display;
 
 use captive_portal::ap_ssid;
-use configuration::{hopspot_wifi_config, HopspotWifiConfig};
+use configuration::{hopspot_wifi_config, HopspotWifiConfig, HopspotWifiConfigSource};
 use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::{build_tcp, build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
 use display::build_interface_menu_details;
@@ -308,6 +324,22 @@ static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 const BUTTON_EVENT_CAPACITY: usize = 4;
 static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, BUTTON_EVENT_CAPACITY> = Channel::new();
+#[cfg(feature = "remote-control-pairing")]
+static REMOTE_CONTROL_COMPOSITION: BlockingMutex<
+    Mtx,
+    RefCell<RemoteControlComposition<personal_rns::remote_control::RemoteControlPairingAttemptId>>,
+> = BlockingMutex::new(RefCell::new(RemoteControlComposition::new()));
+#[cfg(feature = "remote-control-pairing")]
+static REMOTE_CONTROL_UI_WAKE: Signal<Mtx, ()> = Signal::new();
+#[cfg(feature = "remote-control-pairing")]
+static STABLE_TARGET_ANNOUNCER_WAKE: Signal<Mtx, ()> = Signal::new();
+#[cfg(feature = "remote-control-pairing")]
+static PAIRING_CLOSE_REQUESTED: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "remote-control-pairing")]
+static PAIRING_CLOSE_WAKE: Signal<Mtx, ()> = Signal::new();
+#[cfg(feature = "remote-control-pairing")]
+static REMOTE_CONTROL_CLOCK: BlockingMutex<Mtx, RefCell<(u64, u64)>> =
+    BlockingMutex::new(RefCell::new((0, 0)));
 /// Per-interface engine counts the manifold (core 1) pushes into and the render task (core 0) reads —
 /// a `CriticalSectionRawMutex` store so the `&'static` shared across cores stays `Sync`. Capacity is a
 /// power of two above the interface ceiling, so a live interface's counts never get dropped.
@@ -320,9 +352,229 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
 static WIFI_STATION_DATA_PATH_DEGRADED: AtomicBool = AtomicBool::new(false);
 static WIFI_DRIVER_RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
+static WIFI_ACTIVE_CREDENTIAL_REVISION: AtomicU32 = AtomicU32::new(0);
+static WIFI_NETWORK_READY_REVISION: AtomicU32 = AtomicU32::new(0);
+static WIFI_CREDENTIALS: screen::HopspotWifiCredentialMailbox =
+    screen::HopspotWifiCredentialMailbox::new();
+static REMOTE_CONTROL_COMMANDS: screen::HopspotCommandMailbox<
+    { remote_control::REMOTE_CONTROL_COMMAND_DEPTH },
+> = screen::HopspotCommandMailbox::new();
 static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 
-fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
+#[cfg(not(feature = "remote-control-pairing"))]
+fn firmware_on_event(_event: PrnsEvent<'_>, _state: &RemoteControlHandle) {}
+
+#[cfg(feature = "remote-control-pairing")]
+fn apply_remote_control_effects(effects: RemoteControlCompositionEffects) {
+    if effects.wake_ui() {
+        REMOTE_CONTROL_UI_WAKE.signal(());
+    }
+    if effects.wake_announcer() {
+        STABLE_TARGET_ANNOUNCER_WAKE.signal(());
+    }
+    if effects.close_pairing() {
+        PAIRING_CLOSE_REQUESTED.store(true, Ordering::Release);
+        PAIRING_CLOSE_WAKE.signal(());
+    }
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn update_remote_control_state(
+    transition: impl FnOnce(
+        &mut screen::RemoteControlTargetPairingState,
+    ) -> screen::RemoteControlTargetPairingUpdate,
+) -> screen::RemoteControlTargetPairingUpdate {
+    let output = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().update_pairing(transition));
+    let (update, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+    update
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn current_remote_control_state() -> screen::RemoteControlTargetPairingState {
+    REMOTE_CONTROL_COMPOSITION.lock(|composition| composition.borrow_mut().take_current_pairing())
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn remote_control_authorization_persisted(
+    attempt_id: personal_rns::remote_control::RemoteControlPairingAttemptId,
+) {
+    let output = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().authorization_persisted(attempt_id));
+    let (_, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn observe_restored_remote_control_grants(restored_count: u32) {
+    let effects = REMOTE_CONTROL_COMPOSITION.lock(|composition| {
+        composition
+            .borrow_mut()
+            .observe_restored_controller_grants(restored_count)
+    });
+    apply_remote_control_effects(effects);
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn firmware_on_event(event: PrnsEvent<'_>, _state: &RemoteControlHandle) {
+    match event {
+        PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(pairing)) => {
+            let confirmation = pairing.confirmation();
+            let attempt_id = confirmation.attempt_id();
+            let confirmation_code = confirmation.confirmation_code().value();
+            let expires_at = pairing.window().expires_at();
+            let _ = update_remote_control_state(|state| {
+                state.confirmation_required(attempt_id, confirmation_code, expires_at)
+            });
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingControllerCommitted {
+            attempt_id,
+        }) => {
+            let _ = update_remote_control_state(|state| state.controller_committed(attempt_id));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationRequired {
+            attempt_id,
+            ..
+        }) => {
+            let _ = update_remote_control_state(|state| state.authorizing(attempt_id));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationPersisted {
+            attempt_id,
+        }) => {
+            remote_control_authorization_persisted(attempt_id);
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingExpiredDuringAuthorization {
+            attempt_id,
+        }) => {
+            let _ = update_remote_control_state(|state| state.expired(Some(attempt_id)));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingExpired { aborted }) => {
+            let attempt_id = aborted.attempt_id();
+            let _ = update_remote_control_state(|state| state.expired(Some(attempt_id)));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingLinkClosed { aborted }) => {
+            let attempt_id = aborted.attempt_id();
+            let _ = update_remote_control_state(|state| state.terminal_link_closed(attempt_id));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingCompletionRetentionExpired {
+            attempt_id,
+        }) => {
+            let _ = update_remote_control_state(|state| state.completion_expired(attempt_id));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingCompletionLinkClosed {
+            attempt_id,
+        }) => {
+            let _ = update_remote_control_state(|state| state.terminal_link_closed(attempt_id));
+        }
+        PrnsEvent::Diagnostic(Diagnostic::RemoteControlPairingExpired { .. }) => {
+            let _ = update_remote_control_state(|state| state.expired(None));
+        }
+        PrnsEvent::Diagnostic(Diagnostic::RemoteControlPairingExpiryFailed { .. }) => {
+            let _ = update_remote_control_state(|state| {
+                state.operation_failed(
+                    None,
+                    screen::RemoteControlTargetPairingFailure::PairingExpiry,
+                )
+            });
+        }
+        _ => {}
+    }
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn set_remote_control_clock(logical_now: personal_rns::units::InstantMillis) {
+    let raw_now = Instant::now().as_millis();
+    REMOTE_CONTROL_CLOCK.lock(|clock| *clock.borrow_mut() = (raw_now, logical_now.0));
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn remote_control_now() -> personal_rns::units::InstantMillis {
+    let raw_now = Instant::now().as_millis();
+    REMOTE_CONTROL_CLOCK.lock(|clock| {
+        let (raw_start, logical_start) = *clock.borrow();
+        personal_rns::units::InstantMillis(
+            logical_start.saturating_add(raw_now.saturating_sub(raw_start)),
+        )
+    })
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn publish_transmit_egress_ready(ready: bool) {
+    let effects = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().set_transmit_ready(ready));
+    apply_remote_control_effects(effects);
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn request_manual_announcements() {
+    let effects = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().request_manual_announcements());
+    apply_remote_control_effects(effects);
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn poll_stable_target_announcement(
+    now_millis: u64,
+) -> Option<screen::StableTargetAnnouncementAction> {
+    let output = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().poll_announcement(now_millis));
+    let (action, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+    action
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn settle_stable_target_announcement(
+    action: screen::StableTargetAnnouncementAction,
+    succeeded: bool,
+) -> bool {
+    let settlement = if succeeded {
+        StableTargetAnnouncementSettlement::Succeeded
+    } else {
+        StableTargetAnnouncementSettlement::Failed
+    };
+    let output = REMOTE_CONTROL_COMPOSITION.lock(|composition| {
+        composition
+            .borrow_mut()
+            .settle_announcement(action, settlement)
+    });
+    let (settled, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+    settled
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn next_stable_target_announcement_deadline_millis() -> Option<u64> {
+    REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow().next_announcement_deadline_millis())
+}
+
+#[cfg(feature = "remote-control-pairing")]
+pub(crate) fn remote_control_pairing_persistence_failed(
+    failure: personal_rns::runtime::EmbeddedRemoteControlPairingPersistenceFailure,
+) {
+    use personal_rns::runtime::EmbeddedRemoteControlPairingPersistenceFailure as Failure;
+
+    let attempt_id = match failure {
+        Failure::AuthorizationTransaction { attempt_id, .. }
+        | Failure::Storage { attempt_id, .. }
+        | Failure::TargetSettlement { attempt_id, .. }
+        | Failure::ControllerSettlement { attempt_id, .. }
+        | Failure::UnexpectedTargetFinalization { attempt_id, .. }
+        | Failure::UnexpectedControllerFinalization { attempt_id, .. }
+        | Failure::RollbackSnapshotMismatch { attempt_id }
+        | Failure::SettlementBusy { attempt_id, .. }
+        | Failure::NodeStopped { attempt_id, .. } => attempt_id,
+    };
+    let output = REMOTE_CONTROL_COMPOSITION.lock(|composition| {
+        composition
+            .borrow_mut()
+            .target_persistence_failed(attempt_id)
+    });
+    let (_, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+}
 
 const BOOT_PHASE_MAGIC: u32 = 0x5052_0000;
 

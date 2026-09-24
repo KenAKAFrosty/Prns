@@ -1,5 +1,5 @@
 mod build;
-mod mesh_tower_v2;
+mod build_only;
 mod recipe;
 #[cfg(test)]
 mod tests;
@@ -17,6 +17,42 @@ use thiserror::Error;
 
 pub(crate) use build::BuildEvidence;
 pub(crate) use recipe::RecipeIdentity;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalTarget {
+    id: String,
+    display_name: String,
+    memory_profile: String,
+    rust_target: String,
+    architecture_adapter: String,
+}
+
+impl CanonicalTarget {
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    #[must_use]
+    pub fn memory_profile(&self) -> &str {
+        &self.memory_profile
+    }
+
+    #[must_use]
+    pub fn rust_target(&self) -> &str {
+        &self.rust_target
+    }
+
+    #[must_use]
+    pub fn architecture_adapter(&self) -> &str {
+        &self.architecture_adapter
+    }
+}
 
 pub(crate) struct Matrix<'a> {
     targets: Vec<Target<'a>>,
@@ -51,11 +87,11 @@ enum TargetRecipe<'a> {
         board: &'a BoardCatalogEntry,
         recipe: &'a NrfSerialDfuBuild,
     },
-    MeshTowerV2,
+    BuildOnly(&'static build_only::BuildOnlyTarget),
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum MatrixError {
+pub enum MatrixError {
     #[error("resource target {target:?} has an invalid memory profile: {source}")]
     CatalogProfile {
         target: String,
@@ -77,6 +113,29 @@ pub(crate) enum MatrixError {
         #[source]
         source: BuildError,
     },
+}
+
+#[derive(Debug, Error)]
+pub enum CanonicalMatrixError {
+    #[error(transparent)]
+    Catalog(#[from] prns_flash_manifest::CatalogError),
+    #[error(transparent)]
+    Matrix(#[from] MatrixError),
+}
+
+pub fn canonical_targets() -> Result<Vec<CanonicalTarget>, CanonicalMatrixError> {
+    let catalog = prns_flash_manifest::board_catalog()?;
+    let matrix = Matrix::from_catalog(&catalog)?;
+    Ok(matrix
+        .iter()
+        .map(|target| CanonicalTarget {
+            id: target.id().to_string(),
+            display_name: target.display_name().to_string(),
+            memory_profile: target.profile().id.0.to_string(),
+            rust_target: target.adapter().rust_target().to_string(),
+            architecture_adapter: target.adapter().id().as_str().to_string(),
+        })
+        .collect())
 }
 
 impl<'a> Matrix<'a> {
@@ -108,6 +167,9 @@ impl<'a> Matrix<'a> {
                                 source,
                             }
                         })?;
+                        if build_only::is_build_only(memory.id().0) {
+                            continue;
+                        }
                         targets.push(Target {
                             id: memory.id().0.to_string(),
                             display_name: format!(
@@ -143,20 +205,22 @@ impl<'a> Matrix<'a> {
             }
         }
 
-        let profile = mesh_tower_v2::profile();
-        profile
-            .validate()
-            .map_err(|error| MatrixError::BuildOnlyProfile {
-                target: mesh_tower_v2::ID,
-                error,
-            })?;
-        targets.push(Target {
-            id: mesh_tower_v2::ID.to_string(),
-            display_name: mesh_tower_v2::DISPLAY_NAME.to_string(),
-            profile,
-            adapter: adapter_for(profile.architecture),
-            recipe: TargetRecipe::MeshTowerV2,
-        });
+        for target in &build_only::TARGETS {
+            target
+                .profile
+                .validate()
+                .map_err(|error| MatrixError::BuildOnlyProfile {
+                    target: target.id,
+                    error,
+                })?;
+            targets.push(Target {
+                id: target.id.to_string(),
+                display_name: target.display_name.to_string(),
+                profile: target.profile,
+                adapter: adapter_for(target.profile.architecture),
+                recipe: TargetRecipe::BuildOnly(target),
+            });
+        }
 
         let mut ids = BTreeSet::new();
         for target in &targets {
@@ -201,7 +265,7 @@ impl Target<'_> {
             TargetRecipe::Esp { .. } => TargetPlatform::Esp,
             TargetRecipe::Uf2 { .. }
             | TargetRecipe::SerialDfu { .. }
-            | TargetRecipe::MeshTowerV2 => TargetPlatform::Nrf52840,
+            | TargetRecipe::BuildOnly(_) => TargetPlatform::Nrf52840,
         }
     }
 

@@ -13,19 +13,62 @@ use crate::engine::test_support::{
     bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_4_2_ANNOUNCE, TEST_TRANSPORT_ID,
 };
 use crate::engine::{EngineState, InstantMillis, IssuedCommand, Journaled};
+use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::manifold::grant::{GrantProducer, ManifoldLaneReader};
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
+use crate::routing::links::request::{response_envelope_prefix, RequestId, RESPONSE_WIRE_OVERHEAD};
 use crate::runtime::{ManifoldPersistence, NoInterfaceInspectionStore, NoManifoldPersistence};
+use crate::runtime::{ResourceResponse, ResourceResponsePayload};
 use crate::storage::{GrowableHeap, StorageLayout};
 
 use super::super::test_support::{descriptor, WATCHDOG};
 use super::super::{leaked_grant_lane, EmbassyHost, PooledEgress};
-use super::{inbound_source, run_pooled, InterfaceLifecycle, PooledWiring};
+use super::{inbound_source, resource_response_data, run_pooled, InterfaceLifecycle, PooledWiring};
 
 struct AlwaysDuePersistence {
     progress: Rc<Cell<usize>>,
+}
+
+#[test]
+fn path_table_response_materializes_inside_the_manifold() {
+    const RESPONSE_BYTES: usize = RESPONSE_WIRE_OVERHEAD + 1;
+    let engine = EngineState::<GrowableHeap>::default();
+    let request_id = RequestId([0x42; 16]);
+    let selection = RnsRemotePathTableRequest::new(None, None);
+    let mut ready = HeaplessVec::<u8, RESPONSE_BYTES>::new();
+    ready.extend_from_slice(b"ready").unwrap();
+
+    let materialized = resource_response_data(
+        &engine,
+        &[],
+        request_id,
+        ResourceResponsePayload::Ready(ready.clone()),
+    )
+    .unwrap();
+    assert_eq!(materialized.as_slice(), ready.as_slice());
+
+    let data = resource_response_data::<_, RESPONSE_BYTES>(
+        &engine,
+        &[],
+        request_id,
+        ResourceResponsePayload::RnsPathTable(selection),
+    )
+    .unwrap();
+
+    assert_eq!(
+        &data.as_slice()[..RESPONSE_WIRE_OVERHEAD],
+        &response_envelope_prefix(&request_id)
+    );
+    assert_eq!(data.as_slice()[RESPONSE_WIRE_OVERHEAD], 0x90);
+    assert!(resource_response_data::<_, 0>(
+        &engine,
+        &[],
+        request_id,
+        ResourceResponsePayload::RnsPathTable(selection),
+    )
+    .is_some());
 }
 
 #[test]
@@ -72,9 +115,10 @@ impl<S: StorageLayout> ManifoldPersistence<S> for AlwaysDuePersistence {
         _snapshot: &crate::runtime::RemoteControlAuthorizationSnapshot,
         _now: InstantMillis,
     ) -> crate::runtime::StoreRemoteControlAuthorizationSnapshotOutcome {
-        crate::runtime::StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
-            crate::runtime::EmbeddedPersistenceFailure::Flash,
-        )
+        crate::runtime::StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+            failure: crate::runtime::EmbeddedPersistenceFailure::Flash,
+            retry_at: None,
+        }
     }
 }
 
@@ -88,6 +132,7 @@ fn continuously_due_persistence_yields_to_sibling_tasks() {
         let mut host = EmbassyHost::new(crate::manifold::driver::test_support::entropy_handle());
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 1> = Channel::new();
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 1> = Channel::new();
+        let responses: Channel<CriticalSectionRawMutex, ResourceResponse<0>, 1> = Channel::new();
         let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 1> = Channel::new();
         let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
         let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
@@ -106,6 +151,7 @@ fn continuously_due_persistence_yields_to_sibling_tasks() {
                 egress: &mut egress,
                 notify: notify.receiver(),
                 commands: commands.receiver(),
+                resource_responses: responses.receiver(),
                 lifecycle: lifecycle.receiver(),
             },
             |_| {},
@@ -138,6 +184,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
 
     let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
     let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
+    let responses: Channel<CriticalSectionRawMutex, ResourceResponse<0>, 1> = Channel::new();
     let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
 
     const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
@@ -186,9 +233,11 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
         | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
+        | Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { .. }
         | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
         | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
         | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
+        | Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { .. }
         | Journaled::RemoteControlControllerPairingExpired { .. }
         | Journaled::RemoteControlControllerPairingLinkClosed { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
@@ -222,6 +271,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
                 egress: &mut egress,
                 notify: notify.receiver(),
                 commands: commands.receiver(),
+                resource_responses: responses.receiver(),
                 lifecycle: lifecycle.receiver(),
                 ifacs: &mut ifacs,
             },
@@ -282,6 +332,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
 
     let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
     let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
+    let responses: Channel<CriticalSectionRawMutex, ResourceResponse<0>, 1> = Channel::new();
     let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
 
     const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
@@ -328,9 +379,11 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
+        | Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { .. }
         | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
         | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
         | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
+        | Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { .. }
         | Journaled::RemoteControlControllerPairingExpired { .. }
         | Journaled::RemoteControlControllerPairingLinkClosed { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
@@ -360,6 +413,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
                 egress: &mut egress,
                 notify: notify.receiver(),
                 commands: commands.receiver(),
+                resource_responses: responses.receiver(),
                 lifecycle: lifecycle.receiver(),
                 ifacs: &mut ifacs,
             },

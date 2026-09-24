@@ -1,3 +1,5 @@
+use core::time::Duration;
+
 use crate::engine::{
     ApproveRemoteControlControllerPairing, ApproveRemoteControlTargetPairing,
     BeginRemoteControlControllerPairing, EstablishLinkFailure,
@@ -16,6 +18,10 @@ use crate::runtime::{
 use crate::wire::DestinationHash;
 
 use super::super::PrnsNodeHandle;
+
+/// Identify settles at write time. This grace covers one BLE connection
+/// interval plus fragment delivery so Begin does not overtake LINKIDENTIFY.
+const IDENTIFY_PROPAGATION_GRACE: Duration = Duration::from_millis(150);
 
 async fn settle_pairing_command<C>(
     node: &PrnsNodeHandle,
@@ -60,6 +66,10 @@ impl RemoteControlPairingControl for PrnsNodeHandle {
                 },
             ));
         }
+        // Identify is fire-and-forget. Give the LINKIDENTIFY frame time to land
+        // before Begin; a target still running RequireIdentified drops Begin
+        // silently until the link is identified.
+        tokio::time::sleep(IDENTIFY_PROPAGATION_GRACE).await;
         settle_pairing_command(self, begun.into_request())
             .await
             .map_err(|error| {

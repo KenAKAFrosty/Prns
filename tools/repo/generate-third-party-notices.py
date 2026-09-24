@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -135,6 +136,81 @@ VENDORED = (
         ("Node addon Linux", "daemon Linux"),
     ),
 )
+
+INPUT_FINGERPRINT_PREFIX = "Notice input fingerprint: `sha256:"
+INPUT_FINGERPRINT_PATTERN = re.compile(
+    rf"^{re.escape(INPUT_FINGERPRINT_PREFIX)}([0-9a-f]{{64}})`\.$",
+    re.MULTILINE,
+)
+
+
+def notice_input_paths() -> tuple[Path, ...]:
+    """Return every checked-in input that can alter the shipped notice inventory."""
+    paths = {
+        Path(__file__).resolve(),
+        ABOUT,
+        ROOT / "docs/website/package-lock.json",
+    }
+    # The lockfile's integrity hashes bind the exact npm package archives, while
+    # this script binds their pinned package/version and license-source mapping.
+    # Installed node_modules files are needed for full generation, but including
+    # them here would make the fast fingerprint impossible in a clean checkout.
+    paths.update(
+        ROOT / relative
+        for _, _, relative in NPM
+        if "node_modules" not in Path(relative).parts
+    )
+    paths.update(ROOT / relative for _, _, relative, _ in VENDORED)
+    for pattern in ("Cargo.toml", "Cargo.lock"):
+        paths.update(
+            path
+            for path in ROOT.rglob(pattern)
+            if not any(
+                part in {".git", "node_modules", "target", "vendor"}
+                for part in path.relative_to(ROOT).parts
+            )
+        )
+    return tuple(sorted(paths, key=lambda path: path.relative_to(ROOT).as_posix()))
+
+
+def notice_input_fingerprint() -> str:
+    digest = hashlib.sha256()
+    for path in notice_input_paths():
+        if not path.is_file():
+            raise RuntimeError(
+                f"notice input {path.relative_to(ROOT)} is missing"
+            )
+        relative = path.relative_to(ROOT).as_posix().encode("utf-8")
+        contents = path.read_bytes()
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(len(contents).to_bytes(8, "big"))
+        digest.update(contents)
+    return digest.hexdigest()
+
+
+def check_notice_inputs(output: Path) -> bool:
+    if not output.is_file():
+        print(f"notice input check failed: {output} is missing", file=sys.stderr)
+        return False
+    match = INPUT_FINGERPRINT_PATTERN.search(output.read_text(encoding="utf-8"))
+    if match is None:
+        print(
+            "notice input check failed: committed bundle has no input fingerprint; "
+            "regenerate with --write",
+            file=sys.stderr,
+        )
+        return False
+    expected = notice_input_fingerprint()
+    if match.group(1) != expected:
+        print(
+            "notice inputs changed; review and regenerate THIRD_PARTY_NOTICES.md "
+            "with --write",
+            file=sys.stderr,
+        )
+        return False
+    print("THIRD_PARTY_NOTICES.md input fingerprint matches")
+    return True
 
 
 def normalized_notice_text(value: str) -> str:
@@ -301,6 +377,7 @@ def notice_bundle() -> str:
         "",
         "This checked bundle covers the shipped and qualification Rust, JavaScript, and Android product graphs.",
         f"It was generated with `{version}` by `./tools/prns repo notices generate`.",
+        f"{INPUT_FINGERPRINT_PREFIX}{notice_input_fingerprint()}`.",
         "Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before "
         "cargo-about reads its target-filtered packaged license material offline.",
         "Entries are deduplicated by SPDX identifier and canonical notice text; line endings, "
@@ -375,9 +452,21 @@ def notice_bundle() -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--write", action="store_true", help="replace THIRD_PARTY_NOTICES.md")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--write", action="store_true", help="replace THIRD_PARTY_NOTICES.md")
+    mode.add_argument(
+        "--check-inputs",
+        action="store_true",
+        help="check the fast local-input fingerprint without running cargo-about",
+    )
     parser.add_argument("--output", type=Path, default=OUTPUT, help=argparse.SUPPRESS)
     arguments = parser.parse_args()
+    if arguments.check_inputs:
+        try:
+            return 0 if check_notice_inputs(arguments.output) else 1
+        except (OSError, RuntimeError) as error:
+            print(f"notice input check failed: {error}", file=sys.stderr)
+            return 2
     try:
         rendered = notice_bundle()
     except RuntimeError as error:

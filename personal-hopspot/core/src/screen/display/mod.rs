@@ -172,6 +172,21 @@ impl DisplayCoordinator {
         self.blanking_mut()?.toggle_auto_off(now)
     }
 
+    pub fn set_auto_off(
+        &mut self,
+        auto_off: DisplayAutoOff,
+        now: MonotonicMillis,
+    ) -> Result<DisplayAutoOff, BlankingError> {
+        self.blanking_mut()?.set_auto_off(auto_off, now)
+    }
+
+    pub fn auto_off(&self) -> Result<DisplayAutoOff, BlankingError> {
+        match &self.state {
+            DisplayState::Unavailable => Err(BlankingError::DisplayUnavailable),
+            DisplayState::Available(available) => available.blanking.auto_off(),
+        }
+    }
+
     pub fn complete_blanking(
         &mut self,
         completed_at: MonotonicMillis,

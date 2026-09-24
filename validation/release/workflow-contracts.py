@@ -113,6 +113,40 @@ def validate_resource_bounds(workflow: Path, text: str) -> list[str]:
     return errors
 
 
+def validate_ci_compiler_environment(text: str) -> list[str]:
+    """Keep host-only compiler flags out of every cross-toolchain environment."""
+    errors: list[str] = []
+    jobs_offset = text.find("\njobs:\n")
+    header = text if jobs_offset < 0 else text[:jobs_offset]
+    top_level_env = re.search(r"(?ms)^env:\n(.*?)(?=^[A-Za-z0-9_-]+:|\Z)", header)
+    if top_level_env is not None and re.search(
+        r"(?m)^  RUSTFLAGS:", top_level_env.group(1)
+    ):
+        errors.append(
+            "ci.yml must not define workflow-global RUSTFLAGS; cross-toolchain jobs "
+            "inherit them"
+        )
+
+    cross_toolchain_markers = (
+        "wasm32-unknown-unknown",
+        "thumbv7em-none-eabihf",
+        "riscv32imac-unknown-none-elf",
+        "xtensa-esp32s3-none-elf",
+        "aarch64-linux-android",
+        "aarch64-apple-ios",
+        "components: miri",
+        "toolchain: esp",
+    )
+    for job_name, block in workflow_jobs(text):
+        if any(marker in block for marker in cross_toolchain_markers) and re.search(
+            r"(?m)^\s+RUSTFLAGS:", block
+        ):
+            errors.append(
+                f"ci.yml cross-toolchain job {job_name} must not define host RUSTFLAGS"
+            )
+    return errors
+
+
 def validate() -> list[str]:
     errors: list[str] = []
     lock_path = ROOT / "release" / "flash" / "action-pins.json"
@@ -332,10 +366,12 @@ def validate() -> list[str]:
             )
 
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    errors.extend(validate_ci_compiler_environment(ci))
     readiness = (
         ROOT / ".github" / "workflows" / "release-readiness.yml"
     ).read_text(encoding="utf-8")
     for preflight_fragment in (
+        "./tools/prns repo notices check-inputs",
         "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86",
         'python3 validation/run.py run --suite release-contracts --expected-sha "$GITHUB_SHA"',
     ):
@@ -397,7 +433,9 @@ def validate() -> list[str]:
         )
     embedded_target_step = re.search(
         r"name: Prepare embedded targets\n"
-        r"        if: matrix\.group == 'embedded' \|\| matrix\.group == 'esp'\n"
+        r"        if: matrix\.group == 'embedded' \|\| matrix\.group == 'esp' "
+        r"\|\| matrix\.group == 'embedded-isa' \|\| "
+        r"matrix\.group == 'embedded-platform'\n"
         r"        run: rustup target add --toolchain 1\.96\.0 "
         r"riscv32imac-unknown-none-elf "
         r"thumbv7em-none-eabihf",
@@ -407,6 +445,22 @@ def validate() -> list[str]:
         errors.append(
             "release-readiness.yml does not provision embedded Rust targets for ESP suites"
         )
+    for assurance_gate in (
+        "embedded-emulators:",
+        "prepare-embedded-assurance",
+        "release-embedded-emulators-${{ github.run_id }}",
+        "matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'",
+        "matrix.group == 'esp' || matrix.toolchain == 'esp'",
+        "release-embedded-resources-${{ matrix.id }}-${{ github.run_id }}",
+        "release-readiness-embedded-*-${{ github.run_id }}",
+        "release-embedded-assurance-${{ github.sha }}",
+        "needs: [inventory, qualify, embedded-assurance]",
+    ):
+        if assurance_gate not in readiness:
+            errors.append(
+                "release-readiness.yml is missing embedded assurance gate "
+                f"{assurance_gate!r}"
+            )
     for mutation_fragment in (
         "matrix.domain == 'mutation'",
         "cargo-mutants",
@@ -479,18 +533,25 @@ def validate() -> list[str]:
         'ESP_RUSTC_RELEASE="1.95.0-nightly"',
         'ESP_RUSTC_COMMIT_HASH="95e5bda868c960c607597bc03ed9e8f0ad26226d"',
         'ESP_RUSTC_COMMIT_DATE="2026-04-15"',
+        'ESP_OBJDUMP_BANNER="GNU objdump (crosstool-NG esp-15.2.0_20250920) 2.45"',
     ):
         if identity_gate not in esp_identity:
             errors.append(f"ESP toolchain identity is missing exact gate {identity_gate!r}")
     if "verify-release-esp-toolchain.sh" not in esp_installer:
         errors.append("ESP toolchain installer does not reuse the exact identity proof")
-    for field in ("banner", "release", "commit_hash", "commit_date"):
+    for field in (
+        "banner",
+        "release",
+        "commit_hash",
+        "commit_date",
+        "ESP_OBJDUMP_BANNER",
+    ):
         if field not in esp_verifier:
             errors.append(f"ESP toolchain verifier does not check {field}")
     if "RUSTUP_TOOLCHAIN: 1.90.0" not in ci or "toolchain: 1.90.0" not in ci:
         errors.append("ci.yml does not explicitly force and install the Rust 1.90.0 MSRV")
     for product_matrix_gate in (
-        "validation/hygiene/embedded_resource_selection.py",
+        "validation/hygiene/embedded_assurance_selection.py",
         "run --suite embedded-builds",
         "run --suite esp32-firmware-check",
         'release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"',
@@ -498,11 +559,19 @@ def validate() -> list[str]:
         "embedded-resources-esp",
         "embedded-resources-matrix",
         "resources summarize",
+        "embedded-assurance-miri",
+        "embedded-assurance-isa",
+        "embedded-assurance-matrix",
+        "prepare-embedded-assurance",
+        "assurance summarize",
         "GITHUB_STEP_SUMMARY",
         "EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}",
         "EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}",
         "ESP32_RESULT: ${{ needs.esp32-firmware.result }}",
         "EMBEDDED_SUMMARY_RESULT: ${{ needs.embedded-resource-summary.result }}",
+        "EMBEDDED_MIRI_RESULT: ${{ needs.embedded-miri.result }}",
+        "EMBEDDED_ISA_RESULT: ${{ needs.embedded-isa.result }}",
+        "EMBEDDED_ASSURANCE_RESULT: ${{ needs.embedded-assurance-summary.result }}",
     ):
         if product_matrix_gate not in ci:
             errors.append(
@@ -512,13 +581,59 @@ def validate() -> list[str]:
     selection_job = ci_jobs.get("embedded-resource-selection", "")
     if (
         "fetch-depth: 0" not in selection_job
-        or "required: ${{ steps.resources.outputs.required }}" not in selection_job
+        or "required: ${{ steps.assurance.outputs.resources_required }}" not in selection_job
+        or "miri_required: ${{ steps.assurance.outputs.miri_required }}" not in selection_job
+        or "miri_suites: ${{ steps.assurance.outputs.miri_suites }}" not in selection_job
+        or "isa_required: ${{ steps.assurance.outputs.isa_required }}" not in selection_job
+        or "isa_suites: ${{ steps.assurance.outputs.isa_suites }}" not in selection_job
+        or "pilots_required: ${{ steps.assurance.outputs.pilots_required }}" not in selection_job
+        or "pilots_suites: ${{ steps.assurance.outputs.pilots_suites }}" not in selection_job
+        or "resources_suites: ${{ steps.assurance.outputs.resources_suites }}" not in selection_job
+        or "embedded_builds_required: ${{ steps.assurance.outputs.embedded_builds_required }}"
+        not in selection_job
+        or "esp32_firmware_check_required: "
+        "${{ steps.assurance.outputs.esp32_firmware_check_required }}"
+        not in selection_job
+        or "aggregate_required: ${{ steps.assurance.outputs.aggregate_required }}"
+        not in selection_job
     ):
         errors.append("embedded resource selection does not expose a full-history decision")
-    selection_condition = "if: needs.embedded-resource-selection.outputs.required == 'true'"
-    for job_name in ("no-std-embedded", "esp32-firmware"):
+    if "resources baseline-contracts" not in selection_job:
+        errors.append(
+            "embedded resource selection does not reject stale baseline contracts before builds"
+        )
+    if selection_job.count(
+        "if: steps.assurance.outputs.resources_required == 'true'"
+    ) != 3:
+        errors.append(
+            "embedded baseline preflight does not keep toolchain, cache, and validation "
+            "diff-selected"
+        )
+    integration_capstones = ci_jobs.get("integration-capstones", "")
+    feature_configs = ci_jobs.get("feature-configs", "")
+    for capstone_gate in (
+        "cargo clippy --all-targets --locked -- -D warnings",
+        "cargo test --locked -- --test-threads=1",
+        "working-directory: validation/integration",
+        "shared-key: integration-capstones",
+    ):
+        if capstone_gate not in integration_capstones:
+            errors.append(
+                f"integration-capstones is missing isolated gate {capstone_gate!r}"
+            )
+    if "working-directory: validation/integration" in feature_configs:
+        errors.append("feature-configs still owns the independently retryable capstones")
+    for job_name, output in (
+        ("no-std-embedded", "embedded_builds_required"),
+        ("esp32-firmware", "esp32_firmware_check_required"),
+    ):
+        selection_condition = (
+            f"needs.embedded-resource-selection.outputs.{output} == 'true'"
+        )
         if selection_condition not in ci_jobs.get(job_name, ""):
-            errors.append(f"ci.yml {job_name} does not use the shared resource selection")
+            errors.append(
+                f"ci.yml {job_name} does not use its exact shared resource selection"
+            )
     summary_job = ci_jobs.get("embedded-resource-summary", "")
     for dependency in (
         "embedded-resource-selection",
@@ -546,11 +661,72 @@ def validate() -> list[str]:
     ):
         if summary_gate not in summary_job:
             errors.append(f"embedded resource summary is missing gate {summary_gate!r}")
+    miri_job = ci_jobs.get("embedded-miri", "")
+    for miri_gate in (
+        "needs.embedded-resource-selection.outputs.miri_required == 'true'",
+        "validation/run.py toolchain nightly",
+        "SELECTED_MIRI_SUITES: ${{ needs.embedded-resource-selection.outputs.miri_suites }}",
+        'python3 validation/run.py run "${arguments[@]}"',
+        "name: embedded-assurance-miri",
+    ):
+        if miri_gate not in miri_job:
+            errors.append(f"embedded Miri CI is missing gate {miri_gate!r}")
+    isa_job = ci_jobs.get("embedded-isa", "")
+    for isa_gate in (
+        "needs.embedded-resource-selection.outputs.isa_required == 'true'",
+        "prepare-embedded-assurance",
+        "SELECTED_ISA_SUITES: ${{ needs.embedded-resource-selection.outputs.isa_suites }}",
+        'arguments+=(--suite "$suite")',
+        "name: embedded-assurance-isa",
+    ):
+        if isa_gate not in isa_job:
+            errors.append(f"embedded ISA CI is missing gate {isa_gate!r}")
+    assurance_summary = ci_jobs.get("embedded-assurance-summary", "")
+    for dependency in (
+        "embedded-resource-selection",
+        "no-std-embedded",
+        "esp32-firmware",
+        "embedded-miri",
+        "embedded-isa",
+    ):
+        if f"- {dependency}" not in assurance_summary:
+            errors.append(f"embedded assurance summary does not depend on {dependency}")
+    for assurance_gate in (
+        "outputs.aggregate_required == 'true'",
+        "--resources target/flash-artifacts/assurance/resources",
+        "--proofs target/flash-artifacts/assurance/proofs",
+        'matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"',
+        "name: embedded-assurance-matrix",
+        "if-no-files-found: error",
+    ):
+        if assurance_gate not in assurance_summary:
+            errors.append(
+                f"embedded assurance summary is missing gate {assurance_gate!r}"
+            )
+    for resource_job_name in ("no-std-embedded", "esp32-firmware"):
+        resource_job = ci_jobs.get(resource_job_name, "")
+        for evidence in ("function-boundaries.json", "stack-evidence.json"):
+            if evidence not in resource_job:
+                errors.append(
+                    f"ci.yml {resource_job_name} does not upload {evidence}"
+                )
     release_critical = ci_jobs.get("release-critical", "")
+    for capstone_gate in (
+        "- integration-capstones",
+        "INTEGRATION_CAPSTONES_RESULT: ${{ needs.integration-capstones.result }}",
+        '"$INTEGRATION_CAPSTONES_RESULT"',
+    ):
+        if capstone_gate not in release_critical:
+            errors.append(
+                f"release-critical does not require integration capstones via {capstone_gate!r}"
+            )
     for result_name, successful_result in (
         ("nRF", 'test "$EMBEDDED_RESULT" = "success"'),
         ("ESP", 'test "$ESP32_RESULT" = "success"'),
         ("summary", 'test "$EMBEDDED_SUMMARY_RESULT" = "success"'),
+        ("Miri", 'test "$EMBEDDED_MIRI_RESULT" = "success"'),
+        ("ISA", 'test "$EMBEDDED_ISA_RESULT" = "success"'),
+        ("assurance", 'test "$EMBEDDED_ASSURANCE_RESULT" = "success"'),
     ):
         if successful_result not in release_critical:
             errors.append(f"release-critical does not require a successful {result_name} result")
@@ -558,6 +734,9 @@ def validate() -> list[str]:
         ("nRF", 'test "$EMBEDDED_RESULT" = "skipped"'),
         ("ESP", 'test "$ESP32_RESULT" = "skipped"'),
         ("summary", 'test "$EMBEDDED_SUMMARY_RESULT" = "skipped"'),
+        ("Miri", 'test "$EMBEDDED_MIRI_RESULT" = "skipped"'),
+        ("ISA", 'test "$EMBEDDED_ISA_RESULT" = "skipped"'),
+        ("assurance", 'test "$EMBEDDED_ASSURANCE_RESULT" = "skipped"'),
     ):
         if skipped_result not in release_critical:
             errors.append(
@@ -594,6 +773,18 @@ def validate() -> list[str]:
         'cron: "17 9 1 * *"',
         "group: ${{ github.workflow }}",
         "cancel-in-progress: false",
+        "embedded_resources: ${{ steps.matrix.outputs.embedded_resources }}",
+        "--suite embedded-builds --suite esp32-firmware-check",
+        "embedded-emulators:",
+        "prepare-embedded-assurance",
+        "deep-assurance-runners-${{ github.run_id }}",
+        "embedded-resources:",
+        "deep-resource-${{ matrix.id }}-${{ github.run_id }}",
+        "embedded-assurance:",
+        "Require every embedded proof attempt",
+        "--suite embedded-platform-esp32s3",
+        "deep-embedded-assurance-${{ github.sha }}",
+        "EMBEDDED_ASSURANCE_RESULT: ${{ needs.embedded-assurance.result }}",
     ):
         if resource_gate not in deep:
             errors.append(f"deep-validation.yml is missing resource gate {resource_gate!r}")
@@ -607,6 +798,23 @@ def validate() -> list[str]:
                 "deep-validation.yml must leave mutation analysis to mutation-audit.yml: "
                 f"{mutation_fragment!r}"
             )
+
+    manifest_document = (ROOT / "validation" / "manifest.toml").read_text(
+        encoding="utf-8"
+    )
+    for pilot in ("embedded-platform-nrf52840", "embedded-platform-esp32s3"):
+        pilot_block = re.search(
+            rf'(?ms)^\[\[suite\]\]\nid = "{re.escape(pilot)}"\n(.*?)(?=^\[\[suite\]\]|\Z)',
+            manifest_document,
+        )
+        if pilot_block is None or 'enforcement = "advisory"' not in pilot_block.group(1):
+            errors.append(f"{pilot} is not explicitly advisory")
+    esp_resources = re.search(
+        r'(?ms)^\[\[suite\]\]\nid = "esp32-firmware-check"\n(.*?)(?=^\[\[suite\]\]|\Z)',
+        manifest_document,
+    )
+    if esp_resources is None or 'tiers = ["pr", "release", "scheduled"]' not in esp_resources.group(1):
+        errors.append("ESP resource evidence does not run in every assurance tier")
 
     mutation_audit = (
         ROOT / ".github" / "workflows" / "mutation-audit.yml"

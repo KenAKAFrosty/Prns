@@ -45,6 +45,7 @@ pub fn bluetooth_dialer_hello(identity: Vec<u8>) -> Result<Vec<u8>, JsValue> {
         endpoint: local.endpoint,
         capabilities: local.capabilities,
         peer_rssi: None,
+        discovery_groups: bluetooth_contract::PeerDiscoveryGroups::Explicit(local.discovery_groups),
     })
 }
 
@@ -112,6 +113,7 @@ fn web_bluetooth_local(identity: Vec<u8>) -> Result<bluetooth_contract::LocalPee
             l2cap: None,
             link_mtu: bluetooth_contract::BLE_HW_MTU as u16,
         },
+        discovery_groups: bluetooth_contract::DiscoveryGroupSet::reticulum().hashes(),
     })
 }
 

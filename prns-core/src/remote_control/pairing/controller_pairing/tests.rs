@@ -75,6 +75,7 @@ impl PairingFixture {
             self.session.permissions().clone(),
             self.attempt_timeout(),
         )
+        .unwrap()
     }
 }
 

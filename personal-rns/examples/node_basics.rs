@@ -37,7 +37,7 @@ async fn main() {
         remote_control: common::remote_control_service(0xD0, 0xD1),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
@@ -55,7 +55,7 @@ async fn main() {
         pre_configured_destinations: [destination_b],
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,

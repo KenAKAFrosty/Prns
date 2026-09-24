@@ -44,6 +44,14 @@ platform_requires = { linux = ["cc"], macos = ["cc"], windows = ["cl"] }
 minimum_versions = { python = "3.11", rustc = "1.90" }
 setup = { cargo = "Install Rust through rustup: https://rustup.rs/", cc = "Install Xcode Command Line Tools on macOS or a C compiler through your Linux package manager.", cl = "Install the Visual Studio Build Tools C++ workload.", python = "Install Python 3.11 or newer with your operating system's package manager.", rustc = "Install or update Rust through rustup: https://rustup.rs/", uv = "Install uv using the instructions at https://docs.astral.sh/uv/getting-started/installation/." }
 
+[[doctor_profile]]
+id = "embedded-assurance"
+summary = "Check the exact toolchains, targets, emulators, and analysis tools used by hardware-less embedded assurance."
+requires = ["bash", "cargo", "git", "python", "rustc", "rustup"]
+minimum_versions = { python = "3.11", rustc = "1.90" }
+setup = { cargo = "Install Rust through rustup: https://rustup.rs/", git = "Install Git with your operating system's package manager.", python = "Install Python 3.11 or newer with your operating system's package manager.", rustc = "Install or update Rust through rustup: https://rustup.rs/", rustup = "Install Rust through rustup: https://rustup.rs/" }
+probe = ["python", "-m", "validation.hardening.embedded_readiness.run"]
+
 [[task]]
 id = "build.android"
 summary = "Cross-compile the Personal RNS core for Android device and emulator targets."
@@ -52,6 +60,16 @@ effect = "workspace-write"
 platforms = ["any"]
 audience = ["developer", "ci"]
 entrypoint = ["bash", "tools/build/android.sh"]
+requires = ["bash", "cargo"]
+
+[[task]]
+id = "build.embedded.assurance"
+summary = "Compose embedded resource evidence with executable proof results."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["bash", "tools/build/embedded-assurance.sh"]
 requires = ["bash", "cargo"]
 
 [[task]]
@@ -137,7 +155,18 @@ domain = "build"
 effect = "workspace-write"
 platforms = ["linux", "macos"]
 audience = ["developer", "ci"]
-entrypoint = ["bash", "tools/build/hopspot-mesh-tower-v2.sh"]
+entrypoint = ["bash", "tools/build/hopspot-build-only-uf2.sh", "mesh-tower-v2", "heltec-mesh-tower-v2", "MeshTower V2"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.muzi-base-duo"
+summary = "Build the headless muzi Base Duo (nRF52840 + LR1121) firmware with S140 6.1.1 Bluetooth Auto and package its developer UF2 for the muzi-Base bootloader volume."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-build-only-uf2.sh", "muzi-base-duo", "muzi-base-duo", "muzi Base Duo"]
 requires = ["bash", "cargo", "python3", "rustc"]
 setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
 
@@ -533,6 +562,16 @@ platforms = ["any"]
 audience = ["developer", "ci", "release"]
 entrypoint = ["python", "tools/release/smoke-maven-package.py"]
 requires = ["java"]
+
+[[task]]
+id = "repo.notices.check-inputs"
+summary = "Check the third-party notice input fingerprint without resolving dependency graphs."
+domain = "repo"
+effect = "read-only"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python3", "tools/repo/generate-third-party-notices.py", "--check-inputs"]
+requires = ["python3"]
 
 [[task]]
 id = "repo.notices.generate"

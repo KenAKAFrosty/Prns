@@ -54,8 +54,22 @@ pub use node::{
     PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 pub use remote_control::{
-    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
-    RemoteControlError,
+    NoRemoteControlHostControls, RemoteControlActivateWifiCredentials, RemoteControlAnnounceSelf,
+    RemoteControlAnnounceSelfFailure, RemoteControlAuthorizeController,
+    RemoteControlCancelWifiCredentials, RemoteControlConfirmWifiCredentials, RemoteControlDescribe,
+    RemoteControlDescribeBuild, RemoteControlDescribePower, RemoteControlError,
+    RemoteControlHostCommand, RemoteControlHostCommandError, RemoteControlHostControls,
+    RemoteControlHostResponse, RemoteControlInspectWifiTransaction,
+    RemoteControlInventoryControllers, RemoteControlInventoryInterfaceConfig,
+    RemoteControlInventoryInterfaceDiscoveryGroups, RemoteControlInventoryInterfacePeers,
+    RemoteControlInventoryInterfaces, RemoteControlReplaceInterfaceDiscoveryGroups,
+    RemoteControlRevokeController, RemoteControlSetDisplayAutoOff,
+    RemoteControlSetDisplayVisibility, RemoteControlSetEspRadioMode, RemoteControlSetGnssPower,
+    RemoteControlSetInterfaceGroup, RemoteControlSetInterfaceLoRaProfile,
+    RemoteControlSetInterfaceMode, RemoteControlSetInterfacePower,
+    RemoteControlSetInterfaceWifiStation, RemoteControlSetStationUplink,
+    RemoteControlSetSystemPower, RemoteControlSleepRadios, RemoteControlStageWifiCredentials,
+    RemoteControlWakeRadios,
 };
 pub use remote_control_authorizations::{
     RemoteControlAuthorizationRestoreError, RemoteControlAuthorizationRestoreOutcome,
@@ -101,8 +115,11 @@ pub use remote_control_target_connection::{
 pub mod placement {
     pub use super::node::assemble_node_in_place;
     pub use super::remote_control::{
-        admit_remote_control_request, dispatch_admitted_remote_control_request,
-        dispatch_remote_control_request, AdmittedRemoteControlRequest,
+        admit_remote_control_request, admit_verified_remote_control_request,
+        dispatch_admitted_remote_control_request, dispatch_remote_control_request,
+        dispatch_verified_admitted_remote_control_request, verify_admitted_remote_control_request,
+        AdmittedRemoteControlRequest, RemoteControlAdmitError,
+        VerifiedAdmittedRemoteControlRequest,
     };
 }
 

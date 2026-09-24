@@ -19,6 +19,7 @@ pub const MAX_REMOTE_CONTROL_PAIRING_ATTEMPT_TIMEOUT: DurationMillis =
 
 const PAIRING_MESSAGE_HEADER_ENCODED_LEN: usize = 2;
 const PAIRING_IDENTITY_ENCODED_LEN: usize = IDENTITY_PUBLIC_KEY_LEN;
+const PAIRING_AUTHORITY_ENCODED_LEN: usize = 1;
 const PAIRING_REQUEST_SET_COUNT_ENCODED_LEN: usize = 1;
 const PAIRING_ATTEMPT_TIMEOUT_ENCODED_LEN: usize = 4;
 const PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN: usize = SHA256_OUTPUT_LEN;
@@ -30,6 +31,7 @@ const PAIRING_COMMIT_ENCODED_LEN: usize =
     PAIRING_MESSAGE_HEADER_ENCODED_LEN.saturating_add(PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN);
 const PAIRING_OFFER_MAX_ENCODED_LEN: usize = PAIRING_MESSAGE_HEADER_ENCODED_LEN
     .saturating_add(PAIRING_IDENTITY_ENCODED_LEN)
+    .saturating_add(PAIRING_AUTHORITY_ENCODED_LEN)
     .saturating_add(PAIRING_REQUEST_SET_COUNT_ENCODED_LEN)
     .saturating_add(RemoteControlRequestKind::ALL.len())
     .saturating_add(PAIRING_ATTEMPT_TIMEOUT_ENCODED_LEN)
@@ -37,8 +39,15 @@ const PAIRING_OFFER_MAX_ENCODED_LEN: usize = PAIRING_MESSAGE_HEADER_ENCODED_LEN
 const PAIRING_COMPLETED_ENCODED_LEN: usize = PAIRING_MESSAGE_HEADER_ENCODED_LEN
     .saturating_add(PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN)
     .saturating_add(PAIRING_SIGNATURE_ENCODED_LEN);
-const PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN: usize =
-    PAIRING_REQUEST_SET_COUNT_ENCODED_LEN.saturating_add(RemoteControlRequestKind::ALL.len());
+const V2_V3_REQUEST_KIND_CAP: usize = 0x1C;
+const LEGACY_PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN: usize =
+    PAIRING_REQUEST_SET_COUNT_ENCODED_LEN.saturating_add(V2_V3_REQUEST_KIND_CAP);
+const V3_PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN: usize = PAIRING_AUTHORITY_ENCODED_LEN
+    .saturating_add(PAIRING_REQUEST_SET_COUNT_ENCODED_LEN)
+    .saturating_add(V2_V3_REQUEST_KIND_CAP);
+const PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN: usize = PAIRING_AUTHORITY_ENCODED_LEN
+    .saturating_add(PAIRING_REQUEST_SET_COUNT_ENCODED_LEN)
+    .saturating_add(RemoteControlRequestKind::ALL.len());
 const PAIRING_CONFIRMATION_CODE_MODULUS: u32 = 1_000_000;
 const PAIRING_TRANSCRIPT_DOMAIN: &[u8] = b"reticulum.remote.control.pairing.transcript.v1";
 const PAIRING_COMPLETION_DOMAIN: &[u8] = b"reticulum.remote.control.pairing.completed.v1";
@@ -51,6 +60,8 @@ prns_macros::iterable_enum! {
     #[repr(u8)]
     pub enum RemoteControlPairingProtocolVersion {
         V2 = 2,
+        V3 = 3,
+        V4 = 4,
     }
 }
 
@@ -63,6 +74,8 @@ impl RemoteControlPairingProtocolVersion {
     const fn from_wire(value: u8) -> Option<Self> {
         match value {
             2 => Some(Self::V2),
+            3 => Some(Self::V3),
+            4 => Some(Self::V4),
             _ => None,
         }
     }

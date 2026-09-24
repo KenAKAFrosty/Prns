@@ -1604,6 +1604,7 @@ checksum = "a513e167849a384b7f9b746e517604398518590a9142f4846a32e3c2a4de7b11"
 name = "personal-hopspot-core"
 version = "0.1.0"
 dependencies = [
+ "embassy-sync",
  "embedded-graphics",
  "embedded-storage",
  "embedded-storage-async",
@@ -1612,6 +1613,7 @@ dependencies = [
  "prns-core",
  "prns-macros",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]
@@ -1712,6 +1714,7 @@ version = "0.3.7"
 dependencies = [
  "cfg-if",
  "dispatch2",
+ "libc",
  "objc2",
  "objc2-core-bluetooth",
  "objc2-core-foundation",

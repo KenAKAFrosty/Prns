@@ -7,7 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use personal_hopspot_builder::artifact::publish;
-use personal_hopspot_builder::{BuildContext, BuildError, BuildIntent, LtoMode};
+use personal_hopspot_builder::{BuildContext, BuildError, BuildIntent, LtoMode, SourceCustody};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -16,7 +16,9 @@ use crate::matrix::Matrix;
 use super::build::{architecture_identity, build_identity, target_identity};
 use super::compare::{load_report, ComparisonError};
 use super::contract;
-use super::model::{BuildStatus, ResourceReport, SCHEMA_VERSION};
+use super::model::{
+    BuildStatus, Evidence, ResourceReport, ScenarioFutureSizesIdentity, SCHEMA_VERSION,
+};
 
 pub(super) const BASELINE_SCHEMA_VERSION: u32 = 1;
 const BASELINE_PATH: &str = "personal-hopspot/resources/baseline/canonical.json";
@@ -81,7 +83,7 @@ pub(crate) enum CanonicalReportError {
         dimension: &'static str,
     },
     #[error("could not derive the current build identity: {0}")]
-    BuildIdentity(#[from] serde_json::Error),
+    BuildIdentity(#[from] super::build::BuildIdentityError),
     #[error(transparent)]
     MemoryContract(#[from] contract::ContractIdentityError),
 }
@@ -89,6 +91,11 @@ pub(crate) enum CanonicalReportError {
 pub(crate) struct BaselineOutcome {
     path: PathBuf,
     targets: usize,
+}
+
+pub(super) enum SourceExpectation<'a> {
+    Historical,
+    Current(&'a SourceCustody),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -108,27 +115,39 @@ pub(super) fn load(path: &Path) -> Result<CanonicalBaseline, BaselineError> {
         path: path.to_path_buf(),
         source,
     })?;
+    let schema = serde_json::from_slice::<BaselineSchema>(&bytes).map_err(|source| {
+        BaselineError::Parse {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    if schema.schema_version != BASELINE_SCHEMA_VERSION {
+        return Err(BaselineError::UnsupportedSchema {
+            path: path.to_path_buf(),
+            actual: schema.schema_version,
+            supported: BASELINE_SCHEMA_VERSION,
+        });
+    }
+    if schema.report_schema_version != SCHEMA_VERSION {
+        return Err(BaselineError::UnsupportedReportSchema {
+            path: path.to_path_buf(),
+            actual: schema.report_schema_version,
+            supported: SCHEMA_VERSION,
+        });
+    }
     let baseline = serde_json::from_slice::<CanonicalBaseline>(&bytes).map_err(|source| {
         BaselineError::Parse {
             path: path.to_path_buf(),
             source,
         }
     })?;
-    if baseline.schema_version != BASELINE_SCHEMA_VERSION {
-        return Err(BaselineError::UnsupportedSchema {
-            path: path.to_path_buf(),
-            actual: baseline.schema_version,
-            supported: BASELINE_SCHEMA_VERSION,
-        });
-    }
-    if baseline.report_schema_version != SCHEMA_VERSION {
-        return Err(BaselineError::UnsupportedReportSchema {
-            path: path.to_path_buf(),
-            actual: baseline.report_schema_version,
-            supported: SCHEMA_VERSION,
-        });
-    }
     Ok(baseline)
+}
+
+#[derive(Deserialize)]
+struct BaselineSchema {
+    schema_version: u32,
+    report_schema_version: u32,
 }
 
 pub(crate) fn refresh_baseline(
@@ -136,6 +155,7 @@ pub(crate) fn refresh_baseline(
     matrix: &Matrix<'_>,
     context: &BuildContext<'_>,
     report_paths: &[PathBuf],
+    source: &SourceCustody,
 ) -> Result<BaselineOutcome, BaselineError> {
     if !matches!(
         context.intent(),
@@ -167,7 +187,7 @@ pub(crate) fn refresh_baseline(
             .ok_or_else(|| BaselineError::MissingTarget {
                 target: target.id().to_string(),
             })?;
-        validate_target(target, context, &report)?;
+        validate_target(target, context, &report, SourceExpectation::Current(source))?;
         targets.push(report);
     }
     if let Some((target, _)) = reports.into_iter().next() {
@@ -189,9 +209,38 @@ pub(crate) fn refresh_baseline(
     })
 }
 
-pub(super) fn validate_target(
+pub(crate) fn validate_baseline_contracts(
+    repository: &Path,
+    matrix: &Matrix<'_>,
+) -> Result<BaselineOutcome, BaselineError> {
+    let path = path(repository);
+    let baseline = load(&path)?;
+    let mut reports = BTreeMap::new();
+    for report in baseline.targets {
+        let target = report.target.id.clone();
+        if reports.insert(target.clone(), report).is_some() {
+            return Err(BaselineError::DuplicateTarget { target });
+        }
+    }
+
+    let mut targets = 0;
+    for target in matrix.iter() {
+        let report = reports
+            .remove(target.id())
+            .ok_or_else(|| BaselineError::MissingTarget {
+                target: target.id().to_string(),
+            })?;
+        validate_static_target(target, &report)?;
+        targets += 1;
+    }
+    if let Some((target, _)) = reports.into_iter().next() {
+        return Err(BaselineError::UnexpectedTarget { target });
+    }
+    Ok(BaselineOutcome { path, targets })
+}
+
+fn validate_static_target(
     target: &crate::matrix::Target<'_>,
-    context: &BuildContext<'_>,
     report: &ResourceReport,
 ) -> Result<(), CanonicalReportError> {
     if !matches!(report.status, BuildStatus::Success) {
@@ -210,15 +259,40 @@ pub(super) fn validate_target(
         "architecture adapter",
     )?;
     require_current(
-        report.build == build_identity(context, target.recipe_identity())?,
-        target.id(),
-        "build recipe",
-    )?;
-    require_current(
         report.memory_contract == contract::identity(target.profile())?,
         target.id(),
         "memory contract",
     )
+}
+
+pub(super) fn validate_target(
+    target: &crate::matrix::Target<'_>,
+    context: &BuildContext<'_>,
+    report: &ResourceReport,
+    source: SourceExpectation<'_>,
+) -> Result<(), CanonicalReportError> {
+    validate_static_target(target, report)?;
+    require_current(
+        report.build == build_identity(context, target.recipe_identity())?,
+        target.id(),
+        "build recipe",
+    )?;
+    if let SourceExpectation::Current(expected) = source {
+        require_current(report.source == *expected, target.id(), "source custody")?;
+        require_current(
+            matches!(
+                &report.analysis.async_memory,
+                Evidence::Complete(async_memory)
+                    if matches!(
+                        async_memory.scenario_futures,
+                        ScenarioFutureSizesIdentity::Measured { .. }
+                    )
+            ),
+            target.id(),
+            "scenario-future evidence",
+        )?;
+    }
+    Ok(())
 }
 
 fn require_current(

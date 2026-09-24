@@ -1,5 +1,6 @@
 mod config;
 mod protocol;
+mod sub_ghz_power;
 
 use core::future::{poll_fn, Future};
 use core::task::Poll;
@@ -12,17 +13,19 @@ use prns_core::interfaces::lora::{LoRaNetwork, RadioProfile, RadioProfileCompati
 use prns_core::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 
 pub use config::{
-    BoardConfig, HighPowerSelection, PowerAmplifierConfig, PowerAmplifierDutyCycle,
+    BoardConfig, HighPowerSelection, Lr11xxPart, PowerAmplifierConfig, PowerAmplifierDutyCycle,
     PowerAmplifierSelection, PowerAmplifierSupply, PowerAmplifierTable, ReceiveGain,
     ReferenceClock, RegulatorMode, RfSwitchConfig, RfSwitchPins, TcxoStartupTime, TcxoVoltage,
     TransmitRampTime,
 };
+pub use sub_ghz_power::SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE;
 
 use super::{LoRaRadio, RadioRecovery};
 pub use super::{RadioEvent, ReceivedAirFrame};
 use protocol::{
     antenna_referred_rssi_dbm, classify_receive_irq, command_with_u32, command_with_u8, irq,
-    lora_ldro, op, opcode, radio_config, FirmwareVersion, IrqEventKind, LoraModulation, LoraPacket,
+    lora_ldro, op, opcode, radio_config, sync_word_command, FirmwareVersion, IrqEventKind,
+    LoraModulation, LoraPacket, SyncWordCommand,
 };
 
 #[cfg(test)]
@@ -41,7 +44,7 @@ const RESET_BOOT_MS: u32 = 150;
 const VERSION_POLL_ATTEMPTS: usize = 200;
 const VERSION_POLL_INTERVAL_MS: u32 = 10;
 const POST_CALIBRATION_DELAY_MS: u32 = 5;
-const LR1110_DEVICE_KIND: u8 = 0x01;
+const DEVICE_KIND_NOT_READY: u8 = 0x00;
 const COMMAND_STATUS_FAILED: u8 = 0x00;
 const COMMAND_STATUS_PARAMETER_ERROR: u8 = 0x01;
 const CALIBRATE_ALL: u8 = 0x3f;
@@ -66,7 +69,7 @@ pub enum Error {
     Dio1,
     Reset,
     DeviceNotReady,
-    UnexpectedDevice(u8),
+    UnexpectedDevice { expected: Lr11xxPart, observed: u8 },
     CommandRejected,
     NotInitialized,
     UnsupportedTransmitPower(i8),
@@ -253,7 +256,7 @@ where
         self.state = RadioState::Uninitialized;
         let config = radio_config(profile);
         self.hard_reset().await?;
-        let firmware = self.wait_for_lr1110().await?;
+        let firmware = self.wait_for_declared_part().await?;
         self.set_standby().await?;
         self.write_command(&opcode(op::CLEAR_ERRORS)).await?;
         self.clear_irq(irq::RADIO_EVENTS).await?;
@@ -280,20 +283,22 @@ where
         Ok(())
     }
 
-    async fn wait_for_lr1110(&mut self) -> Result<FirmwareVersion, Error> {
+    async fn wait_for_declared_part(&mut self) -> Result<FirmwareVersion, Error> {
+        let expected = self.board.part;
         let mut version = [0; 4];
         for _ in 0..VERSION_POLL_ATTEMPTS {
             self.read_command(&opcode(op::GET_VERSION), &mut version)
                 .await?;
-            match version[1] {
-                LR1110_DEVICE_KIND => {
-                    return Ok(FirmwareVersion(u16::from_be_bytes([
-                        version[2], version[3],
-                    ])));
-                }
-                0x00 => self.delay.delay_ms(VERSION_POLL_INTERVAL_MS).await,
-                device_kind => return Err(Error::UnexpectedDevice(device_kind)),
+            let observed = version[1];
+            if observed == expected as u8 {
+                return Ok(FirmwareVersion(u16::from_be_bytes([
+                    version[2], version[3],
+                ])));
             }
+            if observed != DEVICE_KIND_NOT_READY {
+                return Err(Error::UnexpectedDevice { expected, observed });
+            }
+            self.delay.delay_ms(VERSION_POLL_INTERVAL_MS).await;
         }
         Err(Error::DeviceNotReady)
     }
@@ -353,18 +358,16 @@ where
         network: LoRaNetwork,
         firmware: FirmwareVersion,
     ) -> Result<(), Error> {
-        match (
-            network,
-            firmware >= FirmwareVersion::MODERN_SYNC_WORD_MINIMUM,
-        ) {
-            (LoRaNetwork::Reticulum, true) => {
+        let LoRaNetwork::Reticulum = network;
+        match sync_word_command(self.board.part, firmware) {
+            SyncWordCommand::SetLoraSyncWord => {
                 self.write_command(&command_with_u8(
                     op::SET_LORA_SYNC_WORD,
                     RETICULUM_LR11XX_SYNC_WORD,
                 ))
                 .await
             }
-            (LoRaNetwork::Reticulum, false) => {
+            SyncWordCommand::SetLoraPublicNetwork => {
                 self.write_command(&command_with_u8(
                     op::SET_LORA_PUBLIC_NETWORK,
                     LORA_PRIVATE_NETWORK,
@@ -669,7 +672,7 @@ where
             | Error::Dio1
             | Error::Reset
             | Error::DeviceNotReady
-            | Error::UnexpectedDevice(_)
+            | Error::UnexpectedDevice { .. }
             | Error::CommandRejected
             | Error::NotInitialized
             | Error::Timeout

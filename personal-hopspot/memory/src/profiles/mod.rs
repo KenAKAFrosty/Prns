@@ -13,8 +13,8 @@ pub use espressif::{
     T_BEAM_SUPREME, XIAO_ESP32_C6,
 };
 pub use nrf52840::{
-    MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2, NRF52840_MEMORY_X_BINDING, T096, T1000_E,
-    T114, T_ECHO_S140_V6, T_ECHO_S140_V7,
+    MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2, MUZI_BASE_DUO, NRF52840_MEMORY_X_BINDING,
+    T096, T1000_E, T114, T_ECHO_S140_V6, T_ECHO_S140_V7,
 };
 
 const KIB: u64 = 1024;
@@ -95,7 +95,7 @@ const fn journal(
     }
 }
 
-pub const ALL_MEMORY_PROFILES: [&MemoryProfile; 14] = [
+pub const ALL_MEMORY_PROFILES: [&MemoryProfile; 15] = [
     &HELTEC_V4,
     &HELTEC_V4_R8,
     &HELTEC_E290,
@@ -110,6 +110,7 @@ pub const ALL_MEMORY_PROFILES: [&MemoryProfile; 14] = [
     &MESH_POCKET_10000,
     &T1000_E,
     &MESH_TOWER_V2,
+    &MUZI_BASE_DUO,
 ];
 
 #[must_use]
@@ -130,3 +131,10 @@ pub fn memory_profile_named(id: &str) -> Option<&'static MemoryProfile> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "linker-addresses")]
+mod linker;
+#[cfg(feature = "linker-addresses")]
+pub use linker::{
+    linker_address_profile, LinkerAddressProfile, LinkerAddressSpace, LinkerAddressValidationError,
+};

@@ -6,10 +6,10 @@ use std::time::{Duration, Instant};
 use mdns_sd::{
     IfKind, Receiver, ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent, ServiceInfo,
 };
+#[cfg(test)]
+use mdns_sd::{InterfaceId as MdnsInterfaceId, ScopedIpV4};
 
-use prns_core::interfaces::local_network::{
-    is_local_address, local_address_scope, LocalAddressScope,
-};
+use prns_core::interfaces::local_network::is_local_address;
 use prns_core::interfaces::wifi_auto as contract;
 use prns_core::interfaces::wifi_auto::{
     AdvertisementInsertion, AdvertisementRemoval, CandidateInsertion, CandidateInsertionError,
@@ -18,6 +18,7 @@ use prns_core::interfaces::wifi_auto::{
     ServiceAdvertisement,
 };
 
+use super::HostLanInventory;
 use crate::network_device::AutoWifiDevicePolicy;
 
 use super::publication_absence::{
@@ -31,29 +32,63 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 pub(crate) const DISCOVERY_CAPACITY: NonZeroU8 = contract::DEFAULT_DISCOVERY_SERVICE_CAPACITY;
 
+/// Native DNS-SD together with the LAN inventory used to scope its advertisements and peers.
+///
+/// Keeping the two values in one type prevents an AutoWifi runtime and its discovery task from
+/// observing different interface inventories.
+pub struct NativeHostDiscovery {
+    service_discovery: ServiceDiscovery,
+    host_lan: HostLanInventory,
+}
+
+impl NativeHostDiscovery {
+    pub(super) fn into_parts(self) -> (ServiceDiscovery, HostLanInventory) {
+        (self.service_discovery, self.host_lan)
+    }
+}
+
 /// Starts the native DNS-SD provider behind a bounded AutoWifi discovery channel.
 ///
 /// The provider remains dormant until the associated AutoWifi runtime owns the
 /// shared TCP listener and reports [`DiscoveryParticipation::Central`].
-pub fn native_service_discovery(auto_wifi_device_policy: AutoWifiDevicePolicy) -> ServiceDiscovery {
+pub fn native_service_discovery(
+    auto_wifi_device_policy: AutoWifiDevicePolicy,
+) -> NativeHostDiscovery {
+    native_service_discovery_with_host_lan(auto_wifi_device_policy, HostLanInventory::default())
+}
+
+pub fn native_service_discovery_with_host_lan(
+    auto_wifi_device_policy: AutoWifiDevicePolicy,
+    host_lan: HostLanInventory,
+) -> NativeHostDiscovery {
     let (service_discovery, service_discovery_publisher) =
         ServiceDiscovery::channel(DISCOVERY_CAPACITY);
-    spawn_service_discovery(auto_wifi_device_policy, service_discovery_publisher);
-    service_discovery
+    spawn_service_discovery(
+        auto_wifi_device_policy,
+        host_lan.clone(),
+        service_discovery_publisher,
+    );
+    NativeHostDiscovery {
+        service_discovery,
+        host_lan,
+    }
 }
 
 fn spawn_service_discovery(
     auto_wifi_device_policy: AutoWifiDevicePolicy,
+    host_lan: HostLanInventory,
     service_discovery_publisher: ServiceDiscoveryPublisher,
 ) {
     tokio::spawn(run_service_discovery(
         auto_wifi_device_policy,
+        host_lan,
         service_discovery_publisher,
     ));
 }
 
 async fn run_service_discovery(
     auto_wifi_device_policy: AutoWifiDevicePolicy,
+    host_lan: HostLanInventory,
     mut service_discovery_publisher: ServiceDiscoveryPublisher,
 ) -> NativeDiscoveryExit {
     loop {
@@ -70,18 +105,21 @@ async fn run_service_discovery(
             }
         }
 
-        let central_session_follow_up =
-            match run_central_session(&auto_wifi_device_policy, &mut service_discovery_publisher)
-                .await
-            {
-                Ok(central_session_end) => CentralSessionFollowUp::from(central_session_end),
-                Err(mdns_error) => {
-                    crate::diagnostic_log::debug!(
-                        "wifi-auto: mDNS discovery unavailable: {mdns_error}"
-                    );
-                    CentralSessionFollowUp::RetryBackend
-                }
-            };
+        let central_session_follow_up = match run_central_session(
+            &auto_wifi_device_policy,
+            &host_lan,
+            &mut service_discovery_publisher,
+        )
+        .await
+        {
+            Ok(central_session_end) => CentralSessionFollowUp::from(central_session_end),
+            Err(mdns_error) => {
+                crate::diagnostic_log::debug!(
+                    "wifi-auto: mDNS discovery unavailable: {mdns_error}"
+                );
+                CentralSessionFollowUp::RetryBackend
+            }
+        };
 
         service_discovery_publisher.clear_snapshot();
         match central_session_follow_up {
@@ -120,10 +158,16 @@ async fn run_service_discovery(
 
 async fn run_central_session(
     auto_wifi_device_policy: &AutoWifiDevicePolicy,
+    host_lan: &HostLanInventory,
     service_discovery_publisher: &mut ServiceDiscoveryPublisher,
 ) -> Result<CentralDiscoverySessionEnd, MdnsDiscoveryError> {
     let central_publications = CentralPublications::fresh()?;
     let mut native_mdns_session = NativeMdnsSession::start()?;
+    crate::diagnostic_log::debug!(
+        "wifi-auto: mDNS central session browsing {} and {} over FF02::FB:5353",
+        DiscoveryTransport::Tcp.dns_sd_service_type(),
+        DiscoveryTransport::Udp.dns_sd_service_type()
+    );
     let tcp_service_events = native_mdns_session.browse(DiscoveryTransport::Tcp)?;
     let udp_service_events = native_mdns_session.browse(DiscoveryTransport::Udp)?;
     let mut eligible_ip_addresses = BTreeSet::new();
@@ -149,7 +193,7 @@ async fn run_central_session(
             }
             _ = reconciliation_interval.tick() => {
                 let current_eligible_ip_addresses =
-                    collect_eligible_ip_addresses(auto_wifi_device_policy)?;
+                    collect_eligible_ip_addresses(auto_wifi_device_policy, host_lan)?;
                 match InterfaceReconciliation::between(
                     &eligible_ip_addresses,
                     &current_eligible_ip_addresses,
@@ -177,10 +221,13 @@ async fn run_central_session(
                     Ok(service_event) => service_event,
                     Err(_backend_stopped) => break CentralDiscoverySessionEnd::BackendStopped,
                 };
+                let local_link_local_scopes =
+                    local_link_local_scope_ids(auto_wifi_device_policy, host_lan);
                 match apply_service_event(
                     &mut discovery_snapshot,
                     &service_event,
                     &central_publications,
+                    &local_link_local_scopes,
                 ) {
                     ServiceEventOutcome::SnapshotChanged => {
                         let _ = service_discovery_publisher
@@ -213,11 +260,15 @@ fn apply_service_event(
     discovery_snapshot: &mut DiscoverySnapshot,
     service_event: &ServiceEvent,
     central_publications: &CentralPublications,
+    local_link_local_scopes: &[u32],
 ) -> ServiceEventOutcome {
     match service_event {
-        ServiceEvent::ServiceResolved(resolved_service) => {
-            apply_resolved_service(discovery_snapshot, resolved_service, central_publications)
-        }
+        ServiceEvent::ServiceResolved(resolved_service) => apply_resolved_service(
+            discovery_snapshot,
+            resolved_service,
+            central_publications,
+            local_link_local_scopes,
+        ),
         ServiceEvent::ServiceRemoved(removed_service_type, removed_service_fullname) => {
             match classify_service_type(removed_service_type) {
                 ServiceTypeClassification::Supported(discovery_transport) => {
@@ -253,36 +304,57 @@ fn apply_resolved_service(
     discovery_snapshot: &mut DiscoverySnapshot,
     resolved_service: &ResolvedService,
     central_publications: &CentralPublications,
+    local_link_local_scopes: &[u32],
 ) -> ServiceEventOutcome {
     let discovery_transport = match classify_service_type(&resolved_service.ty_domain) {
         ServiceTypeClassification::Supported(discovery_transport) => discovery_transport,
         ServiceTypeClassification::Unsupported => return ServiceEventOutcome::SnapshotUnchanged,
     };
-    let service_advertisement =
-        match build_service_advertisement(resolved_service, central_publications) {
-            Ok(service_advertisement) => service_advertisement,
-            Err(
-                ServiceAdvertisementRejection::WrongServiceType
-                | ServiceAdvertisementRejection::OwnService
-                | ServiceAdvertisementRejection::InvalidServiceName(_),
-            ) => return ServiceEventOutcome::SnapshotUnchanged,
-            Err(
-                ServiceAdvertisementRejection::InvalidVersion(_)
-                | ServiceAdvertisementRejection::CandidateTransport(_)
-                | ServiceAdvertisementRejection::NoEligibleEndpoints,
-            ) => {
-                let Ok(discovery_service_name) = DiscoveryServiceName::from_fullname(
-                    resolved_service.get_fullname(),
-                    discovery_transport,
-                ) else {
-                    return ServiceEventOutcome::SnapshotUnchanged;
-                };
-                return match discovery_snapshot.remove(&discovery_service_name) {
-                    AdvertisementRemoval::Removed => ServiceEventOutcome::SnapshotChanged,
-                    AdvertisementRemoval::NotPresent => ServiceEventOutcome::SnapshotUnchanged,
-                };
-            }
-        };
+    let service_advertisement = match build_service_advertisement(
+        resolved_service,
+        central_publications,
+        local_link_local_scopes,
+    ) {
+        Ok(service_advertisement) => {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: mDNS resolved {} endpoints={:?}",
+                resolved_service.get_fullname(),
+                service_advertisement
+                    .endpoints()
+                    .iter()
+                    .map(|endpoint| endpoint.to_string())
+                    .collect::<std::vec::Vec<_>>()
+            );
+            service_advertisement
+        }
+        Err(
+            ServiceAdvertisementRejection::WrongServiceType
+            | ServiceAdvertisementRejection::OwnService
+            | ServiceAdvertisementRejection::InvalidServiceName(_),
+        ) => return ServiceEventOutcome::SnapshotUnchanged,
+        Err(
+            ServiceAdvertisementRejection::InvalidVersion(_)
+            | ServiceAdvertisementRejection::CandidateTransport(_)
+            | ServiceAdvertisementRejection::NoEligibleEndpoints,
+        ) => {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: mDNS resolved {} with no eligible endpoints (addrs={} local_scopes={:?})",
+                resolved_service.get_fullname(),
+                resolved_service.get_addresses().len(),
+                local_link_local_scopes
+            );
+            let Ok(discovery_service_name) = DiscoveryServiceName::from_fullname(
+                resolved_service.get_fullname(),
+                discovery_transport,
+            ) else {
+                return ServiceEventOutcome::SnapshotUnchanged;
+            };
+            return match discovery_snapshot.remove(&discovery_service_name) {
+                AdvertisementRemoval::Removed => ServiceEventOutcome::SnapshotChanged,
+                AdvertisementRemoval::NotPresent => ServiceEventOutcome::SnapshotUnchanged,
+            };
+        }
+    };
     if discovery_snapshot.get(service_advertisement.service()) == Some(&service_advertisement) {
         return ServiceEventOutcome::SnapshotUnchanged;
     }
@@ -296,6 +368,7 @@ fn apply_resolved_service(
 
 fn collect_eligible_ip_addresses(
     auto_wifi_device_policy: &AutoWifiDevicePolicy,
+    host_lan: &HostLanInventory,
 ) -> Result<BTreeSet<IpAddr>, MdnsDiscoveryError> {
     let network_interfaces = if_addrs::get_if_addrs().map_err(MdnsDiscoveryError::Interfaces)?;
     let mut eligible_ip_addresses = BTreeSet::new();
@@ -311,16 +384,33 @@ fn collect_eligible_ip_addresses(
         eligible_ip_addresses.insert(ip_address);
     }
     eligible_ip_addresses.extend(
-        super::link_local_nics(auto_wifi_device_policy)
+        super::link_local_nics(auto_wifi_device_policy, host_lan)
             .into_iter()
             .map(|network_interface| IpAddr::V6(network_interface.link_local)),
     );
+    for interface in host_lan.allowed_interfaces(auto_wifi_device_policy) {
+        for address in interface.addresses() {
+            eligible_ip_addresses.insert(address.addr());
+        }
+    }
     Ok(eligible_ip_addresses)
+}
+
+fn local_link_local_scope_ids(
+    auto_wifi_device_policy: &AutoWifiDevicePolicy,
+    host_lan: &HostLanInventory,
+) -> std::vec::Vec<u32> {
+    super::link_local_nics(auto_wifi_device_policy, host_lan)
+        .into_iter()
+        .map(|network_interface| network_interface.index)
+        .filter(|scope_id| *scope_id != 0)
+        .collect()
 }
 
 fn build_service_advertisement(
     resolved_service: &ResolvedService,
     central_publications: &CentralPublications,
+    local_link_local_scopes: &[u32],
 ) -> Result<ServiceAdvertisement, ServiceAdvertisementRejection> {
     let discovery_transport = match classify_service_type(&resolved_service.ty_domain) {
         ServiceTypeClassification::Supported(discovery_transport) => discovery_transport,
@@ -341,15 +431,15 @@ fn build_service_advertisement(
     let discovery_service_name =
         DiscoveryServiceName::from_fullname(resolved_service.get_fullname(), discovery_transport)
             .map_err(ServiceAdvertisementRejection::InvalidServiceName)?;
+    let scope_selection = select_link_local_scope_ids(resolved_service, local_link_local_scopes);
     let mut discovery_endpoints = BTreeSet::new();
     for scoped_ip_address in resolved_service.get_addresses() {
-        if let Some(discovery_endpoint) = validated_discovery_endpoint(
+        discovery_endpoints.extend(discovery_endpoints_for_address(
             scoped_ip_address,
             resolved_service.get_port(),
             discovery_transport,
-        ) {
-            discovery_endpoints.insert(discovery_endpoint);
-        }
+            scope_selection.as_slice(),
+        ));
     }
     let mut service_advertisement = ServiceAdvertisement::new(discovery_service_name);
     for discovery_endpoint in discovery_endpoints {
@@ -373,27 +463,98 @@ fn build_service_advertisement(
     Ok(service_advertisement)
 }
 
-fn validated_discovery_endpoint(
+#[derive(Debug, PartialEq, Eq)]
+enum LinkLocalScopeSelection {
+    RecordDerived(std::vec::Vec<u32>),
+    LocalFallback(std::vec::Vec<u32>),
+    Unavailable,
+}
+
+impl LinkLocalScopeSelection {
+    fn as_slice(&self) -> &[u32] {
+        match self {
+            Self::RecordDerived(scope_ids) | Self::LocalFallback(scope_ids) => scope_ids,
+            Self::Unavailable => &[],
+        }
+    }
+}
+
+/// Use receive-side scope provenance when the mDNS backend provides it. Only records with no
+/// interface provenance may fan out across the host's eligible link-local interfaces.
+fn select_link_local_scope_ids(
+    resolved_service: &ResolvedService,
+    local_link_local_scopes: &[u32],
+) -> LinkLocalScopeSelection {
+    let mut scope_ids = BTreeSet::new();
+    for scoped_ip_address in resolved_service.get_addresses() {
+        match scoped_ip_address {
+            ScopedIp::V4(ipv4_address) => {
+                for interface_id in ipv4_address.interface_ids() {
+                    if interface_id.index != 0 {
+                        scope_ids.insert(interface_id.index);
+                    }
+                }
+            }
+            ScopedIp::V6(ipv6_address) if ipv6_address.scope_id().index != 0 => {
+                scope_ids.insert(ipv6_address.scope_id().index);
+            }
+            _ => {}
+        }
+    }
+    if !scope_ids.is_empty() {
+        return LinkLocalScopeSelection::RecordDerived(scope_ids.into_iter().collect());
+    }
+
+    let local_scope_ids = local_link_local_scopes
+        .iter()
+        .copied()
+        .filter(|scope_id| *scope_id != 0)
+        .collect::<BTreeSet<_>>();
+    if local_scope_ids.is_empty() {
+        LinkLocalScopeSelection::Unavailable
+    } else {
+        LinkLocalScopeSelection::LocalFallback(local_scope_ids.into_iter().collect())
+    }
+}
+
+fn discovery_endpoints_for_address(
     scoped_ip_address: &ScopedIp,
     service_port: u16,
     discovery_transport: DiscoveryTransport,
-) -> Option<DiscoveryEndpoint> {
-    let socket_address = match scoped_ip_address {
-        ScopedIp::V4(ipv4_address) => {
-            SocketAddr::new(IpAddr::V4(*ipv4_address.addr()), service_port)
-        }
+    fallback_scope_ids: &[u32],
+) -> BTreeSet<DiscoveryEndpoint> {
+    let mut discovery_endpoints = BTreeSet::new();
+    match scoped_ip_address {
+        ScopedIp::V4(_) => {}
         ScopedIp::V6(ipv6_address) => {
             let ip_address = *ipv6_address.addr();
-            let scope_id = if ip_address.is_unicast_link_local() {
-                ipv6_address.scope_id().index
+            if !ip_address.is_unicast_link_local() {
+                return discovery_endpoints;
+            }
+            let reported_scope_id = ipv6_address.scope_id().index;
+            let scope_ids = if reported_scope_id != 0 {
+                std::slice::from_ref(&reported_scope_id)
             } else {
-                0
+                fallback_scope_ids
             };
-            SocketAddr::V6(SocketAddrV6::new(ip_address, service_port, 0, scope_id))
+            for &scope_id in scope_ids {
+                let socket_address =
+                    SocketAddr::V6(SocketAddrV6::new(ip_address, service_port, 0, scope_id));
+                if let Some(discovery_endpoint) =
+                    validated_socket_endpoint(socket_address, discovery_transport)
+                {
+                    if reported_scope_id == 0 {
+                        crate::diagnostic_log::debug!(
+                            "wifi-auto: mDNS link-local missing scope; using ifindex {scope_id}"
+                        );
+                    }
+                    discovery_endpoints.insert(discovery_endpoint);
+                }
+            }
         }
-        _ => return None,
-    };
-    validated_socket_endpoint(socket_address, discovery_transport)
+        _ => {}
+    }
+    discovery_endpoints
 }
 
 fn validated_socket_endpoint(
@@ -611,6 +772,12 @@ impl NativeMdnsSession {
         }
 
         let service_info = service_info_for(ephemeral_publication, &advertised_ip_addresses)?;
+        crate::diagnostic_log::debug!(
+            "wifi-auto: mDNS publishing {} on {:?} port {}",
+            ephemeral_publication.transport.dns_sd_service_type(),
+            advertised_ip_addresses,
+            ephemeral_publication.transport.port()
+        );
         self.daemon
             .register(service_info)
             .map_err(MdnsDiscoveryError::Mdns)?;
@@ -637,35 +804,22 @@ impl Drop for NativeMdnsSession {
 }
 
 fn advertised_ip_addresses(
-    discovery_transport: DiscoveryTransport,
+    _discovery_transport: DiscoveryTransport,
     eligible_ip_addresses: &BTreeSet<IpAddr>,
 ) -> BTreeSet<IpAddr> {
     let mut advertised_ip_addresses = eligible_ip_addresses
         .iter()
         .copied()
-        .filter(|ip_address| match (discovery_transport, ip_address) {
-            (DiscoveryTransport::Tcp, _) => true,
-            (DiscoveryTransport::Udp, IpAddr::V6(ipv6_address)) => {
-                ipv6_address.is_unicast_link_local()
-            }
-            (DiscoveryTransport::Udp, IpAddr::V4(_)) => false,
+        .filter(|ip_address| match ip_address {
+            IpAddr::V6(ipv6_address) => ipv6_address.is_unicast_link_local(),
+            IpAddr::V4(_) => false,
         })
         .collect::<Vec<_>>();
-    advertised_ip_addresses
-        .sort_by_key(|ip_address| (publication_address_preference(*ip_address), *ip_address));
+    advertised_ip_addresses.sort();
     advertised_ip_addresses.truncate(usize::from(
         contract::SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY,
     ));
     advertised_ip_addresses.into_iter().collect()
-}
-
-fn publication_address_preference(ip_address: IpAddr) -> u8 {
-    match ip_address {
-        IpAddr::V4(ipv4_address) if ipv4_address.is_private() => 0,
-        IpAddr::V6(_) if local_address_scope(ip_address) == Some(LocalAddressScope::Private) => 1,
-        IpAddr::V4(_) => 2,
-        IpAddr::V6(_) => 3,
-    }
 }
 
 fn service_info_for(
@@ -923,7 +1077,21 @@ mod tests {
     }
 
     #[test]
-    fn native_publications_use_both_transport_contracts_and_one_address_policy() {
+    fn host_lan_mixed_addresses_publish_link_local_only_for_both_transports() {
+        let eligible_ip_addresses =
+            ip_address_set(&["192.168.1.18", "fe80::282f:4eff:fe59:3321", "fd00::1"]);
+        assert_eq!(
+            advertised_ip_addresses(DiscoveryTransport::Tcp, &eligible_ip_addresses),
+            ip_address_set(&["fe80::282f:4eff:fe59:3321"])
+        );
+        assert_eq!(
+            advertised_ip_addresses(DiscoveryTransport::Udp, &eligible_ip_addresses),
+            ip_address_set(&["fe80::282f:4eff:fe59:3321"])
+        );
+    }
+
+    #[test]
+    fn native_publications_use_both_transport_contracts_and_ll_only_addresses() {
         let central_publications = central_publications();
         let eligible_ip_addresses = ip_address_set(&["192.168.4.8", "fd00::8", "fe80::8"]);
         let tcp_addresses =
@@ -933,7 +1101,7 @@ mod tests {
         let tcp_service_info = service_info_for(&central_publications.tcp, &tcp_addresses).unwrap();
         let udp_service_info = service_info_for(&central_publications.udp, &udp_addresses).unwrap();
 
-        assert_eq!(tcp_addresses, eligible_ip_addresses);
+        assert_eq!(tcp_addresses, ip_address_set(&["fe80::8"]));
         assert_eq!(udp_addresses, ip_address_set(&["fe80::8"]));
         assert_eq!(
             (
@@ -962,19 +1130,21 @@ mod tests {
     }
 
     #[test]
-    fn native_publication_addresses_are_bounded_and_keep_the_best_candidates() {
+    fn native_publication_addresses_are_bounded_and_keep_link_local_only() {
         let eligible_ip_addresses = ip_address_set(&[
             "192.168.4.18",
-            "192.168.4.17",
-            "192.168.4.16",
-            "192.168.4.15",
-            "192.168.4.14",
-            "192.168.4.13",
-            "192.168.4.12",
-            "192.168.4.11",
             "192.168.4.10",
             "fd00::8",
             "fe80::8",
+            "fe80::9",
+            "fe80::a",
+            "fe80::b",
+            "fe80::c",
+            "fe80::d",
+            "fe80::e",
+            "fe80::f",
+            "fe80::10",
+            "fe80::11",
         ]);
 
         let advertised_ip_addresses =
@@ -985,16 +1155,18 @@ mod tests {
             usize::from(contract::SERVICE_ADVERTISEMENT_CANDIDATE_CAPACITY)
         );
         assert!(advertised_ip_addresses.iter().all(|ip_address| {
-            matches!(ip_address, IpAddr::V4(ipv4_address) if ipv4_address.is_private())
+            matches!(ip_address, IpAddr::V6(ipv6_address) if ipv6_address.is_unicast_link_local())
         }));
-        assert!(advertised_ip_addresses.contains(&"192.168.4.10".parse().unwrap()));
-        assert!(!advertised_ip_addresses.contains(&"192.168.4.18".parse().unwrap()));
+        assert!(advertised_ip_addresses.contains(&"fe80::8".parse().unwrap()));
+        assert!(!advertised_ip_addresses.contains(&"192.168.4.10".parse().unwrap()));
+        assert!(!advertised_ip_addresses.contains(&"fd00::8".parse().unwrap()));
+        assert!(!advertised_ip_addresses.contains(&"fe80::11".parse().unwrap()));
     }
 
     #[test]
     fn native_endpoint_decoding_preserves_transport_and_ipv6_scope() {
         let tcp_endpoint = validated_socket_endpoint(
-            "192.168.4.8:42699".parse().unwrap(),
+            "[fe80::8%4]:42699".parse().unwrap(),
             DiscoveryTransport::Tcp,
         )
         .unwrap();
@@ -1013,6 +1185,61 @@ mod tests {
         assert_eq!(
             validated_socket_endpoint("[fe80::8]:29717".parse().unwrap(), DiscoveryTransport::Udp,),
             None
+        );
+    }
+
+    #[test]
+    fn missing_link_local_scope_is_filled_from_local_nics() {
+        let central_publications = central_publications();
+        let peer_service = resolved_service(
+            DiscoveryTransport::Udp,
+            "prns-scopefill",
+            &["fe80::12bd:a3ff:fe9d:f90c".parse().unwrap()],
+            contract::UNICAST_DISCOVERY_PORT,
+            &[(contract::TXT_VERSION_KEY, contract::TXT_VERSION_VALUE)],
+        );
+        assert_eq!(
+            build_service_advertisement(&peer_service, &central_publications, &[]),
+            Err(ServiceAdvertisementRejection::NoEligibleEndpoints)
+        );
+
+        let service_advertisement =
+            build_service_advertisement(&peer_service, &central_publications, &[14])
+                .expect("local ifindex fills missing LL scope");
+        assert_eq!(service_advertisement.endpoints().len(), 1);
+        assert_eq!(
+            service_advertisement.endpoints()[0].socket_addr(),
+            "[fe80::12bd:a3ff:fe9d:f90c%14]:29717".parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn receive_side_scope_excludes_unrelated_local_interfaces() {
+        let mut peer_service = resolved_service(
+            DiscoveryTransport::Udp,
+            "prns-receive-scope",
+            &["fe80::12bd:a3ff:fe9d:f90c".parse().unwrap()],
+            contract::UNICAST_DISCOVERY_PORT,
+            &[(contract::TXT_VERSION_KEY, contract::TXT_VERSION_VALUE)],
+        );
+        peer_service.addresses.insert(ScopedIp::V4(ScopedIpV4::new(
+            "192.168.23.9".parse().unwrap(),
+            MdnsInterfaceId {
+                name: "en23".to_owned(),
+                index: 23,
+            },
+        )));
+
+        assert_eq!(
+            select_link_local_scope_ids(&peer_service, &[2, 5]),
+            LinkLocalScopeSelection::RecordDerived(vec![23])
+        );
+        let advertisement =
+            build_service_advertisement(&peer_service, &central_publications(), &[2, 5])
+                .expect("the receive-side interface scopes the link-local endpoint");
+        assert_eq!(
+            advertisement.endpoints()[0].socket_addr(),
+            "[fe80::12bd:a3ff:fe9d:f90c%23]:29717".parse().unwrap()
         );
     }
 
@@ -1039,6 +1266,7 @@ mod tests {
                     udp_service_name.as_str().to_owned(),
                 ),
                 &central_publications,
+                &[],
             ),
             ServiceEventOutcome::SnapshotChanged
         );
@@ -1046,7 +1274,7 @@ mod tests {
     }
 
     #[test]
-    fn records_keep_all_valid_candidates_and_reject_our_own_record() {
+    fn records_keep_ll_candidates_and_reject_our_own_record() {
         let central_publications = central_publications();
         let peer_service = resolved_service(
             DiscoveryTransport::Tcp,
@@ -1055,24 +1283,28 @@ mod tests {
             contract::TCP_RENDEZVOUS_PORT,
             &[(contract::TXT_VERSION_KEY, contract::TXT_VERSION_VALUE)],
         );
+        assert_eq!(
+            build_service_advertisement(&peer_service, &central_publications, &[]),
+            Err(ServiceAdvertisementRejection::NoEligibleEndpoints)
+        );
         let peer_service_advertisement =
-            build_service_advertisement(&peer_service, &central_publications)
-                .expect("peer is accepted");
+            build_service_advertisement(&peer_service, &central_publications, &[4])
+                .expect("scoped LL peer is accepted");
         assert_eq!(peer_service_advertisement.endpoints().len(), 1);
         assert_eq!(
             peer_service_advertisement.endpoints()[0].socket_addr(),
-            "192.168.4.8:42699".parse().unwrap()
+            "[fe80::1%4]:42699".parse().unwrap()
         );
 
         let local_service = resolved_service(
             DiscoveryTransport::Tcp,
             central_publications.tcp.instance_name.as_str(),
-            &["192.168.4.9".parse().unwrap()],
+            &["fe80::9".parse().unwrap()],
             contract::TCP_RENDEZVOUS_PORT,
             &[],
         );
         assert_eq!(
-            build_service_advertisement(&local_service, &central_publications),
+            build_service_advertisement(&local_service, &central_publications, &[4]),
             Err(ServiceAdvertisementRejection::OwnService)
         );
     }
@@ -1088,19 +1320,19 @@ mod tests {
             &[],
         );
         assert_eq!(
-            build_service_advertisement(&public_service, &central_publications),
+            build_service_advertisement(&public_service, &central_publications, &[]),
             Err(ServiceAdvertisementRejection::NoEligibleEndpoints)
         );
 
         let incompatible_service = resolved_service(
             DiscoveryTransport::Tcp,
             "prns-version2",
-            &["192.168.4.8".parse().unwrap()],
+            &["fe80::8".parse().unwrap()],
             contract::TCP_RENDEZVOUS_PORT,
             &[(contract::TXT_VERSION_KEY, "2")],
         );
         assert_eq!(
-            build_service_advertisement(&incompatible_service, &central_publications),
+            build_service_advertisement(&incompatible_service, &central_publications, &[4]),
             Err(ServiceAdvertisementRejection::InvalidVersion(
                 DiscoveryVersionError::Unsupported(2)
             ))
@@ -1113,11 +1345,11 @@ mod tests {
         let legacy_service = resolved_service(
             DiscoveryTransport::Tcp,
             "prns-legacy",
-            &["192.168.4.8".parse().unwrap()],
+            &["fe80::8".parse().unwrap()],
             contract::TCP_RENDEZVOUS_PORT,
             &[],
         );
-        build_service_advertisement(&legacy_service, &central_publications)
+        build_service_advertisement(&legacy_service, &central_publications, &[4])
             .expect("implicit v1 record is accepted");
     }
 
@@ -1173,10 +1405,11 @@ mod tests {
     #[test]
     fn snapshot_updates_known_services_at_capacity_and_removes_departures() {
         let central_publications = central_publications();
+        let local_scopes = [4];
         let first_service = resolved_service(
             DiscoveryTransport::Tcp,
             "first",
-            &["192.168.4.8".parse().unwrap()],
+            &["fe80::8".parse().unwrap()],
             contract::TCP_RENDEZVOUS_PORT,
             &[],
         );
@@ -1192,6 +1425,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(first_service)),
                 &central_publications,
+                &local_scopes,
             ),
             ServiceEventOutcome::SnapshotChanged
         );
@@ -1199,7 +1433,7 @@ mod tests {
         let repeated_service = resolved_service(
             DiscoveryTransport::Tcp,
             "first",
-            &["192.168.4.8".parse().unwrap()],
+            &["fe80::8".parse().unwrap()],
             contract::TCP_RENDEZVOUS_PORT,
             &[],
         );
@@ -1208,6 +1442,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(repeated_service)),
                 &central_publications,
+                &local_scopes,
             ),
             ServiceEventOutcome::SnapshotUnchanged
         );
@@ -1215,7 +1450,7 @@ mod tests {
         let overflow_service = resolved_service(
             DiscoveryTransport::Tcp,
             "overflow",
-            &["192.168.4.9".parse().unwrap()],
+            &["fe80::9".parse().unwrap()],
             contract::TCP_RENDEZVOUS_PORT,
             &[],
         );
@@ -1224,6 +1459,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(overflow_service)),
                 &central_publications,
+                &local_scopes,
             ),
             ServiceEventOutcome::RejectedAtCapacity
         );
@@ -1232,7 +1468,7 @@ mod tests {
         let replacement_service = resolved_service(
             DiscoveryTransport::Tcp,
             "first",
-            &["192.168.4.10".parse().unwrap()],
+            &["fe80::a".parse().unwrap()],
             contract::TCP_RENDEZVOUS_PORT,
             &[],
         );
@@ -1241,6 +1477,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(replacement_service)),
                 &central_publications,
+                &local_scopes,
             ),
             ServiceEventOutcome::SnapshotChanged
         );
@@ -1250,13 +1487,13 @@ mod tests {
                 .unwrap()
                 .endpoints()[0]
                 .ip(),
-            "192.168.4.10".parse::<IpAddr>().unwrap()
+            "fe80::a".parse::<IpAddr>().unwrap()
         );
 
         let incompatible_service = resolved_service(
             DiscoveryTransport::Tcp,
             "first",
-            &["192.168.4.10".parse().unwrap()],
+            &["fe80::a".parse().unwrap()],
             contract::TCP_RENDEZVOUS_PORT,
             &[(contract::TXT_VERSION_KEY, "2")],
         );
@@ -1265,6 +1502,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(incompatible_service)),
                 &central_publications,
+                &local_scopes,
             ),
             ServiceEventOutcome::SnapshotChanged
         );
@@ -1273,7 +1511,7 @@ mod tests {
         let restored_service = resolved_service(
             DiscoveryTransport::Tcp,
             "first",
-            &["192.168.4.10".parse().unwrap()],
+            &["fe80::a".parse().unwrap()],
             contract::TCP_RENDEZVOUS_PORT,
             &[],
         );
@@ -1282,6 +1520,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(restored_service)),
                 &central_publications,
+                &local_scopes,
             ),
             ServiceEventOutcome::SnapshotChanged
         );
@@ -1294,9 +1533,16 @@ mod tests {
                     first_service_name.as_str().to_owned(),
                 ),
                 &central_publications,
+                &local_scopes,
             ),
             ServiceEventOutcome::SnapshotChanged
         );
         assert!(discovery_snapshot.is_empty());
+    }
+
+    /// LL-only DNS-SD: IPv4-only records are rejected; mixed A+AAAA still scopes AAAA.
+    mod without_ipv6_ll_multicast {
+        use super::*;
+        include!("mdns_without_ipv6_ll_multicast.rs");
     }
 }

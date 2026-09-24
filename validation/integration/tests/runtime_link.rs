@@ -27,6 +27,22 @@ fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 
 struct Responder;
 
+impl personal_rns::runtime::RemoteControlHostControls for Responder {
+    async fn execute_remote_control(
+        &self,
+        command: personal_rns::runtime::RemoteControlHostCommand,
+    ) -> Result<
+        personal_rns::runtime::RemoteControlHostResponse,
+        personal_rns::runtime::RemoteControlHostCommandError,
+    > {
+        personal_rns::runtime::RemoteControlHostControls::execute_remote_control(
+            &personal_rns::runtime::NoRemoteControlHostControls,
+            command,
+        )
+        .await
+    }
+}
+
 struct Echo;
 impl RequestEndpoint<Responder> for Echo {
     const ENDPOINT_ID: &'static str = QUERY_PATH;
@@ -126,7 +142,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
             maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| {

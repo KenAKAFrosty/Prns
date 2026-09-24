@@ -32,54 +32,62 @@ pub(super) async fn run_resource_endpoint(
         .expect("the bench destination name is valid");
 
     let (event_tx, event_rx) = event_channel(&manifest.profile);
-    let on_event = move |event: PrnsEvent<'_>, _state: &()| {
-        let mapped = match event {
-            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
-                Some(Event::Heard(destination))
-            }
-            PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
-            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
-                Some(Event::Closed { link_id, reason })
-            }
-            PrnsEvent::Message(Message::Resource { link_id, data, .. }) => {
-                Some(Event::ResourceIn {
+    let on_event =
+        move |event: PrnsEvent<'_>, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
+            let mapped = match event {
+                PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
+                    Some(Event::Heard(destination))
+                }
+                PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
+                PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
+                    Some(Event::Closed { link_id, reason })
+                }
+                PrnsEvent::Message(Message::Resource { link_id, data, .. }) => {
+                    Some(Event::ResourceIn {
+                        link_id,
+                        bytes: data.len(),
+                    })
+                }
+                PrnsEvent::Diagnostic(Diagnostic::ResourceAssembled {
                     link_id,
-                    bytes: data.len(),
-                })
-            }
-            PrnsEvent::Diagnostic(Diagnostic::ResourceAssembled {
-                link_id,
-                total_size_bytes,
-                ..
-            }) => Some(Event::ResourceIn {
-                link_id,
-                bytes: total_size_bytes as usize,
-            }),
-            PrnsEvent::Diagnostic(Diagnostic::ResourceFailed {
-                link_id,
-                hash,
-                cause,
-            }) => {
-                eprintln!(
+                    total_size_bytes,
+                    ..
+                }) => Some(Event::ResourceIn {
+                    link_id,
+                    bytes: total_size_bytes as usize,
+                }),
+                PrnsEvent::Diagnostic(Diagnostic::ResourceFailed {
+                    link_id,
+                    hash,
+                    cause,
+                }) => {
+                    eprintln!(
                     "RESOURCE_FAILURE kind=protocol role=responder link_id={:?} hash={:?} cause={cause:?}",
                     link_id.as_bytes(),
                     hash.as_bytes(),
                 );
-                None
+                    None
+                }
+                PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
+                    parse_resource_ack(delivery.plaintext).map(Event::ResourceAck)
+                }
+                _ => None,
+            };
+            if let Some(event) = mapped {
+                send_event(&event_tx, event);
             }
-            PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
-                parse_resource_ack(delivery.plaintext).map(Event::ResourceAck)
-            }
-            _ => None,
         };
-        if let Some(event) = mapped {
-            send_event(&event_tx, event);
-        }
-    };
 
     if role == "responder" {
-        let (node, bound) =
-            build_responder_node(single, (), request_endpoints![], on_event, manifest, addr).await;
+        let (node, bound) = build_responder_node(
+            single,
+            personal_rns::runtime::NoRemoteControlHostControls,
+            request_endpoints![],
+            on_event,
+            manifest,
+            addr,
+        )
+        .await;
         let commands = node.handle();
         println!("READY role=responder addr={bound}");
         let firehose = async {

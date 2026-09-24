@@ -92,7 +92,7 @@ impl MockState {
             pending_read: None,
             irq_statuses: VecDeque::new(),
             firmware: FirmwareVersion(0x0308),
-            device_kind: LR1110_DEVICE_KIND,
+            device_kind: Lr11xxPart::Lr1110 as u8,
             command_status: 0x02,
             rx_length: payload.len() as u8,
             rx_offset: offset as u8,
@@ -366,7 +366,12 @@ impl Wait for Dio1NeverLow {
 type MockRadio = Lr1110<MockSpi, MockBusy, MockDio1, MockOutput, MockDelay>;
 
 fn board() -> BoardConfig {
+    board_for(Lr11xxPart::Lr1110)
+}
+
+fn board_for(part: Lr11xxPart) -> BoardConfig {
     BoardConfig {
+        part,
         reference_clock: ReferenceClock::Tcxo {
             voltage: TcxoVoltage::V1_6,
             startup_time: TcxoStartupTime::from_rtc_ticks(164),
@@ -395,6 +400,10 @@ fn board() -> BoardConfig {
 }
 
 fn mock_radio() -> (MockRadio, SharedState) {
+    mock_radio_for(board())
+}
+
+fn mock_radio_for(board: BoardConfig) -> (MockRadio, SharedState) {
     let state = Rc::new(RefCell::new(MockState::new()));
     let radio = Lr1110::new(
         MockSpi {
@@ -408,7 +417,7 @@ fn mock_radio() -> (MockRadio, SharedState) {
         },
         MockOutput,
         MockDelay,
-        board(),
+        board,
     );
     (radio, state)
 }
@@ -478,7 +487,10 @@ fn lr1110_recovery_classifies_every_error() {
         Error::Dio1,
         Error::Reset,
         Error::DeviceNotReady,
-        Error::UnexpectedDevice(2),
+        Error::UnexpectedDevice {
+            expected: Lr11xxPart::Lr1110,
+            observed: 0x03,
+        },
         Error::CommandRejected,
         Error::NotInitialized,
         Error::Timeout,
@@ -659,13 +671,123 @@ fn operations_before_initialization_are_rejected() {
 }
 
 #[test]
-fn wrong_radio_kind_is_reported() {
+fn dropping_a_pending_receive_preserves_the_latched_frame() {
+    let state = Rc::new(RefCell::new(MockState::new()));
+    let mut radio = Lr1110::new(
+        MockSpi {
+            state: state.clone(),
+        },
+        MockBusy {
+            state: state.clone(),
+        },
+        Dio1NeverHigh,
+        MockOutput,
+        MockDelay,
+        board(),
+    );
+    block_on(radio.initialize(profile_with_power(22))).expect("initialize");
+    block_on(radio.arm_rx()).expect("arm receive");
+    state.borrow_mut().irq_statuses.push_back(irq::RX_DONE);
+
+    let mut buffer = [0; MAX_LORA_PAYLOAD];
+    {
+        let mut receive = Box::pin(radio.read_event(&mut buffer));
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(receive.as_mut().poll(&mut context).is_pending());
+    }
+
+    let event = block_on(radio.poll_event(&mut buffer)).expect("poll latched event");
+    assert!(matches!(event, Some(RadioEvent::Frame(frame)) if frame.len == 16));
+    assert_eq!(&buffer[..16], b"PRNS-LR1110-SMOK");
+}
+
+#[test]
+fn an_lr1110_board_rejects_an_lr1121_chip() {
     let (mut radio, state) = mock_radio();
-    state.borrow_mut().device_kind = 0x02;
+    state.borrow_mut().device_kind = Lr11xxPart::Lr1121 as u8;
     assert_eq!(
         block_on(radio.initialize(profile_with_power(22))),
-        Err(Error::UnexpectedDevice(0x02))
+        Err(Error::UnexpectedDevice {
+            expected: Lr11xxPart::Lr1110,
+            observed: 0x03,
+        })
     );
+}
+
+#[test]
+fn an_lr1121_board_rejects_an_lr1110_chip() {
+    let (mut radio, state) = mock_radio_for(board_for(Lr11xxPart::Lr1121));
+    state.borrow_mut().device_kind = Lr11xxPart::Lr1110 as u8;
+    assert_eq!(
+        block_on(radio.initialize(profile_with_power(22))),
+        Err(Error::UnexpectedDevice {
+            expected: Lr11xxPart::Lr1121,
+            observed: 0x01,
+        })
+    );
+}
+
+#[test]
+fn an_lr1121_board_initializes_and_sets_the_sync_word_on_early_firmware() {
+    let (mut radio, state) = mock_radio_for(board_for(Lr11xxPart::Lr1121));
+    {
+        let mut state = state.borrow_mut();
+        state.device_kind = Lr11xxPart::Lr1121 as u8;
+        state.firmware = FirmwareVersion(0x0101);
+    }
+    block_on(radio.initialize(profile_with_power(22))).expect("initialize");
+    let state = state.borrow();
+    assert!(state
+        .commands
+        .iter()
+        .any(|command| command.as_slice() == [0x02, 0x2b, 0x12]));
+    assert!(!state
+        .commands
+        .iter()
+        .any(|command| command.as_slice() == [0x02, 0x08, 0x00]));
+}
+
+#[test]
+fn semtech_sub_ghz_table_spans_the_lr11xx_output_range() {
+    assert_eq!(
+        SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE.minimum_output_power_dbm(),
+        -17
+    );
+    assert_eq!(
+        SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE.maximum_output_power_dbm(),
+        22
+    );
+    assert_eq!(
+        SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE.configuration(22),
+        Some(PowerAmplifierConfig {
+            chip_output_power_dbm: 22,
+            selection: PowerAmplifierSelection::HighPower,
+            supply: PowerAmplifierSupply::Battery,
+            duty_cycle: PowerAmplifierDutyCycle::new(4),
+            high_power_selection: HighPowerSelection::new(7),
+        })
+    );
+}
+
+#[test]
+fn semtech_high_power_rows_stay_within_the_duty_cycle_ceiling() {
+    const HIGH_POWER_DUTY_CYCLE_CEILING: u8 = 4;
+    for output_power_dbm in 16..=22 {
+        let config = SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE
+            .configuration(output_power_dbm)
+            .expect("high-power row");
+        assert_eq!(config.selection, PowerAmplifierSelection::HighPower);
+        assert_eq!(config.supply, PowerAmplifierSupply::Battery);
+        assert!(config.duty_cycle.value() <= HIGH_POWER_DUTY_CYCLE_CEILING);
+    }
+    for output_power_dbm in -17..=15 {
+        let config = SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE
+            .configuration(output_power_dbm)
+            .expect("low-power row");
+        assert_eq!(config.selection, PowerAmplifierSelection::LowPower);
+        assert_eq!(config.supply, PowerAmplifierSupply::Regulator);
+    }
 }
 
 #[test]

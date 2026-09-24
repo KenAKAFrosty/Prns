@@ -3114,6 +3114,9 @@ fn native_snapshot_error(error: NativeSnapshotError) -> crate::errors::CodeError
         NativeSnapshotError::Busy => code_err(ErrorCode::Busy, "snapshot queue is busy"),
         NativeSnapshotError::Stopped => code_err(ErrorCode::NodeStopped, "node stopped"),
         NativeSnapshotError::TimedOut => code_err(ErrorCode::Unavailable, "snapshot timed out"),
+        NativeSnapshotError::Unavailable => {
+            code_err(ErrorCode::Unavailable, "snapshot state is unavailable")
+        }
     }
 }
 

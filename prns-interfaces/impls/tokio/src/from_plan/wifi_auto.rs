@@ -20,7 +20,9 @@ pub(super) fn stand_up(
     );
     #[cfg(feature = "wifi-auto-mdns")]
     let auto_wifi = match native_service_discovery {
-        Some(native_service_discovery) => auto_wifi.with_host_discovery(native_service_discovery),
+        Some(native_service_discovery) => {
+            auto_wifi.with_native_host_discovery(native_service_discovery)
+        }
         None => auto_wifi,
     };
     let attached_auto_wifi = interface_construction.attach(auto_wifi);
@@ -31,12 +33,8 @@ fn auto_wifi_settings(
     interface_name: &str,
     auto_interface_plan: &AutoInterfacePlan,
 ) -> Result<AutoWifiSettings, crate::wifi_auto::AutoWifiSettingsError> {
-    let discovery_group_id = auto_interface_plan.group_id().as_bytes();
-    let mut instance_tag = (discovery_group_id.len() as u64).to_be_bytes().to_vec();
-    instance_tag.extend_from_slice(discovery_group_id);
-    instance_tag.extend_from_slice(interface_name.as_bytes());
-    AutoWifiSettings::new(
-        discovery_group_id.to_vec(),
+    AutoWifiSettings::with_discovery_groups(
+        *auto_interface_plan.group_ids(),
         auto_interface_plan.discovery_scope(),
         auto_interface_plan.multicast_address_type(),
         auto_interface_plan.discovery_port().get(),
@@ -46,7 +44,7 @@ fn auto_wifi_settings(
             auto_interface_plan.devices().ignored().to_vec(),
         ),
     )
-    .map(|auto_wifi_settings| auto_wifi_settings.with_instance_tag(instance_tag))
+    .map(|auto_wifi_settings| auto_wifi_settings.with_instance_tag(interface_name.as_bytes()))
 }
 
 #[cfg(test)]
@@ -73,6 +71,7 @@ mod tests {
                 .expect("typed plan maps to runtime settings");
 
         assert_eq!(runtime_settings.group_id(), b"field-mesh");
+        assert_eq!(runtime_settings.discovery_groups().len(), 1);
         assert_eq!(
             runtime_settings.discovery_scope(),
             prns_core::interfaces::wifi_auto::DiscoveryScope::Organisation

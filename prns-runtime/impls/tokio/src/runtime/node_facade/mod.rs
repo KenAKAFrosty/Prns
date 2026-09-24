@@ -33,6 +33,7 @@ use crate::engine::{
     SetRegisteredAnnounceAppData, Settlement, PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
+use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::interfaces::InterfaceId;
 use crate::manifold::driver::{HostCommand, LocalCommandProducer};
 use crate::routing::links::channel::MessageType;
@@ -63,14 +64,14 @@ pub use node_lifecycle::{
     NodeRunError, NonRoutingIdentityError, PrnsNode, RegisterRequestEndpointError,
     SharedInstanceIdentityError,
 };
-pub(crate) use persistence::RemoteControlAuthorizationPersistence;
 pub use persistence::{
     boot_timeline_origin, wall_clock_timeline_origin, DefaultLocationError,
     DestinationIdentitySeedReport, FlushError, FlushFailurePolicy, FlushMark, FlushReport,
     NodePersistence, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
     PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PrepareFlushError,
-    PreparedFlush, RatchetSeedReport, RegionFlush, RemoteControlAuthorizationSeedReport,
-    RouteSeedProgress, RouteSeedReport, SaveOnLearn, SaveOnLearnWiring, TunnelSeedReport,
+    PreparedFlush, RatchetSeedReport, RegionFlush, RemoteControlAuthorizationPersistence,
+    RemoteControlAuthorizationSeedReport, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
+    SaveOnLearnWiring, TunnelSeedReport,
 };
 pub use remote_control::{RemoteControlHandle, RemoteControlTargetHandle};
 pub use request_response::{RequestOptions, ResponseSendError};
@@ -82,6 +83,15 @@ pub use resource_transfer::{
 
 #[cfg(test)]
 pub(crate) fn test_remote_control_service(
+) -> prns_core::remote_control::RemoteControlService<'static> {
+    test_remote_control_service_with_capabilities(
+        prns_core::remote_control::RemoteControlCapabilities::describe_only(),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn test_remote_control_service_with_capabilities(
+    capabilities: prns_core::remote_control::RemoteControlCapabilities,
 ) -> prns_core::remote_control::RemoteControlService<'static> {
     use prns_core::identity::vault::IdentitySecretKey;
     use prns_core::remote_control::{
@@ -99,10 +109,11 @@ pub(crate) fn test_remote_control_service(
         )),
     )
     .expect("distinct test identities");
-    RemoteControlService::new(
+    RemoteControlService::with_capabilities(
         identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
+        capabilities,
     )
 }
 
@@ -117,6 +128,7 @@ pub(crate) fn test_remote_control_grant(
         .identities();
     prns_core::remote_control::RemoteControlControllerGrant::new(
         *identities.controller(),
+        prns_core::remote_control::RemoteControlControllerAuthority::Operator,
         prns_core::remote_control::RemoteControlRequestSet::only(request),
     )
     .unwrap()
@@ -732,6 +744,14 @@ impl super::PrnsNodeApi for PrnsNodeHandle {
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
         self.respond_packed(responder, packed).is_some()
+    }
+
+    async fn respond_rns_path_table(
+        &self,
+        responder: RespondToken,
+        request: RnsRemotePathTableRequest,
+    ) -> bool {
+        self.respond_rns_path_table(responder, request).await
     }
 
     fn close_link(&self, link_id: LinkId) -> bool {

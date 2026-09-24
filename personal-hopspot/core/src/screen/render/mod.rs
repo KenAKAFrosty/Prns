@@ -21,6 +21,9 @@ use cards::{draw_card_peek, draw_card_with_selection, draw_footer, draw_global_r
 use glyphs::draw_title_bar;
 use gnss::draw_gnss_panel;
 use layout::*;
+#[cfg(feature = "remote-control-pairing")]
+use menus::draw_remote_control_pairing;
+use menus::groups::draw_group_editor;
 use menus::subg::draw_subg_editor;
 use menus::{
     draw_global_menu, draw_interface_menu, draw_limits_page, draw_notice, draw_radio_confirm,
@@ -53,6 +56,11 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
         return;
     }
 
+    if let UiMode::DiscoveryGroupEditor(editor) = state.mode {
+        draw_group_editor(display, editor);
+        return;
+    }
+
     if let UiMode::LimitsPage { page } = state.mode {
         let rows = build_limit_rows(state.storage_limits);
         draw_limits_page(display, page, &rows);
@@ -74,6 +82,12 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
         return;
     }
 
+    #[cfg(feature = "remote-control-pairing")]
+    if let UiMode::RemoteControlPairing { .. } = state.mode {
+        draw_remote_control_pairing(display, state);
+        return;
+    }
+
     if let Some(selected_item) = state.global_menu_selected_item() {
         draw_global_menu(display, selected_item, state);
         return;
@@ -86,6 +100,7 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
                 selected_card,
                 selected_item,
                 state.shared_instance_config_export,
+                state.discovery_groups,
                 interface_menu_details,
             );
             return;

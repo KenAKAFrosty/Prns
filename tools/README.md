@@ -43,11 +43,13 @@ own task definitions or setup logic, so bootstrap checks and CI can use
 `./tools/prns` without requiring Cargo. Product and daemon commands use the
 separate `cargo prnsd` entrypoint.
 
-The declarative doctor profiles are `getting-started`, `node`, `rust`, `docs`,
-`tests`, and `benchmarks`. Profiles check the commands and important versions
-for one outcome, including the platform C compiler where applicable. They print
-setup guidance and never install software. No-argument, task-ID, and domain
-doctor behavior remains available.
+The declarative doctor profiles include `getting-started`, `embedded-assurance`,
+`node`, `rust`, `docs`, `tests`, and `benchmarks`. Profiles check the commands
+and important versions for one outcome, including the platform C compiler where
+applicable. A profile can delegate deeper read-only checks to the subsystem that
+owns their version and capability inventories. Doctors print setup guidance and
+never install software. No-argument, task-ID, and domain doctor behavior remains
+available.
 
 The operator interface prints every task's purpose and side-effect class before
 execution. CI invokes the same named tasks and does not call implementation files

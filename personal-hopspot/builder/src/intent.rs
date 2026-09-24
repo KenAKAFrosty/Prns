@@ -23,6 +23,15 @@ impl LtoMode {
             Self::Thin => Some("thin"),
         }
     }
+
+    #[must_use]
+    pub const fn resolve(self, configured: Self) -> Self {
+        match self {
+            Self::Configured => configured,
+            Self::Fat => Self::Fat,
+            Self::Thin => Self::Thin,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -64,6 +73,8 @@ mod tests {
     fn explicit_lto_modes_have_stable_cargo_values() {
         assert_eq!(LtoMode::Fat.cargo_value(), Some("fat"));
         assert_eq!(LtoMode::Thin.cargo_value(), Some("thin"));
+        assert_eq!(LtoMode::Configured.resolve(LtoMode::Thin), LtoMode::Thin);
+        assert_eq!(LtoMode::Fat.resolve(LtoMode::Thin), LtoMode::Fat);
         assert!(BuildIntent::ResourceReport { lto: LtoMode::Thin }.is_resource_report());
     }
 }

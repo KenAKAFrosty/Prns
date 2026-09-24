@@ -348,7 +348,8 @@ mod tests {
             begin,
             permissions(),
             RemoteControlPairingAttemptTimeout::try_from(DurationMillis(3_000)).unwrap(),
-        );
+        )
+        .unwrap();
         let (offer, transcript) = prepared.into_parts();
         (
             RemoteControlPairingResponse::Offer(offer),

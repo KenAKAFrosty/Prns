@@ -158,10 +158,15 @@ impl<const N: usize> StreamDeframer<N> {
         self.buf.extend_from_slice(bytes).is_ok()
     }
 
-    pub fn next_frame(&mut self, out: &mut [u8]) -> Option<usize> {
+    /// Returns the length declared by the next frame prefix, even when its body is incomplete.
+    pub fn pending_frame_len(&self) -> Option<usize> {
         let prefix: [u8; STREAM_FRAME_PREFIX_LEN] =
             self.buf.get(..STREAM_FRAME_PREFIX_LEN)?.try_into().ok()?;
-        let len = u16::from_be_bytes(prefix) as usize;
+        Some(u16::from_be_bytes(prefix) as usize)
+    }
+
+    pub fn next_frame(&mut self, out: &mut [u8]) -> Option<usize> {
+        let len = self.pending_frame_len()?;
         let total = STREAM_FRAME_PREFIX_LEN + len;
         if self.buf.len() < total {
             return None;

@@ -5,7 +5,7 @@ use crate::engine::{
     WholeResourceOpenCompleted, WholeResourceOpenOutcome,
 };
 use crate::identity::OpenedToken;
-use crate::interfaces::{FrameAccountingEvent, InterfaceIfac};
+use crate::interfaces::FrameAccountingEvent;
 use crate::manifold::Host;
 use crate::routing::links::resources::send::{
     ResourceBuildCompleted, ResourceSealBuffers, ResourceSealCompleted, ResourceSealOutcome,
@@ -15,7 +15,7 @@ use crate::storage::StorageLayout;
 
 use super::crypto_pool::{CryptoCompletion, CryptoPool, CryptoResult, OpenedSpanResult};
 use super::egress::{
-    route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
+    route_reaction, route_reaction_with_work, Egress, InterfaceIfacs, InterfacePacers, WireScratch,
 };
 use super::inbound_dispatch::InboundDispatch;
 use super::interface_topology::InterfaceTopology;
@@ -29,8 +29,8 @@ use crate::remote_control::RemoteControlPairingAvailabilityVerification;
 fn route_completion_reaction<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     owed_work: &mut PendingOwedWork,
@@ -54,8 +54,8 @@ fn route_completion_reaction<J>(
 fn route_completed_reaction_without_work<J>(
     reaction: EngineReaction<'_>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     now: InstantMillis,

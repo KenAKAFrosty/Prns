@@ -382,12 +382,12 @@ async fn run_until_returns_when_a_non_persistent_node_is_asked_to_stop() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     });
 
     assert_eq!(node.run_until(async {}).await, Ok(()));
@@ -414,12 +414,12 @@ fn controller_and_target_identities_coexist_without_a_transport_identity() {
         transport_identity: None,
         remote_control,
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     });
 
     assert_eq!(
@@ -463,12 +463,12 @@ async fn run_until_with_proof_decider_reaches_a_prove_if_recipe_destination() {
             maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     });
     let (wire_in, inbound) = tokio::sync::mpsc::unbounded_channel();
     let (outbound, mut wire_out) = tokio::sync::mpsc::unbounded_channel();
@@ -525,12 +525,14 @@ async fn graceful_shutdown_is_observed_after_state_and_ratchet_flushes() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence,
-        on_event: move |event, _state: &()| record_persistence_event(&event_sink, event),
+        on_event: move |event, _state: &crate::runtime::NoRemoteControlHostControls| {
+            record_persistence_event(&event_sink, event)
+        },
     });
 
     let result = node.run_until(async {}).await;
@@ -571,12 +573,14 @@ async fn a_recipe_managed_write_failure_is_observed_before_run_returns() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence,
-        on_event: move |event, _state: &()| record_persistence_event(&event_sink, event),
+        on_event: move |event, _state: &crate::runtime::NoRemoteControlHostControls| {
+            record_persistence_event(&event_sink, event)
+        },
     });
     std::fs::remove_dir_all(&directory).unwrap();
     std::fs::write(&directory, b"persistence path blocked by a file").unwrap();
@@ -600,12 +604,12 @@ async fn a_restore_callback_panic_reports_the_manifold_boundary() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence,
-        on_event: |event, _state: &()| {
+        on_event: |event, _state: &crate::runtime::NoRemoteControlHostControls| {
             if matches!(
                 event,
                 crate::runtime::PrnsEvent::Diagnostic(
@@ -699,12 +703,12 @@ fn host_resource_memory_limits_reach_the_engine_before_run() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     })
     .with_resource_memory_limits(limits);
 
@@ -714,12 +718,12 @@ fn host_resource_memory_limits_reach_the_engine_before_run() {
 #[test]
 fn a_runtime_destination_registers_only_its_selected_route_types() {
     struct First;
-    impl RequestEndpoint<()> for First {
+    impl RequestEndpoint<crate::runtime::NoRemoteControlHostControls> for First {
         const ENDPOINT_ID: &'static str = "/first";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
         async fn handle(
-            _context: RequestContext<'_, ()>,
+            _context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             _node: &impl crate::runtime::PrnsNodeApi,
         ) -> Result<(), Decline> {
             Ok(())
@@ -727,12 +731,12 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
     }
 
     struct Second;
-    impl RequestEndpoint<()> for Second {
+    impl RequestEndpoint<crate::runtime::NoRemoteControlHostControls> for Second {
         const ENDPOINT_ID: &'static str = "/second";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
         async fn handle(
-            _context: RequestContext<'_, ()>,
+            _context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             _node: &impl crate::runtime::PrnsNodeApi,
         ) -> Result<(), Decline> {
             Ok(())
@@ -743,12 +747,12 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![First, Second],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     });
     let destination = prns
         .register_preconfigured_destination(PreConfiguredDestination::Single {

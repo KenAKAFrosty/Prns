@@ -3,7 +3,7 @@ use std::path::Path;
 use personal_hopspot_builder::platform::{esp, nrf52840};
 use personal_hopspot_builder::{BuildContext, FirmwareEvidence};
 
-use super::{mesh_tower_v2, MatrixError, Target, TargetRecipe};
+use super::{MatrixError, Target, TargetRecipe};
 
 pub(crate) struct BuildEvidence {
     firmware: FirmwareEvidence,
@@ -14,6 +14,7 @@ pub(crate) struct BuildEvidence {
 pub(crate) struct ArtifactEvidence {
     path: String,
     bytes: u64,
+    fingerprint: String,
 }
 
 impl Target<'_> {
@@ -29,6 +30,7 @@ impl Target<'_> {
                         .map(|part| ArtifactEvidence {
                             path: part.descriptor().path.clone(),
                             bytes: part.descriptor().size,
+                            fingerprint: part.descriptor().sha256.clone(),
                         })
                         .collect(),
                 })
@@ -44,6 +46,7 @@ impl Target<'_> {
                     artifacts: vec![ArtifactEvidence {
                         path: output.descriptor().path.clone(),
                         bytes: output.descriptor().size,
+                        fingerprint: output.descriptor().sha256.clone(),
                     }],
                 })
             }
@@ -62,19 +65,20 @@ impl Target<'_> {
                         .map(|part| ArtifactEvidence {
                             path: part.path.clone(),
                             bytes: part.size,
+                            fingerprint: part.sha256.clone(),
                         })
                         .collect(),
                     }
                 })
             }
-            TargetRecipe::MeshTowerV2 => {
-                nrf52840::firmware::build(context, self.profile(), mesh_tower_v2::recipe()).map(
-                    |output| BuildEvidence {
+            TargetRecipe::BuildOnly(target) => {
+                nrf52840::firmware::build(context, self.profile(), target.recipe).map(|output| {
+                    BuildEvidence {
                         firmware: output.firmware().clone(),
                         firmware_image_bytes: output.firmware_image_bytes(),
                         artifacts: Vec::new(),
-                    },
-                )
+                    }
+                })
             }
         };
         result.map_err(|source| MatrixError::Build {
@@ -119,5 +123,9 @@ impl ArtifactEvidence {
 
     pub(crate) const fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    pub(crate) fn fingerprint(&self) -> &str {
+        &self.fingerprint
     }
 }

@@ -2827,6 +2827,18 @@
                 "value": "percent"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*pending stalled$"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
           }
         ]
       },
@@ -2892,9 +2904,33 @@
           "legendFormat": "{{logical_interface}} · {{physical_lane}} · lane occupancy",
           "range": false,
           "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (physical_lane, logical_interface) (prns_egress_lane_pending{logical_interface=~\"$interface\"}) > 0",
+          "instant": true,
+          "legendFormat": "{{logical_interface}} · {{physical_lane}} · pending",
+          "range": false,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "prns_egress_pending_stalled_seconds > 0",
+          "instant": true,
+          "legendFormat": "node · pending stalled",
+          "range": false,
+          "refId": "E"
         }
       ],
-      "title": "Interface announce pressure",
+      "title": "Interface egress pressure",
       "type": "stat"
     },
     {

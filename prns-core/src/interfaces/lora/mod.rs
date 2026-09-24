@@ -17,5 +17,6 @@ pub use network::{LoRaNetwork, RNODE_LORA_SYNC_WORD};
 pub use policy::{defaults, descriptor, unconfigured_descriptor};
 pub use profile::{
     channel_tag, AirtimePolicy, AirtimePolicyError, ModemPreset, PreambleSymbols, RadioProfile,
-    RadioProfileCompatibilityError, RadioProfileError, CHANNEL_TAG_CAP,
+    RadioProfileCompatibilityError, RadioProfileError, CHANNEL_TAG_CAP, DEFAULT_915_PROFILE,
+    INVENTORY_CONFIG_CAP,
 };

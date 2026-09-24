@@ -26,9 +26,8 @@ use personal_rns::engine::{
     SetResourceStrategyFailure, SetResourceStrategyRejection,
 };
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
-use personal_rns::interfaces::{BitrateBps, ConnectionState};
+use personal_rns::interfaces::BitrateBps;
 use personal_rns::manifold::reconnect::ReconnectPolicy;
-use personal_rns::node_introspection::logical_interface_inventory;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::resources::table::ApplyHashmapUpdateError;
@@ -55,22 +54,24 @@ use personal_rns::{
 use prns_host::{
     ApplicationEvent, BackendInfo, BackendKind, Bitrate, Capability, ChannelMessage,
     CommandFailure, CommandOutcome, DeliveryEvidence, DestinationConfig, DestinationHash,
-    DestinationIdentityConfig, DestinationIdentitySnapshot, DestinationLinkRequestPolicy,
-    DestinationProofStrategy, DestinationRatchetPolicy, DiagnosticEvent, HostCommand, HostConfig,
-    HostRole, HostSnapshot, IdentityConfig, IdentityHash, InterfaceConfig, InterfaceHealth,
-    InterfaceId, InterfaceKind, InterfaceMode, InterfaceRoutingPolicy, InterfaceSnapshot,
-    LinkClosedReason, LinkDelivery, LinkId, PacketHash, PersistenceConfig, PersistenceFlushCause,
-    PersistenceFlushTarget, PersistenceSnapshot, RequestAvailable, RequestHandlerConfig, RequestId,
-    RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
-    ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId, ResponseAvailable,
-    ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot, RuntimeHealthSnapshot,
-    SingleDelivery, WebSocketFramingSelection, SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
+    DestinationIdentityConfig, DestinationLinkRequestPolicy, DestinationProofStrategy,
+    DestinationRatchetPolicy, DiagnosticEvent, HostCommand, HostConfig, HostRole, HostSnapshot,
+    IdentityConfig, IdentityHash, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode,
+    InterfaceRoutingPolicy, LinkClosedReason, LinkDelivery, LinkId, PacketHash, PersistenceConfig,
+    PersistenceFlushCause, PersistenceFlushTarget, PersistenceSnapshot, RequestAvailable,
+    RequestHandlerConfig, RequestId, RequestPathHash, RequestPolicy, ResourceAvailable,
+    ResourceCompression, ResourceHash, ResourceSegmentAvailable, ResourceStrategy,
+    ResourceStreamId, ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, SingleDelivery,
+    WebSocketFramingSelection, SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
 };
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{mpsc, oneshot, watch};
 
 #[cfg(unix)]
 mod supplied_pipe;
+pub use prns_host_snapshot::{
+    assemble_host_snapshot, HostInterfaceAttachment, HostSnapshotAssemblyError,
+};
 #[cfg(unix)]
 pub use supplied_pipe::{
     NativeSuppliedPipe, SuppliedPipeConfig, SuppliedPipeOpenRequest, SuppliedPipeRequestWait,
@@ -138,6 +139,7 @@ pub enum NativeSnapshotError {
     Busy,
     Stopped,
     TimedOut,
+    Unavailable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -505,7 +507,7 @@ impl NativeHost {
                 std::sync::mpsc::RecvTimeoutError::Disconnected => NativeSnapshotError::Stopped,
             }),
             None => result.recv().map_err(|_| NativeSnapshotError::Stopped),
-        }
+        }?
     }
 
     pub fn stop(&self) {
@@ -617,7 +619,7 @@ struct UploadJob {
 }
 
 struct SnapshotJob {
-    reply: std::sync::mpsc::SyncSender<HostSnapshot>,
+    reply: std::sync::mpsc::SyncSender<Result<HostSnapshot, NativeSnapshotError>>,
 }
 
 struct PendingCompletion(Arc<CommandCompletion>);
@@ -1108,13 +1110,13 @@ async fn run(
             HostRole::Transport => Some(host_identity.clone()),
         },
         pre_configured_destinations: destinations,
-        app_state: (),
+        app_state: personal_rns::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence,
-        on_event: move |event, _state: &()| {
+        on_event: move |event, _state: &personal_rns::NoRemoteControlHostControls| {
             if !publish_event(event_sink.as_ref(), event, &event_persistence) {
                 event_backpressure.notify_waiters();
             }
@@ -1310,17 +1312,15 @@ async fn command_loop(handle: PrnsNodeHandle, inputs: CommandLoopInputs) {
             }
             HostWork::Snapshot(job) => {
                 snapshot_revision = snapshot_revision.saturating_add(1);
-                if let Some(snapshot) = collect_snapshot(
+                let snapshot = collect_snapshot(
                     &handle,
                     &attachments,
                     snapshot_revision,
                     started_at,
                     &persistence,
                 )
-                .await
-                {
-                    let _ = job.reply.send(snapshot);
-                }
+                .await;
+                let _ = job.reply.send(snapshot);
             }
             HostWork::Preview(job) => {
                 tokio::spawn(job(handle.clone()));
@@ -1347,173 +1347,32 @@ async fn collect_snapshot(
     revision: u64,
     started_at: Instant,
     persistence: &Mutex<PersistenceSnapshot>,
-) -> Option<HostSnapshot> {
-    let inventory = logical_interface_inventory(handle.interface_inventory());
-    let mut interfaces = Vec::with_capacity(attachments.len());
-    for (interface_id, attachment) in attachments {
-        let member_ids = attachment.interfaces();
-        let members = inventory
-            .iter()
-            .filter(|entry| member_ids.contains(&entry.snapshot.id))
-            .collect::<Vec<_>>();
-        let Some(first) = members.first() else {
-            continue;
-        };
-        let name = first.name.clone();
-        let mut health = host_interface_health(first.snapshot.connection);
-        let mut failure_detail = first.snapshot.failure_reason.map(str::to_string);
-        let mut rx_bytes = 0u64;
-        let mut tx_bytes = 0u64;
-        let mut rx_bps = 0u64;
-        let mut tx_bps = 0u64;
-        let mut has_rates = false;
-        let mut route_count = 0u32;
-        let mut link_count = 0u32;
-        let mut transported_link_count = 0u32;
-        for member in &members {
-            health = less_healthy(health, host_interface_health(member.snapshot.connection));
-            if failure_detail.is_none() {
-                failure_detail = member.snapshot.failure_reason.map(str::to_string);
-            }
-            rx_bytes = rx_bytes.saturating_add(member.snapshot.rx_bytes);
-            tx_bytes = tx_bytes.saturating_add(member.snapshot.tx_bytes);
-            if let Some(rates) = member.snapshot.transfer_rates {
-                has_rates = true;
-                rx_bps = rx_bps.saturating_add(u64::from(rates.rx_bps));
-                tx_bps = tx_bps.saturating_add(u64::from(rates.tx_bps));
-            }
-            route_count = route_count.saturating_add(member.snapshot.destinations);
-            link_count = link_count.saturating_add(member.snapshot.links);
-            transported_link_count =
-                transported_link_count.saturating_add(member.snapshot.transported_links);
-        }
-        interfaces.push(InterfaceSnapshot {
-            interface_id: *interface_id,
-            name,
-            kind: Some(attachment.kind()),
-            health,
-            failure_detail,
-            rx_bytes,
-            tx_bytes,
-            rx_bps: has_rates.then_some(rx_bps),
-            tx_bps: has_rates.then_some(tx_bps),
-            route_count,
-            link_count,
-            transported_link_count,
-        });
-    }
-    let engine = handle.engine_inspection_snapshot().await?;
-    let routes: Vec<RouteSnapshot> = engine
-        .routes
-        .into_iter()
-        .map(|route| RouteSnapshot {
-            destination: host_destination(route.destination),
-            hops: route.hops,
-            via_identity: match route.via {
-                personal_rns::routing::routes::NextHop::Direct => None,
-                personal_rns::routing::routes::NextHop::Via(identity) => {
-                    Some(IdentityHash::new(*identity.as_bytes()))
-                }
-            },
-            interface_id: attachments
-                .iter()
-                .find(|(_, attachment)| attachment.interfaces().contains(&route.interface))
-                .map_or_else(
-                    || host_interface(route.interface),
-                    |(interface, _)| *interface,
-                ),
-            learned_at_millis: route.learned_at.0,
-            last_route_activity_at_millis: route.last_route_activity_at.0,
-            expires_at_millis: route.expires_at.0,
-        })
-        .collect();
-    let destination_identities = engine
-        .destination_identities
-        .into_iter()
-        .map(|identity| DestinationIdentitySnapshot {
-            destination: host_destination(identity.destination),
-            identity: IdentityHash::new(*identity.identity.as_bytes()),
-        })
-        .collect();
-    let interface_count = u32::try_from(interfaces.len()).unwrap_or(u32::MAX);
-    let online_interface_count = u32::try_from(
-        interfaces
-            .iter()
-            .filter(|interface| {
-                matches!(
-                    interface.health,
-                    InterfaceHealth::Connected | InterfaceHealth::Degraded
-                )
+) -> Result<HostSnapshot, NativeSnapshotError> {
+    let raw_interfaces = handle.interface_inventory();
+    let attached_interfaces = attachments
+        .iter()
+        .flat_map(|(host_interface, attachment)| {
+            let host_interface = *host_interface;
+            let kind = attachment.kind();
+            attachment.interfaces().into_iter().map(move |interface| {
+                HostInterfaceAttachment::with_host_interface(interface, host_interface, kind)
             })
-            .count(),
-    )
-    .unwrap_or(u32::MAX);
-    let runtime = RuntimeHealthSnapshot {
-        running: true,
-        uptime_millis: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
-        interface_count,
-        online_interface_count,
-        route_count: u32::try_from(routes.len()).unwrap_or(u32::MAX),
-        link_count: engine.link_count,
-        transported_link_count: interfaces.iter().fold(0u32, |sum, entry| {
-            sum.saturating_add(entry.transported_link_count)
-        }),
-        rx_bytes: interfaces
-            .iter()
-            .fold(0u64, |sum, entry| sum.saturating_add(entry.rx_bytes)),
-        tx_bytes: interfaces
-            .iter()
-            .fold(0u64, |sum, entry| sum.saturating_add(entry.tx_bytes)),
-        rx_bps: interfaces.iter().fold(0u64, |sum, entry| {
-            sum.saturating_add(entry.rx_bps.unwrap_or_default())
-        }),
-        tx_bps: interfaces.iter().fold(0u64, |sum, entry| {
-            sum.saturating_add(entry.tx_bps.unwrap_or_default())
-        }),
-    };
-    Some(HostSnapshot {
+        })
+        .collect::<Vec<_>>();
+    let engine = handle
+        .engine_inspection_snapshot()
+        .await
+        .ok_or(NativeSnapshotError::Unavailable)?;
+    assemble_host_snapshot(
+        raw_interfaces,
+        attached_interfaces,
+        engine,
+        native_backend_info(),
+        lock(persistence).clone(),
         revision,
-        backend: native_backend_info(),
-        interfaces,
-        routes,
-        active_link_count: engine.link_count,
-        destination_identities,
-        runtime,
-        persistence: lock(persistence).clone(),
-    })
-}
-
-fn host_interface_health(health: ConnectionState) -> InterfaceHealth {
-    match health {
-        ConnectionState::Initializing => InterfaceHealth::Initializing,
-        ConnectionState::Connected => InterfaceHealth::Connected,
-        ConnectionState::Degraded => InterfaceHealth::Degraded,
-        ConnectionState::Reconnecting => InterfaceHealth::Reconnecting,
-        ConnectionState::Failed => InterfaceHealth::Failed,
-        ConnectionState::Disconnected => InterfaceHealth::Disconnected,
-        ConnectionState::Disabled => InterfaceHealth::Disabled,
-        ConnectionState::Unknown => InterfaceHealth::Unknown,
-    }
-}
-
-fn less_healthy(left: InterfaceHealth, right: InterfaceHealth) -> InterfaceHealth {
-    fn priority(health: InterfaceHealth) -> u8 {
-        match health {
-            InterfaceHealth::Connected => 0,
-            InterfaceHealth::Disabled => 1,
-            InterfaceHealth::Unknown => 2,
-            InterfaceHealth::Initializing => 3,
-            InterfaceHealth::Disconnected => 4,
-            InterfaceHealth::Degraded => 5,
-            InterfaceHealth::Reconnecting => 6,
-            InterfaceHealth::Failed => 7,
-        }
-    }
-    if priority(left) >= priority(right) {
-        left
-    } else {
-        right
-    }
+        started_at.elapsed(),
+    )
+    .map_err(|_| NativeSnapshotError::Unavailable)
 }
 
 async fn upload_loop(
@@ -1688,6 +1547,7 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
             "AutoInterface",
             ReferenceConfigParams::Auto {
                 group_id: group_id.clone(),
+                group_ids: None,
                 discovery_scope: discovery_scope.map(|scope| {
                     match scope {
                         prns_host::DiscoveryScope::Link => "link",
@@ -1949,7 +1809,10 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
         InterfaceConfig::AutomaticUsb => ("PrnsUsbAuto", ReferenceConfigParams::PrnsUsbAuto, None),
         InterfaceConfig::AutomaticBluetoothLe => (
             "PrnsBluetoothAuto",
-            ReferenceConfigParams::PrnsBluetoothAuto,
+            ReferenceConfigParams::PrnsBluetoothAuto {
+                group_id: None,
+                group_ids: None,
+            },
             None,
         ),
         InterfaceConfig::WebSocketClient { target, framing } => (
@@ -2879,6 +2742,14 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
             );
             return true;
         }
+        Message::RemoteControlTargetPairingExpiredDuringAuthorization { attempt_id } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingExpiredDuringAuthorization",
+                format!("{attempt_id:?}"),
+            );
+            return true;
+        }
         Message::RemoteControlControllerPairingConfirmationRequired(attempt) => {
             publish_remote_control_diagnostic(
                 sink,
@@ -2899,6 +2770,14 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
             publish_remote_control_diagnostic(
                 sink,
                 "RemoteControlControllerPairingAuthorizationPersisted",
+                format!("{attempt_id:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlControllerPairingAuthorizationPersistenceFailed { attempt_id } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlControllerPairingAuthorizationPersistenceFailed",
                 format!("{attempt_id:?}"),
             );
             return true;

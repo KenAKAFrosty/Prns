@@ -2,23 +2,29 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use personal_hopspot_builder::artifact::publish;
-use personal_hopspot_builder::{BuildContext, BuildError, LinkOverflowEvidence, ToolchainEvidence};
+use personal_hopspot_builder::{
+    BuildContext, BuildError, LinkOverflowEvidence, SourceCustody, ToolchainEvidence,
+};
 use personal_hopspot_memory::MemoryProfile;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::analysis::{self, AnalysisError, RamAnalysisError, RamCapacity, SectionKind};
+use crate::analysis::{
+    self, AnalysisError, ExecutableError, RamAnalysisError, RamCapacity, SectionKind,
+};
 use crate::matrix::{BuildEvidence, RecipeIdentity, Target};
+use crate::semantic_futures::Measurements;
 
-use super::contract;
-use super::fingerprint::fingerprint;
+use super::fingerprint::{fingerprint, Fingerprint};
 use super::model::{
     AnalysisEvidence, ArchitectureIdentity, ArtifactIdentity, AttributionCategoryIdentity,
     AttributionCoverageIdentity, AttributionEntryIdentity, BuildIdentity, BuildStatus, Evidence,
     FirmwareFlashUsage, FlashAttributionIdentity, MemoryOverflowIdentity, RamBackingUsage,
-    RamCapacityIdentity, ResourceReport, SectionKindIdentity, SectionUsage, TargetIdentity,
+    RamCapacityIdentity, ReleaseSettingsIdentity, RequestedBuildSettingsIdentity,
+    RequestedLtoIdentity, ResourceReport, SectionKindIdentity, SectionUsage, TargetIdentity,
     ToolchainIdentity, SCHEMA_VERSION,
 };
+use super::{build_settings, contract};
 
 const CARGO_PROFILE: &str = "release";
 
@@ -26,6 +32,8 @@ const CARGO_PROFILE: &str = "release";
 pub(crate) enum ReportError {
     #[error(transparent)]
     Contract(#[from] contract::ContractIdentityError),
+    #[error(transparent)]
+    BuildIdentity(#[from] BuildIdentityError),
     #[error("build for {target:?} did not capture resource evidence")]
     MissingResourceEvidence { target: String },
     #[error("overflow evidence for {actual:?} does not belong to target {expected:?}")]
@@ -47,9 +55,21 @@ pub(crate) enum ReportError {
     #[error(transparent)]
     Analysis(#[from] AnalysisError),
     #[error(transparent)]
+    Executable(#[from] ExecutableError),
+    #[error(transparent)]
+    AsyncMemory(#[from] analysis::AsyncMemoryError),
+    #[error(transparent)]
     Attribution(#[from] analysis::AttributionError),
     #[error(transparent)]
     RamAnalysis(#[from] RamAnalysisError),
+    #[error(transparent)]
+    ExecutableReport(#[from] super::executable::ExecutableReportError),
+    #[error("artifact {path:?} has an invalid fingerprint: {source}")]
+    InvalidArtifactFingerprint {
+        path: String,
+        #[source]
+        source: prns_flash_manifest::DomainValueError,
+    },
     #[error("could not serialize resource report: {0}")]
     Serialize(#[from] serde_json::Error),
     #[error("could not publish resource report: {0}")]
@@ -60,8 +80,10 @@ pub(crate) fn write(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     evidence: &BuildEvidence,
+    future_sizes: &Measurements,
+    source: &SourceCustody,
 ) -> Result<PathBuf, ReportError> {
-    let report = build(target, context, evidence)?;
+    let report = build(target, context, evidence, future_sizes, source)?;
     publish_report(context, target, &report)
 }
 
@@ -69,6 +91,7 @@ pub(crate) fn write_overflow(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     evidence: &LinkOverflowEvidence,
+    source: &SourceCustody,
 ) -> Result<PathBuf, ReportError> {
     if evidence.target() != target.id() {
         return Err(ReportError::MismatchedOverflowTarget {
@@ -85,6 +108,7 @@ pub(crate) fn write_overflow(
     )?;
     let report = ResourceReport {
         schema_version: SCHEMA_VERSION,
+        source: source.clone(),
         target: target_identity(target),
         architecture: architecture_identity(target),
         build: build_identity(context, target.recipe_identity())?,
@@ -107,6 +131,8 @@ pub(crate) fn write_overflow(
             linker_map_bytes,
             allocated_sections: Evidence::Unavailable,
             flash_attribution: Evidence::Partial(attribution_identity(attribution)),
+            executable: Evidence::Unavailable,
+            async_memory: Evidence::Unavailable,
         },
     };
     publish_report(context, target, &report)
@@ -131,6 +157,8 @@ fn build(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     evidence: &BuildEvidence,
+    future_sizes: &Measurements,
+    source: &SourceCustody,
 ) -> Result<ResourceReport, ReportError> {
     let recipe = target.recipe_identity();
     let adapter = target.adapter();
@@ -143,6 +171,13 @@ fn build(
     let linker_map = resource_build.linker_map();
     let linker_map_bytes = linker_map_size(linker_map)?;
     let allocated_sections = analysis::read_allocated_sections(evidence.elf())?;
+    let executable = analysis::analyze_executable(
+        evidence.elf(),
+        target.profile(),
+        adapter,
+        evidence.firmware_image_bytes(),
+    )?;
+    let async_memory = analysis::analyze_async_memory(evidence.elf())?;
     let attribution = analysis::analyze_linker_map(
         linker_map,
         adapter.linker_flavor(),
@@ -192,6 +227,7 @@ fn build(
 
     Ok(ResourceReport {
         schema_version: SCHEMA_VERSION,
+        source: source.clone(),
         target: target_identity(target),
         architecture: architecture_identity(target),
         build: build_identity(context, recipe)?,
@@ -208,16 +244,33 @@ fn build(
             evidence
                 .artifacts()
                 .iter()
-                .map(|artifact| ArtifactIdentity {
-                    path: artifact.path().to_string(),
-                    bytes: artifact.bytes(),
+                .map(|artifact| {
+                    Ok(ArtifactIdentity {
+                        path: artifact.path().to_string(),
+                        bytes: artifact.bytes(),
+                        fingerprint: Fingerprint::parse(artifact.fingerprint().to_string())
+                            .map_err(|source| ReportError::InvalidArtifactFingerprint {
+                                path: artifact.path().to_string(),
+                                source,
+                            })?,
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, ReportError>>()?,
         ),
         analysis: AnalysisEvidence {
             linker_map_bytes,
             allocated_sections: Evidence::Complete(allocated_sections),
             flash_attribution: Evidence::Complete(attribution_identity(attribution)),
+            executable: Evidence::Complete(super::executable::identity(
+                context,
+                target.id(),
+                adapter.rust_target(),
+                executable,
+            )?),
+            async_memory: Evidence::Complete(super::async_memory::identity(
+                async_memory,
+                future_sizes,
+            )),
         },
     })
 }
@@ -272,7 +325,7 @@ pub(super) fn architecture_identity(target: &Target<'_>) -> ArchitectureIdentity
         adapter: adapter.id().as_str().to_string(),
         linker_flavor: adapter.linker_flavor().as_str().to_string(),
         rustflags: adapter
-            .rustflags()
+            .firmware_rustflags()
             .iter()
             .map(|argument| (*argument).to_string())
             .collect(),
@@ -322,7 +375,7 @@ pub(super) fn firmware_flash_usage(
 pub(super) fn build_identity(
     context: &BuildContext<'_>,
     recipe: RecipeIdentity<'_>,
-) -> Result<BuildIdentity, serde_json::Error> {
+) -> Result<BuildIdentity, BuildIdentityError> {
     let features = recipe
         .features
         .into_iter()
@@ -330,29 +383,78 @@ pub(super) fn build_identity(
         .collect::<Vec<_>>();
     let version = context.version();
     let recipe_kind = recipe.kind;
+    let manifest = recipe.manifest;
     let package = recipe.package;
     let binary = recipe.binary;
-    let lto = context.intent().lto().as_str();
-    let body = BuildFingerprint {
+    let requested = RequestedBuildSettingsIdentity {
+        lto: requested_lto(context.intent().lto()),
+    };
+    let settings = build_settings::resolve(
+        context.repository(),
+        manifest,
+        context.intent().lto().resolve(recipe.configured_lto),
+    )?;
+    let fingerprint = fingerprint(&BuildFingerprint {
         firmware_version: version,
         cargo_profile: CARGO_PROFILE,
         recipe_kind,
+        manifest,
         package,
         binary,
         features: &features,
-        lto,
-    };
-    let fingerprint = fingerprint(&body)?;
+        requested: &requested,
+        effective_release: &settings.effective_release,
+        package_overrides: &settings.package_overrides,
+        build_override: &settings.build_override,
+    })?;
     Ok(BuildIdentity {
         fingerprint,
         firmware_version: version.to_string(),
         cargo_profile: CARGO_PROFILE.to_string(),
         recipe_kind: recipe_kind.to_string(),
+        manifest: manifest.to_string(),
         package: package.to_string(),
         binary: binary.to_string(),
         features,
-        lto: lto.to_string(),
+        requested,
+        effective_release: settings.effective_release,
+        package_overrides: settings.package_overrides,
+        build_override: settings.build_override,
     })
+}
+
+pub(super) fn build_fingerprint(
+    identity: &BuildIdentity,
+) -> Result<super::fingerprint::Fingerprint, serde_json::Error> {
+    fingerprint(&BuildFingerprint {
+        firmware_version: &identity.firmware_version,
+        cargo_profile: &identity.cargo_profile,
+        recipe_kind: &identity.recipe_kind,
+        manifest: &identity.manifest,
+        package: &identity.package,
+        binary: &identity.binary,
+        features: &identity.features,
+        requested: &identity.requested,
+        effective_release: &identity.effective_release,
+        package_overrides: &identity.package_overrides,
+        build_override: &identity.build_override,
+    })
+}
+
+const fn requested_lto(value: personal_hopspot_builder::LtoMode) -> RequestedLtoIdentity {
+    match value {
+        personal_hopspot_builder::LtoMode::Configured => RequestedLtoIdentity::Configured,
+        personal_hopspot_builder::LtoMode::Fat => RequestedLtoIdentity::Fat,
+        personal_hopspot_builder::LtoMode::Thin => RequestedLtoIdentity::Thin,
+    }
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum BuildIdentityError {
+    #[error(transparent)]
+    Settings(#[from] build_settings::BuildSettingsError),
+    #[error("could not fingerprint build settings: {0}")]
+    Fingerprint(#[from] serde_json::Error),
 }
 
 fn toolchain_identity(
@@ -407,10 +509,14 @@ struct BuildFingerprint<'a> {
     firmware_version: &'a str,
     cargo_profile: &'a str,
     recipe_kind: &'a str,
+    manifest: &'a str,
     package: &'a str,
     binary: &'a str,
     features: &'a [String],
-    lto: &'a str,
+    requested: &'a RequestedBuildSettingsIdentity,
+    effective_release: &'a ReleaseSettingsIdentity,
+    package_overrides: &'a [super::model::PackageReleaseOverrideIdentity],
+    build_override: &'a super::model::PackageReleaseSettingsIdentity,
 }
 
 #[derive(Serialize)]

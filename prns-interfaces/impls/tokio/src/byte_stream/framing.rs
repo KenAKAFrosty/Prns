@@ -15,7 +15,7 @@ use prns_core::interfaces::kiss_framing::{self, KissScanner};
     feature = "i2p"
 ))]
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialScanner};
-use prns_core::interfaces::{BitrateBps, FrameSink};
+use prns_core::interfaces::{BitrateBps, FrameSink, InterfaceStatus};
 #[cfg(any(target_os = "windows", test))]
 use prns_core::interfaces::{BROADCAST_WIRE_FRAME_LEN, IFAC_MAX_SIZE};
 use prns_core::units::DurationMillis;
@@ -239,6 +239,20 @@ pub struct WireMeters<'a> {
     pub started: tokio::time::Instant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WriteProgressTimeout(std::time::Duration);
+
+impl WriteProgressTimeout {
+    #[cfg(any(feature = "tcp", test))]
+    pub(crate) const fn after(duration: std::time::Duration) -> Self {
+        Self(duration)
+    }
+
+    fn deadline_from(self, now: tokio::time::Instant) -> tokio::time::Instant {
+        now + self.0
+    }
+}
+
 trait StreamWatchdog {
     fn observe_read(&mut self, now: InstantMillis) -> I2pReadObservation;
     fn observe_ordinary_write(&mut self, now: InstantMillis);
@@ -266,6 +280,30 @@ struct PendingWrite {
     len: usize,
     written: usize,
     class: PendingWriteClass,
+    progress_deadline: Option<tokio::time::Instant>,
+}
+
+impl PendingWrite {
+    fn new(len: usize, class: PendingWriteClass, timeout: Option<WriteProgressTimeout>) -> Self {
+        Self {
+            len,
+            written: 0,
+            class,
+            progress_deadline: timeout
+                .map(|timeout| timeout.deadline_from(tokio::time::Instant::now())),
+        }
+    }
+
+    fn advance(
+        &mut self,
+        written: usize,
+        timeout: Option<WriteProgressTimeout>,
+    ) -> Option<(PendingWriteClass, usize)> {
+        self.written += written;
+        self.progress_deadline =
+            timeout.map(|timeout| timeout.deadline_from(tokio::time::Instant::now()));
+        (self.written == self.len).then_some((self.class, self.len))
+    }
 }
 
 fn poll_stream_read<S: AsyncRead + Unpin>(
@@ -319,13 +357,9 @@ async fn next_stream_progress<S: AsyncRead + AsyncWrite + Unpin>(
     .await
 }
 
-fn keepalive_write(frame_buf: &mut [u8]) -> PendingWrite {
+fn keepalive_write(frame_buf: &mut [u8], timeout: Option<WriteProgressTimeout>) -> PendingWrite {
     frame_buf[..HDLC_KEEPALIVE.len()].copy_from_slice(&HDLC_KEEPALIVE);
-    PendingWrite {
-        len: HDLC_KEEPALIVE.len(),
-        written: 0,
-        class: PendingWriteClass::Keepalive,
-    }
+    PendingWrite::new(HDLC_KEEPALIVE.len(), PendingWriteClass::Keepalive, timeout)
 }
 
 fn record_tx_write(
@@ -413,14 +447,13 @@ impl StreamWatchdog for I2pStreamWatchdog {
 }
 
 #[cfg(any(
-    feature = "tcp",
     feature = "serial",
     feature = "kiss",
     feature = "ax25",
     feature = "rnode",
     feature = "pipe",
     feature = "shared-instance",
-    feature = "backbone"
+    test
 ))]
 pub async fn serve<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>(
     stream: S,
@@ -432,7 +465,33 @@ pub async fn serve<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam>(
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
 {
-    serve_inner(stream, buffers, seam, meters, NoIdleWatchdog).await;
+    serve_inner(stream, buffers, seam, meters, NoIdleWatchdog, None).await;
+}
+
+#[cfg(any(
+    feature = "tcp",
+    feature = "backbone",
+    feature = "wifi-aware",
+    feature = "wifi-direct"
+))]
+pub(crate) async fn serve_with_write_progress_timeout<
+    F,
+    const READ_LEN: usize,
+    const FRAMED_LEN: usize,
+    S,
+    Seam,
+>(
+    stream: S,
+    buffers: &mut FramedBuffers<F, READ_LEN, FRAMED_LEN>,
+    seam: &mut Seam,
+    meters: &mut WireMeters<'_>,
+    timeout: WriteProgressTimeout,
+) where
+    F: Framing,
+    S: AsyncRead + AsyncWrite + Unpin,
+    Seam: InterfaceSeam,
+{
+    serve_inner(stream, buffers, seam, meters, NoIdleWatchdog, Some(timeout)).await;
 }
 
 #[cfg(feature = "i2p")]
@@ -451,7 +510,15 @@ pub(crate) async fn serve_with_hdlc_idle_watchdog<
     Seam: InterfaceSeam,
 {
     let now = elapsed_millis(meters.started);
-    serve_inner(stream, buffers, seam, meters, I2pStreamWatchdog::start(now)).await;
+    serve_inner(
+        stream,
+        buffers,
+        seam,
+        meters,
+        I2pStreamWatchdog::start(now),
+        None,
+    )
+    .await;
 }
 
 async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam, Watchdog>(
@@ -460,6 +527,7 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
     seam: &mut Seam,
     meters: &mut WireMeters<'_>,
     mut watchdog: Watchdog,
+    write_progress_timeout: Option<WriteProgressTimeout>,
 ) where
     F: Framing,
     S: AsyncRead + AsyncWrite + Unpin,
@@ -489,16 +557,17 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
     loop {
         if pending_write.is_none() {
             if let Some(outbound) = deferred_outbound.take() {
-                pending_write = F::encode(&outbound, frame_buf).map(|len| PendingWrite {
-                    len,
-                    written: 0,
-                    class: PendingWriteClass::Ordinary,
+                pending_write = F::encode(&outbound, frame_buf).map(|len| {
+                    PendingWrite::new(len, PendingWriteClass::Ordinary, write_progress_timeout)
                 });
             }
         }
         let write_buf = pending_write
             .as_ref()
             .map(|pending| &frame_buf[pending.written..pending.len]);
+        let write_progress_deadline = pending_write
+            .as_ref()
+            .and_then(|pending| pending.progress_deadline);
         tokio::select! {
             progress = next_stream_progress(&mut stream, read_buf, write_buf, poll_order) => {
                 let read = match progress {
@@ -516,8 +585,7 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
                             let Some(pending) = pending_write.as_mut() else {
                                 return;
                             };
-                            pending.written += written;
-                            (pending.written == pending.len).then_some((pending.class, pending.len))
+                            pending.advance(written, write_progress_timeout)
                         };
                         if let Some((class, written)) = completed {
                             pending_write = None;
@@ -583,11 +651,11 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
                     break;
                 }
                 if filled > 0 {
-                    pending_write = Some(PendingWrite {
-                        len: filled,
-                        written: 0,
-                        class: PendingWriteClass::Ordinary,
-                    });
+                    pending_write = Some(PendingWrite::new(
+                        filled,
+                        PendingWriteClass::Ordinary,
+                        write_progress_timeout,
+                    ));
                 }
             }
             verdict = watchdog.wait_for_tick(started), if pending_write.is_none() => {
@@ -597,16 +665,33 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
                         status.set_connection(prns_core::interfaces::ConnectionState::Degraded);
                     }
                     I2pWatchdogVerdict::TransmitKeepalive => {
-                        pending_write = Some(keepalive_write(frame_buf));
+                        pending_write = Some(keepalive_write(frame_buf, write_progress_timeout));
                     }
                     I2pWatchdogVerdict::DegradeAndTransmitKeepalive => {
                         status.set_connection(prns_core::interfaces::ConnectionState::Degraded);
-                        pending_write = Some(keepalive_write(frame_buf));
+                        pending_write = Some(keepalive_write(frame_buf, write_progress_timeout));
                     }
                     I2pWatchdogVerdict::Disconnect => return,
                 }
             }
+            () = wait_for_write_progress_deadline(write_progress_deadline), if write_progress_deadline.is_some() => {
+                if let Some(timeout) = write_progress_timeout {
+                    let timeout_ms = timeout.0.as_millis();
+                    crate::diagnostic_log::warn!(
+                        "byte-stream interface {:?} made no write progress for {timeout_ms} ms; disconnecting",
+                        status.id().as_bytes(),
+                    );
+                }
+                return;
+            }
         }
+    }
+}
+
+async fn wait_for_write_progress_deadline(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
     }
 }
 
@@ -1060,6 +1145,95 @@ mod tests {
 
         drop(far);
         served.await.expect("the serve loop returns on stream drop");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_writer_without_progress_disconnects_even_while_reads_advance() {
+        let (mut producer, consumer) = tokio_grant_lane(4096, 1);
+        let (near, mut far) = tokio::io::duplex(1);
+        let writes = Arc::new(AtomicUsize::new(0));
+        let counted = WriteCounting {
+            stream: near,
+            writes: writes.clone(),
+        };
+        let inbound_commits = Arc::new(AtomicUsize::new(0));
+        let observed_commits = inbound_commits.clone();
+        let served = tokio::spawn(async move {
+            let mut buffers = FramedBuffers::<HdlcFraming, 4096, 8192>::new();
+            let mut seam = LaneSeam {
+                outbound: consumer,
+                inbound: std::vec::Vec::new(),
+                inbound_commits,
+            };
+            let status = TokioInterfaceStatus::new_accounted(
+                InterfaceId::new([11u8; 8]),
+                ConnectionState::Connected,
+            );
+            let mut airtime = AirtimeLedger::default();
+            let mut throughput = ThroughputLedger::new();
+            let mut meters = WireMeters {
+                status: &status,
+                airtime: &mut airtime,
+                throughput: &mut throughput,
+                bitrate: BitrateBps::guess(1_000_000),
+                started: tokio::time::Instant::now(),
+            };
+            serve_with_write_progress_timeout(
+                counted,
+                &mut buffers,
+                &mut seam,
+                &mut meters,
+                WriteProgressTimeout::after(std::time::Duration::from_millis(10)),
+            )
+            .await;
+        });
+
+        let mut frame = [0u8; 64];
+        let len = HdlcFraming::encode(b"inbound", &mut frame).expect("the frame fits");
+        tokio::io::AsyncWriteExt::write_all(&mut far, &frame[..len])
+            .await
+            .expect("the readable half starts live");
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while observed_commits.load(Ordering::Relaxed) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the inbound frame advances before any outbound write");
+
+        producer
+            .try_grant()
+            .expect("the lane has a free slot")
+            .fill(&[0x11; 4096]);
+        producer.commit();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while writes.load(Ordering::Relaxed) < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the outbound write reaches backpressure");
+
+        tokio::io::AsyncWriteExt::write_all(&mut far, &frame[..len])
+            .await
+            .expect("the readable half remains live during write backpressure");
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while observed_commits.load(Ordering::Relaxed) < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("inbound processing continues while the write is stalled");
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), served)
+            .await
+            .expect("the stalled writer reaches its progress deadline")
+            .expect("the serve task exits cleanly");
+        assert!(
+            writes.load(Ordering::Relaxed) >= 2,
+            "the stream accepted one byte before withholding further progress"
+        );
+        assert_eq!(observed_commits.load(Ordering::Relaxed), 2);
     }
 
     #[tokio::test]

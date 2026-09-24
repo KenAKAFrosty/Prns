@@ -25,6 +25,10 @@ include = [
 [lib]
 path = "src/lib.rs"
 
+[[example]]
+name = "subghz_turbo_evidence"
+required-features = ["std"]
+
 [features]
 default = ["std", "std-sync-host", "resource-work-offload"]
 # `zeroize/alloc` rides our own `alloc` gate so `Zeroize for Vec<u8>` is present by declaration rather than incidental dependency feature unification. The host identity vault's keyring backend zeroizes the secret bytes the OS store hands back.
@@ -33,7 +37,8 @@ ed25519-batch = ["alloc", "ed25519-dalek/batch"]
 signed-artifact = ["alloc", "dep:rmp"]
 rnx = ["alloc", "dep:rmp"]
 i2p = ["alloc", "dep:base64", "dep:data-encoding"]
-shared-instance-rpc = ["alloc", "dep:md-5", "dep:rmp"]
+rns-management-wire = []
+shared-instance-rpc = ["alloc", "dep:md-5", "dep:rmp", "rns-management-wire"]
 interface-discovery = ["alloc", "dep:rmp"]
 interface-discovery-archive = ["interface-discovery", "std", "dep:serde", "dep:serde_json"]
 # Place fixed-capacity bulk in a caller-chosen heap region (PSRAM) via a custom `Allocator`: pulls the `allocator_api2` backport and unlocks the allocator-generic `FixedHeap*` columns + the `Esp32S3` prepackage. Off by default. Ordinary hosts never link the backport; they use the inline or growable residences.

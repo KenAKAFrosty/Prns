@@ -11,12 +11,12 @@ const EXAMPLE_ENDPOINT_ID: &str = "/example/echo";
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct Echo;
-impl RequestEndpoint for Echo {
+impl RequestEndpoint<personal_rns::runtime::NoRemoteControlHostControls> for Echo {
     const ENDPOINT_ID: &'static str = EXAMPLE_ENDPOINT_ID;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(
-        mut context: RequestContext<'_, ()>,
+        mut context: RequestContext<'_, personal_rns::runtime::NoRemoteControlHostControls>,
         _node: &impl personal_rns::runtime::PrnsNodeApi,
     ) -> Result<(), Decline> {
         let data_from_request = context.data;
@@ -45,7 +45,7 @@ async fn main() {
         transport_identity: None,
         remote_control: common::remote_control_service(0xD0, 0xD1),
         pre_configured_destinations: [responder_destination],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![Echo],
         on_event: |_event, _state| {},
@@ -63,7 +63,7 @@ async fn main() {
         transport_identity: None,
         remote_control: common::remote_control_service(0xD2, 0xD3),
         pre_configured_destinations: [requester_destination()],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| {

@@ -299,7 +299,7 @@ fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
             PlannedMedium::AutoWifi(_)
             | PlannedMedium::Udp { .. }
             | PlannedMedium::PrnsUsbAuto
-            | PlannedMedium::PrnsBluetoothAuto => report.online = 1,
+            | PlannedMedium::PrnsBluetoothAuto(_) => report.online = 1,
             PlannedMedium::I2p {
                 peers,
                 reachability,
@@ -404,7 +404,7 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::I2p { .. } => "i2p",
         PlannedMedium::Weave { .. } => "weave",
         PlannedMedium::PrnsUsbAuto => "prns_usb_auto",
-        PlannedMedium::PrnsBluetoothAuto => "prns_bluetooth_auto",
+        PlannedMedium::PrnsBluetoothAuto(_) => "prns_bluetooth_auto",
         PlannedMedium::PrnsWebSocketClient { .. } => "prns_websocket_client",
         PlannedMedium::PrnsWebSocketServer { .. } => "prns_websocket_server",
     }
@@ -432,12 +432,12 @@ mod tests {
                 remote_control: crate::test_support::remote_control_service(),
                 pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(
                 ),
-                app_state: (),
+                app_state: personal_rns::runtime::NoRemoteControlHostControls,
                 storage: GrowableHeap,
                 request_endpoints: personal_rns::request_endpoints![],
                 interfaces: ManuallyAttached,
                 persistence: NoPersistence,
-                on_event: |_event, _state: &()| {},
+                on_event: |_event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {},
             })
         };
     }

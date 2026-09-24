@@ -1,8 +1,10 @@
 mod board;
 mod entropy;
 mod firmware;
+mod remote_control;
 
 use embassy_executor::Spawner;
+use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
@@ -10,7 +12,6 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
-use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::gpio::{Input, Output};
 use esp_hal::peripherals::BT;
 use esp_hal::rng::TrngSource;
@@ -42,7 +43,7 @@ use static_cell::StaticCell;
 use crate::storage::InternalStorage;
 use entropy::S3Fn8EntropySource;
 
-esp_app_desc!();
+firmware_app_descriptor!();
 
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"wslv3usb");
 const USB_UART_BAUD: u32 = 115_200;
@@ -89,10 +90,12 @@ type InterfaceStore = EmbassyInterfaceStore<
     PACKET_PHY_RETENTION_CAPACITY,
     PACKET_PHY_INDEX_BUCKETS,
 >;
+const REMOTE_CONTROL_COMMAND_DEPTH: usize = 1;
+type AppState = personal_hopspot_core::HopspotCommandHandle<REMOTE_CONTROL_COMMAND_DEPTH>;
 type Node = PrnsNode<
-    (),
+    AppState,
     personal_hopspot_core::node_pages::NodePageRoutes,
-    for<'a> fn(PrnsEvent<'a>, &()),
+    for<'a> fn(PrnsEvent<'a>, &AppState),
     InternalStorage,
     EmbassyHost<Mtx, S3Fn8EntropySource>,
     Mtx,
@@ -123,6 +126,9 @@ static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
+static REMOTE_CONTROL_COMMANDS: personal_hopspot_core::HopspotCommandMailbox<
+    REMOTE_CONTROL_COMMAND_DEPTH,
+> = personal_hopspot_core::HopspotCommandMailbox::new();
 static USB_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
     EMBEDDED_MAX_WIRE_FRAME_LEN,
@@ -189,6 +195,6 @@ async fn ble_task(
     crate::bluetooth_auto::run(connector, mac, identity, fleet, &BLE_SHARED, spawner).await;
 }
 
-fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
+fn ignore_events(_event: PrnsEvent<'_>, _state: &AppState) {}
 
 pub use firmware::run;

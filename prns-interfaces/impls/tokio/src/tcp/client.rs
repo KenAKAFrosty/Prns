@@ -2,7 +2,7 @@ use std::string::String;
 
 use crate::byte_stream::framing;
 use crate::reconnect::ReconnectPolicy;
-use crate::tcp::{connect, tune_for_tunnel, TcpConnectionSettings};
+use crate::tcp::{connect, tune_for_tunnel, write_progress_timeout, TcpConnectionSettings};
 use prns_core::interfaces::tcp::{self, TcpWireFraming};
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
@@ -261,9 +261,10 @@ impl Interface for TcpClientInterface {
                     bitrate: self.policy.bitrate,
                     started,
                 };
+                let write_progress_timeout = write_progress_timeout(self.connection.tunnel);
                 match self.framing {
                     TcpWireFraming::Hdlc => {
-                        framing::serve::<
+                        framing::serve_with_write_progress_timeout::<
                             framing::HdlcFraming,
                             { tcp::READ_BUF_LEN },
                             { tcp::FRAMED_LEN },
@@ -274,11 +275,12 @@ impl Interface for TcpClientInterface {
                             buffers.get_or_insert_with(framing::FramedBuffers::new),
                             &mut seam,
                             &mut meters,
+                            write_progress_timeout,
                         )
                         .await;
                     }
                     TcpWireFraming::Kiss => {
-                        framing::serve::<
+                        framing::serve_with_write_progress_timeout::<
                             framing::KissFraming,
                             { tcp::READ_BUF_LEN },
                             { tcp::KISS_FRAMED_LEN },
@@ -289,6 +291,7 @@ impl Interface for TcpClientInterface {
                             kiss_buffers.get_or_insert_with(framing::FramedBuffers::new),
                             &mut seam,
                             &mut meters,
+                            write_progress_timeout,
                         )
                         .await;
                     }

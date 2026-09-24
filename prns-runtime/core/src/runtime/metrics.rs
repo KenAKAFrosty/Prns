@@ -314,6 +314,8 @@ pub struct EgressMetricsSnapshot {
     pub enqueued_frames: u64,
     pub unavailable_frame_skips: u64,
     pub backpressured_frames: u64,
+    pub flushed_pending_frames: u64,
+    pub unavailable_pending_drops: u64,
     pub pending_frames: u32,
     pub maximum_pending_frames: u32,
     pub full_lane_drops: u64,

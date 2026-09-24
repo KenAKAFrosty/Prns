@@ -156,6 +156,8 @@ async fn runtime_attachment_carries_ifac_wire_and_status_metadata() {
                 links: 0,
                 transported_links: 0,
                 membership: Membership::Independent,
+                radio: crate::interfaces::RadioIndication::for_kind(id.kind()),
+                details: crate::interfaces::PeerDetails::NotApplicable,
             },
             ifac: Some(InterfaceIfacSnapshot {
                 signature,

@@ -370,6 +370,7 @@ dependencies = [
  "prns-core",
  "prns-macros",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]

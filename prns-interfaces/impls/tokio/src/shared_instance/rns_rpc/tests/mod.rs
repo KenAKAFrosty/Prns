@@ -72,5 +72,6 @@ fn test_rpc_service(
         started_at: std::time::Instant::now(),
         transport_identity: TEST_TRANSPORT_IDENTITY_HASH,
         network_identity: None,
+        probe_responder: None,
     }
 }

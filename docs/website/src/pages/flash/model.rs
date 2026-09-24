@@ -218,7 +218,9 @@ pub(super) fn preparation_guide(
             uf2_preparation_guide(target)
         }
         PreparationProfile::MeshPocketUf2 => mesh_pocket_preparation_guide(target),
-        PreparationProfile::T096Uf2 => uf2_preparation_guide(target),
+        PreparationProfile::MuziBaseDuoUf2 | PreparationProfile::T096Uf2 => {
+            uf2_preparation_guide(target)
+        }
         PreparationProfile::T1000eNrfSerialDfu => {
             t1000e_preparation_guide(target, nrf_recovery)
         }

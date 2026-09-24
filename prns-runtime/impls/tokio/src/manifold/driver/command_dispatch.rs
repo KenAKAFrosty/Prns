@@ -2,7 +2,6 @@ use crate::engine::{
     CryptoOwed, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, OwedWork,
     PrnsCommand, Respond, RespondData, SendRequest, SendRequestData, WakeSchedules,
 };
-use crate::interfaces::InterfaceIfac;
 use crate::manifold::Host;
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::{
@@ -20,8 +19,8 @@ use prns_runtime::runtime::persistence_snapshots;
 
 use super::crypto_pool::CryptoPool;
 use super::egress::{
-    clear_announce_queues, route_reaction, route_reaction_with_work, Egress, InterfacePacer,
-    WireScratch,
+    clear_announce_queues, route_reaction, route_reaction_with_work, Egress, InterfaceIfacs,
+    InterfacePacers, WireScratch,
 };
 use super::host_protocol::{
     HostCommand, HostResourceDigestPreparation, HostResourcePayload, RequestAnyHostCommand,
@@ -36,8 +35,8 @@ use super::owed_work::PendingOwedWork;
 fn route_command_reaction_with_owed_work<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     owed_work: &mut PendingOwedWork,
@@ -61,8 +60,8 @@ fn route_command_reaction_with_owed_work<J>(
 fn route_command_reaction<J>(
     reaction: EngineReaction<'_>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     now: InstantMillis,

@@ -1,7 +1,7 @@
 use crate::engine::CommandId;
 use crate::identity::IdentityHash;
 use crate::remote_control::{
-    ForgetRemoteControlTargetOutcome, RemoteControlTargetAccess, RemoteControlTargetIdentity,
+    ForgetRemoteControlTargetOutcome, RemoteControlTargetAccess,
     SetRemoteControlTargetAccessOutcome,
 };
 use crate::runtime::{
@@ -28,7 +28,7 @@ pub(super) enum RemoteControlTargetAccessCommand {
     },
     ForgetTarget {
         id: CommandId,
-        target: RemoteControlTargetIdentity,
+        target: IdentityHash,
     },
 }
 

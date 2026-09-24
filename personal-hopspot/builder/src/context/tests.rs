@@ -67,7 +67,11 @@ fn evidence_context_separates_linker_maps_by_lto_mode() -> Result<(), BuildError
     );
     assert_eq!(
         context.cargo_target_directory("t114"),
-        Some(PathBuf::from("/artifacts/thin/work/t114/cargo"))
+        Some(PathBuf::from("/artifacts/thin/cargo-cache"))
+    );
+    assert_eq!(
+        context.cargo_target_directory("t096"),
+        context.cargo_target_directory("t114")
     );
     assert_eq!(
         context.work_output("t114"),

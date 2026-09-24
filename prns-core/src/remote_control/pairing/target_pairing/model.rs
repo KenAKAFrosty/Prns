@@ -1,6 +1,7 @@
 use crate::identity::IdentityHash;
 use crate::remote_control::{
-    RemoteControlControllerGrant, RemoteControlControllerIdentity, RemoteControlTargetIdentity,
+    RemoteControlControllerAuthority, RemoteControlControllerGrant,
+    RemoteControlControllerIdentity, RemoteControlTargetIdentity,
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
@@ -11,8 +12,8 @@ use super::super::{
     RemoteControlPairingCommit, RemoteControlPairingCompleted,
     RemoteControlPairingCompletionSigningError, RemoteControlPairingConfirmationCode,
     RemoteControlPairingContext, RemoteControlPairingOffer, RemoteControlPairingPermissions,
-    RemoteControlPairingTranscript, RemoteControlPairingTranscriptDigest,
-    RemoteControlPairingWindow,
+    RemoteControlPairingProtocolVersion, RemoteControlPairingTranscript,
+    RemoteControlPairingTranscriptDigest, RemoteControlPairingWindow,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,6 +380,14 @@ pub enum RemoteControlTargetPairingBeginRejection {
         identified: IdentityHash,
     },
     InvalidInvitationProof,
+    AuthorityUnsupported {
+        version: RemoteControlPairingProtocolVersion,
+        authority: RemoteControlControllerAuthority,
+    },
+    RequestUnsupportedForVersion {
+        version: RemoteControlPairingProtocolVersion,
+        request: crate::remote_control::RemoteControlRequestKind,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
