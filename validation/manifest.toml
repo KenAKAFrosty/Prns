@@ -45,6 +45,8 @@ cargo_lock_workspaces = [
     "prns-config",
     "prns-ffi",
     "prns-host/abi/c",
+    "prns-host/bindings/uniffi",
+    "prns-host/bindings/uniffi/image",
     "prns-host/impls/cooperative",
     "prns-host/impls/native",
     "prns-host/impls/snapshot",
@@ -52,6 +54,7 @@ cargo_lock_workspaces = [
     "prns-interfaces/impls/embassy",
     "prns-interfaces/impls/tokio",
     "prns-napi",
+    "prns-react-native/platform/android",
     "prns-runtime/impls/embassy",
     "prns-runtime/impls/tokio",
     "prns-wasm",
@@ -105,6 +108,8 @@ cargo_manifests = [
     "prns-ffi/Cargo.toml",
     "prns-flash-manifest/Cargo.toml",
     "prns-host/abi/c/Cargo.toml",
+    "prns-host/bindings/uniffi/Cargo.toml",
+    "prns-host/bindings/uniffi/image/Cargo.toml",
     "prns-host/core/Cargo.toml",
     "prns-host/impls/cooperative/Cargo.toml",
     "prns-host/impls/native/Cargo.toml",
@@ -114,6 +119,7 @@ cargo_manifests = [
     "prns-interfaces/impls/tokio/Cargo.toml",
     "prns-macros/Cargo.toml",
     "prns-napi/Cargo.toml",
+    "prns-react-native/platform/android/Cargo.toml",
     "prns-nrf-dfu/Cargo.toml",
     "prns-nrf-dfu-wasm/Cargo.toml",
     "prns-runtime/core/Cargo.toml",
@@ -141,11 +147,14 @@ format_manifests = [
     "prns-config/Cargo.toml",
     "prns-ffi/Cargo.toml",
     "prns-host/abi/c/Cargo.toml",
+    "prns-host/bindings/uniffi/Cargo.toml",
+    "prns-host/bindings/uniffi/image/Cargo.toml",
     "prns-host/impls/native/Cargo.toml",
     "prns-host/impls/snapshot/Cargo.toml",
     "prns-interfaces/impls/embassy/Cargo.toml",
     "prns-interfaces/impls/tokio/Cargo.toml",
     "prns-napi/Cargo.toml",
+    "prns-react-native/platform/android/Cargo.toml",
     "prns-runtime/impls/embassy/Cargo.toml",
     "prns-runtime/impls/tokio/Cargo.toml",
     "prns-wasm/Cargo.toml",
@@ -193,6 +202,12 @@ timeout_seconds = 60
 command = ["__RUNNER_PYTHON__", "tools/prns", "run", "repo.host-contract.check"]
 inputs = [
   "tools/repo/generate-host-contract.py",
+  "tools/repo/host_contract",
+  "prns-host/schema/native-extensions-v1.json",
+  "prns-host/schema/remote-control-v1.generated.json",
+  "prns-host/bindings/uniffi/src/transport.generated.rs",
+  "prns-host/bindings/uniffi/coverage.generated.json",
+  "prns-react-native/src/generated/host-adapter.generated.ts",
   "prns-host/schema/host-contract-v1.json",
   "prns-host/core/src/generated.rs",
   "prns-host/abi/c/include/prns_host.h",
@@ -215,6 +230,138 @@ inputs = [
   "prns-js/src/contract.generated.ts",
 ]
 artifacts = "validation-artifacts/results/host-contract-generated"
+
+[[suite]]
+id = "host-native-session"
+domain = "platform"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 900
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-host/impls/native/Cargo.toml", "--features", "android-platform", "--lib"]
+inputs = ["prns-host/impls/native", "prns-host/core", "personal-rns", "prns-runtime", "prns-interfaces", "prns-ffi"]
+artifacts = "validation-artifacts/results/host-native-session"
+
+[[suite]]
+id = "host-uniffi-session"
+domain = "platform"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 900
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-host/bindings/uniffi/Cargo.toml"]
+inputs = ["prns-host/bindings/uniffi", "prns-host/impls/native", "prns-host/core", "prns-host/schema", "tools/repo/host_contract"]
+artifacts = "validation-artifacts/results/host-uniffi-session"
+
+[[suite]]
+id = "host-uniffi-conformance"
+domain = "interop"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "tools/prns", "run", "repo.host-uniffi.check"]
+inputs = ["tools/repo/check-host-uniffi.py", "tools/repo/host_contract", "prns-host/bindings/uniffi", "prns-host/impls/native", "prns-host/core", "prns-host/schema", "prns-host/conformance"]
+artifacts = "validation-artifacts/results/host-uniffi-conformance"
+
+[[suite]]
+id = "react-native-sdk"
+domain = "platform"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "node"
+timeout_seconds = 300
+command = ["npm", "--prefix", "prns-react-native", "run", "verify"]
+inputs = ["prns-react-native", "prns-js/src", "prns-js/package.json", "prns-host/bindings/uniffi", "prns-host/schema", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-sdk"
+
+[[suite]]
+id = "react-native-generated"
+domain = "platform"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 2400
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "generate", "--check"]
+inputs = ["prns-react-native", "prns-host", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-generated"
+
+[[suite]]
+id = "react-native-apple-platform"
+domain = "platform"
+group = "deterministic"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "swift"
+timeout_seconds = 300
+command = ["npm", "--prefix", "prns-react-native", "run", "test:apple"]
+inputs = ["prns-react-native/ios", "prns-react-native/scripts/test-apple.mjs", "prns-react-native/tests/apple", "prns-react-native/package.json"]
+artifacts = "validation-artifacts/results/react-native-apple-platform"
+
+[[suite]]
+id = "react-native-android-image"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "android", "--targets", "arm64-v8a"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-android-image"
+
+[[suite]]
+id = "react-native-android-consumer"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "node"
+timeout_seconds = 1800
+command = ["npm", "--prefix", "prns-react-native", "run", "test:consumer", "--", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-android-consumer"
+
+[[suite]]
+id = "react-native-apple-image"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "ios", "--sim-only", "--targets", "aarch64-apple-ios-sim"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-apple-image"
+
+[[suite]]
+id = "react-native-mobile-archive"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "node"
+timeout_seconds = 300
+command = ["npm", "--prefix", "prns-react-native", "run", "pack:check", "--", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-mobile-archive"
+
+[[suite]]
+id = "react-native-apple-consumer"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "node"
+timeout_seconds = 1800
+command = ["node", "prns-react-native/tools/detached-consumer.mjs", "--ios", "--require-ios", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-apple-consumer"
 
 [[suite]]
 id = "host-c-contract"
@@ -1049,6 +1196,8 @@ inputs = [
   "personal-hopspot/sdk/hopspot/contract.js",
   "personal-hopspot/sdk/hopspot/contract.cjs",
   "personal-hopspot/sdk/hopspot/contract.d.ts",
+  "personal-hopspot/sdk/hopspot/remote-control.js",
+  "personal-hopspot/sdk/hopspot/remote-control.d.ts",
   "personal-hopspot/sdk/hopspot/native.js",
   "personal-hopspot/sdk/hopspot/native.cjs",
   "personal-hopspot/sdk/hopspot/native.d.ts",

@@ -1419,17 +1419,19 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
           plaintext: bytes("plaintext", data.plaintext).slice(),
         }),
       ),
-    linkDelivery: (data) =>
-      casework.Tag(
+    linkDelivery: (data) => {
+      const localDestination = optionalBytes(data.localDestination);
+      return casework.Tag(
         "Application",
         casework.Tag("LinkDelivery", {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
-          sourceInterface: contract.interfaceId(
-            bytes("sourceInterface", data.sourceInterface),
-          ),
+          sourceInterface: contract.interfaceId(bytes("sourceInterface", data.sourceInterface)),
           plaintext: bytes("plaintext", data.plaintext).slice(),
+          ...(localDestination === undefined ? {} : { localDestination: contract.destinationHash(localDestination) }),
+          arrivedAtMillis: rawSafeUint("arrivedAtMillis", data.arrivedAtMillis),
         }),
-      ),
+      );
+    },
     request: (rawRequest) => {
       const request = {
         destination: contract.destinationHash(

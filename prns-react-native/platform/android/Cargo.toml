@@ -1,0 +1,22 @@
+[package]
+name = "prns-expo-android"
+version = "0.3.7"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+prns-host-native = { path = "../../../prns-host/impls/native", features = ["android-platform"] }
+prns-ffi = { path = "../../../prns-ffi", default-features = false }
+jni = { version = "0.21", default-features = false }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
