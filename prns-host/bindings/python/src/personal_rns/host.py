@@ -1275,10 +1275,13 @@ def _decode_event(native: NativeLibrary, event):
             _event_bytes(native, event, f.PLAINTEXT),
         )
     if application is g.ApplicationEventKind.LINK_DELIVERY:
+        local_destination = _optional_event_bytes(native, event, f.LOCAL_DESTINATION)
         return g.ApplicationEventLinkDelivery(
             g.LinkId(_event_bytes(native, event, f.LINK_ID)),
             g.InterfaceId(_event_bytes(native, event, f.SOURCE_INTERFACE)),
             _event_bytes(native, event, f.PLAINTEXT),
+            None if local_destination is None else g.DestinationHash(local_destination),
+            _event_u64(native, event, f.ARRIVED_AT_MILLIS),
         )
     if application is g.ApplicationEventKind.REQUEST:
         requester = _optional_event_bytes(native, event, f.REQUESTER)

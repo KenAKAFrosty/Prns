@@ -7,7 +7,7 @@ namespace PersonalRns;
 public static class HostContract
 {
     public const uint Abi = 1;
-    public const uint SchemaVersion = 1;
+    public const uint SchemaVersion = 2;
     public const string ProductVersion = "0.3.7";
     public const int DestinationHashLength = 16;
     public const int IdentityHashLength = 16;
@@ -424,6 +424,8 @@ public enum EventField : uint
     PersistenceCause = 38,
     PersistenceTarget = 39,
     AppData = 40,
+    LocalDestination = 41,
+    ArrivedAtMillis = 42,
 }
 
 public readonly struct DestinationHash : IEquatable<DestinationHash>
@@ -1562,7 +1564,9 @@ public abstract record ApplicationEvent
     public sealed record LinkDelivery(
         LinkId LinkId,
         InterfaceId SourceInterface,
-        ReadOnlyMemory<byte> Plaintext
+        ReadOnlyMemory<byte> Plaintext,
+        DestinationHash? LocalDestination,
+        ulong ArrivedAtMillis
     ) : ApplicationEvent;
 
     public TResult Match<TResult>(

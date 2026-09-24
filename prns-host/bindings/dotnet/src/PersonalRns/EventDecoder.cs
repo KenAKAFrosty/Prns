@@ -16,7 +16,10 @@ internal static class EventDecoder
                 new ApplicationEvent.LinkDelivery(
                     new LinkId(Bytes(@event, EventField.LinkId)),
                     new InterfaceId(Bytes(@event, EventField.SourceInterface)),
-                    Bytes(@event, EventField.Plaintext)
+                    Bytes(@event, EventField.Plaintext),
+                    OptionalBytes(@event, EventField.LocalDestination) is { } localDestination
+                        ? new DestinationHash(localDestination) : null,
+                    U64(@event, EventField.ArrivedAtMillis)
                 ),
             ApplicationEventKind.Request =>
                 new ApplicationEvent.Request(

@@ -635,6 +635,10 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(LinkPhase::Active { key, role, .. }) = self.links.phase_for(&link_id) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
+        let local_destination = match role {
+            LinkRole::Initiator { .. } => None,
+            LinkRole::Responder { destination, .. } => Some(*destination),
+        };
         let owed = match role {
             LinkRole::Initiator { .. } => None,
             LinkRole::Responder {
@@ -658,6 +662,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::Delivery {
             delivery: Delivery::Link(LinkDelivery {
                 link_id,
+                local_destination,
                 plaintext,
                 arrived_at,
                 source_interface,

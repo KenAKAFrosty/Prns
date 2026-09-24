@@ -14,21 +14,21 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = []
+android-platform = ["dep:prns-ffi"]
+
 [dependencies]
+prns-ffi = { path = "../../../prns-ffi", optional = true, default-features = false }
+
 personal-rns = { path = "../../../personal-rns", default-features = false, features = [
     "tokio-host",
     "tcp",
     "udp",
-    "serial",
-    "kiss",
-    "ax25",
-    "rnode",
     "pipe",
     "backbone",
     "i2p",
-    "weave",
     "wifi-auto",
-    "usb",
     "bluetooth-auto",
     "websocket",
     "config",
@@ -42,6 +42,13 @@ tokio = { version = "1", default-features = false, features = [
     "sync",
     "time",
     "net",
+] }
+
+# Mobile hosts use prepared platform adapters; they must not compile desktop
+# serial/BLE-manager and USB discovery implementations by accident.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+personal-rns = { path = "../../../personal-rns", default-features = false, features = [
+    "serial", "kiss", "ax25", "rnode", "weave", "usb",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

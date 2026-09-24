@@ -49,7 +49,7 @@ function compressionModule(url: string): Promise<CompressionModule> {
 }
 
 async function loadCompressionModule(url: string): Promise<CompressionModule> {
-  const imported: unknown = await import(url);
+  const imported: unknown = await import(/* @metro-ignore */ /* @vite-ignore */ /* webpackIgnore: true */ url);
   if (
     typeof imported !== "object" ||
     imported === null ||

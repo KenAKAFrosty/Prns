@@ -23,10 +23,11 @@ use prns_core::remote_control::{
     RemoteControlInterfaceGroup, RemoteControlInterfaceInventory, RemoteControlInterfacePage,
     RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
     RemoteControlLoRaProfile, RemoteControlModeOutcome, RemoteControlPeerPage,
-    RemoteControlPowerOutcome, RemoteControlRequestKind, RemoteControlRequestSet,
-    RemoteControlRevokeControllerOutcome, RemoteControlSleepOutcome, RemoteControlStationUplink,
-    RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
-    RemoteControlWifiStation, RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
+    RemoteControlPowerOutcome, RemoteControlRequest, RemoteControlRequestKind,
+    RemoteControlRequestSet, RemoteControlResponse, RemoteControlRevokeControllerOutcome,
+    RemoteControlSleepOutcome, RemoteControlStationUplink, RemoteControlSystemPower,
+    RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome, RemoteControlWifiStation,
+    RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
 };
 
 use super::{PrnsNodeHandle, RemoteControlHandle};
@@ -89,6 +90,18 @@ impl RemoteControlTargetConnectionTransport for PrnsNodeHandle {
 }
 
 impl RemoteControlTargetHandle<'_> {
+    /// Execute a typed request after checking the persisted target grant.
+    pub async fn exchange(
+        &self,
+        request: RemoteControlRequest,
+    ) -> Result<(RemoteControlResponse, RttMillis), RemoteControlTargetOperationError> {
+        self.connection.admit(request.kind())?;
+        self.remote_control
+            .exchange(request)
+            .await
+            .map_err(Into::into)
+    }
+
     remote_control_target_apply_method!(
         set_system_power,
         SetSystemPower,

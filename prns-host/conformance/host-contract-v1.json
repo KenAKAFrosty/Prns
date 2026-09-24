@@ -2,6 +2,27 @@
   "abi": 1,
   "commandProjection": {
     "cPrefix": "prns_host_",
+    "outcomes": {
+      "AllowRequester": "RequesterAllowed",
+      "Announce": "Announced",
+      "AttachInterface": "InterfaceAttached",
+      "AttachTcpClient": "InterfaceAttached",
+      "AttachTcpServer": "InterfaceAttached",
+      "AttachUdp": "InterfaceAttached",
+      "CloseLink": "LinkCloseQueued",
+      "DetachInterface": "InterfaceDetached",
+      "EstablishLink": "LinkEstablished",
+      "Identify": "Identified",
+      "Request": "ResponseReceived",
+      "RequestPath": "PathDiscovered",
+      "Respond": "ResponseSent",
+      "SendChannelMessage": "PacketDelivered",
+      "SendLinkPacket": "PacketDelivered",
+      "SendResource": "ResourceSent",
+      "SendSinglePacket": "PacketDelivered",
+      "SetDestinationResourceStrategy": "ResourceStrategySet",
+      "SetLinkResourceStrategy": "ResourceStrategySet"
+    },
     "receiver": "Host",
     "result": "IssuedCommand",
     "union": "HostCommand"
@@ -11,25 +32,25 @@
       "outcome": "Compatible",
       "requiredAbi": 1,
       "requiredProductVersion": "0.3.7",
-      "requiredSchemaVersion": 1
+      "requiredSchemaVersion": 2
     },
     {
       "outcome": "ContractMismatch",
       "requiredAbi": 2,
-      "requiredProductVersion": "0.3.7",
-      "requiredSchemaVersion": 1
-    },
-    {
-      "outcome": "ContractMismatch",
-      "requiredAbi": 1,
       "requiredProductVersion": "0.3.7",
       "requiredSchemaVersion": 2
     },
     {
       "outcome": "ContractMismatch",
       "requiredAbi": 1,
+      "requiredProductVersion": "0.3.7",
+      "requiredSchemaVersion": 3
+    },
+    {
+      "outcome": "ContractMismatch",
+      "requiredAbi": 1,
       "requiredProductVersion": "0.0.0",
-      "requiredSchemaVersion": 1
+      "requiredSchemaVersion": 2
     }
   ],
   "enums": {
@@ -185,6 +206,7 @@
     },
     "EventField": {
       "AppData": 40,
+      "ArrivedAtMillis": 42,
       "ArrivedOn": 22,
       "AttachedInterface": 21,
       "Cause": 24,
@@ -199,6 +221,7 @@
       "Identity": 19,
       "Kind": 28,
       "LinkId": 4,
+      "LocalDestination": 41,
       "MessageType": 18,
       "Metadata": 14,
       "OriginalHash": 13,
@@ -1574,7 +1597,188 @@
       "storage": "u64"
     }
   },
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "session": {
+    "records": [
+      {
+        "fields": [
+          {
+            "name": "pendingCommands",
+            "type": "safeUint"
+          },
+          {
+            "name": "applicationEvents",
+            "type": "safeUint"
+          },
+          {
+            "name": "retainedEventBytes",
+            "type": "safeUint"
+          },
+          {
+            "name": "diagnostics",
+            "type": "safeUint"
+          }
+        ],
+        "name": "PrnsLimits"
+      },
+      {
+        "fields": [
+          {
+            "name": "identity",
+            "type": "IdentityConfig"
+          },
+          {
+            "name": "persistence",
+            "type": "PersistenceConfig"
+          },
+          {
+            "name": "role",
+            "type": "HostRole"
+          },
+          {
+            "name": "destinations",
+            "type": {
+              "array": "DestinationConfig"
+            }
+          },
+          {
+            "name": "requiredCapabilities",
+            "type": {
+              "array": "Capability"
+            }
+          },
+          {
+            "name": "limits",
+            "type": "PrnsLimits"
+          }
+        ],
+        "name": "HostConfig"
+      },
+      {
+        "fields": [
+          {
+            "name": "revision",
+            "type": "u64"
+          },
+          {
+            "name": "state",
+            "type": "HostLifecycleState"
+          }
+        ],
+        "name": "LifecycleSnapshot"
+      }
+    ],
+    "unions": [
+      {
+        "cases": [
+          {
+            "fields": [
+              {
+                "name": "limits",
+                "type": "PrnsLimits"
+              },
+              {
+                "name": "rejectedEventBytes",
+                "type": "safeUint"
+              }
+            ],
+            "name": "EventBackpressureExceeded",
+            "value": 0
+          },
+          {
+            "fields": [
+              {
+                "name": "component",
+                "type": "string"
+              },
+              {
+                "name": "detail",
+                "type": "string"
+              }
+            ],
+            "name": "BackendFailed",
+            "value": 1
+          },
+          {
+            "fields": [
+              {
+                "name": "detail",
+                "type": "string"
+              }
+            ],
+            "name": "ContractViolated",
+            "value": 2
+          }
+        ],
+        "name": "HostFailure"
+      },
+      {
+        "cases": [
+          {
+            "fields": [],
+            "name": "Starting",
+            "value": 0
+          },
+          {
+            "fields": [],
+            "name": "Running",
+            "value": 1
+          },
+          {
+            "fields": [],
+            "name": "Stopping",
+            "value": 2
+          },
+          {
+            "fields": [
+              {
+                "name": "reason",
+                "type": "StopReason"
+              }
+            ],
+            "name": "Stopped",
+            "value": 3
+          },
+          {
+            "fields": [
+              {
+                "name": "failure",
+                "type": "HostFailure"
+              }
+            ],
+            "name": "Failed",
+            "value": 4
+          }
+        ],
+        "name": "HostLifecycleState"
+      },
+      {
+        "cases": [
+          {
+            "fields": [
+              {
+                "name": "outcome",
+                "type": "CommandOutcome"
+              }
+            ],
+            "name": "Succeeded",
+            "value": 0
+          },
+          {
+            "fields": [
+              {
+                "name": "failure",
+                "type": "CommandFailure"
+              }
+            ],
+            "name": "Failed",
+            "value": 1
+          }
+        ],
+        "name": "CommandSettlement"
+      }
+    ]
+  },
   "unions": {
     "ApplicationEvent": {
       "ChannelMessage": 107,

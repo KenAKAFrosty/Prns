@@ -2,7 +2,7 @@ package prns
 
 const (
 	HostContractABI uint32 = 1
-	HostSchemaVersion uint32 = 1
+	HostSchemaVersion uint32 = 2
 	ProductVersion = "0.3.7"
 )
 
@@ -458,6 +458,8 @@ const (
 	EventFieldPersistenceCause EventField = 38
 	EventFieldPersistenceTarget EventField = 39
 	EventFieldAppData EventField = 40
+	EventFieldLocalDestination EventField = 41
+	EventFieldArrivedAtMillis EventField = 42
 )
 
 type DestinationHash [DestinationHashLength]byte
@@ -1418,6 +1420,8 @@ type ApplicationEventLinkDelivery struct {
 	LinkId LinkId
 	SourceInterface InterfaceId
 	Plaintext []byte
+	LocalDestination *DestinationHash
+	ArrivedAtMillis uint64
 }
 
 func (ApplicationEventLinkDelivery) applicationEvent() {}

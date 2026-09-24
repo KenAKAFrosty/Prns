@@ -1,10 +1,20 @@
 # Binding implementation guide
 
-Every native binding is an adapter over `prns_host.h`, not a second host
-implementation. This constraint is what keeps many ecosystem packages one
-system.
+Every native binding adapts shared host semantics and ownership. C-backed
+Swift/Kotlin/Python/.NET/JVM bindings use `prns_host.h`. N-API and the
+Expo/React Native UniFFI adapter call the shared Rust host directly. None owns
+another implementation of queues, resource storage, command policy or lifecycle.
 
-## Required shape
+The Expo adapter lives in `uniffi/` as an `rlib`. Its generated values and
+conversions come from the canonical schema; its handwritten objects adapt
+`prns-host-native::owner::{OwnedSession, HostClient}`. `prns-react-native/`
+provides generated JSI/Swift/Kotlin glue and reusable platform integration.
+Standalone consumers select its default image; a native app composition links
+that same facade into one aggregate image. An attached client cannot stop the
+composition's owner or bypass service draining. See
+[the Expo SDK](../../prns-react-native/README.md).
+
+## C-backed adapter shape
 
 1. Generate the language's constants, scalar policy, fixed-size values, enums,
    records, closed unions, handles, operation inventory, and raw protocol from
@@ -67,3 +77,10 @@ New language projections belong in
 operation lists do not.
 Convenience helpers come after the raw semantic surface and conformance smoke,
 and must compile down to the same bounded, interruptible happy path.
+
+All adapters retain the scalar, closed-union, capability, exclusive-stream and
+persistent two-node conformance requirements above. Direct Rust adapters replace
+C pointer/readiness mechanics with shared native leases and asynchronous
+readiness; they do not duplicate the C adapter's implementation. Native-only
+protocol extensions are versioned and advertised separately from the portable
+host contract, with explicit unsupported outcomes on other backends.

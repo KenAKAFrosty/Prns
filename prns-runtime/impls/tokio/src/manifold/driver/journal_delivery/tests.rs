@@ -54,6 +54,59 @@ fn settle_forwards_a_settlement_nobody_awaits() {
 }
 
 #[test]
+fn request_resource_failure_settles_the_request_waiter() {
+    for (failure, expected) in [
+        (
+            SendResourceFailure::Rejected(SendResourceRejection::NoSuchLink),
+            SendRequestFailure::Rejected(SendRequestRejection::NoSuchLink),
+        ),
+        (
+            SendResourceFailure::Rejected(SendResourceRejection::LinkNotActive),
+            SendRequestFailure::Rejected(SendRequestRejection::LinkNotActive),
+        ),
+        (SendResourceFailure::Timeout, SendRequestFailure::Timeout),
+        (
+            SendResourceFailure::LinkClosed,
+            SendRequestFailure::LinkClosed,
+        ),
+        (
+            SendResourceFailure::Rejected(SendResourceRejection::TableFull),
+            SendRequestFailure::WriteFailed,
+        ),
+    ] {
+        let mut delivery = JournalDelivery::default();
+        let (completion, mut settled) = oneshot::channel();
+        delivery.register_request(CommandId(19), completion);
+        assert!(delivery
+            .route(Journaled::CommandSettled {
+                id: CommandId(19),
+                settlement: Settlement::SendResource(Err(failure)),
+            })
+            .is_none());
+        assert_eq!(settled.try_recv(), Ok(Err(expected)));
+        assert!(delivery.requests.is_empty());
+    }
+}
+
+#[test]
+fn request_resource_success_waits_for_response() {
+    let mut delivery = JournalDelivery::default();
+    let (completion, mut settled) = oneshot::channel();
+    delivery.register_request(CommandId(19), completion);
+    delivery.route(Journaled::CommandSettled {
+        id: CommandId(19),
+        settlement: Settlement::SendResource(Ok(())),
+    });
+    assert_eq!(settled.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+    assert_eq!(delivery.requests.len(), 1);
+    delivery.route(Journaled::CommandSettled {
+        id: CommandId(19),
+        settlement: Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+    });
+    assert_eq!(settled.try_recv(), Ok(Err(SendRequestFailure::Timeout)));
+}
+
+#[test]
 fn controller_pairing_persistence_failure_reaches_the_application_lane() {
     let mut delivery = JournalDelivery::default();
     let attempt_id =

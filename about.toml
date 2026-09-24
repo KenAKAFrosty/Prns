@@ -29,6 +29,26 @@ accepted = ["LicenseRef-Nordic-SoftDevice"]
 [serialport]
 accepted = ["MPL-2.0"]
 
+# Notice choices for the SDK's generated native binding runtime. Exact package
+# versions are enforced by deny.toml and the locked release graphs.
+[uniffi]
+accepted = ["MPL-2.0"]
+
+[uniffi_core]
+accepted = ["MPL-2.0"]
+
+[uniffi_internal_macros]
+accepted = ["MPL-2.0"]
+
+[uniffi_macros]
+accepted = ["MPL-2.0"]
+
+[uniffi_meta]
+accepted = ["MPL-2.0"]
+
+[uniffi_pipeline]
+accepted = ["MPL-2.0"]
+
 [nrf-softdevice-s140.clarify]
 license = "LicenseRef-Nordic-SoftDevice"
 override-git-commit = "47d6121c6e823120e8b883a7ac75f44ce7daa3aa"
