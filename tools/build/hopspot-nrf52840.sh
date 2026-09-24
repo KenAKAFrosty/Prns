@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if (( $# != 1 )); then
-    echo "usage: hopspot-nrf52840.sh <t096|t114|mesh-pocket-5000|mesh-pocket-10000|t1000e>" >&2
+if (( $# < 1 || $# > 2 )); then
+    echo "usage: hopspot-nrf52840.sh <t096|t114|mesh-pocket-5000|mesh-pocket-10000|t1000e> [usb-debug-log]" >&2
     exit 1
 fi
 
@@ -38,6 +38,13 @@ case "$board" in
         exit 1
         ;;
 esac
+
+if [[ "${2:-}" == "usb-debug-log" ]]; then
+    board_feature="${board_feature},usb-debug-log"
+elif [[ -n "${2:-}" ]]; then
+    printf 'unsupported image option: %s\n' "$2" >&2
+    exit 1
+fi
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 crate="$root/personal-hopspot/embedded/nrf52840"

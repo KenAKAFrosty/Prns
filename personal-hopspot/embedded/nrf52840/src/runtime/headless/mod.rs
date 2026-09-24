@@ -80,8 +80,18 @@ mod selected;
 #[path = "t1000e.rs"]
 mod selected;
 
+#[cfg(not(feature = "usb-debug-log"))]
 const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
+#[cfg(feature = "usb-debug-log")]
+const USB_CONFIG_DESCRIPTOR_BYTES: usize = 256;
+#[cfg(not(feature = "usb-debug-log"))]
 const USB_BOS_DESCRIPTOR_BYTES: usize = 64;
+#[cfg(feature = "usb-debug-log")]
+const USB_BOS_DESCRIPTOR_BYTES: usize = 128;
+#[cfg(not(feature = "usb-debug-log"))]
+const USB_MSOS_DESCRIPTOR_BYTES: usize = WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES;
+#[cfg(feature = "usb-debug-log")]
+const USB_MSOS_DESCRIPTOR_BYTES: usize = WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES + 192;
 const WINDOWS_MSOS_VENDOR_CODE: u8 = 0x20;
 const INTERFACE_CAPACITY: usize = selected::INTERFACE_CAPACITY;
 const LANE_COUNT: usize = selected::LANE_COUNT;
@@ -182,6 +192,8 @@ async fn manifold_task(
 
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
+    #[cfg(feature = "usb-debug-log")]
+    super::usb_debug::init();
     #[cfg(feature = "board-t1000e")]
     let ((node_bootstrap, remote_control_bootstrap, entropy), hardware) =
         Board::initialize(|nvmc, rng| {
@@ -275,14 +287,14 @@ pub async fn run(spawner: Spawner) -> ! {
     usb_config.max_packet_size_0 = 64;
     static CONFIG_DESC: StaticCell<[u8; USB_CONFIG_DESCRIPTOR_BYTES]> = StaticCell::new();
     static BOS_DESC: StaticCell<[u8; USB_BOS_DESCRIPTOR_BYTES]> = StaticCell::new();
-    static MSOS_DESC: StaticCell<[u8; WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES]> = StaticCell::new();
+    static MSOS_DESC: StaticCell<[u8; USB_MSOS_DESCRIPTOR_BYTES]> = StaticCell::new();
     static CONTROL_BUF: StaticCell<[u8; WEBUSB_AUTO_CONTROL_BUFFER_BYTES]> = StaticCell::new();
     let mut builder = Builder::new(
         usb_driver,
         usb_config,
         CONFIG_DESC.init([0; USB_CONFIG_DESCRIPTOR_BYTES]),
         BOS_DESC.init([0; USB_BOS_DESCRIPTOR_BYTES]),
-        MSOS_DESC.init([0; WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES]),
+        MSOS_DESC.init([0; USB_MSOS_DESCRIPTOR_BYTES]),
         CONTROL_BUF.init([0; WEBUSB_AUTO_CONTROL_BUFFER_BYTES]),
     );
     builder.msos_descriptor(
@@ -294,7 +306,21 @@ pub async fn run(spawner: Spawner) -> ! {
         &mut builder,
         USB_STATE.init(WebUsbAutoState::new(super::bootloader_entry::webusb_entry())),
         WEBUSB_AUTO_PACKET_SIZE,
+        cfg!(feature = "usb-debug-log"),
     );
+    #[cfg(feature = "usb-debug-log")]
+    let cdc = {
+        use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+        static CDC_STATE: StaticCell<State<'static>> = StaticCell::new();
+        CdcAcmClass::new(
+            &mut builder,
+            CDC_STATE.init(State::new()),
+            WEBUSB_AUTO_PACKET_SIZE,
+        )
+    };
+    #[cfg(feature = "usb-debug-log")]
+    let usb = builder.build();
+    #[cfg(not(feature = "usb-debug-log"))]
     let mut usb = builder.build();
 
     #[cfg(any(
@@ -467,8 +493,12 @@ pub async fn run(spawner: Spawner) -> ! {
             selected::maintain().await;
         }
     };
+    #[cfg(feature = "usb-debug-log")]
+    let usb_bus = super::usb_debug::run(usb, cdc);
+    #[cfg(not(feature = "usb-debug-log"))]
+    let usb_bus = usb.run();
     let io = join4(
-        usb.run(),
+        usb_bus,
         usb_device.run(usb_seam),
         heartbeat,
         super::bootloader_entry::wait(),
