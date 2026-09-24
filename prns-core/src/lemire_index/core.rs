@@ -6,7 +6,7 @@ pub(crate) const fn buckets_for_two_thirds_load(entries: usize) -> usize {
 }
 
 #[cfg(any(feature = "alloc", test))]
-pub(super) const fn exceeds_two_thirds_load(entries: usize, buckets: usize) -> bool {
+pub(crate) const fn exceeds_two_thirds_load(entries: usize, buckets: usize) -> bool {
     entries > buckets.saturating_sub(buckets.div_ceil(3))
 }
 

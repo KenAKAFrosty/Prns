@@ -387,7 +387,7 @@ fn validate_stack(
     });
     executable_valid(
         path,
-        partial == !stack.gaps.is_empty() && gaps_valid,
+        partial != stack.gaps.is_empty() && gaps_valid,
         "stack evidence availability does not match its gaps",
     )?;
     executable_valid(
