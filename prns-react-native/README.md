@@ -46,6 +46,14 @@ runtime errors remain generated typed errors. Remote control uses
 list is maintained by hand in the SDK. Aborting a command wait does not
 roll back an operation already admitted by Rust.
 
+`SendLinkPacket` preserves the core's delivery-proof behavior. Packets sent to a
+`ProveAll` responder settle with an explicit delivery proof. Raw packets sent
+back to the link initiator can arrive as `LinkDelivery` events while the
+responder's command settles as `Failed(DeliveryTimedOut)`: the initiator does not
+emit an automatic packet proof. A timeout therefore does not establish that the
+peer received no bytes. Applications that need confirmed replies must account
+for this core behavior; the SDK does not add an acknowledgement protocol.
+
 Destination public-key lookup is available on the generated native
 `HostClientHandle.destinationPublicKey` binding. Authenticated announce callbacks
 and prepared native transport objects remain Rust embedding hooks; they are not

@@ -33,13 +33,38 @@ app aggregate image's device results as evidence for the default provider.
 - Validation/task/workflow registries, scoped license policy, Linux/Android/iOS
   dependency license checks and the updated unsafe inventory.
 
-## Device and publication limits
+## Physical device checks and limits
 
-The standalone example was installed on MetalbeardMobile. Its launch was denied
-because the device was locked, and iPhone Mirroring could not connect. The Galaxy
-S9+ was absent from USB/ADB. Default-provider physical ownership and Hermes reload
-checks therefore remain pending despite the simulator results above. Existing PRNS app installations and data were
-not reset or replaced.
+The default-provider Debug example passed on Galaxy S9+ (Android 10/API 29)
+and MetalbeardMobile (iPhone 14 Pro, iOS 27.0), using source commit
+`f03be48d2f2e66f1fde5ef39e6fe75ddae65ead4`. Both physical Hermes runtimes confirmed
+the selected image and absence of app-policy modules, exclusive ownership of the
+application stream, pending-reader closure, shared stop completion and released
+clients. Each kept a
+pending diagnostic reader across a real runtime reload, then reopened the same
+persisted identity and reclaimed both streams. The iPhone example's Open/Stop UI
+also passed. These checks cover JavaScript-owned sessions, not native app-owner
+continuity.
+
+The Galaxy also passed a same-signature Release upgrade and cold startup with
+Metro stopped and no USB port reversals. Its bundled JavaScript opened a native
+host, displayed the snapshot and stopped the host through the example UI. The
+Release example was left stopped with its data retained.
+
+A direct Wi-Fi TCP connection from the iPhone to the Galaxy passed announcement
+routing, encrypted link establishment, a random nonce packet and exact-byte echo,
+schema-2 delivery fields and `bigint` traffic counters. The forward command
+settled with `ExplicitProof`. The reverse packet reached the iPhone but its send
+settled with `DeliveryTimedOut`, matching the existing core contract: the link
+initiator emits no automatic packet proof. The test now checks that distinction
+explicitly. See [the SDK guide](../README.md) before treating delivery timeout as
+proof that a peer received no bytes.
+
+Android reload logged a React Native soft exception for an AppState emission
+after instance destruction; native teardown and all post-reload probes passed.
+No fatal native crash was observed. Tests used the separate
+`rs.reticulum.prns.host.example` bundle, without resetting or replacing existing
+PRNS app installations or data.
 
 The CI definitions are checked locally; hosted CI has not run on this branch.
 The detached consumer pins the reviewed runtime archives. It does not establish
