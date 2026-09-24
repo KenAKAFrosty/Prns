@@ -378,7 +378,9 @@ func decodeApplicationEvent(_ pointer: OpaquePointer) throws -> ApplicationEvent
         return .linkDelivery(
             linkId: try LinkId(event.bytes(.linkId)),
             sourceInterface: try InterfaceId(event.bytes(.sourceInterface)),
-            plaintext: try event.bytes(.plaintext)
+            plaintext: try event.bytes(.plaintext),
+            localDestination: try event.optionalBytes(.localDestination).map { try DestinationHash($0) },
+            arrivedAtMillis: try event.u64(.arrivedAtMillis)
         )
     case .request:
         let requester = try event.optionalBytes(.requester).map {

@@ -948,6 +948,7 @@ fn isolated_upload(declared_length: u64) -> (NativeUpload, UploadSource) {
             declared_length,
             written: AtomicU64::new(0),
             finished: AtomicBool::new(false),
+            changed: watch::channel(()).0,
         },
         UploadSource::new(source),
     )
@@ -992,4 +993,741 @@ fn upload_rejects_oversized_chunks() {
     let (upload, _source) = isolated_upload((MAX_UPLOAD_CHUNK_BYTES + 1) as u64);
     let chunk = vec![0; MAX_UPLOAD_CHUNK_BYTES + 1];
     assert_eq!(upload.write(&chunk), Err(UploadWriteError::ChunkTooLarge));
+}
+
+#[test]
+fn persistent_directory_is_exclusive_until_joined_stop() -> Result<(), String> {
+    let root = temporary_root("exclusive-owner")?;
+    let first = NativeHost::start(persistent_config(&root), Arc::new(Sink))
+        .map_err(|e| format!("{e:?}"))?;
+    let second = NativeHost::start(persistent_config(&root), Arc::new(Sink));
+    assert!(matches!(
+        second,
+        Err(NativeStartError::Persistence(
+            PersistenceStartError::Unavailable { .. }
+        ))
+    ));
+    first.stop_result().map_err(|e| format!("{e:?}"))?;
+    // The stopped Rust object remains alive; ownership ends at joined stop, not GC.
+    let third = NativeHost::start(persistent_config(&root), Arc::new(Sink))
+        .map_err(|e| format!("{e:?}"))?;
+    third.stop_result().map_err(|e| format!("{e:?}"))?;
+    fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn command_async_wait_is_runtime_independent_and_cancellation_keeps_command() {
+    let completion = Arc::new(CommandCompletion::new(None));
+    let command = CommandHandle {
+        completion: Arc::clone(&completion),
+    };
+    let mut context = Context::from_waker(std::task::Waker::noop());
+    let mut cancelled = Box::pin(command.wait_async());
+    assert!(matches!(
+        cancelled.as_mut().poll(&mut context),
+        Poll::Pending
+    ));
+    drop(cancelled);
+    completion.finish(Ok(CommandOutcome::Announced));
+    let mut second = Box::pin(command.wait_async());
+    assert!(matches!(
+        second.as_mut().poll(&mut context),
+        Poll::Ready(CommandWait::Completed(Ok(CommandOutcome::Announced)))
+    ));
+}
+
+#[test]
+fn cancelled_upload_write_does_not_reserve_declared_bytes() {
+    let (upload, _source) = isolated_upload(16);
+    for _ in 0..UPLOAD_CHUNK_CAPACITY {
+        assert_eq!(upload.write(&[1]), Ok(()));
+    }
+    let mut context = Context::from_waker(std::task::Waker::noop());
+    let mut write = Box::pin(upload.write_async(vec![9]));
+    assert!(matches!(write.as_mut().poll(&mut context), Poll::Pending));
+    drop(write);
+    assert_eq!(
+        upload.written.load(Ordering::Acquire),
+        UPLOAD_CHUNK_CAPACITY as u64
+    );
+    let mut write = Box::pin(upload.write_async(vec![9]));
+    assert!(matches!(write.as_mut().poll(&mut context), Poll::Pending));
+    upload.abort();
+    assert!(matches!(
+        write.as_mut().poll(&mut context),
+        Poll::Ready(Err(UploadWriteError::Finished))
+    ));
+}
+
+#[test]
+fn concurrent_native_stop_waiters_do_not_return_before_worker_join() -> Result<(), String> {
+    struct PausedStop {
+        gate: Mutex<(bool, bool)>,
+        changed: Condvar,
+    }
+    impl NativeEventSink for PausedStop {
+        fn running(&self) {}
+        fn publish_application(&self, _: ApplicationEvent) -> bool {
+            true
+        }
+        fn publish_resource(&self, _: ResourceAvailable, _: Vec<u8>) -> bool {
+            true
+        }
+        fn publish_diagnostic(&self, _: DiagnosticEvent) {}
+        fn failed(&self, _: String) {}
+        fn stopped(&self) {
+            let mut gate = lock(&self.gate);
+            gate.0 = true;
+            self.changed.notify_all();
+            while !gate.1 {
+                gate = self
+                    .changed
+                    .wait(gate)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+        }
+    }
+    let sink = Arc::new(PausedStop {
+        gate: Mutex::new((false, false)),
+        changed: Condvar::new(),
+    });
+    let host = Arc::new(NativeHost::start(config(), sink.clone()).map_err(|e| format!("{e:?}"))?);
+    let first_host = Arc::clone(&host);
+    let first = std::thread::spawn(move || first_host.stop_result());
+    let entered = sink
+        .changed
+        .wait_timeout_while(lock(&sink.gate), Duration::from_secs(2), |gate| !gate.0)
+        .unwrap_or_else(PoisonError::into_inner);
+    let worker_entered = entered.0 .0;
+    drop(entered);
+    let (begun, starting) = std::sync::mpsc::sync_channel(1);
+    let (done, finished) = std::sync::mpsc::sync_channel(1);
+    let second_host = Arc::clone(&host);
+    let second = std::thread::spawn(move || {
+        let _ = begun.send(());
+        let _ = done.send(second_host.stop_result());
+    });
+    let started = starting.recv_timeout(Duration::from_secs(2)).is_ok();
+    let returned_before_release = finished.recv_timeout(Duration::from_millis(30)).is_ok();
+    lock(&sink.gate).1 = true;
+    sink.changed.notify_all();
+    first
+        .join()
+        .map_err(|_| "first stop panicked")?
+        .map_err(|e| format!("{e:?}"))?;
+    second.join().map_err(|_| "second stop panicked")?;
+    assert!(worker_entered && started);
+    assert!(!returned_before_release);
+    assert_eq!(host.stop_result(), Ok(()));
+    Ok(())
+}
+
+#[test]
+fn snapshot_future_runs_without_a_caller_tokio_runtime() -> Result<(), String> {
+    struct WakeThread(std::thread::Thread);
+    impl std::task::Wake for WakeThread {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let host = NativeHost::start(config(), Arc::new(Sink)).map_err(|e| format!("{e:?}"))?;
+    let mut future = Box::pin(host.snapshot_async());
+    let waker = std::task::Waker::from(Arc::new(WakeThread(std::thread::current())));
+    let mut context = Context::from_waker(&waker);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let result = loop {
+        if let Poll::Ready(result) = future.as_mut().poll(&mut context) {
+            break result;
+        }
+        if Instant::now() >= deadline {
+            return Err("snapshot wake timed out".into());
+        }
+        std::thread::park_timeout(deadline.saturating_duration_since(Instant::now()));
+    };
+    assert!(result.is_ok());
+    host.stop();
+    Ok(())
+}
+
+#[test]
+fn blocking_and_async_snapshots_preserve_unavailable_results() -> Result<(), String> {
+    let mut host = NativeHost::start(config(), Arc::new(Sink)).map_err(|e| format!("{e:?}"))?;
+    // Keep the real command lane alive while injecting a snapshot assembly failure.
+    let (snapshot_tx, mut snapshot_rx) = mpsc::channel(1);
+    let original = std::mem::replace(&mut host.snapshots, snapshot_tx);
+    let mut future = Box::pin(host.snapshot_async());
+    let mut context = Context::from_waker(std::task::Waker::noop());
+    assert!(matches!(future.as_mut().poll(&mut context), Poll::Pending));
+    snapshot_rx
+        .try_recv()
+        .map_err(|e| e.to_string())?
+        .reply
+        .send(Err(NativeSnapshotError::Unavailable));
+    assert!(matches!(
+        future.as_mut().poll(&mut context),
+        Poll::Ready(Err(NativeSnapshotError::Unavailable))
+    ));
+    drop(future);
+
+    let reply = std::thread::spawn(move || {
+        if let Some(job) = snapshot_rx.blocking_recv() {
+            job.reply.send(Err(NativeSnapshotError::Unavailable));
+        }
+    });
+    assert!(matches!(
+        host.snapshot(Some(Duration::from_secs(2))),
+        Err(NativeSnapshotError::Unavailable)
+    ));
+    reply.join().map_err(|_| "snapshot reply thread panicked")?;
+    host.snapshots = original;
+    host.stop();
+    Ok(())
+}
+
+#[test]
+fn native_embedding_tracks_prepared_interfaces_in_canonical_snapshot() -> Result<(), String> {
+    let embedding = NativeEmbedding {
+        prepare_interfaces: Some(Box::new(|client| {
+            let attachment = client
+                .protocols()
+                .attach(TcpClientInterface::new("127.0.0.1:1".to_string()));
+            Ok(vec![NativePreparedAttachment::Interface {
+                attachment,
+                kind: InterfaceKind::TcpClient,
+            }])
+        })),
+        ..NativeEmbedding::default()
+    };
+    let host = NativeHost::start_with_embedding(config(), Arc::new(Sink), embedding)
+        .map_err(|e| format!("{e:?}"))?;
+    let snapshot = host
+        .snapshot(Some(Duration::from_secs(2)))
+        .map_err(|e| format!("{e:?}"))?;
+    assert!(snapshot
+        .interfaces
+        .iter()
+        .any(|interface| interface.kind == Some(InterfaceKind::TcpClient)));
+    assert!(host.service_client().is_ok());
+    host.stop();
+    assert!(matches!(
+        host.service_client(),
+        Err(NativeSubmitError::Stopped)
+    ));
+    Ok(())
+}
+
+#[test]
+fn exclusive_native_application_dispatch_requires_callback() {
+    let embedding = NativeEmbedding {
+        application_events: ApplicationEventDispatch::NativeCallback,
+        ..NativeEmbedding::default()
+    };
+    assert!(matches!(
+        NativeHost::start_with_embedding(config(), Arc::new(Sink), embedding),
+        Err(NativeStartError::Runtime(_))
+    ));
+}
+
+#[test]
+fn shutdown_retains_persistence_until_blocking_runtime_work_exits() -> Result<(), String> {
+    let root = temporary_root("blocking-stop")?;
+    let host = Arc::new(
+        NativeHost::start(persistent_config(&root), Arc::new(Sink))
+            .map_err(|e| format!("{e:?}"))?,
+    );
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let blocked = Arc::clone(&gate);
+    let (begun, started) = std::sync::mpsc::sync_channel(1);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|e| e.to_string())?;
+    runtime
+        .block_on(host.on_preview_runtime(move |_| async move {
+            tokio::task::spawn_blocking(move || {
+                let _ = begun.send(());
+                let (released, changed) = &*blocked;
+                let mut released = lock(released);
+                while !*released {
+                    released = changed
+                        .wait(released)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
+            });
+        }))
+        .map_err(|e| format!("{e:?}"))?;
+    started
+        .recv_timeout(Duration::from_secs(2))
+        .map_err(|e| e.to_string())?;
+    let stopping = Arc::clone(&host);
+    let (done, stopped) = std::sync::mpsc::sync_channel(1);
+    let stop = std::thread::spawn(move || {
+        let _ = done.send(stopping.stop_result());
+    });
+    // The former five-second runtime shutdown released the owner while this work
+    // was still live. Bound only this test wait, never the native owner's lifetime.
+    let prematurely_stopped = stopped.recv_timeout(Duration::from_millis(5100)).is_ok();
+    let duplicate = NativeHost::start(persistent_config(&root), Arc::new(Sink));
+    let (released, changed) = &*gate;
+    *lock(released) = true;
+    changed.notify_all();
+    stop.join().map_err(|_| "stop thread panicked")?;
+    assert!(!prematurely_stopped);
+    assert!(matches!(
+        duplicate,
+        Err(NativeStartError::Persistence(
+            PersistenceStartError::Unavailable { .. }
+        ))
+    ));
+    host.stop_result().map_err(|e| format!("{e:?}"))?;
+    fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn vanished_route_stays_a_typed_no_route_failure() {
+    assert_eq!(
+        establish_link_failure(SendError::Failed(EstablishLinkFailure::WriteFailed(
+            personal_rns::routing::links::establish::WriteEstablishLinkRejection::RouteVanished,
+        ))),
+        CommandFailure::NoRouteToDestination
+    );
+}
+
+#[test]
+fn native_link_projection_preserves_destination_and_arrival_metadata() -> Result<(), String> {
+    let events = NativeSessionEvents::new(PrnsLimits::balanced(), true);
+    let stream = events
+        .claim_stream(prns_host::ConsumerLane::ApplicationEvents)
+        .map_err(|e| format!("{e:?}"))?;
+    let destination = DestinationHash::new([6; 16]);
+    let link_id = LinkId::new([7; 16]);
+    let interface = InterfaceId::new([8; 8]);
+    assert!(publish_message(
+        &events,
+        Message::Delivered(Delivery::Link(
+            personal_rns::routing::delivery::LinkDelivery {
+                link_id: engine_link(link_id),
+                local_destination: Some(engine_destination(destination)),
+                plaintext: b"application",
+                arrived_at: personal_rns::engine::InstantMillis(4321),
+                source_interface: engine_interface(interface),
+            }
+        ))
+    ));
+    let event = stream.try_next().map_err(|e| format!("{e:?}"))?;
+    let NativeEventValue::Application(ApplicationEvent::LinkDelivery(delivery)) = event.value
+    else {
+        return Err("wrong event projection".into());
+    };
+    assert_eq!(delivery.local_destination, Some(destination));
+    assert_eq!(delivery.arrived_at_millis, 4321);
+    assert_eq!(delivery.link_id, link_id);
+    assert_eq!(delivery.source_interface, interface);
+    assert_eq!(delivery.plaintext, b"application");
+    Ok(())
+}
+
+#[test]
+fn native_extension_tasks_stay_bounded_after_waiter_cancellation_and_join_on_stop(
+) -> Result<(), String> {
+    struct ExitSignal(std::sync::mpsc::SyncSender<()>);
+    impl Drop for ExitSignal {
+        fn drop(&mut self) {
+            let _ = self.0.send(());
+        }
+    }
+    let mut configuration = config();
+    configuration.limits =
+        PrnsLimits::try_new(1, 1, 1024, 1).map_err(|error| format!("{error:?}"))?;
+    let host =
+        NativeHost::start(configuration, Arc::new(Sink)).map_err(|error| format!("{error:?}"))?;
+    let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
+    let (exited_tx, exited_rx) = std::sync::mpsc::sync_channel(1);
+    let mut operation = Box::pin(host.on_preview_runtime(move |_| async move {
+        let _exit = ExitSignal(exited_tx);
+        let _ = started_tx.send(());
+        std::future::pending::<()>().await;
+    }));
+    let mut context = Context::from_waker(std::task::Waker::noop());
+    assert!(matches!(
+        operation.as_mut().poll(&mut context),
+        Poll::Pending
+    ));
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .map_err(|error| error.to_string())?;
+    drop(operation);
+    // Cancellation releases only the foreign waiter, not an admitted operation.
+    assert!(matches!(
+        exited_rx.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    ));
+    let mut excess = Box::pin(host.on_preview_runtime(|_| async {}));
+    assert!(matches!(
+        excess.as_mut().poll(&mut context),
+        Poll::Ready(Err(NativeSubmitError::Busy))
+    ));
+    drop(excess);
+    host.stop_result().map_err(|error| format!("{error:?}"))?;
+    assert!(
+        exited_rx.try_recv().is_ok(),
+        "joined stop must have run task drop guards"
+    );
+    assert_eq!(host.preview_slots.available_permits(), 1);
+    Ok(())
+}
+
+#[test]
+fn joined_stop_preserves_persistence_failure_for_every_waiter() -> Result<(), String> {
+    let root = temporary_root("failed-shutdown-flush")?;
+    let sink = Arc::new(RecordingSink::new());
+    let host = NativeHost::start(persistent_config(&root), sink.clone())
+        .map_err(|error| format!("{error:?}"))?;
+    if !sink.wait_for(|event| matches!(event, DiagnosticEvent::PersistenceRestored { .. })) {
+        return Err("persistence was not restored before failure fixture".into());
+    }
+    let state = root.join("state");
+    fs::remove_dir_all(&state).map_err(|error| error.to_string())?;
+    fs::write(&state, b"blocked persistence writes").map_err(|error| error.to_string())?;
+    let result = host.stop_result();
+    assert_eq!(
+        result,
+        Err(NativeStopError::NodeFailed(
+            personal_rns::runtime::NodeRunError::PersistenceFailed
+        ))
+    );
+    assert_eq!(host.stop_result(), result);
+    assert!(sink.diagnostics().iter().any(|event| matches!(
+        event,
+        DiagnosticEvent::PersistenceFlushFailed {
+            cause: PersistenceFlushCause::Shutdown,
+            ..
+        }
+    )));
+    fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn remote_control_observations_share_the_application_lane_and_its_byte_bound() -> Result<(), String>
+{
+    use crate::remote_control_service::NativeRemoteControlEvent;
+    use personal_rns::remote_control::RemoteControlPairingEndpoint;
+    use personal_rns::units::InstantMillis;
+    use prns_host::{ConsumerLane, LifecycleState};
+    let limits = PrnsLimits::try_new(1, 2, 4, 1).map_err(|error| format!("{error:?}"))?;
+    let events = NativeSessionEvents::new(limits, true);
+    let stream = events
+        .claim_stream(ConsumerLane::ApplicationEvents)
+        .map_err(|error| format!("{error:?}"))?;
+    assert!(events
+        .claim_stream(ConsumerLane::ApplicationEvents)
+        .is_err());
+    let make = |data: Vec<u8>| NativeRemoteControlEvent::PairingAvailable {
+        endpoint: RemoteControlPairingEndpoint::from_destination_hash(engine_destination(
+            DestinationHash::new([1; 16]),
+        )),
+        observed_at: InstantMillis(20),
+        expires_at: InstantMillis(40),
+        hops: 2,
+        source_interface: personal_rns::interfaces::InterfaceId::from_channel_tag(
+            personal_rns::interfaces::InterfaceKind::Pipe,
+            b"rc",
+        ),
+        public_app_data: data,
+    };
+    events
+        .publish_remote_control(make(vec![1, 2]))
+        .map_err(|error| format!("{error:?}"))?;
+    let rejected = events.publish_remote_control(make(vec![3, 4, 5]));
+    assert!(
+        matches!(rejected, Err(NativeRemoteControlEvent::PairingAvailable { public_app_data, .. }) if public_app_data == [3,4,5])
+    );
+    assert!(matches!(
+        events.lifecycle().state,
+        LifecycleState::Failed(_)
+    ));
+    assert!(
+        matches!(stream.try_next(), Ok(NativeEvent { value: NativeEventValue::RemoteControl(NativeRemoteControlEvent::PairingAvailable { public_app_data, .. }), .. }) if public_app_data == [1,2])
+    );
+    Ok(())
+}
+
+fn remote_control_config(seed: u8) -> crate::remote_control_service::NativeRemoteControlConfig {
+    use personal_rns::remote_control::{RemoteControlCapabilities, RemoteControlSelfAnnouncement};
+    crate::remote_control_service::NativeRemoteControlConfig {
+        controller_identity: IdentityConfig::Existing(prns_host::IdentitySecret::new([seed; 64])),
+        target_identity: IdentityConfig::Existing(prns_host::IdentitySecret::new([seed + 1; 64])),
+        initial_controller_grants: Vec::new(),
+        self_announcement: RemoteControlSelfAnnouncement::Unavailable,
+        capabilities: RemoteControlCapabilities::describe_only(),
+    }
+}
+
+#[test]
+fn standalone_remote_control_is_opt_in_and_reuses_host_owned_runtime() -> Result<(), String> {
+    use personal_rns::runtime::{
+        RemoteControlTargetAccessControl, RemoteControlTargetInventoryControlError,
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let ordinary =
+        NativeHost::start(config(), Arc::new(Sink)).map_err(|error| format!("{error:?}"))?;
+    let unavailable = runtime
+        .block_on(ordinary.on_preview_runtime(|handle| async move {
+            handle.remote_control_target_inventory().await
+        }))
+        .map_err(|error| format!("{error:?}"))?;
+    assert!(matches!(
+        unavailable,
+        Err(RemoteControlTargetInventoryControlError::Unavailable)
+    ));
+    ordinary
+        .stop_result()
+        .map_err(|error| format!("{error:?}"))?;
+    let events = NativeSessionEvents::new(PrnsLimits::balanced(), false);
+    let host = NativeHost::start_with_embedding(
+        config(),
+        Arc::new(events),
+        NativeEmbedding {
+            remote_control_config: Some(remote_control_config(72)),
+            ..NativeEmbedding::default()
+        },
+    )
+    .map_err(|error| format!("{error:?}"))?;
+    let inventory = runtime
+        .block_on(host.on_preview_runtime(|handle| async move {
+            handle.remote_control_target_inventory().await
+        }))
+        .map_err(|error| format!("{error:?}"))?;
+    assert!(
+        inventory.is_ok(),
+        "explicit service config must enable native operations: {inventory:?}"
+    );
+    host.stop_result().map_err(|error| format!("{error:?}"))?;
+    let mut invalid = remote_control_config(75);
+    invalid.target_identity = IdentityConfig::Existing(prns_host::IdentitySecret::new([75; 64]));
+    assert!(matches!(
+        NativeHost::start_with_embedding(
+            config(),
+            Arc::new(Sink),
+            NativeEmbedding {
+                remote_control_config: Some(invalid),
+                ..NativeEmbedding::default()
+            }
+        ),
+        Err(NativeStartError::Runtime(_))
+    ));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn standalone_pairing_uses_typed_queue_confirmations_and_restores_target_access(
+) -> Result<(), String> {
+    use crate::remote_control_service::NativeRemoteControlEvent as RcEvent;
+    use personal_rns::engine::{
+        ApproveRemoteControlControllerPairing, ApproveRemoteControlTargetPairing, EgressTarget,
+        OpenRemoteControlPairing,
+    };
+    use personal_rns::remote_control::{
+        RemoteControlPairingAttemptTimeout, RemoteControlPairingExpiresAfter,
+        RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+        RemoteControlRequestKind, RemoteControlRequestSet,
+    };
+    use personal_rns::runtime::{
+        InitiateRemoteControlControllerPairing, RemoteControlControllerPairingInitiationControl,
+        RemoteControlPairingControl, RemoteControlTargetAccessControl,
+    };
+    use personal_rns::units::DurationMillis;
+    use prns_host::ConsumerLane;
+
+    fn next_rc(
+        stream: &NativeEventStream,
+        accepts: impl Fn(&RcEvent) -> bool,
+    ) -> Result<RcEvent, String> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let event = stream
+                .next(Some(deadline.saturating_duration_since(Instant::now())))
+                .map_err(|error| format!("waiting for remote-control event: {error:?}"))?;
+            if let NativeEventValue::RemoteControl(value) = event.value {
+                if accepts(&value) {
+                    return Ok(value);
+                }
+            }
+        }
+    }
+    let root = temporary_root("standalone-pairing")?;
+    let target_root = root.join("target");
+    let controller_root = root.join("controller");
+    let target_events = NativeSessionEvents::new(PrnsLimits::balanced(), false);
+    let controller_events = NativeSessionEvents::new(PrnsLimits::balanced(), false);
+    let target_stream = target_events
+        .claim_stream(ConsumerLane::ApplicationEvents)
+        .map_err(|error| format!("{error:?}"))?;
+    let controller_stream = controller_events
+        .claim_stream(ConsumerLane::ApplicationEvents)
+        .map_err(|error| format!("{error:?}"))?;
+    let target = NativeHost::start_with_embedding(
+        persistent_config(&target_root),
+        Arc::new(target_events),
+        NativeEmbedding {
+            remote_control_config: Some(remote_control_config(90)),
+            ..NativeEmbedding::default()
+        },
+    )
+    .map_err(|error| format!("{error:?}"))?;
+    let controller = NativeHost::start_with_embedding(
+        persistent_config(&controller_root),
+        Arc::new(controller_events),
+        NativeEmbedding {
+            remote_control_config: Some(remote_control_config(100)),
+            ..NativeEmbedding::default()
+        },
+    )
+    .map_err(|error| format!("{error:?}"))?;
+    let (target_wire, controller_wire) =
+        std::os::unix::net::UnixStream::pair().map_err(|error| error.to_string())?;
+    let (_target_pipe, target_interface) = attach_supplied_wire(&target, "target", target_wire)?;
+    let (_controller_pipe, controller_interface) =
+        attach_supplied_wire(&controller, "controller", controller_wire)?;
+    wait_until_connected(&target, target_interface)?;
+    wait_until_connected(&controller, controller_interface)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let open = OpenRemoteControlPairing {
+        target: EgressTarget::AllInterfaces,
+        expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(60_000))
+            .map_err(|error| format!("{error:?}"))?,
+        attempt_timeout: RemoteControlPairingAttemptTimeout::try_from(DurationMillis(30_000))
+            .map_err(|error| format!("{error:?}"))?,
+        permissions: RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::only(
+            RemoteControlRequestKind::Describe,
+        ))
+        .map_err(|error| format!("{error:?}"))?,
+        public_app_data: RemoteControlPairingPublicAppDataBytes::try_from(
+            b"standalone target".as_slice(),
+        )
+        .map_err(|error| format!("{error:?}"))?,
+    };
+    let opened = runtime
+        .block_on(target.on_preview_runtime(move |handle| async move {
+            handle.open_remote_control_pairing(open).await
+        }))
+        .map_err(|error| format!("{error:?}"))?
+        .map_err(|error| format!("{error:?}"))?;
+    let available = next_rc(&controller_stream, |event| {
+        matches!(event, RcEvent::PairingAvailable { .. })
+    })?;
+    let RcEvent::PairingAvailable {
+        endpoint,
+        expires_at,
+        public_app_data,
+        ..
+    } = available
+    else {
+        return Err("expected availability".into());
+    };
+    assert_eq!(public_app_data, b"standalone target");
+    let initiate = InitiateRemoteControlControllerPairing {
+        endpoint,
+        expires_at,
+        invitation_code: opened.invitation_code,
+    };
+    runtime
+        .block_on(controller.on_preview_runtime(move |handle| async move {
+            handle
+                .initiate_remote_control_controller_pairing(initiate)
+                .await
+        }))
+        .map_err(|error| format!("{error:?}"))?
+        .map_err(|error| format!("{error:?}"))?;
+    let RcEvent::TargetConfirmationRequired {
+        confirmation: target_confirmation,
+        ..
+    } = next_rc(&target_stream, |event| {
+        matches!(event, RcEvent::TargetConfirmationRequired { .. })
+    })?
+    else {
+        return Err("expected target confirmation".into());
+    };
+    let RcEvent::ControllerConfirmationRequired {
+        confirmation: controller_confirmation,
+        ..
+    } = next_rc(&controller_stream, |event| {
+        matches!(event, RcEvent::ControllerConfirmationRequired { .. })
+    })?
+    else {
+        return Err("expected controller confirmation".into());
+    };
+    assert_eq!(
+        target_confirmation.attempt_id,
+        controller_confirmation.attempt_id
+    );
+    assert_eq!(
+        target_confirmation.confirmation_code,
+        controller_confirmation.confirmation_code
+    );
+    let attempt_id = target_confirmation.attempt_id;
+    let target_identity = controller_confirmation.target.identity_hash();
+    // Dropping public confirmation views does not discard the engine-owned attempt.
+    drop(target_confirmation);
+    drop(controller_confirmation);
+    runtime
+        .block_on(target.on_preview_runtime(move |handle| async move {
+            handle
+                .approve_remote_control_target_pairing(ApproveRemoteControlTargetPairing {
+                    attempt_id,
+                })
+                .await
+        }))
+        .map_err(|error| format!("{error:?}"))?
+        .map_err(|error| format!("{error:?}"))?;
+    runtime
+        .block_on(controller.on_preview_runtime(move |handle| async move {
+            handle
+                .approve_remote_control_controller_pairing(ApproveRemoteControlControllerPairing {
+                    attempt_id,
+                })
+                .await
+        }))
+        .map_err(|error| format!("{error:?}"))?
+        .map_err(|error| format!("{error:?}"))?;
+    next_rc(
+        &controller_stream,
+        |event| matches!(event, RcEvent::ControllerAuthorizationPersisted { attempt_id: actual } if *actual == attempt_id),
+    )?;
+    target.stop_result().map_err(|error| format!("{error:?}"))?;
+    controller
+        .stop_result()
+        .map_err(|error| format!("{error:?}"))?;
+    let restarted = NativeHost::start_with_embedding(
+        persistent_config(&controller_root),
+        Arc::new(Sink),
+        NativeEmbedding {
+            remote_control_config: Some(remote_control_config(100)),
+            ..NativeEmbedding::default()
+        },
+    )
+    .map_err(|error| format!("{error:?}"))?;
+    let inventory = runtime
+        .block_on(restarted.on_preview_runtime(|handle| async move {
+            handle.remote_control_target_inventory().await
+        }))
+        .map_err(|error| format!("{error:?}"))?
+        .map_err(|error| format!("{error:?}"))?;
+    assert_eq!(inventory.targets().len(), 1);
+    assert_eq!(inventory.targets()[0].identity_hash(), target_identity);
+    restarted
+        .stop_result()
+        .map_err(|error| format!("{error:?}"))?;
+    fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+    Ok(())
 }

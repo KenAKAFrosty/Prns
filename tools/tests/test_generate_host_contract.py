@@ -2,6 +2,7 @@ import copy
 import importlib.util
 import json
 import unittest
+import tempfile
 from pathlib import Path
 
 
@@ -17,6 +18,89 @@ def canonical_schema():
 
 
 class GenerateHostContractTests(unittest.TestCase):
+    def test_native_extension_inventory_accounts_for_native_and_foreign_boundaries(self):
+        inventory = GENERATOR.native_extensions(ROOT)
+        extensions = {item["name"]: item for item in inventory["extensions"]}
+        self.assertEqual(set(extensions), {"destinationPublicKey", "authenticatedAnnounces", "preparedInterfaceAttachments"})
+        self.assertEqual(extensions["destinationPublicKey"]["targets"]["uniffi"]["status"], "supported")
+        self.assertEqual(extensions["authenticatedAnnounces"]["targets"]["uniffi"]["status"], "unsupported")
+        for extension in extensions.values():
+            self.assertEqual(extension["targets"]["native"]["status"], "supported")
+            for target in ("c", "napi", "cooperative"):
+                self.assertEqual(extension["targets"][target]["status"], "unsupported")
+        coverage = json.loads(GENERATOR.uniffi_coverage(canonical_schema(), inventory))
+        self.assertEqual(coverage["nativeExtensions"], inventory)
+        self.assertEqual((ROOT / GENERATOR.NATIVE_EXTENSIONS_DOCUMENT_PATH).read_text(), GENERATOR.native_extensions_documentation(inventory))
+
+    def test_native_extension_inventory_rejects_unaccounted_targets_and_missing_declarations(self):
+        from tools.repo.host_contract.extensions import validate
+        inventory = GENERATOR.native_extensions(ROOT)
+        del inventory["extensions"][0]["targets"]["cooperative"]
+        with self.assertRaisesRegex(ValueError, "target inventory must be complete"):
+            validate(inventory, ROOT)
+        inventory = GENERATOR.native_extensions(ROOT)
+        inventory["extensions"][0]["targets"]["native"]["declarations"][0]["name"] = "removed_query"
+        with self.assertRaisesRegex(ValueError, "missing native extension declaration"):
+            validate(inventory, ROOT)
+
+    def test_native_extension_inventory_output_is_stale_checked(self):
+        inventory = GENERATOR.native_extensions(ROOT)
+        generated = GENERATOR.native_extensions_documentation(inventory)
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            output = Path(temporary) / "extensions.md"
+            GENERATOR.write_or_check(output, generated, False)
+            GENERATOR.write_or_check(output, generated, True)
+            output.write_text(generated + "stale")
+            with self.assertRaisesRegex(ValueError, "generated host contract is stale"):
+                GENERATOR.write_or_check(output, generated, True)
+
+    def test_remote_control_inventory_is_read_from_authoritative_rust(self):
+        from tools.repo.host_contract.remote_control import load, generate
+        types = load(ROOT)
+        requests = {case["name"] for case in types["RemoteControlRequest"]["variants"]}
+        self.assertEqual(requests, {case["name"] for case in types["RemoteControlRequestKind"]["variants"]})
+        self.assertEqual(requests | {"ProtocolError"}, {case["name"] for case in types["RemoteControlResponse"]["variants"]})
+        self.assertIn("RemoteControlNativeRemoteControlError", generate(ROOT)[0])
+        self.assertEqual(types["RemoteControlRequest"]["directions"], ["input"])
+        self.assertEqual(types["RemoteControlResponse"]["directions"], ["output"])
+
+    def test_remote_control_secret_owner_and_private_storage_do_not_leak(self):
+        from tools.repo.host_contract.remote_control import generate
+        output, _ = generate(ROOT)
+        self.assertIn("RemoteControlSecretText(zeroize::Zeroizing<String>)", output)
+        self.assertNotIn("impl From<prns_core::remote_control::RemoteControlWifiStation>", output)
+        self.assertNotIn("impl From<prns_host_native::remote_control_service::NativeRemoteControlConfig>", output)
+        self.assertIn("RemoteControlSecretCode(zeroize::Zeroizing<u32>)", output)
+        self.assertNotIn("#[derive(Debug", output)
+        self.assertIn("RemoteControlWifiStation::parse", output)
+        self.assertIn("DiscoveryGroupSet::try_from_slice", output)
+
+    def test_session_envelopes_share_the_validated_vocabulary(self):
+        schema = canonical_schema()
+        schema["session"]["records"][0]["fields"][0]["type"] = "MissingType"
+        with self.assertRaisesRegex(ValueError, "unknown type MissingType"):
+            GENERATOR.validate(schema)
+
+    def test_uniffi_generator_projects_every_union_and_uses_native_constructors(self):
+        schema = canonical_schema()
+        output = GENERATOR.uniffi_output(schema)
+        for union in schema["unions"] + schema["session"]["unions"]:
+            self.assertIn("pub enum " + union["name"], output)
+            for case in union["cases"]:
+                self.assertIn(case["name"], output)
+        self.assertIn("Self::try_new", output)
+        self.assertIn("value.zeroize()", output)
+        self.assertNotIn("impl From<prns_host::IdentityConfig>", output)
+        self.assertNotIn("impl From<prns_host::HostConfig>", output)
+        self.assertIn("pub struct WideCounter", output)
+
+    def test_semantic_fingerprint_changes_with_session_schema(self):
+        schema = canonical_schema()
+        first = GENERATOR.uniffi_output(schema).split('HOST_SEMANTIC_FINGERPRINT')[1].split(';')[0]
+        schema["session"]["records"][0]["fields"][0]["name"] = "pendingCommandsRenamed"
+        second = GENERATOR.uniffi_output(schema).split('HOST_SEMANTIC_FINGERPRINT')[1].split(';')[0]
+        self.assertNotEqual(first, second)
+
     def test_canonical_schema_is_valid(self):
         GENERATOR.validate(canonical_schema())
 

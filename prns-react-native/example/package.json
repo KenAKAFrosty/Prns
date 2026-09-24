@@ -1,0 +1,26 @@
+{
+  "name": "prns-expo-host-example",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "export:web": "node ../tools/stage-web.mjs && expo export --platform web"
+  },
+  "dependencies": {
+    "@ubjs/core": "file:../../vendor/ubrn/packages/ubjs-core-0.31.0-5.tgz",
+    "@ubjs/react-native": "file:../../vendor/ubrn/packages/ubjs-react-native-0.31.0-5.tgz",
+    "expo": "~57.0.24",
+    "expo-build-properties": "57.0.21",
+    "expo-modules-core": "~57.0.18",
+    "personal-rns": "file:../../prns-js",
+    "personal-rns-expo": "file:..",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "@expo/metro-runtime": "~57.0.16",
+    "react-dom": "19.2.3",
+    "react-native-web": "~0.21.0"
+  }
+}

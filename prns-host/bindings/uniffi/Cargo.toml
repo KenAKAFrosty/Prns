@@ -1,0 +1,20 @@
+[package]
+name = "prns-host-uniffi"
+version = "0.3.7"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+personal-rns = { path = "../../../personal-rns", default-features = false }
+prns-core = { path = "../../../prns-core", default-features = false }
+prns-host = { path = "../../core" }
+prns-host-native = { path = "../../impls/native" }
+uniffi = { version = "=0.31.2", default-features = false }
+zeroize = "1"
+thiserror = "2"
