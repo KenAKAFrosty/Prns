@@ -257,6 +257,27 @@
       "cables_ready": true,
       "device_permissions_ready": true,
       "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "muzi-base-duo",
+      "surface": "web",
+      "os": "macos",
+      "architecture": "aarch64",
+      "browser": {"name": "chrome", "channel": "stable"},
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "muzi-base-duo",
+      "surface": "cli",
+      "os": "macos",
+      "architecture": "aarch64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
     }
   ],
   "web_serial_assignments": [

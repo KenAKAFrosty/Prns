@@ -6,6 +6,81 @@ Effect, or a product runtime singleton. Configuration, commands, results,
 snapshots, and events use `personal-rns/contract`. The handwritten wrapper owns
 leases, iterators, and resource handles; generated adapters own value conversion.
 
+This is a source preview. The SDK and its patched runtime archives are not yet
+available as a complete public-registry installation. Use this repository's
+locked packages and the source workflow below. A custom native build is required;
+Expo Go cannot load the Rust image.
+
+## Source quickstart
+
+Run the commands below from the repository root. Use Node 24.18.0, npm 11.16.0,
+Python 3.11+ and Rust through rustup. Native builds use Rust 1.98.1; the reviewed
+native toolchain versions are recorded in
+[`vendor/ubrn/source-lock.json`](../vendor/ubrn/source-lock.json).
+On Linux, install `libdbus-1-dev` and `pkg-config` for host metadata generation.
+
+First install the locked dependencies and build the core JavaScript contract:
+
+```sh
+npm install --global npm@11.16.0
+rustup toolchain install 1.98.1 --profile minimal
+export RUSTUP_TOOLCHAIN=1.98.1
+npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+npm --prefix prns-js run build:code
+npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+npm --prefix prns-react-native run verify
+python3 prns-react-native/tools/generate.py generate --check
+```
+
+This setup uses the core package and pinned runtime archives without an app
+workspace install. The shared `tools/uniffi` generator uses the single runtime
+distribution under `vendor/ubrn`. `providers/default.json` selects
+`prns-host-uniffi-image`, which builds the native image `prns_host_mobile`.
+`PRNS_UBRN_CACHE` selects disposable generator cache; `CARGO_TARGET_DIR` selects
+the Rust build cache.
+
+Then build the SDK image for the platform you will run. For Android, install
+Java 17 and the Android command-line tools, and set `ANDROID_HOME` to the SDK
+directory. This builds for an arm64 device or emulator:
+
+```sh
+sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.1.12297006"
+rustup target add aarch64-linux-android
+cargo install cargo-ndk --locked --version 4.1.2
+python3 prns-react-native/tools/generate.py android --targets arm64-v8a
+```
+
+For an x86_64 emulator, add the `x86_64-linux-android` Rust target and use
+`--targets x86_64` instead. On macOS, install Xcode 27.0 and CocoaPods; this
+builds for an Apple Silicon iOS simulator:
+
+```sh
+rustup target add aarch64-apple-ios-sim
+python3 prns-react-native/tools/generate.py ios --sim-only --targets aarch64-apple-ios-sim
+```
+
+For a physical iOS device, also add the `aarch64-apple-ios` Rust target and build
+with `ios --targets aarch64-apple-ios,aarch64-apple-ios-sim` instead. Installing
+the example on a device requires your own app signing configuration.
+
+Finally install the independent example and run it on your chosen platform:
+
+```sh
+npm --prefix prns-react-native/example ci --ignore-scripts --no-audit --no-fund
+npm --prefix prns-react-native/example run android -- --device
+# Or, for the iOS simulator:
+npm --prefix prns-react-native/example run ios
+```
+
+`example/` opens a persistent host, inspects it, connects to an editable TCP peer
+address, and stops it. No PRNS product/service package is used. The example
+enables `expo-build-properties` → `ios.enableSceneSupport` so Expo owns scene
+startup on iOS 27. Consumers built with that SDK must also configure scene
+startup; this is an Expo app setting.
+
+## Open a host
+
 ```ts
 import { balancedLimits, defaultStoragePath, openHost } from "personal-rns-expo";
 
@@ -85,21 +160,7 @@ the reader. Received resources own their bytes independently of the client.
 and backpressure remain authoritative. Durable services must consume and persist
 in Rust; delivery to JS does not promise recovery after runtime destruction.
 
-## Select one native image
-
-The source checkout uses the single runtime distribution under `vendor/ubrn` and
-the shared `tools/uniffi` generator. From the repository root:
-
-```sh
-python3 prns-react-native/tools/generate.py generate
-python3 prns-react-native/tools/generate.py generate --check
-python3 prns-react-native/tools/generate.py android --targets arm64-v8a
-python3 prns-react-native/tools/generate.py ios --sim-only --targets aarch64-apple-ios-sim
-```
-
-`PRNS_UBRN_CACHE` selects disposable generator cache; `CARGO_TARGET_DIR` selects
-the Rust build cache. `providers/default.json` builds the SDK's default
-`prns-host-uniffi-image` as `prns_host_mobile`.
+## Native compositions: select one image
 
 An app with native services supplies `--provider /path/to/provider.json` and
 `--destination /path/to/app/target/host-sdk`. The versioned provider document
@@ -134,16 +195,7 @@ only while generating bindings. The semantic fingerprint and UniFFI checksums
 are checked before host use. A changed contract/provider requires a native
 rebuild and the corresponding Expo update runtime-version change.
 
-## Independent example and web
-
-`example/` is a separate Expo project that opens a persistent host, inspects it,
-connects a TCP peer, and stops it. Build the SDK image first, install the example's
-dependencies, then run `npm run android` or `npm run ios` from that directory.
-A custom development build is required; Expo Go cannot load this Rust image.
-The peer address is editable. No PRNS product/service package is used.
-The example enables `expo-build-properties` → `ios.enableSceneSupport` so Expo
-owns scene startup on iOS 27. Consumers built with that SDK must also configure
-scene startup; this is an Expo app setting, not a PRNS runtime service.
+## Browser
 
 The browser entry delegates directly to the existing backend:
 
@@ -152,13 +204,25 @@ import { BrowserHost, persistentBrowser } from "personal-rns-expo/browser";
 const outcome = await BrowserHost.create(persistentBrowser("my-node"));
 ```
 
-For the Expo web example, build and stage the existing browser WASM package
-(`npm --prefix prns-wasm run build:wasm`, then `node prns-js/scripts/stage.mjs browser`
-from the repository root) and run `npm run export:web` in `example/`. Its staging
-helper copies the installed core package's WASM assets into the public directory;
-Expo bundles the existing PRNS workers. Serve the resulting `example/dist/` to
-exercise persistent browser startup and shutdown. WASM and JavaScript must come
-from the same contract version.
+After the source quickstart's dependency setup and Rust toolchain selection,
+install the WebAssembly target and the CLI version matching `prns-wasm/Cargo.lock`.
+Build, stage and export the Expo web example from the repository root:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --locked --version 0.2.126
+env -u CARGO_TARGET_DIR npm --prefix prns-wasm run build:wasm
+node prns-js/scripts/stage.mjs browser
+npm --prefix prns-react-native/example ci --ignore-scripts --no-audit --no-fund
+npm --prefix prns-react-native/example run export:web
+```
+
+The WASM build script expects its local target directory, so that command clears
+any shared `CARGO_TARGET_DIR`. The example's staging helper copies the installed
+core package's WASM assets into the public directory; Expo bundles the existing
+PRNS workers. Serve `prns-react-native/example/dist/` to exercise persistent
+browser startup and shutdown. WASM and JavaScript must come from the same
+contract version.
 
 Browser creation retains its existing worker/storage options and explicit
 unsupported-capability outcomes. Native filesystem configuration and TCP are
@@ -177,19 +241,9 @@ Session tests cover joined failure cleanup, shared stop outcomes and retry after
 unavailable ownership. Provider tests reject missing/duplicate image selections.
 `npm run verify` runs the TypeScript, JavaScript and provider checks.
 
-For a clean source checkout, build the core contract and install the SDK's locked
-development dependencies from the repository root:
-
-```sh
-npm --prefix prns-js ci --ignore-scripts
-npm --prefix prns-js run build:code
-npm --prefix prns-react-native ci --ignore-scripts
-npm --prefix prns-react-native run verify
-```
-
-This setup uses the core package and pinned runtime archives without an app
-workspace install. Dedicated SDK CI jobs verify the generated default provider,
-contract conformance, package checks, and native builds independently.
+After the source quickstart, dedicated SDK CI jobs verify the generated default
+provider, contract conformance, package checks, and native builds independently.
+The commands below run from `prns-react-native/`.
 
 `npm run test:consumer`
 installs the packed SDK, core package, and pinned runtime archives outside this
