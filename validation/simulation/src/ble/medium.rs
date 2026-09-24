@@ -1,0 +1,449 @@
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use personal_rns::interfaces::bluetooth_auto::BleAddress;
+
+use super::advertisement::{BleAdvertisement, BleAdvertisingParameters};
+use super::config::BleMediumConfig;
+use super::trace::{
+    BleObservationDropReason, BleSimulationEvent, BleTraceBuffer, BleTraceSnapshot,
+};
+use super::{BleRadioPower, BleScanState};
+use crate::{SimulationDurationInTicks, SimulationTick};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BleRadioId(u16);
+
+impl BleRadioId {
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BleRadioMutation {
+    Applied,
+    Unchanged,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BleSimulationError {
+    RadioCapacityReached,
+    RadioIdsExhausted,
+    DuplicateAddress,
+    UnknownRadio(BleRadioId),
+}
+
+impl fmt::Display for BleSimulationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RadioCapacityReached => formatter.write_str("BLE radio capacity reached"),
+            Self::RadioIdsExhausted => formatter.write_str("BLE radio identifiers exhausted"),
+            Self::DuplicateAddress => formatter.write_str("BLE address is already attached"),
+            Self::UnknownRadio(radio) => write!(formatter, "BLE radio {} is unknown", radio.get()),
+        }
+    }
+}
+
+impl std::error::Error for BleSimulationError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BleAdvanceError {
+    BeforeCurrent {
+        current: SimulationTick,
+        requested: SimulationTick,
+    },
+    Overflow {
+        current: SimulationTick,
+        by: SimulationDurationInTicks,
+    },
+    EmissionBudgetExceeded {
+        maximum: usize,
+    },
+}
+
+impl fmt::Display for BleAdvanceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BeforeCurrent { current, requested } => write!(
+                formatter,
+                "cannot move BLE simulation time backward from {} to {}",
+                current.get(),
+                requested.get(),
+            ),
+            Self::Overflow { current, by } => write!(
+                formatter,
+                "advancing BLE simulation time {} by {} ticks overflows",
+                current.get(),
+                by.get(),
+            ),
+            Self::EmissionBudgetExceeded { maximum } => write!(
+                formatter,
+                "BLE advance exceeds its bounded budget of {maximum} advertisement emissions",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BleAdvanceError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BleObservation {
+    pub advertiser: BleRadioId,
+    pub address: BleAddress,
+    pub received_signal_strength_dbm: i8,
+    pub at: SimulationTick,
+    pub advertisement: BleAdvertisement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BleAdvanceReport {
+    pub from: SimulationTick,
+    pub to: SimulationTick,
+    pub advertisements_emitted: usize,
+    pub observations_queued: usize,
+    pub observations_dropped: usize,
+}
+
+struct ActiveAdvertisement {
+    parameters: BleAdvertisingParameters,
+    next_emission: Option<SimulationTick>,
+}
+
+struct Radio {
+    address: BleAddress,
+    received_signal_strength_dbm: i8,
+    power: BleRadioPower,
+    scanning: BleScanState,
+    advertising: Option<ActiveAdvertisement>,
+    observations: VecDeque<BleObservation>,
+}
+
+struct BleMediumState {
+    max_radios: usize,
+    observation_capacity: usize,
+    max_emissions_per_advance: usize,
+    now: SimulationTick,
+    next_radio: Option<BleRadioId>,
+    addresses: BTreeSet<BleAddress>,
+    radios: BTreeMap<BleRadioId, Radio>,
+    trace: BleTraceBuffer,
+}
+
+#[derive(Clone)]
+pub struct VirtualBleMedium {
+    state: Arc<Mutex<BleMediumState>>,
+}
+
+impl VirtualBleMedium {
+    #[must_use]
+    pub fn new(config: BleMediumConfig) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(BleMediumState {
+                max_radios: config.max_radios,
+                observation_capacity: config.observation_queue,
+                max_emissions_per_advance: config.max_emissions_per_advance,
+                now: SimulationTick::ZERO,
+                next_radio: Some(BleRadioId(0)),
+                addresses: BTreeSet::new(),
+                radios: BTreeMap::new(),
+                trace: BleTraceBuffer::new(config.trace_capacity),
+            })),
+        }
+    }
+
+    pub fn attach(
+        &self,
+        address: BleAddress,
+        received_signal_strength_dbm: i8,
+    ) -> Result<BleRadioId, BleSimulationError> {
+        let mut state = self.lock_state();
+        if state.radios.len() == state.max_radios {
+            return Err(BleSimulationError::RadioCapacityReached);
+        }
+        if state.addresses.contains(&address) {
+            return Err(BleSimulationError::DuplicateAddress);
+        }
+        let radio = state
+            .next_radio
+            .ok_or(BleSimulationError::RadioIdsExhausted)?;
+        state.next_radio = radio.0.checked_add(1).map(BleRadioId);
+        let _ = state.addresses.insert(address);
+        let observation_capacity = state.observation_capacity;
+        let replaced = state.radios.insert(
+            radio,
+            Radio {
+                address,
+                received_signal_strength_dbm,
+                power: BleRadioPower::Off,
+                scanning: BleScanState::Off,
+                advertising: None,
+                observations: VecDeque::with_capacity(observation_capacity),
+            },
+        );
+        debug_assert!(replaced.is_none(), "fresh BLE radio id must be vacant");
+        state
+            .trace
+            .push(BleSimulationEvent::RadioAttached { radio });
+        Ok(radio)
+    }
+
+    #[must_use]
+    pub fn now(&self) -> SimulationTick {
+        self.lock_state().now
+    }
+
+    pub fn set_radio_power(
+        &self,
+        radio: BleRadioId,
+        power: BleRadioPower,
+    ) -> Result<BleRadioMutation, BleSimulationError> {
+        let mut state = self.lock_state();
+        let now = state.now;
+        let attached = state
+            .radios
+            .get_mut(&radio)
+            .ok_or(BleSimulationError::UnknownRadio(radio))?;
+        if attached.power == power {
+            return Ok(BleRadioMutation::Unchanged);
+        }
+        attached.power = power;
+        if power == BleRadioPower::On {
+            if let Some(advertising) = &mut attached.advertising {
+                advertising.next_emission = Some(now);
+            }
+        }
+        state
+            .trace
+            .push(BleSimulationEvent::RadioPowerChanged { radio, power });
+        Ok(BleRadioMutation::Applied)
+    }
+
+    pub fn set_scanning(
+        &self,
+        radio: BleRadioId,
+        scanning: BleScanState,
+    ) -> Result<BleRadioMutation, BleSimulationError> {
+        let mut state = self.lock_state();
+        let attached = state
+            .radios
+            .get_mut(&radio)
+            .ok_or(BleSimulationError::UnknownRadio(radio))?;
+        if attached.scanning == scanning {
+            return Ok(BleRadioMutation::Unchanged);
+        }
+        attached.scanning = scanning;
+        state
+            .trace
+            .push(BleSimulationEvent::ScanningChanged { radio, scanning });
+        Ok(BleRadioMutation::Applied)
+    }
+
+    pub fn set_advertising(
+        &self,
+        radio: BleRadioId,
+        parameters: Option<BleAdvertisingParameters>,
+    ) -> Result<BleRadioMutation, BleSimulationError> {
+        let mut state = self.lock_state();
+        let now = state.now;
+        let attached = state
+            .radios
+            .get_mut(&radio)
+            .ok_or(BleSimulationError::UnknownRadio(radio))?;
+        if attached
+            .advertising
+            .as_ref()
+            .map(|active| active.parameters)
+            == parameters
+        {
+            return Ok(BleRadioMutation::Unchanged);
+        }
+        attached.advertising = parameters.map(|parameters| ActiveAdvertisement {
+            parameters,
+            next_emission: Some(now),
+        });
+        state.trace.push(BleSimulationEvent::AdvertisingChanged {
+            radio,
+            advertisement: parameters.map(BleAdvertisingParameters::advertisement),
+            interval: parameters.map(BleAdvertisingParameters::interval),
+        });
+        Ok(BleRadioMutation::Applied)
+    }
+
+    pub fn take_observation(
+        &self,
+        radio: BleRadioId,
+    ) -> Result<Option<BleObservation>, BleSimulationError> {
+        self.lock_state()
+            .radios
+            .get_mut(&radio)
+            .ok_or(BleSimulationError::UnknownRadio(radio))
+            .map(|attached| attached.observations.pop_front())
+    }
+
+    pub fn advance_by(
+        &self,
+        by: SimulationDurationInTicks,
+    ) -> Result<BleAdvanceReport, BleAdvanceError> {
+        let mut state = self.lock_state();
+        let requested = state.now.checked_add(by).ok_or(BleAdvanceError::Overflow {
+            current: state.now,
+            by,
+        })?;
+        advance_locked(&mut state, requested)
+    }
+
+    pub fn advance_to(
+        &self,
+        requested: SimulationTick,
+    ) -> Result<BleAdvanceReport, BleAdvanceError> {
+        advance_locked(&mut self.lock_state(), requested)
+    }
+
+    #[must_use]
+    pub fn trace(&self) -> BleTraceSnapshot {
+        self.lock_state().trace.snapshot()
+    }
+
+    fn lock_state(&self) -> MutexGuard<'_, BleMediumState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+fn advance_locked(
+    state: &mut BleMediumState,
+    requested: SimulationTick,
+) -> Result<BleAdvanceReport, BleAdvanceError> {
+    if requested < state.now {
+        return Err(BleAdvanceError::BeforeCurrent {
+            current: state.now,
+            requested,
+        });
+    }
+    let emissions = planned_emissions(state, requested)?;
+    let from = state.now;
+    if requested > from {
+        state.now = requested;
+        state.trace.push(BleSimulationEvent::TimeAdvanced {
+            from,
+            to: requested,
+        });
+    }
+    let mut report = BleAdvanceReport {
+        from,
+        to: requested,
+        advertisements_emitted: emissions.len(),
+        observations_queued: 0,
+        observations_dropped: 0,
+    };
+    for (at, advertiser) in emissions {
+        settle_emission(state, advertiser, at, &mut report);
+    }
+    Ok(report)
+}
+
+fn planned_emissions(
+    state: &BleMediumState,
+    requested: SimulationTick,
+) -> Result<Vec<(SimulationTick, BleRadioId)>, BleAdvanceError> {
+    let mut emissions = Vec::new();
+    for (radio_id, radio) in &state.radios {
+        if radio.power != BleRadioPower::On {
+            continue;
+        }
+        let Some(active) = &radio.advertising else {
+            continue;
+        };
+        let Some(mut at) = active.next_emission else {
+            continue;
+        };
+        while at <= requested {
+            if emissions.len() == state.max_emissions_per_advance {
+                return Err(BleAdvanceError::EmissionBudgetExceeded {
+                    maximum: state.max_emissions_per_advance,
+                });
+            }
+            emissions.push((at, *radio_id));
+            let Some(next) = at.checked_add(active.parameters.interval()) else {
+                break;
+            };
+            at = next;
+        }
+    }
+    emissions.sort_unstable();
+    Ok(emissions)
+}
+
+fn settle_emission(
+    state: &mut BleMediumState,
+    advertiser: BleRadioId,
+    at: SimulationTick,
+    report: &mut BleAdvanceReport,
+) {
+    let Some(source) = state.radios.get(&advertiser) else {
+        return;
+    };
+    let Some(active) = &source.advertising else {
+        return;
+    };
+    let parameters = active.parameters;
+    let advertisement = parameters.advertisement();
+    let address = source.address;
+    let received_signal_strength_dbm = source.received_signal_strength_dbm;
+    state.trace.push(BleSimulationEvent::AdvertisementEmitted {
+        radio: advertiser,
+        at,
+        advertisement,
+    });
+
+    let scanners: Vec<_> = state
+        .radios
+        .iter()
+        .filter_map(|(radio_id, radio)| {
+            (*radio_id != advertiser
+                && radio.power == BleRadioPower::On
+                && radio.scanning == BleScanState::On)
+                .then_some(*radio_id)
+        })
+        .collect();
+    for scanner in scanners {
+        let Some(receiver) = state.radios.get_mut(&scanner) else {
+            continue;
+        };
+        if receiver.observations.len() == state.observation_capacity {
+            report.observations_dropped = report.observations_dropped.saturating_add(1);
+            state.trace.push(BleSimulationEvent::ObservationDropped {
+                advertiser,
+                scanner,
+                at,
+                reason: BleObservationDropReason::ObservationQueueFull,
+            });
+        } else {
+            receiver.observations.push_back(BleObservation {
+                advertiser,
+                address,
+                received_signal_strength_dbm,
+                at,
+                advertisement,
+            });
+            report.observations_queued = report.observations_queued.saturating_add(1);
+            state.trace.push(BleSimulationEvent::ObservationQueued {
+                advertiser,
+                scanner,
+                at,
+            });
+        }
+    }
+
+    if let Some(active) = state
+        .radios
+        .get_mut(&advertiser)
+        .and_then(|source| source.advertising.as_mut())
+    {
+        active.next_emission = at.checked_add(parameters.interval());
+    }
+}

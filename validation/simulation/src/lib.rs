@@ -10,6 +10,8 @@ mod seeded;
 mod time;
 mod trace;
 
+pub mod ble;
+
 pub use config::{CapacityField, VirtualMediumConfig, VirtualMediumConfigError};
 pub use fault::{
     FaultPlan, FaultPlanError, TransmissionAction, TransmissionOrdinal, TransmissionRule,
