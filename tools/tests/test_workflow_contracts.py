@@ -71,5 +71,48 @@ jobs:
         self.assertEqual(contracts.validate_ci_compiler_environment(workflow), [])
 
 
+class ReleaseSdkBootstrapTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.workflow = (ROOT / ".github/workflows/release-readiness.yml").read_text()
+
+    def test_current_release_workflow_bootstraps_sdk(self) -> None:
+        self.assertEqual(contracts.validate_release_sdk_bootstrap(self.workflow), [])
+
+    def test_rejects_nonexistent_sdk_matrix_group(self) -> None:
+        workflow = self.workflow.replace(
+            "matrix.id == 'react-native-sdk' || matrix.id == 'react-native-generated'",
+            "matrix.group == 'react-native-sdk'",
+        )
+        self.assertEqual(
+            contracts.validate_release_sdk_bootstrap(workflow),
+            ["release-readiness.yml must bootstrap both standalone SDK suite IDs"],
+        )
+
+    def test_rejects_missing_or_late_core_contract_build(self) -> None:
+        command = "          npm --prefix prns-js run build:code\n"
+        for case, workflow in (
+            ("missing", self.workflow.replace(command, "")),
+            ("after SDK install", self.workflow.replace(command, "").replace(
+                "      - uses: astral-sh/setup-uv@", command + "      - uses: astral-sh/setup-uv@"
+            )),
+        ):
+            with self.subTest(case=case):
+                self.assertIn(
+                    "release-readiness.yml must select the pinned SDK toolchain, build the core contract, "
+                    "then install the standalone SDK dependencies",
+                    contracts.validate_release_sdk_bootstrap(workflow),
+                )
+
+    def test_rejects_installing_rust_without_selecting_it(self) -> None:
+        workflow = self.workflow.replace(
+            "          printf 'RUSTUP_TOOLCHAIN=1.98.1\\n' >> \"$GITHUB_ENV\"\n", ""
+        )
+        self.assertIn(
+            "release-readiness.yml must select the pinned SDK toolchain, build the core contract, "
+            "then install the standalone SDK dependencies",
+            contracts.validate_release_sdk_bootstrap(workflow),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
