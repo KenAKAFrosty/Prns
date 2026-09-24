@@ -3408,6 +3408,7 @@ name = "prns-simulation"
 version = "0.3.7"
 dependencies = [
  "personal-rns",
+ "prns-interfaces-tokio",
  "tokio",
 ]
 

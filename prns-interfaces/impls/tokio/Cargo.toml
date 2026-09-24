@@ -96,7 +96,10 @@ wifi-aware = ["tcp"]
 usb = ["serial", "tcp", "dep:futures-util", "dep:prns-ffi", "dep:nusb"]
 interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
 config = ["dep:prns-config", "dep:tokio", "dep:if-addrs", "tokio/rt"]
-bluetooth-auto = ["dep:tokio", "tokio/rt", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
+# Portable policy, handshake, and member supervision without native radio adapters.
+bluetooth-auto-runtime = ["dep:tokio", "tokio/rt", "dep:futures-util"]
+# Production host attachment adds the platform Bluetooth implementations.
+bluetooth-auto = ["bluetooth-auto-runtime", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]
 dbg_macro = "deny"

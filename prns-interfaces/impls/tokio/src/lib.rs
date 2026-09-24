@@ -108,5 +108,5 @@ pub mod usb_auto;
 #[cfg(feature = "shared-instance")]
 pub mod shared_instance;
 
-#[cfg(feature = "bluetooth-auto")]
+#[cfg(any(feature = "bluetooth-auto", feature = "bluetooth-auto-runtime"))]
 pub mod bluetooth_auto;

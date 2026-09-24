@@ -13,5 +13,8 @@ publish = false
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host"] }
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
 
+[dev-dependencies]
+prns-interfaces-tokio = { path = "../../prns-interfaces/impls/tokio", default-features = false, features = ["bluetooth-auto-runtime"] }
+
 [lints]
 workspace = true
