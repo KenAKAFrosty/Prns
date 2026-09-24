@@ -1,53 +1,59 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="880" height="400" viewBox="0 0 880 400" role="img" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
-  <text x="8" y="17" font-size="12" fill="#52514e">Median throughput as a multiple of RNS 1.4.2 (compiled) · higher is better</text>
-  <line x1="338.3" y1="34.0" x2="338.3" y2="378.0" stroke="#c3c2b7" stroke-width="1"/>
-  <text x="338.3" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">1×</text>
-  <line x1="387.4" y1="34.0" x2="387.4" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
-  <text x="387.4" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">10×</text>
-  <line x1="441.8" y1="34.0" x2="441.8" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
-  <text x="441.8" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">20×</text>
-  <line x1="496.3" y1="34.0" x2="496.3" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
-  <text x="496.3" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">30×</text>
-  <line x1="550.7" y1="34.0" x2="550.7" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
-  <text x="550.7" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">40×</text>
-  <line x1="605.2" y1="34.0" x2="605.2" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
-  <text x="605.2" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">50×</text>
-  <line x1="659.6" y1="34.0" x2="659.6" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
-  <text x="659.6" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">60×</text>
-  <line x1="714.1" y1="34.0" x2="714.1" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
-  <text x="714.1" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">70×</text>
-  <line x1="768.5" y1="34.0" x2="768.5" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
-  <text x="768.5" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">80×</text>
-  <line x1="332.9" y1="34.0" x2="332.9" y2="378.0" stroke="#c3c2b7" stroke-width="1"/>
-  <text x="322.9" y="55.5" font-size="13" fill="#52514e" text-anchor="end">Single-packet throughput</text>
-  <path d="M332.9,41.0 L814.0,41.0 Q818.0,41.0 818.0,45.0 L818.0,57.0 Q818.0,61.0 814.0,61.0 L332.9,61.0 Z" fill="#2a78d6"/>
-  <text x="826.0" y="55.5" font-size="12.5" font-weight="600" fill="#0b0b0b">89.09×</text>
-  <text x="322.9" y="89.5" font-size="13" fill="#52514e" text-anchor="end">Link-message throughput</text>
-  <path d="M332.9,75.0 L457.6,75.0 Q461.6,75.0 461.6,79.0 L461.6,91.0 Q461.6,95.0 457.6,95.0 L332.9,95.0 Z" fill="#2a78d6"/>
-  <text x="469.6" y="89.5" font-size="12.5" font-weight="600" fill="#0b0b0b">23.64×</text>
-  <text x="322.9" y="123.5" font-size="13" fill="#52514e" text-anchor="end">Request/response</text>
-  <path d="M332.9,109.0 L356.1,109.0 Q360.1,109.0 360.1,113.0 L360.1,125.0 Q360.1,129.0 356.1,129.0 L332.9,129.0 Z" fill="#2a78d6"/>
-  <text x="368.1" y="123.5" font-size="12.5" font-weight="600" fill="#0b0b0b">5.00×</text>
-  <text x="322.9" y="157.5" font-size="13" fill="#52514e" text-anchor="end">Maximum resource segment</text>
-  <path d="M332.9,143.0 L345.5,143.0 Q349.5,143.0 349.5,147.0 L349.5,159.0 Q349.5,163.0 345.5,163.0 L332.9,163.0 Z" fill="#2a78d6"/>
-  <text x="357.5" y="157.5" font-size="12.5" font-weight="600" fill="#0b0b0b">3.06×</text>
-  <text x="322.9" y="191.5" font-size="13" fill="#52514e" text-anchor="end">Maximum resource segment · 1 Gbps policy</text>
-  <path d="M332.9,177.0 L346.7,177.0 Q350.7,177.0 350.7,181.0 L350.7,193.0 Q350.7,197.0 346.7,197.0 L332.9,197.0 Z" fill="#2a78d6"/>
-  <text x="358.7" y="191.5" font-size="12.5" font-weight="600" fill="#0b0b0b">3.26×</text>
-  <text x="322.9" y="225.5" font-size="13" fill="#52514e" text-anchor="end">64-segment resource stream</text>
-  <path d="M332.9,211.0 L348.3,211.0 Q352.3,211.0 352.3,215.0 L352.3,227.0 Q352.3,231.0 348.3,231.0 L332.9,231.0 Z" fill="#2a78d6"/>
-  <text x="360.3" y="225.5" font-size="12.5" font-weight="600" fill="#0b0b0b">3.57×</text>
-  <text x="322.9" y="259.5" font-size="13" fill="#52514e" text-anchor="end">64-segment resource stream · 1 Gbps policy</text>
-  <path d="M332.9,245.0 L350.3,245.0 Q354.3,245.0 354.3,249.0 L354.3,261.0 Q354.3,265.0 350.3,265.0 L332.9,265.0 Z" fill="#2a78d6"/>
-  <text x="362.3" y="259.5" font-size="12.5" font-weight="600" fill="#0b0b0b">3.93×</text>
-  <text x="322.9" y="293.5" font-size="13" fill="#52514e" text-anchor="end">Raw transport throughput</text>
-  <path d="M332.9,279.0 L452.7,279.0 Q456.7,279.0 456.7,283.0 L456.7,295.0 Q456.7,299.0 452.7,299.0 L332.9,299.0 Z" fill="#2a78d6"/>
-  <text x="464.7" y="293.5" font-size="12.5" font-weight="600" fill="#0b0b0b">22.73×</text>
-  <text x="322.9" y="327.5" font-size="13" fill="#52514e" text-anchor="end">Transported resource throughput</text>
-  <path d="M332.9,313.0 L377.3,313.0 Q381.3,313.0 381.3,317.0 L381.3,329.0 Q381.3,333.0 377.3,333.0 L332.9,333.0 Z" fill="#2a78d6"/>
-  <text x="389.3" y="327.5" font-size="12.5" font-weight="600" fill="#0b0b0b">8.89×</text>
-  <text x="322.9" y="361.5" font-size="13" fill="#52514e" text-anchor="end">Transported resource throughput · 1 Gbps policy</text>
-  <path d="M332.9,347.0 L372.3,347.0 Q376.3,347.0 376.3,351.0 L376.3,363.0 Q376.3,367.0 372.3,367.0 L332.9,367.0 Z" fill="#2a78d6"/>
-  <text x="384.3" y="361.5" font-size="12.5" font-weight="600" fill="#0b0b0b">7.97×</text>
-  <line x1="332.9" y1="378.0" x2="818.0" y2="378.0" stroke="#c3c2b7" stroke-width="1"/>
+  <text x="8" y="17" font-size="12" fill="#52514e">Median throughput as a multiple of RNS 1.5.4 · higher is better</text>
+  <line x1="370.5" y1="34.0" x2="370.5" y2="378.0" stroke="#c3c2b7" stroke-width="1"/>
+  <text x="370.5" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">1×</text>
+  <line x1="407.4" y1="34.0" x2="407.4" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
+  <text x="407.4" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">10×</text>
+  <line x1="448.3" y1="34.0" x2="448.3" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
+  <text x="448.3" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">20×</text>
+  <line x1="489.3" y1="34.0" x2="489.3" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
+  <text x="489.3" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">30×</text>
+  <line x1="530.3" y1="34.0" x2="530.3" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
+  <text x="530.3" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">40×</text>
+  <line x1="571.3" y1="34.0" x2="571.3" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
+  <text x="571.3" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">50×</text>
+  <line x1="612.2" y1="34.0" x2="612.2" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
+  <text x="612.2" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">60×</text>
+  <line x1="653.2" y1="34.0" x2="653.2" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
+  <text x="653.2" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">70×</text>
+  <line x1="694.2" y1="34.0" x2="694.2" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
+  <text x="694.2" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">80×</text>
+  <line x1="735.2" y1="34.0" x2="735.2" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
+  <text x="735.2" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">90×</text>
+  <line x1="776.1" y1="34.0" x2="776.1" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
+  <text x="776.1" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">100×</text>
+  <line x1="817.1" y1="34.0" x2="817.1" y2="378.0" stroke="#e1e0d9" stroke-width="1"/>
+  <text x="817.1" y="394.0" font-size="11" fill="#898781" text-anchor="middle" font-variant-numeric="tabular-nums">110×</text>
+  <line x1="366.4" y1="34.0" x2="366.4" y2="378.0" stroke="#c3c2b7" stroke-width="1"/>
+  <text x="356.4" y="55.5" font-size="13" fill="#52514e" text-anchor="end">Single-packet throughput</text>
+  <path d="M366.4,41.0 L814.0,41.0 Q818.0,41.0 818.0,45.0 L818.0,57.0 Q818.0,61.0 814.0,61.0 L366.4,61.0 Z" fill="#2a78d6"/>
+  <text x="826.0" y="55.5" font-size="12.5" font-weight="600" fill="#0b0b0b">110.22×</text>
+  <text x="356.4" y="89.5" font-size="13" fill="#52514e" text-anchor="end">Link-message throughput</text>
+  <path d="M366.4,75.0 L416.3,75.0 Q420.3,75.0 420.3,79.0 L420.3,91.0 Q420.3,95.0 416.3,95.0 L366.4,95.0 Z" fill="#2a78d6"/>
+  <text x="428.3" y="89.5" font-size="12.5" font-weight="600" fill="#0b0b0b">13.15×</text>
+  <text x="356.4" y="123.5" font-size="13" fill="#52514e" text-anchor="end">Request/response</text>
+  <path d="M366.4,109.0 L477.7,109.0 Q481.7,109.0 481.7,113.0 L481.7,125.0 Q481.7,129.0 477.7,129.0 L366.4,129.0 Z" fill="#2a78d6"/>
+  <text x="489.7" y="123.5" font-size="12.5" font-weight="600" fill="#0b0b0b">28.15×</text>
+  <text x="356.4" y="157.5" font-size="13" fill="#52514e" text-anchor="end">Maximum resource segment</text>
+  <path d="M366.4,143.0 L375.9,143.0 Q379.9,143.0 379.9,147.0 L379.9,159.0 Q379.9,163.0 375.9,163.0 L366.4,163.0 Z" fill="#2a78d6"/>
+  <text x="387.9" y="157.5" font-size="12.5" font-weight="600" fill="#0b0b0b">3.30×</text>
+  <text x="356.4" y="191.5" font-size="13" fill="#52514e" text-anchor="end">Maximum resource segment · matched RNS policy</text>
+  <path d="M366.4,177.0 L376.1,177.0 Q380.1,177.0 380.1,181.0 L380.1,193.0 Q380.1,197.0 376.1,197.0 L366.4,197.0 Z" fill="#2a78d6"/>
+  <text x="388.1" y="191.5" font-size="12.5" font-weight="600" fill="#0b0b0b">3.35×</text>
+  <text x="356.4" y="225.5" font-size="13" fill="#52514e" text-anchor="end">64-segment resource stream</text>
+  <path d="M366.4,211.0 L385.0,211.0 Q389.0,211.0 389.0,215.0 L389.0,227.0 Q389.0,231.0 385.0,231.0 L366.4,231.0 Z" fill="#2a78d6"/>
+  <text x="397.0" y="225.5" font-size="12.5" font-weight="600" fill="#0b0b0b">5.51×</text>
+  <text x="356.4" y="259.5" font-size="13" fill="#52514e" text-anchor="end">64-segment resource stream · matched RNS policy</text>
+  <path d="M366.4,245.0 L385.3,245.0 Q389.3,245.0 389.3,249.0 L389.3,261.0 Q389.3,265.0 385.3,265.0 L366.4,265.0 Z" fill="#2a78d6"/>
+  <text x="397.3" y="259.5" font-size="12.5" font-weight="600" fill="#0b0b0b">5.58×</text>
+  <text x="356.4" y="293.5" font-size="13" fill="#52514e" text-anchor="end">Raw transport throughput</text>
+  <path d="M366.4,279.0 L466.2,279.0 Q470.2,279.0 470.2,283.0 L470.2,295.0 Q470.2,299.0 466.2,299.0 L366.4,299.0 Z" fill="#2a78d6"/>
+  <text x="478.2" y="293.5" font-size="12.5" font-weight="600" fill="#0b0b0b">25.33×</text>
+  <text x="356.4" y="327.5" font-size="13" fill="#52514e" text-anchor="end">Transported resource throughput</text>
+  <path d="M366.4,313.0 L449.1,313.0 Q453.1,313.0 453.1,317.0 L453.1,329.0 Q453.1,333.0 449.1,333.0 L366.4,333.0 Z" fill="#2a78d6"/>
+  <text x="461.1" y="327.5" font-size="12.5" font-weight="600" fill="#0b0b0b">21.17×</text>
+  <text x="356.4" y="361.5" font-size="13" fill="#52514e" text-anchor="end">Transported resource throughput · matched RNS policy</text>
+  <path d="M366.4,347.0 L435.1,347.0 Q439.1,347.0 439.1,351.0 L439.1,363.0 Q439.1,367.0 435.1,367.0 L366.4,367.0 Z" fill="#2a78d6"/>
+  <text x="447.1" y="361.5" font-size="12.5" font-weight="600" fill="#0b0b0b">17.73×</text>
+  <line x1="366.4" y1="378.0" x2="818.0" y2="378.0" stroke="#c3c2b7" stroke-width="1"/>
 </svg>
