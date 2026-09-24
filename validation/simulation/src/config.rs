@@ -6,6 +6,7 @@ use crate::fault::FaultPlan;
 pub enum CapacityField {
     Endpoints,
     EndpointReceiveQueue,
+    PendingDeliveries,
     Trace,
 }
 
@@ -33,6 +34,7 @@ impl std::error::Error for VirtualMediumConfigError {}
 pub struct VirtualMediumConfig {
     pub(crate) max_endpoints: usize,
     pub(crate) endpoint_receive_queue: usize,
+    pub(crate) pending_deliveries: usize,
     pub(crate) trace_capacity: usize,
     pub(crate) fault_plan: FaultPlan,
 }
@@ -41,12 +43,14 @@ impl VirtualMediumConfig {
     pub fn new(
         max_endpoints: usize,
         endpoint_receive_queue: usize,
+        pending_deliveries: usize,
         trace_capacity: usize,
         fault_plan: FaultPlan,
     ) -> Result<Self, VirtualMediumConfigError> {
         for (field, capacity) in [
             (CapacityField::Endpoints, max_endpoints),
             (CapacityField::EndpointReceiveQueue, endpoint_receive_queue),
+            (CapacityField::PendingDeliveries, pending_deliveries),
             (CapacityField::Trace, trace_capacity),
         ] {
             if capacity == 0 {
@@ -63,6 +67,7 @@ impl VirtualMediumConfig {
         Ok(Self {
             max_endpoints,
             endpoint_receive_queue,
+            pending_deliveries,
             trace_capacity,
             fault_plan,
         })

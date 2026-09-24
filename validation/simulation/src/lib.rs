@@ -6,13 +6,17 @@ mod config;
 mod fault;
 mod interface;
 mod medium;
+mod time;
 mod trace;
 
 pub use config::{CapacityField, VirtualMediumConfig, VirtualMediumConfigError};
-pub use fault::{FaultPlan, FaultPlanError, TransmissionOrdinal};
+pub use fault::{
+    FaultPlan, FaultPlanError, TransmissionAction, TransmissionOrdinal, TransmissionRule,
+};
 pub use interface::VirtualInterface;
 pub use medium::{AttachError, EndpointId, VirtualMedium};
-pub use trace::{MediumEvent, ReceptionDropReason, TraceSnapshot};
+pub use time::{AdvanceError, AdvanceReport, SimulationDurationInTicks, SimulationTick};
+pub use trace::{DeliveryCopy, MediumEvent, ReceptionDropReason, TraceSnapshot};
 
 #[cfg(test)]
 mod tests;

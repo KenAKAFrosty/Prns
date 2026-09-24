@@ -66,7 +66,7 @@ fn scenario_error(message: impl Into<String>) -> Box<dyn Error> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn real_nodes_complete_a_link_request_over_the_virtual_medium() -> Result<(), Box<dyn Error>>
 {
-    let config = VirtualMediumConfig::new(2, 64, 4_096, FaultPlan::none())?;
+    let config = VirtualMediumConfig::new(2, 64, 64, 4_096, FaultPlan::none())?;
     let medium = VirtualMedium::new(config);
     let interface_a = medium.attach(b"scenario-node-a")?;
     let interface_b = medium.attach(b"scenario-node-b")?;

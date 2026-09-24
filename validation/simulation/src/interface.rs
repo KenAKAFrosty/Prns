@@ -88,7 +88,11 @@ impl Interface for VirtualInterface {
                         Err(TransmitError::DetachedEndpoint) => {
                             OutboundDisposition::Dropped(OutboundDropReason::Disconnected)
                         }
-                        Err(TransmitError::TransmissionOrdinalsExhausted) => {
+                        Err(
+                            TransmitError::TransmissionOrdinalsExhausted
+                            | TransmitError::DeliveryOrdinalsExhausted
+                            | TransmitError::TimelineExhausted,
+                        ) => {
                             OutboundDisposition::Dropped(OutboundDropReason::Rejected)
                         }
                     };

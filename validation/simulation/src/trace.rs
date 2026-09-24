@@ -2,10 +2,18 @@ use std::collections::VecDeque;
 
 use crate::fault::TransmissionOrdinal;
 use crate::medium::EndpointId;
+use crate::time::SimulationTick;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryCopy {
+    Original,
+    Duplicate,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceptionDropReason {
     ScheduledFault,
+    PendingCapacityReached,
     ReceiveQueueFull,
     EndpointClosed,
 }
@@ -19,18 +27,34 @@ pub enum MediumEvent {
     EndpointDetached {
         endpoint: EndpointId,
     },
+    TimeAdvanced {
+        from: SimulationTick,
+        to: SimulationTick,
+    },
     TransmissionAccepted {
         ordinal: TransmissionOrdinal,
         from: EndpointId,
+        at: SimulationTick,
         frame: Vec<u8>,
+    },
+    ReceptionScheduled {
+        ordinal: TransmissionOrdinal,
+        to: EndpointId,
+        copy: DeliveryCopy,
+        deliver_at: SimulationTick,
     },
     ReceptionQueued {
         ordinal: TransmissionOrdinal,
         to: EndpointId,
+        copy: DeliveryCopy,
+        at: SimulationTick,
     },
     ReceptionDropped {
         ordinal: TransmissionOrdinal,
         to: EndpointId,
+        copy: DeliveryCopy,
+        at: SimulationTick,
+        intended_for: SimulationTick,
         reason: ReceptionDropReason,
     },
 }
