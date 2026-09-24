@@ -38,8 +38,10 @@ the temporary detached workspace.
 The runner requires the recorded Node and npm versions and the recorded minimum
 Python and Rust versions. Nested gates use the selected rustup toolchain even
 when another system Rust installation is earlier on the invoking shell's path.
-CI provisions those tools explicitly and runs this
-suite as a release-critical lane.
+CI provisions those tools explicitly. The PR's release-critical lane runs the
+separately named `application-current-source-mobility` suite with `--working-tree`.
+The recorded-revision `application-detached-mobility` suite remains available for
+release/scheduled qualification and requires a promoted compatibility record.
 
 By default the wrapper uses the current checkout as a local `file:` Git URL.
 Set `PRNS_MOBILITY_GIT_URL` to exercise the same recorded revision through a
@@ -67,3 +69,10 @@ core/SDK npm archives and checks the detached application, including actual
 generated foreign-object sharing between the app and SDK in one native image.
 It never rewrites the historical compatibility record. See
 [release policy](../../release/README.md) for evidence limits and release promotion.
+
+The app's ignored `target/react-native-sdk` package is recreated before npm
+installation. This bootstrap checks tracked bindings before writing the staged
+aggregate SDK, so an export cannot conceal stale committed product output.
+Current-source qualification packs this staged SDK for the app while verifying
+the canonical default SDK independently. Artifact locations are recorded in
+`release/working-tree-qualification.json` alongside the reviewed source roots.

@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@ubjs/core": "0.31.0-5",
-    "personal-rns-expo": "file:../../../../prns-react-native"
+    "personal-rns-expo": "file:../../../target/react-native-sdk"
   },
   "exports": {
     ".": {

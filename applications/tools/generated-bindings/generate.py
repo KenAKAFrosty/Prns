@@ -24,6 +24,7 @@ sdk = importlib.util.module_from_spec(sdk_spec)
 sdk_spec.loader.exec_module(sdk)
 
 OWNERSHIP = HERE / 'outputs.json'
+SDK_PACKAGE = APPLICATIONS / 'target/react-native-sdk'
 run = tooling.run
 generator = tooling.generator
 existing_outputs = tooling.existing_outputs
@@ -86,13 +87,13 @@ def generated_files(cli, env):
     return files
 
 
-def generate(cli, env, check):
+def generate(cli, env, check, stage_only=False):
     # Validate owned output before writing. Canonical host generation is a
     # repository-wide prerequisite, never an app-owned schema walker.
     existing_outputs(*ownership())
     files = generated_files(cli, env)
-    synchronize_outputs(files, check)
-    sdk.generate(sdk.image_provider(BINDINGS / 'host-provider.json'), cli, env, check)
+    synchronize_outputs(files, check or stage_only)
+    sdk.generate(sdk.image_provider(BINDINGS / 'host-provider.json'), cli, env, check, SDK_PACKAGE)
 
 
 def build(cli, env, args):
@@ -102,11 +103,14 @@ def build(cli, env, args):
         provider['features'].append('ios-restoration-probe')
     # The SDK package owns exactly one selected framework/library, including
     # when that image also contains this product namespace.
-    sdk.build(provider, cli, env, args)
+    sdk.build(provider, cli, env, args, SDK_PACKAGE)
 
 
 def execute(cli, env, args):
-    if args.command == 'generate':
+    if args.command == 'stage':
+        # Bootstrap a clean npm install without rewriting tracked bindings.
+        generate(cli, env, False, stage_only=True)
+    elif args.command == 'generate':
         generate(cli, env, args.check)
     else:
         # Both platforms must pair the current Rust image with current sources.
@@ -122,6 +126,7 @@ if __name__ == '__main__':
     commands = parser.add_subparsers(dest='command', required=True)
     gen = commands.add_parser('generate')
     gen.add_argument('--check', action='store_true')
+    commands.add_parser('stage', help='check tracked bindings and materialize the ignored SDK package')
     for name in ('ios', 'android'):
         native = commands.add_parser(name)
         native.add_argument('--release', action='store_true')

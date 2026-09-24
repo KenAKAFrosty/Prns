@@ -69,3 +69,32 @@ export async function createContact() {}
                         patch.object(generate, 'build', side_effect=build) as image:
                     generate.execute('cli', {}, argparse.Namespace(command=platform))
                 image.assert_called_once()
+
+
+class StagingBoundaryTests(unittest.TestCase):
+    def test_bootstrap_checks_tracked_bindings_and_writes_only_app_sdk_stage(self):
+        for check, stage_only in ((False, True), (True, False)):
+            with self.subTest(check=check), \
+                    patch.object(generate, 'existing_outputs'), \
+                    patch.object(generate, 'generated_files', return_value={}), \
+                    patch.object(generate, 'synchronize_outputs') as app_outputs, \
+                    patch.object(generate.sdk, 'generate') as sdk_outputs:
+                generate.generate('cli', {}, check, stage_only=stage_only)
+            self.assertTrue(app_outputs.call_args.args[1])
+            self.assertEqual(sdk_outputs.call_args.args[-1], generate.SDK_PACKAGE)
+            self.assertEqual(sdk_outputs.call_args.args[-2], check)
+            self.assertTrue(generate.SDK_PACKAGE.is_relative_to(generate.APPLICATIONS / 'target'))
+
+    def test_bootstrap_does_not_mask_stale_tracked_bindings(self):
+        with patch.object(generate, 'existing_outputs'), \
+                patch.object(generate, 'generated_files', return_value={}), \
+                patch.object(generate, 'synchronize_outputs', side_effect=ValueError('stale app binding')), \
+                patch.object(generate.sdk, 'generate') as sdk_outputs:
+            with self.assertRaisesRegex(ValueError, 'stale app binding'):
+                generate.execute('cli', {}, argparse.Namespace(command='stage'))
+        sdk_outputs.assert_not_called()
+
+    def test_native_builds_use_the_app_owned_sdk_destination(self):
+        with patch.object(generate.sdk, 'build') as build:
+            generate.build('cli', {}, argparse.Namespace(command='android', release=False))
+        self.assertEqual(build.call_args.args[-1], generate.SDK_PACKAGE)

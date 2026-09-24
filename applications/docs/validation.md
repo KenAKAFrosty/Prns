@@ -11,6 +11,10 @@ Shared host ownership and generic mobile mechanics now live below app policy and
 LXMF. That record separates source tests, packed-consumer checks and simulator
 results from release qualification.
 
+The [September 24 SDK adoption checkpoint](../checkpoints/2026-09-24-sdk-adoption.md)
+records the independent SDK merge, app-owned staging, detached PR validation and
+retained-data Android/iOS checks.
+
 The [September 23 SDK mobile checkpoint](../checkpoints/2026-09-23-sdk-mobile.md)
 records new retained-data builds on the Galaxy S9+ and MetalbeardMobile, the E290
 firmware update, binding-lifetime defects found on real Hermes runtimes, and
@@ -149,8 +153,10 @@ The principal gates are:
 
 - `verify`: generated-output/provenance, portable native, SDK, UI, route,
   configuration, and web-export checks.
-- `mobility:verify`: a clean tracked application export with its exact recorded
-  core revision and JavaScript artifact, including native/Python LXMF exchange.
+- `mobility:verify -- --working-tree`: the PR gate for an isolated current-source
+  export, packed SDK dependencies and native/Python LXMF exchange.
+- `mobility:verify`: the separate recorded-release gate, requiring promotion of
+  the [release record](../release/README.md) to a containing SDK commit.
 - `native:ios:test`: explicit macOS Swift lifecycle and release-symbol checks.
 - Root application-boundary, personal-path, and diff-selected pre-push checks.
 

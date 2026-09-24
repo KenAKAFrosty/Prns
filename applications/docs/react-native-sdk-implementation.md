@@ -4,6 +4,8 @@ Implementation branch: `prns-app`, based on `0461d7aadc571ad073499c8644f318998ea
 This record describes working-tree changes and observed validation, not a
 published release. The [mobile checkpoint](../checkpoints/2026-09-23-sdk-mobile.md)
 records subsequent physical-device builds, findings and remaining limits.
+The [SDK adoption checkpoint](../checkpoints/2026-09-24-sdk-adoption.md) records
+the later independent SDK integration and app-owned package staging.
 
 ## Ownership delivered
 
@@ -25,9 +27,15 @@ its native dispatcher owns application events and drains services before host
 shutdown. Offline product storage remains available while networking is stopped.
 
 The standalone SDK image is `prns_host_mobile`; the aggregate image is
-`prns_app`. Generation selects exactly one provider. The SDK package owns that
-library on both mobile platforms; the product binding package contains no second
-Rust library. The SDK has no dependency on `applications/`, LXMF or Effect.
+`prns_app`. The canonical `prns-react-native` package keeps the standalone
+provider. App generation uses the shared recipe to stage `personal-rns-expo` in
+`applications/target/react-native-sdk`; all app consumers resolve that package.
+Its handwritten sources come from the canonical SDK, and its generated bindings
+and native library select the app aggregate. The product binding package
+contains no second Rust library. The SDK has no dependency on `applications/`,
+LXMF or Effect. The SDK is reviewed in
+[PR #251](https://github.com/KenAKAFrosty/Prns/pull/251), independently of app
+adoption in [PR #197](https://github.com/KenAKAFrosty/Prns/pull/197).
 
 ## Compatibility and lifecycle
 
@@ -88,14 +96,16 @@ npm --prefix applications run native:android:client
 npm --prefix applications run native:ios:client
 ```
 
-Default and aggregate generation intentionally select different image providers;
-qualify them sequentially. `test:consumer` expects a built default image. For
-the built aggregate, run:
+Default and aggregate generation write to separate packages. Both checks must
+pass in the same checkout, with app builds leaving tracked SDK outputs unchanged.
+`test:consumer` expects a built default image. For the built aggregate, run:
 
 ```sh
 node prns-react-native/tools/detached-consumer.mjs --android --aggregate \
+  --sdk applications/target/react-native-sdk \
   --bindings applications/prns/native-composition/bindings --keep
-npm --prefix prns-react-native run pack:check -- --aggregate --keep
+npm --prefix prns-react-native run pack:check -- --aggregate \
+  --sdk applications/target/react-native-sdk --keep
 ```
 
 Keep recorded-release qualification distinct from explicit current-working-tree

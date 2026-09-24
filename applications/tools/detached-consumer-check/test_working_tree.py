@@ -129,3 +129,9 @@ lto = true
             self.assertTrue(result['profile']['release']['lto'])
             self.assertEqual(receipt['workspaceProjection']['omitted']['members'], ['unrelated-firmware'])
             self.assertNotEqual(receipt['workspaceProjection']['sourceSha256'], receipt['workspaceProjection']['projectedSha256'])
+
+    def test_current_artifact_policy_selects_staged_aggregate_without_exporting_builds(self):
+        policy = working_tree.load_policy(mobility.REPOSITORY_ROOT)
+        self.assertEqual(policy['npmPackages']['personal-rns-expo'], 'prns-react-native')
+        self.assertEqual(policy['npmArtifacts']['personal-rns-expo'], 'applications/target/react-native-sdk')
+        self.assertNotIn('applications/target/react-native-sdk', policy['sourceRoots'])

@@ -35,6 +35,10 @@ grep -Fq "package: name='rs.reticulum.prns.dev'" <<<"${BADGING}"
 grep -Fxq "minSdkVersion:'29'" <<<"${BADGING}"
 APK_ENTRIES="$(unzip -Z1 "${APK}")"
 grep -Eq '^lib/(arm64-v8a|x86_64)/libprns_app\.so$' <<<"${APK_ENTRIES}"
+if grep -Eq '^lib/[^/]+/libprns_host_mobile\.so$' <<<"${APK_ENTRIES}"; then
+  echo 'The app must package only its aggregate PRNS image.' >&2
+  exit 1
+fi
 if [[ "${BUILD_VARIANT}" == release ]]; then
   grep -Fx 'assets/index.android.bundle' <<<"${APK_ENTRIES}" >/dev/null
 fi

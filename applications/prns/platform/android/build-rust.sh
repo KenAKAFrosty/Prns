@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIRECTORY="$(cd "$(dirname "$0")" && pwd)"
 APPLICATIONS_DIRECTORY="$(cd "${SCRIPT_DIRECTORY}/../../.." && pwd)"
-# The general Expo SDK packages the selected aggregate native library.
+# The app-staged Expo SDK packages the selected aggregate native library.
 # This command regenerates typed sources before building the shared image.
 # Run before prebuild/autolinking; Expo must never package a second image.
 python3 "${APPLICATIONS_DIRECTORY}/tools/generated-bindings/generate.py" android \

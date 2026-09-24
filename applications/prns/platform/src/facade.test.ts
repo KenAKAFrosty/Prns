@@ -23,7 +23,8 @@ jest.mock("../../native-composition/bindings/typescript/prns_app-ffi", () => ({
   }),
 }));
 
-jest.mock("../../../../prns-react-native/src/generated/prns_host_uniffi-ffi", () => ({
+// Resolve through the consumer package selection for linked and packed installs.
+jest.mock("@prns-test/host-ffi", () => ({
   __esModule: true,
   default: () => ({
     ubrn_uniffi_internal_fn_func_ffi__string_to_byte_length: (value: string) =>
