@@ -1,11 +1,16 @@
 # General-purpose Expo/RN SDK: UniFFI implementation plan
 
-Status: implementation delivered on `prns-app`, with physical-device and release
-qualification still pending; see the
-[implementation and validation record](react-native-sdk-implementation.md).
-The original plan audited `e39eb2a1c6eff87875662a42c3ea85828a26b9b2` on
-2026-09-22. The exit criteria below remain the acceptance requirements, including
-the physical-device checks. See the
+Status: implemented as an independent Expo SDK with app composition above the
+shared host. Bounded Android/iOS ownership, Hermes reload and retained-data
+checks have passed for the default SDK and app aggregate, with different session
+ownership semantics. The [implementation record](react-native-sdk-implementation.md#current-qualification)
+links their evidence and remaining release/background gates. Do not read the
+original plan below as a current list of unimplemented work.
+
+This plan audited `e39eb2a1c6eff87875662a42c3ea85828a26b9b2` on 2026-09-22.
+Its baseline gaps and investigation results describe that source. The exit
+criteria remain the acceptance requirements; bounded device checks do not close
+all lifecycle or distribution criteria. See the
 [architectural investigation](react-native-sdk-investigation.md) for the original
 ownership audit.
 
@@ -53,7 +58,7 @@ APIs. Otherwise the UniFFI wrapper would reproduce those mechanisms.
 | Mobile ownership still invokes product functions. | [Expo Android service](../prns/platform/android/src/main/java/rs/reticulum/prns/app/expo/PrnsRuntimeService.kt), [runtime](../prns/platform/android/src/main/java/rs/reticulum/prns/app/expo/PrnsAndroidRuntime.kt), and [app storage](../prns/native-composition/src/node.rs). | Move reusable platform mechanics once; supply the app's startup configuration, paths, notification presentation, and services through native composition. |
 | Mobile feature support is not established by the desktop host. | [Native host manifest](../../prns-host/impls/native/Cargo.toml) enables a broad desktop transport set; `native_capabilities` is largely static. | Make compiled/mobile transport support explicit and report actual backend capabilities; distinguish supported mechanisms from current permission/radio availability. |
 
-The schema currently contains 19 command cases, 14 unions, 13 records,
+At the audited baseline, the schema contained 19 command cases, 14 unions, 13 records,
 33 enums, nine fixed-byte definitions, and ten raw handle definitions. Its
 47 explicit raw operations plus 19 projected command operations are an audit
 inventory, not a requirement to expose 66 low-level functions to users.
@@ -341,7 +346,7 @@ or platform supervisors across C/UniFFI/app packages. Generated Swift/Kotlin use
 internally by Expo are an implementation detail, not a replacement for the
 existing public C-backed Swift/Kotlin SDKs.
 
-## Evidence collected for this plan
+## Historical evidence collected for this plan
 
 The source audit validated the canonical schema and inspected native/C queue,
 command, resource and lifecycle ownership; full app/native tests were not rerun
@@ -366,8 +371,9 @@ returned that SDK object. Results:
   mutation against that library. Exact 64-bit values and two-limb values through
   `2^128-1` round-tripped.
 
-This proves a useful metadata/linking/conversion slice. It does **not** qualify
-the JSI runtime, actual `NativeHost`, Hermes reloads, iOS/Android linkage, native
-restoration, custom-image package substitution or C-session extraction. Those
-remain explicit implementation gates above; no new device qualification is
-claimed by this investigation.
+This original probe proved a metadata/linking/conversion slice. It did **not**
+qualify the JSI runtime, actual `NativeHost`, Hermes reloads, iOS/Android linkage,
+native restoration, custom-image package substitution or C-session extraction.
+Later implementation and qualification are recorded in the
+[implementation record](react-native-sdk-implementation.md#current-qualification);
+the probe itself is not device evidence.

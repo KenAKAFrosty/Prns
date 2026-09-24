@@ -14,6 +14,35 @@ prebuild declares `EXExpoAppSceneDelegate` and makes AppDelegate provide the Rea
 factory without starting the window itself. Scene creation owns the UI only,
 not the native node. See [Expo's SDK 57 guidance](https://github.com/expo/fyi/blob/main/ios-scene-lifecycle.md#staying-on-sdk-57-with-xcode-27).
 
+## Build without installation
+
+After [workspace setup](../README.md#setup), install Xcode, CocoaPods and the
+`aarch64-apple-ios-sim` Rust target. From the repository root:
+
+```sh
+npm --prefix applications run native:ios:build
+```
+
+This selects the existing build helper's `--build-only` mode. It regenerates the
+app-selected SDK/framework, creates the Expo iOS project, installs Pods and
+compiles an unsigned Release app for `generic/platform=iOS Simulator`. It checks
+the development bundle identifier, iOS minimum version, scene/Bluetooth metadata,
+embedded JavaScript and the single `prns_app.framework`. It stops after build
+verification without booting a simulator, installing an app or starting Metro.
+
+The default output is
+`applications/target/ios-development-client/Build/Products/Release-iphonesimulator/prnsdev.app`.
+Set `PRNS_IOS_DERIVED_DATA` to place Xcode outputs elsewhere. A usable CocoaPods
+executable is required; `PRNS_POD_EXECUTABLE` selects one explicitly when needed.
+The `application-ios-build` suite runs this command in the
+`application-mobile-build` CI matrix. It also checks that generation leaves the
+canonical SDK and committed product bindings unchanged.
+
+This builds the app's workspace composition. The detached aggregate iOS consumer
+and physical lifecycle journeys remain separate qualification. For the Debug
+simulator install and runtime smoke, use `native:ios:client`; for a physical
+Debug install, follow the [device instructions](#physical-ios-development-client).
+
 ## iOS native lifetime and Bluetooth restoration
 
 The implemented direct-LXMF slice retains one native node for the iOS process,

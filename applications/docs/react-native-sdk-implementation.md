@@ -1,11 +1,15 @@
 # Expo/React Native SDK implementation
 
-Implementation branch: `prns-app`, based on `0461d7aadc571ad073499c8644f318998ea0b12f`.
-This record describes working-tree changes and observed validation, not a
-published release. The [mobile checkpoint](../checkpoints/2026-09-23-sdk-mobile.md)
-records subsequent physical-device builds, findings and remaining limits.
-The [SDK adoption checkpoint](../checkpoints/2026-09-24-sdk-adoption.md) records
-the later independent SDK integration and app-owned package staging.
+The reusable SDK lives below app services and policy. The app composes the shared
+host and SDK in one native image, using app-owned package staging. This is a
+development implementation, not a release-qualified distribution.
+
+The original cutover started on `prns-app` at
+`0461d7aadc571ad073499c8644f318998ea0b12f`. Historical sections below retain that
+implementation's validation scope. The
+[SDK adoption checkpoint](../checkpoints/2026-09-24-sdk-adoption.md) records the
+later independent SDK integration, current-source qualification and final
+retained-data app builds.
 
 ## Ownership delivered
 
@@ -111,9 +115,27 @@ npm --prefix prns-react-native run pack:check -- --aggregate \
 Keep recorded-release qualification distinct from explicit current-working-tree
 export checks: a release source pin must identify an actual matching commit.
 
-## Validation record
+## Current qualification
 
-Observed during implementation, with the scope of each check retained:
+The default SDK and app aggregate have separate evidence:
+
+| Provider | Completed evidence | Remaining boundary |
+| --- | --- | --- |
+| Standalone `prns_host_mobile` | Detached npm installation and strict TypeScript on Android/iOS, Android SDK compilation, complete unsigned iOS simulator consumer build, and physical Android/iOS Hermes ownership/reload checks. Android also passed standalone Release startup; direct TCP exchange between the two platforms passed. | JS-owned sessions reopen after reload; this does not prove retained native-owner continuity. Public-registry distribution, extended background operation, radio/permission transitions and OS restoration remain open. |
+| App aggregate `prns_app` | Packed aggregate TypeScript and Android compilation, all 23 current-source detached checks, physical Android/iOS native-owner continuity across Hermes replacement, and final standalone Release cold starts with retained data. | The aggregate detached check did not compile an external iOS consumer. Current-source qualification has `releaseQualified: false`; it does not promote the recorded release or establish production distribution. |
+
+See the [standalone SDK qualification](../../prns-react-native/docs/qualification.md)
+and [app adoption checkpoint](../checkpoints/2026-09-24-sdk-adoption.md) for source,
+artifact and platform-specific scope. The adoption run did not repeat the earlier
+BLE messaging or board/firmware trials in the
+[mobile checkpoint](../checkpoints/2026-09-23-sdk-mobile.md). Bounded physical
+success does not complete the plan's broader lifecycle or distribution criteria.
+
+## Historical implementation validation
+
+Observed during the initial cutover, before independent SDK qualification and
+app-owned staging. Counts, binaries and local evidence paths below belong to
+those runs, not a current-source test report:
 
 - Shared Rust: 51 native host tests, 15 C tests, 49 host-core tests, eight UniFFI
   transport tests and nine request-journal tests pass. Core/engine `no_std`
@@ -187,7 +209,7 @@ The validation/task registries validate. A broader validation-runner unit run
 passed 46 of 47 tests; its remaining failure is the existing ESP32 target symlink
 in this checkout. No all-repository or all-release-gates success is claimed.
 
-## Review cleanup
+## Historical review cleanup
 
 The follow-up review fixes retain the ownership boundaries above:
 
@@ -252,7 +274,7 @@ LXMF refactor; their evidence and additional findings are recorded in the
 [mobile checkpoint](../checkpoints/2026-09-23-sdk-mobile.md). Cleanup logs live under `/tmp/prns-sdk-*-tests.log` rather than a
 disposable Cargo target directory.
 
-## Follow-up mobile findings
+## Historical mobile findings
 
 The physical builds include the cleanup's Rust and LXMF changes. Actual Hermes
 checks then exposed two further binding-integration defects:
@@ -276,21 +298,19 @@ locks were refreshed together. Installed package files match those archives.
 These fixture results establish the binding-runtime behavior; the mobile
 checkpoint records the separate phone reruns and transport acceptance.
 
-## Required external qualification
+## Remaining qualification
 
-The Galaxy S9+, MetalbeardMobile and one E290 became available for the
-[September 23 mobile checks](../checkpoints/2026-09-23-sdk-mobile.md). That
-checkpoint supersedes the earlier device-availability limitation and records
-exactly which retained-data, lifecycle and runtime-replacement checks ran.
-Long idle, natural suspension, OS restoration and a mobile-to-desktop
-conformance-peer run remain separate acceptance gates.
+- Qualify extended idle, natural suspension, repeated OS restoration,
+  permission/radio recovery and the planned mobile-to-desktop conformance journey
+  on the relevant default or aggregate build. Earlier bounded checks cover only
+  their recorded cases.
+- Compile the complete detached aggregate iOS consumer and qualify public package
+  distribution. The standalone SDK's packaged iOS consumer build has passed;
+  it does not substitute for the aggregate build or complete Stage 7.
+- After the SDK lands, promote the app's historical compatibility record to a
+  reviewed containing commit with matching artifacts, then run recorded-release
+  qualification. Current-source extraction and development-signed Release app
+  builds do not perform that promotion.
 
-The packaged standalone iOS consumer and complete detached aggregate release
-pipeline have not been qualified. The actual app's aggregate provider now has
-physical iPhone Debug and Release build/install evidence, in addition to the
-earlier simulator build. That does not qualify an independently packaged SDK
-consumer or mark the full Stage 7 exit criterion complete.
-
-These validation runs preceded the implementation commits and branch publication.
-Historical application release metadata has not been promoted to the new SDK;
-promotion requires a reviewed source revision and corresponding release artifacts.
+Track product acceptance in [validation and limits](validation.md) and the
+[current roadmap](roadmap.md); consult PR checks for current hosted CI status.

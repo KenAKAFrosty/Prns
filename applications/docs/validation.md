@@ -6,14 +6,36 @@ see the [binding boundary](../prns/native-composition/bindings/README.md).
 Browser and Tauri providers for the full application are not implemented. The
 general Expo SDK's web entry delegates to the existing PRNS browser host.
 
-The current source includes the [general React Native SDK migration and cleanup](react-native-sdk-implementation.md).
-Shared host ownership and generic mobile mechanics now live below app policy and
-LXMF. That record separates source tests, packed-consumer checks and simulator
-results from release qualification.
+## Current SDK and app evidence
 
-The [September 24 SDK adoption checkpoint](../checkpoints/2026-09-24-sdk-adoption.md)
-records the independent SDK merge, app-owned staging, detached PR validation and
-retained-data Android/iOS checks.
+The [SDK implementation](react-native-sdk-implementation.md#current-qualification)
+places shared host ownership and generic mobile mechanics below app policy and
+LXMF. The app owns native service composition, storage and product workflows;
+its staged SDK package selects the single aggregate image.
+
+| Evidence | Completed scope | Not established |
+| --- | --- | --- |
+| [Standalone SDK qualification](../../prns-react-native/docs/qualification.md) | Detached Android/iOS installation and strict TypeScript; Android compilation and full unsigned iOS simulator consumer build; physical default-provider ownership and Hermes reload; Android Release cold startup and direct iOS/Android TCP exchange | Retained app-owner continuity, public-registry distribution or broad background/restoration qualification |
+| [App SDK adoption](../checkpoints/2026-09-24-sdk-adoption.md) | All 23 current-source detached checks; actual packed aggregate TypeScript/Android compilation; physical iOS/Android Hermes reload with native-owner continuity; standalone Release cold starts and retained identity, pairing and mailbox/contact data | Detached aggregate iOS compilation, new board/BLE messaging acceptance, production distribution or recorded-release qualification |
+
+The default provider's JS-owned session reopens after reload. The app's native
+owner survives JS replacement and lends clients without stop authority. Keep
+those two lifecycle results separate. Native platform helpers, simulator builds
+and physical runs also have distinct scopes.
+
+The app adoption checkpoint contains exact source and artifact receipts. Its
+current-source result has `releaseQualified: false`; after the SDK lands, promote
+the compatibility revision and matching artifacts before running the separate
+recorded-release gate. The [build cleanup](../checkpoints/2026-09-24-build-cleanup.md)
+records subsequent local Android/iOS Release compilation and the separate repair
+of inherited firmware-assurance and tester-roster failures using fresh upstream
+evidence. Consult the PR checks for hosted status.
+
+## Historical validation
+
+The following dated checkpoints preserve observations of older source and
+binaries. Their counts and acceptance limits are historical; they neither replace
+the current evidence above nor qualify every feature on a later build.
 
 The [September 23 SDK mobile checkpoint](../checkpoints/2026-09-23-sdk-mobile.md)
 records new retained-data builds on the Galaxy S9+ and MetalbeardMobile, the E290
@@ -85,10 +107,10 @@ and background observations below do not qualify this rebase. The new checkpoint
 records each build's checks and limits; source/UI tests are not device acceptance.
 No deployed-pairing migration is required for these disposable development devices.
 
-## What the evidence covers
+## Earlier evidence and its limits
 
-The generated-binding cutover, follow-up builds and earlier phone trials are
-different evidence. Do not transfer physical acceptance between their binaries.
+The pre-SDK generated-binding cutover, follow-up builds and earlier phone trials
+are different evidence. Do not transfer physical acceptance between their binaries.
 Dated checkpoints describe their recorded source and builds, not current PR
 status. The [September 15 integration](../checkpoints/2026-09-15-upstream-integration.md)
 records the refreshed source, APK and firmware hashes. Android acceptance is in
@@ -158,7 +180,19 @@ The principal gates are:
 - `mobility:verify`: the separate recorded-release gate, requiring promotion of
   the [release record](../release/README.md) to a containing SDK commit.
 - `native:ios:test`: explicit macOS Swift lifecycle and release-symbol checks.
+- `native:android:standalone`: complete Android Release APK assembly with embedded
+  JavaScript, development signing and single-image/alignment checks.
+- `native:ios:build`: complete unsigned Release iOS simulator compilation with
+  embedded JavaScript, scene/Bluetooth metadata and single-image checks; it does
+  not install or launch the app.
 - Root application-boundary, personal-path, and diff-selected pre-push checks.
+
+The `application-mobile-build` CI matrix runs the app build commands through
+`application-android-build` and `application-ios-build`, then verifies canonical
+SDK and committed product generation remain unchanged. This describes the
+configured coverage, not a hosted success result. It supplements standalone SDK
+builds; it does not compile a detached aggregate iOS consumer or run device
+acceptance.
 
 The detached check validates extraction, not phone packaging or remote source
 availability unless its recorded run actually uses a remote source. Simulator,
@@ -274,18 +308,16 @@ failures; these are different commands, neither silently waived.
 
 ## Qualification still required
 
-- Rebuild both native apps and matching board firmware, reset/re-pair test
-  devices as needed, and exercise the full-control disclosure and the new read/
-  write screens. Check differing capabilities, pagination, denied or busy
-  operations, navigation/Stop cancellation, disconnection and uncertain write
-  outcomes. Qualify Android and iOS separately; no current physical acceptance
-  is claimed for this expansion.
-- Complete the exact-build physical journeys in the follow-up checkpoint.
-  The September 15 Android build now passes fresh pairing, authenticated checks,
-  bounded pending-read route-exit/retry recovery, three repeated radio cycles and
-  one bounded off-screen receipt. iOS fresh pairing, wider cancellation races,
-  broader OS lifecycle and repeated authenticated-request recovery remain open;
-  grant reuse is not new pairing.
+- Qualify the full-control disclosure and expanded read/write workflows against
+  matching board firmware on current Android and iOS builds. Check differing
+  capabilities, pagination, denied or busy operations, navigation/Stop
+  cancellation, disconnection and uncertain write outcomes. The limited earlier
+  Android/board trials and recent retained-data checks do not complete this
+  acceptance; reset/re-pair only when the chosen test requires it.
+- Qualify fresh iOS pairing, wider cancellation races and repeated authenticated
+  request recovery on the current build. Earlier Android fresh-pairing, radio
+  and cancellation journeys remain evidence for their recorded binaries; grant
+  reuse on a later build is not new pairing.
 - Diagnose the E290 navigation freeze/startup-notice event in the September 15
   checkpoint. Its timing and lost USB/Bluetooth connections are consistent with
   a watchdog restart, but the reset reason and trigger were not captured.
@@ -299,8 +331,11 @@ failures; these are different commands, neither silently waived.
   force quit.
 - Newer Android permission/service and notification-channel behavior, deeper
   and longer battery idle, and wider board/transport coverage.
-- Release/R8/signing, upgrades, retained-data migrations, and security/custody
-  qualification before promising distribution or durable cross-version state.
+- Complete detached aggregate iOS compilation, public package distribution and
+  recorded-release qualification after compatibility promotion. Development-signed
+  standalone Release cold starts and retained-data upgrades have passed on both
+  mobile platforms; production signing/distribution, R8, broader migrations and
+  security/custody still require their own qualification.
 
 The app uses event-driven iOS Bluetooth execution windows and an Android
 foreground service; neither is a promise of continuous execution or guaranteed
