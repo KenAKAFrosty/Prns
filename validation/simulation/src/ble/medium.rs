@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use personal_rns::interfaces::bluetooth_auto::BleAddress;
+use tokio::sync::Notify;
 
 use super::advertisement::{BleAdvertisement, BleAdvertisingParameters};
 use super::config::BleMediumConfig;
@@ -119,6 +120,7 @@ struct Radio {
     scanning: BleScanState,
     advertising: Option<ActiveAdvertisement>,
     observations: VecDeque<BleObservation>,
+    observation_ready: Arc<Notify>,
 }
 
 struct BleMediumState {
@@ -181,6 +183,7 @@ impl VirtualBleMedium {
                 scanning: BleScanState::Off,
                 advertising: None,
                 observations: VecDeque::with_capacity(observation_capacity),
+                observation_ready: Arc::new(Notify::new()),
             },
         );
         debug_assert!(replaced.is_none(), "fresh BLE radio id must be vacant");
@@ -281,6 +284,37 @@ impl VirtualBleMedium {
             .get_mut(&radio)
             .ok_or(BleSimulationError::UnknownRadio(radio))
             .map(|attached| attached.observations.pop_front())
+    }
+
+    pub async fn next_observation(
+        &self,
+        radio: BleRadioId,
+    ) -> Result<BleObservation, BleSimulationError> {
+        loop {
+            let notified = {
+                let mut state = self.lock_state();
+                let attached = state
+                    .radios
+                    .get_mut(&radio)
+                    .ok_or(BleSimulationError::UnknownRadio(radio))?;
+                if let Some(observation) = attached.observations.pop_front() {
+                    return Ok(observation);
+                }
+                attached.observation_ready.clone().notified_owned()
+            };
+            notified.await;
+        }
+    }
+
+    pub(crate) fn detach(&self, radio: BleRadioId) {
+        let mut state = self.lock_state();
+        let Some(detached) = state.radios.remove(&radio) else {
+            return;
+        };
+        let _ = state.addresses.remove(&detached.address);
+        state
+            .trace
+            .push(BleSimulationEvent::RadioDetached { radio });
     }
 
     pub fn advance_by(
@@ -430,6 +464,7 @@ fn settle_emission(
                 at,
                 advertisement,
             });
+            receiver.observation_ready.notify_one();
             report.observations_queued = report.observations_queued.saturating_add(1);
             state.trace.push(BleSimulationEvent::ObservationQueued {
                 advertiser,

@@ -13,6 +13,9 @@ pub enum BleSimulationEvent {
     RadioAttached {
         radio: BleRadioId,
     },
+    RadioDetached {
+        radio: BleRadioId,
+    },
     RadioPowerChanged {
         radio: BleRadioId,
         power: BleRadioPower,
