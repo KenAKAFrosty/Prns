@@ -914,7 +914,7 @@ jobs:
       - name: Verify SDK and standalone default image
         run: |
           python3 validation/run.py run --suite react-native-sdk --suite react-native-generated --expected-sha "$GITHUB_SHA"
-          npm --prefix prns-react-native pack --dry-run --ignore-scripts
+          npm pack ./prns-react-native --dry-run --ignore-scripts
       - name: Verify native sessions and foreign conformance
         run: python3 validation/run.py run --suite host-native-session --suite host-uniffi-session --suite host-uniffi-conformance --expected-sha "$GITHUB_SHA"
       - name: Upload SDK validation evidence
@@ -979,6 +979,7 @@ jobs:
       - name: Install pinned SDK native build tools
         run: |
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+          printf 'ANDROID_NDK_HOME=%s\n' "$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
           cargo install cargo-ndk --locked --version 4.1.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
