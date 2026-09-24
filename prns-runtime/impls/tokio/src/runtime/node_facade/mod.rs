@@ -36,6 +36,11 @@ use crate::identity::IdentityHash;
 use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::interfaces::InterfaceId;
 use crate::manifold::driver::{HostCommand, LocalCommandProducer};
+use crate::node_introspection::NodeIntrospection;
+use crate::remote_control::{
+    RemoteControlPathEntry, RemoteControlPathInventory, RemoteControlPathPage,
+    RemoteControlPathPageBuilder,
+};
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
@@ -752,6 +757,25 @@ impl super::PrnsNodeApi for PrnsNodeHandle {
         request: RnsRemotePathTableRequest,
     ) -> bool {
         self.respond_rns_path_table(responder, request).await
+    }
+
+    async fn inventory_path_table(
+        &self,
+        page: RemoteControlPathPage,
+    ) -> RemoteControlPathInventory {
+        let routes = NodeIntrospection::routes(self).await;
+        let mut builder = RemoteControlPathPageBuilder::new(page);
+        for snapshot in routes {
+            builder.observe(RemoteControlPathEntry::new(
+                snapshot.destination,
+                snapshot.hops,
+                snapshot.via,
+                snapshot.interface,
+                snapshot.learned_at.0,
+                snapshot.expires_at.0,
+            ));
+        }
+        builder.finish()
     }
 
     fn close_link(&self, link_id: LinkId) -> bool {

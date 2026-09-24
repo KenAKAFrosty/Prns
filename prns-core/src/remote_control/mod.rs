@@ -21,6 +21,7 @@ mod inventory;
 mod message;
 mod pagination;
 mod pairing;
+mod path_table;
 mod service;
 
 pub use self::core::*;
@@ -33,6 +34,7 @@ pub use inventory::*;
 pub use message::*;
 pub use pagination::*;
 pub use pairing::*;
+pub use path_table::*;
 pub use service::*;
 
 #[cfg(test)]

@@ -168,6 +168,7 @@ pub(super) fn capabilities<B: Esp32S3Board>() -> RemoteControlCapabilities {
         RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
         RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
         RemoteControlRequestKind::DescribeBuild,
+        RemoteControlRequestKind::InventoryPathTable,
         RemoteControlRequestKind::DescribePower,
         RemoteControlRequestKind::SetSystemPower,
         RemoteControlRequestKind::SetStationUplink,
