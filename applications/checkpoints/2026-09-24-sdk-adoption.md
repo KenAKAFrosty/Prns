@@ -62,6 +62,15 @@ upgrading Rust packages; third-party notices were regenerated.
   outside the checkout. Strict TypeScript and packaged Android SDK compilation
   passed; installed Android/iOS artifact hashes matched and no second SDK/image
   was installed. This aggregate check did not compile a detached iOS consumer.
+- Full current-source detached qualification passes all 23 recorded checks,
+  including the packed SDK/platform and app tests, strict generated-output
+  checks, aggregate foreign-object sharing, native tests, web export and a
+  pinned Python/native LXMF exchange. Its 1,912-file snapshot is
+  `5c451363c3f96faa537dfca0621bfe63f09179b15a72bbdae5c1d905ef9c15c5`.
+  The receipt records reused disposable Cargo/compiler caches and
+  `releaseQualified: false`. Compared with integration commit `283c60505`,
+  only this checkpoint and two recorded-release license-copy entries differ;
+  runtime inputs and the current-source qualification path are identical.
 
 ## Physical runtime checks
 
