@@ -567,12 +567,13 @@ pub(crate) fn remote_control_pairing_persistence_failed(
         | Failure::SettlementBusy { attempt_id, .. }
         | Failure::NodeStopped { attempt_id, .. } => attempt_id,
     };
-    let _ = update_remote_control_state(|state| {
-        state.operation_failed(
-            Some(attempt_id),
-            screen::RemoteControlTargetPairingFailure::Persistence,
-        )
+    let output = REMOTE_CONTROL_COMPOSITION.lock(|composition| {
+        composition
+            .borrow_mut()
+            .target_persistence_failed(attempt_id)
     });
+    let (_, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
 }
 
 const BOOT_PHASE_MAGIC: u32 = 0x5052_0000;

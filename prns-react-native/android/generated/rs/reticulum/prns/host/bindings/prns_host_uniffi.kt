@@ -362,7 +362,7 @@ private fun findLibraryName(componentName: String): String {
     if (libOverride != null) {
         return libOverride
     }
-    return "prns_app"
+    return "prns_host_mobile"
 }
 
 // Define FFI callback types

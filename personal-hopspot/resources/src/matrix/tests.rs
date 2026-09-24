@@ -119,6 +119,13 @@ fn canonical_matrix_has_fourteen_unique_profile_bound_targets(
                 "thumbv7em-rust-lld",
                 TargetPlatform::Nrf52840
             ),
+            (
+                "muzi-base-duo",
+                "muzi-base-duo",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld",
+                TargetPlatform::Nrf52840
+            ),
         ]
     );
     Ok(())
@@ -136,7 +143,7 @@ fn unknown_targets_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn mesh_tower_alone_selects_thin_lto() -> Result<(), Box<dyn std::error::Error>> {
+fn only_build_only_targets_select_thin_lto() -> Result<(), Box<dyn std::error::Error>> {
     let catalog = prns_flash_manifest::board_catalog()?;
     let matrix = Matrix::from_catalog(&catalog)?;
     let selections = matrix
@@ -145,7 +152,7 @@ fn mesh_tower_alone_selects_thin_lto() -> Result<(), Box<dyn std::error::Error>>
         .collect::<Vec<_>>();
 
     for (target, lto) in selections {
-        let expected = if target == "mesh-tower-v2" {
+        let expected = if matches!(target, "mesh-tower-v2" | "muzi-base-duo") {
             personal_hopspot_builder::LtoMode::Thin
         } else {
             personal_hopspot_builder::LtoMode::Configured

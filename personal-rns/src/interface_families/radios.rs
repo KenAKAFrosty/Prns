@@ -2,10 +2,11 @@ pub use prns_interfaces_embassy::radios::{LoRaRadio, RadioEvent, RadioRecovery, 
 
 pub mod lr1110 {
     pub use prns_interfaces_embassy::radios::lr1110::{
-        BoardConfig, Error, HighPowerSelection, Lr1110, PowerAmplifierConfig,
+        BoardConfig, Error, HighPowerSelection, Lr1110, Lr11xxPart, PowerAmplifierConfig,
         PowerAmplifierDutyCycle, PowerAmplifierSelection, PowerAmplifierSupply,
         PowerAmplifierTable, ReceiveGain, ReceivedAirFrame, ReferenceClock, RegulatorMode,
         RfSwitchConfig, RfSwitchPins, TcxoStartupTime, TcxoVoltage, TransmitRampTime,
+        SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE,
     };
 }
 

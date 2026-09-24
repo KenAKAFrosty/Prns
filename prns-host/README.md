@@ -64,7 +64,11 @@ Generated raw protocols and operation inventories give hand-written adapters a s
 
 Registered Linux native smokes exercise real creation, ABI/schema/product mismatch gates, stream single-ownership, wait interruption, and command settlement across C, C++, .NET, Python, Go, Swift, Kotlin/JVM, and Julia. The shared persistent journey additionally covers a real loopback interface, announce discovery, link establishment, request and response, bounded resource transfer, restart, and persistence restoration.
 
-Product `0.3.1`, schema 1, and C ABI 1 are the first real baseline. There is no schema-2 compatibility layer or legacy host-options layout. Browser persisted state has its own version, currently 1, and its JavaScript/WASM boundary checks that value independently of the host schema.
+The current contract is schema 2 with C ABI 1. Schema 2 adds the optional local
+responder destination and arrival timestamp to link-delivery events. Rebuild
+adapters and native images together; schema-1 clients are rejected at creation
+rather than given a partial projection. The original product `0.3.1` baseline
+used schema 1 and ABI 1. There is no legacy host-options layout. Browser persisted state has its own version, currently 1, and its JavaScript/WASM boundary checks that value independently of the host schema.
 
 ## Release assets
 

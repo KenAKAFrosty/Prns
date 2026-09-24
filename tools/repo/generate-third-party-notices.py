@@ -39,6 +39,9 @@ GRAPHS = (
         "prns-host/impls/native/Cargo.toml",
         "x86_64-unknown-linux-gnu",
     ),
+    ("Expo host", "prns-host/bindings/uniffi/image/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("Expo Android", "prns-host/bindings/uniffi/image/Cargo.toml", "aarch64-linux-android"),
+    ("Expo iOS", "prns-host/bindings/uniffi/image/Cargo.toml", "aarch64-apple-ios"),
     ("nRF52840", "personal-hopspot/embedded/nrf52840/Cargo.toml", "thumbv7em-none-eabihf"),
     (
         "ESP32-C6",
@@ -142,7 +145,7 @@ VENDORED = (
         "libdbus 1.14.4",
         "AFL-2.1",
         "release/licenses/libdbus-AFL-2.1.txt",
-        ("Node addon Linux", "daemon Linux"),
+        ("Node addon Linux", "daemon Linux", "Host SDK native", "Expo host"),
     ),
 )
 
@@ -427,8 +430,8 @@ def notice_bundle() -> str:
             "statically linked into the ESP32-S3 WPA3-SAE radio artifact.",
             "- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its "
             "`AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by "
-            "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon and "
-            "full Linux `prnsd` native release.",
+            "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon, "
+            "full Linux `prnsd` native release, native Host SDK, and Expo host qualification image.",
         ]
     )
     lines.extend(["", "## Android Maven runtime", ""])

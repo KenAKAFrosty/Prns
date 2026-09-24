@@ -1154,6 +1154,41 @@ fn snapshot_future_runs_without_a_caller_tokio_runtime() -> Result<(), String> {
 }
 
 #[test]
+fn blocking_and_async_snapshots_preserve_unavailable_results() -> Result<(), String> {
+    let mut host = NativeHost::start(config(), Arc::new(Sink)).map_err(|e| format!("{e:?}"))?;
+    // Keep the real command lane alive while injecting a snapshot assembly failure.
+    let (snapshot_tx, mut snapshot_rx) = mpsc::channel(1);
+    let original = std::mem::replace(&mut host.snapshots, snapshot_tx);
+    let mut future = Box::pin(host.snapshot_async());
+    let mut context = Context::from_waker(std::task::Waker::noop());
+    assert!(matches!(future.as_mut().poll(&mut context), Poll::Pending));
+    snapshot_rx
+        .try_recv()
+        .map_err(|e| e.to_string())?
+        .reply
+        .send(Err(NativeSnapshotError::Unavailable));
+    assert!(matches!(
+        future.as_mut().poll(&mut context),
+        Poll::Ready(Err(NativeSnapshotError::Unavailable))
+    ));
+    drop(future);
+
+    let reply = std::thread::spawn(move || {
+        if let Some(job) = snapshot_rx.blocking_recv() {
+            job.reply.send(Err(NativeSnapshotError::Unavailable));
+        }
+    });
+    assert!(matches!(
+        host.snapshot(Some(Duration::from_secs(2))),
+        Err(NativeSnapshotError::Unavailable)
+    ));
+    reply.join().map_err(|_| "snapshot reply thread panicked")?;
+    host.snapshots = original;
+    host.stop();
+    Ok(())
+}
+
+#[test]
 fn native_embedding_tracks_prepared_interfaces_in_canonical_snapshot() -> Result<(), String> {
     let embedding = NativeEmbedding {
         prepare_interfaces: Some(Box::new(|client| {

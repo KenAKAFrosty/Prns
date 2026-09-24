@@ -1,0 +1,19 @@
+{
+  "implementation": "RNS 1.5.4",
+  "slug": "rns-1.5.4",
+  "language": "Python",
+  "crypto_backend": "PyCA cryptography / OpenSSL",
+  "role": "reference",
+  "repo": "https://github.com/markqvist/Reticulum",
+  "pinned_ref": "1.5.4",
+  "license": "Reticulum License",
+  "notes": "Stock interpreted RNS 1.5.4 from the locked PyPI environment. Every run proves RNS.compiled is false, rejects native RNS modules, and records the exact interpreted module inventory and crypto runtime.",
+  "participant": {
+    "command": [
+      "{reference_python}",
+      "-u",
+      "{benchmark_dir}/reference/stock_reference.py",
+      "{benchmark_dir}/reference/participant_node.py"
+    ]
+  }
+}

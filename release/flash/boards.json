@@ -527,6 +527,52 @@
           "filename": "t1000e.uf2"
         }
       }
+    },
+    {
+      "availability": "qualification",
+      "slug": "muzi-base-duo",
+      "display_name": "muzi works Base Duo",
+      "silicon": "nRF52840 + LR1121",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "muzi-base-duo-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "muzi-base-duo",
+        "board_feature": "board-muzi-base-duo",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "muzi-Base",
+        "board_identity": {
+          "match": "exact",
+          "value": "muzi-base-board"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (muzi Base Duo)",
+          "serial_number": "PERSONAL-RNS-MBDUO-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "memory_profile": "muzi-base-duo",
+            "family_id": "0xada52840",
+            "application_link": "softdevice-s140-v6",
+            "target_directory": "target/muzi-base-duo",
+            "filename": "muzi-base-duo-s140-6.1.1.uf2"
+          }
+        ]
+      }
     }
   ]
 }

@@ -711,6 +711,43 @@ def validate() -> list[str]:
                     f"ci.yml {resource_job_name} does not upload {evidence}"
                 )
     release_critical = ci_jobs.get("release-critical", "")
+    for job, result in (
+        ("react-native-sdk", "REACT_NATIVE_SDK_RESULT"),
+        ("react-native-apple-platform", "REACT_NATIVE_APPLE_RESULT"),
+        ("react-native-android", "REACT_NATIVE_ANDROID_RESULT"),
+        ("react-native-apple-image", "REACT_NATIVE_IMAGE_RESULT"),
+    ):
+        if not ci_jobs.get(job) or any(gate not in release_critical for gate in (
+            f"- {job}", f"{result}: ${{{{ needs.{job}.result }}}}", f'"${result}"',
+        )):
+            errors.append(f"release-critical does not require standalone SDK lane {job}")
+        if "applications/" in ci_jobs.get(job, ""):
+            errors.append(f"standalone SDK lane {job} depends on the application tree")
+    sdk_job = ci_jobs.get("react-native-sdk", "")
+    for suite in ("react-native-sdk", "react-native-generated", "host-native-session",
+                  "host-uniffi-session", "host-uniffi-conformance"):
+        if f"--suite {suite}" not in sdk_job:
+            errors.append(f"standalone SDK CI omits validation suite {suite}")
+    for job, suites in (
+        ("react-native-apple-platform", ("react-native-apple-platform",)),
+        ("react-native-android", ("react-native-android-image", "react-native-android-consumer")),
+        ("react-native-apple-image", ("react-native-apple-image", "react-native-mobile-archive",
+                                      "react-native-apple-consumer")),
+    ):
+        for suite in suites:
+            if f"--suite {suite}" not in ci_jobs.get(job, ""):
+                errors.append(f"standalone SDK lane {job} omits validation suite {suite}")
+    sdk_toolchain = json.loads((ROOT / "vendor/ubrn/source-lock.json").read_text())["toolchain"]
+    android_job = ci_jobs.get("react-native-android", "")
+    for pinned_tool in (f'ndk;{sdk_toolchain["androidNdk"]}',
+                        f'cargo install cargo-ndk --locked --version {sdk_toolchain["cargoNdk"]}'):
+        if pinned_tool not in android_job:
+            errors.append(f"standalone Android SDK CI lacks pinned tool {pinned_tool}")
+    for job in ("react-native-android", "react-native-apple-image"):
+        if f'RUSTUP_TOOLCHAIN: "{sdk_toolchain["rust"]}"' not in ci_jobs.get(job, ""):
+            errors.append(f"standalone SDK lane {job} differs from the reviewed Rust toolchain")
+        if "name: react-native-android-image-${{ github.sha }}" not in ci_jobs.get(job, ""):
+            errors.append(f"standalone SDK lane {job} lacks exact-commit Android artifact custody")
     for capstone_gate in (
         "- integration-capstones",
         "INTEGRATION_CAPSTONES_RESULT: ${{ needs.integration-capstones.result }}",

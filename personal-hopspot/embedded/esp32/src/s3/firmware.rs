@@ -555,13 +555,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
             gnss: B::Gnss::AVAILABILITY,
+            discovery_groups: screen::DiscoveryGroupEditorAvailability::Available,
             #[cfg(feature = "remote-control-pairing")]
             remote_control_pairing: if B::REMOTE_CONTROL_PAIRING {
                 screen::RemoteControlPairingAvailability::Available
             } else {
                 screen::RemoteControlPairingAvailability::Unavailable
             },
-            discovery_groups: screen::DiscoveryGroupEditorAvailability::Available,
         });
         let startup_notice = identity_startup_notice.or(subg_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -1098,6 +1098,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                                     screen::RemoteControlTargetPairingFailure::Close,
                                                 )
                                             });
+                                            ui_state.remote_control_pairing_close_failed();
                                         }
                                     }
                                 }

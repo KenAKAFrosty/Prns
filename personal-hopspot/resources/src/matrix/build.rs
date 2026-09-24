@@ -3,7 +3,7 @@ use std::path::Path;
 use personal_hopspot_builder::platform::{esp, nrf52840};
 use personal_hopspot_builder::{BuildContext, FirmwareEvidence};
 
-use super::{mesh_tower_v2, MatrixError, Target, TargetRecipe};
+use super::{MatrixError, Target, TargetRecipe};
 
 pub(crate) struct BuildEvidence {
     firmware: FirmwareEvidence,
@@ -71,14 +71,14 @@ impl Target<'_> {
                     }
                 })
             }
-            TargetRecipe::MeshTowerV2 => {
-                nrf52840::firmware::build(context, self.profile(), mesh_tower_v2::recipe()).map(
-                    |output| BuildEvidence {
+            TargetRecipe::BuildOnly(target) => {
+                nrf52840::firmware::build(context, self.profile(), target.recipe).map(|output| {
+                    BuildEvidence {
                         firmware: output.firmware().clone(),
                         firmware_image_bytes: output.firmware_image_bytes(),
                         artifacts: Vec::new(),
-                    },
-                )
+                    }
+                })
             }
         };
         result.map_err(|source| MatrixError::Build {

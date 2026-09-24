@@ -87,7 +87,9 @@ pub use session::{
 
 #[cfg(unix)]
 mod supplied_pipe;
-pub use prns_host_snapshot::{assemble_host_snapshot, HostInterfaceAttachment};
+pub use prns_host_snapshot::{
+    assemble_host_snapshot, HostInterfaceAttachment, HostSnapshotAssemblyError,
+};
 #[cfg(unix)]
 pub use supplied_pipe::{
     NativeSuppliedPipe, SuppliedPipeConfig, SuppliedPipeOpenRequest, SuppliedPipeRequestWait,
@@ -168,6 +170,7 @@ pub enum NativeSnapshotError {
     Busy,
     Stopped,
     TimedOut,
+    Unavailable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -637,7 +640,7 @@ impl NativeHost {
                 std::sync::mpsc::RecvTimeoutError::Disconnected => NativeSnapshotError::Stopped,
             }),
             None => result.recv().map_err(|_| NativeSnapshotError::Stopped),
-        }
+        }?
     }
 
     /// No caller runtime is required: the host executes the request and wakes this future.
@@ -654,7 +657,7 @@ impl NativeHost {
                 mpsc::error::TrySendError::Full(_) => NativeSnapshotError::Busy,
                 mpsc::error::TrySendError::Closed(_) => NativeSnapshotError::Stopped,
             })?;
-        result.await.map_err(|_| NativeSnapshotError::Stopped)
+        result.await.map_err(|_| NativeSnapshotError::Stopped)?
     }
 
     pub fn stop(&self) {
@@ -830,12 +833,12 @@ struct SnapshotJob {
 }
 
 enum SnapshotReply {
-    Blocking(std::sync::mpsc::SyncSender<HostSnapshot>),
-    Async(oneshot::Sender<HostSnapshot>),
+    Blocking(std::sync::mpsc::SyncSender<Result<HostSnapshot, NativeSnapshotError>>),
+    Async(oneshot::Sender<Result<HostSnapshot, NativeSnapshotError>>),
 }
 
 impl SnapshotReply {
-    fn send(self, snapshot: HostSnapshot) {
+    fn send(self, snapshot: Result<HostSnapshot, NativeSnapshotError>) {
         match self {
             Self::Blocking(reply) => {
                 let _ = reply.send(snapshot);
@@ -1779,17 +1782,15 @@ async fn command_loop(handle: PrnsNodeHandle, inputs: CommandLoopInputs) {
             }
             HostWork::Snapshot(job) => {
                 snapshot_revision = snapshot_revision.saturating_add(1);
-                if let Some(snapshot) = collect_snapshot(
+                let snapshot = collect_snapshot(
                     &handle,
                     &attachments,
                     snapshot_revision,
                     started_at,
                     &persistence,
                 )
-                .await
-                {
-                    job.reply.send(snapshot);
-                }
+                .await;
+                job.reply.send(snapshot);
             }
         }
     }
@@ -1839,20 +1840,23 @@ async fn collect_snapshot(
     revision: u64,
     started_at: Instant,
     persistence: &Mutex<PersistenceSnapshot>,
-) -> Option<HostSnapshot> {
+) -> Result<HostSnapshot, NativeSnapshotError> {
     let raw_interfaces = handle.interface_inventory();
     let attached_interfaces = attachments
-        .values()
-        .flat_map(|attachment| {
+        .iter()
+        .flat_map(|(host_interface, attachment)| {
+            let host_interface = *host_interface;
             let kind = attachment.kind();
-            attachment
-                .interfaces()
-                .into_iter()
-                .map(move |interface| HostInterfaceAttachment::new(interface, kind))
+            attachment.interfaces().into_iter().map(move |interface| {
+                HostInterfaceAttachment::with_host_interface(interface, host_interface, kind)
+            })
         })
         .collect::<Vec<_>>();
-    let engine = handle.engine_inspection_snapshot().await?;
-    Some(assemble_host_snapshot(
+    let engine = handle
+        .engine_inspection_snapshot()
+        .await
+        .ok_or(NativeSnapshotError::Unavailable)?;
+    assemble_host_snapshot(
         raw_interfaces,
         attached_interfaces,
         engine,
@@ -1860,7 +1864,8 @@ async fn collect_snapshot(
         lock(persistence).clone(),
         revision,
         started_at.elapsed(),
-    ))
+    )
+    .map_err(|_| NativeSnapshotError::Unavailable)
 }
 
 async fn upload_loop(

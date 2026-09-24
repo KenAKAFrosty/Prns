@@ -3,8 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use personal_hopspot_memory::{
-    MemoryProfile, MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2, NRF52840_MEMORY_X_BINDING,
-    T096, T1000_E, T114, T_ECHO_S140_V6, T_ECHO_S140_V7,
+    MemoryProfile, MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2, MUZI_BASE_DUO,
+    NRF52840_MEMORY_X_BINDING, T096, T1000_E, T114, T_ECHO_S140_V6, T_ECHO_S140_V7,
 };
 
 const BOARD_T_ECHO_FEATURE: &str = "CARGO_FEATURE_BOARD_T_ECHO";
@@ -13,6 +13,7 @@ const BOARD_T114_FEATURE: &str = "CARGO_FEATURE_BOARD_T114";
 const BOARD_MESH_POCKET_FEATURE: &str = "CARGO_FEATURE_BOARD_MESH_POCKET";
 const BOARD_T1000E_FEATURE: &str = "CARGO_FEATURE_BOARD_T1000E";
 const BOARD_MESH_TOWER_V2_FEATURE: &str = "CARGO_FEATURE_BOARD_MESH_TOWER_V2";
+const BOARD_MUZI_BASE_DUO_FEATURE: &str = "CARGO_FEATURE_BOARD_MUZI_BASE_DUO";
 const MESH_POCKET_5000_FEATURE: &str = "CARGO_FEATURE_MESH_POCKET_BATTERY_5000";
 const MESH_POCKET_10000_FEATURE: &str = "CARGO_FEATURE_MESH_POCKET_BATTERY_10000";
 const S140_V6_FEATURE: &str = "CARGO_FEATURE_SOFTDEVICE_S140_V6";
@@ -25,6 +26,7 @@ enum Board {
     MeshPocket,
     T1000e,
     MeshTowerV2,
+    MuziBaseDuo,
 }
 
 enum Softdevice {
@@ -63,6 +65,13 @@ fn main() {
         (Board::MeshTowerV2, Some(Softdevice::S140V7)) => {
             panic!("MeshTower V2 does not support S140 7.x")
         }
+        (Board::MuziBaseDuo, Some(Softdevice::S140V6)) => &MUZI_BASE_DUO,
+        (Board::MuziBaseDuo, None) => {
+            panic!("muzi Base Duo requires softdevice-s140-v6")
+        }
+        (Board::MuziBaseDuo, Some(Softdevice::S140V7)) => {
+            panic!("muzi Base Duo does not support S140 7.x")
+        }
         (Board::T1000e, Some(_)) => {
             panic!("T1000-E does not support S140 compatibility features")
         }
@@ -95,14 +104,16 @@ fn selected_board() -> Board {
         env::var_os(BOARD_MESH_POCKET_FEATURE).is_some(),
         env::var_os(BOARD_T1000E_FEATURE).is_some(),
         env::var_os(BOARD_MESH_TOWER_V2_FEATURE).is_some(),
+        env::var_os(BOARD_MUZI_BASE_DUO_FEATURE).is_some(),
     ) {
-        (true, false, false, false, false, false) => Board::TEcho,
-        (false, true, false, false, false, false) => Board::T096,
-        (false, false, true, false, false, false) => Board::T114,
-        (false, false, false, true, false, false) => Board::MeshPocket,
-        (false, false, false, false, true, false) => Board::T1000e,
-        (false, false, false, false, false, true) => Board::MeshTowerV2,
-        (false, false, false, false, false, false) => {
+        (true, false, false, false, false, false, false) => Board::TEcho,
+        (false, true, false, false, false, false, false) => Board::T096,
+        (false, false, true, false, false, false, false) => Board::T114,
+        (false, false, false, true, false, false, false) => Board::MeshPocket,
+        (false, false, false, false, true, false, false) => Board::T1000e,
+        (false, false, false, false, false, true, false) => Board::MeshTowerV2,
+        (false, false, false, false, false, false, true) => Board::MuziBaseDuo,
+        (false, false, false, false, false, false, false) => {
             panic!("select exactly one nRF52840 board feature")
         }
         _ => panic!("nRF52840 board features are mutually exclusive"),

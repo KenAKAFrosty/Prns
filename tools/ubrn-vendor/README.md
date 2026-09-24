@@ -6,13 +6,14 @@ their exact bytes are selected by local archive paths and lockfile integrity.
 They are built from the commit and ordered patches in
 `vendor/ubrn/source-lock.json`, not from a moving branch or a
 workstation checkout. The archives contain upstream's license notice and a copy
-of that source record. App bindings remain generated from the app's Rust API.
+of that source record. Host bindings are generated from the shared UniFFI facade.
 
 This temporary distribution keeps ordinary `npm ci --ignore-scripts` usable on
 Linux and macOS. Installing JavaScript dependencies does not download an
 unreviewed Git head or build five mobile Rust targets. The shared runtime's
-native images are separate from the app-owned Rust image: the app still builds
-one `prns_app` shared library per target for both generated JS and native bindings.
+native images are separate from the selected host image. Standalone consumers
+build one `prns_host_mobile` library per target; a native composition may select
+one aggregate image containing the same host facade and its extensions.
 
 Verify the committed archives without Xcode, Android tooling, or npm packages:
 
@@ -72,17 +73,16 @@ mobile runtime replacement remains a separate device check.
 
 To update upstream or remove an accepted patch, update the source revision and
 ordered patch hashes, rebuild, review the package diff and receipt, update the
-app's npm lockfile, and rerun the detached-consumer and native lifecycle gates.
+consumers' npm lockfiles, and rerun the detached-consumer and native lifecycle gates.
 Do not edit files inside the tarballs or generated bindings. Once an upstream
 release includes the required fixes, replace the local selections with exact
 registry versions and remove this temporary vendor distribution.
 
-This helper and its source record are shared repository inputs, independent of
-`applications/`. The detached consumer gate exports `tools/uniffi`,
-`tools/ubrn-vendor`, and `vendor/ubrn` alongside `applications/`, preserving
-repository-relative paths. Its lock refresh must leave runtime archive selections
-and integrity unchanged. SDK and application generation use this same source
-revision and patch set; neither keeps another toolchain or runtime copy.
+This helper and its source record are shared repository inputs. The standalone
+SDK and native compositions use `tools/uniffi`, `tools/ubrn-vendor`, and
+`vendor/ubrn`, preserving repository-relative paths. Lockfile refreshes must leave
+runtime archive selections and integrity unchanged. Consumers use this same
+source revision and patch set; none keeps another toolchain or runtime copy.
 
 The initial helper move preserved the prior archives. The later native-object
 cleanup rebuilt both archives and refreshed all consuming npm lockfile integrities.

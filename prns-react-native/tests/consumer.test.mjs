@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { consumerDevDependencies, validatePackagedAppleImages, validatePackagedImages, validateSelection } from '../tools/detached-consumer.mjs';
+import { consumerDevDependencies, consumerOptions, validateAppleSceneManifest, validatePackagedAppleImages, validatePackagedImages, validateSelection } from '../tools/detached-consumer.mjs';
 
 const defaultImage = { schemaVersion: 1, provider: 'default', libraryName: 'prns_host_mobile' };
 const aggregateImage = { schemaVersion: 1, provider: 'sample-composition', libraryName: 'sample_composition' };
@@ -14,6 +14,28 @@ const frameworkFiles = image => [
   `ios/${image}.xcframework/ios-arm64-simulator/${image}.framework/Info.plist`,
   `ios/${image}.xcframework/ios-arm64-simulator/${image}.framework/${image}`,
 ].map(path => ({ path }));
+
+test('iOS compilation requires a packaged framework and cannot be reduced to an archive check', () => {
+  const ios = consumerOptions(['--ios']);
+  assert.equal(ios['require-ios'], true);
+  assert.equal(ios.android, false);
+  assert.throws(() => consumerOptions(['--ios', '--pack-only']), /cannot compile/);
+  assert.throws(() => consumerOptions(['--android', '--pack-only']), /cannot compile/);
+  assert.equal(consumerOptions(['--require-ios', '--pack-only'])['pack-only'], true);
+});
+
+test('the built iOS example must use Expo scene lifecycle configuration', () => {
+  const configuration = { UISceneDelegateClassName: 'EXExpoAppSceneDelegate' };
+  const manifest = { UIApplicationSupportsMultipleScenes: false,
+    UISceneConfigurations: { UIWindowSceneSessionRoleApplication: [configuration] } };
+  validateAppleSceneManifest({ UIApplicationSceneManifest: manifest });
+  assert.throws(() => validateAppleSceneManifest({}), /requires UIKit scene support/);
+  assert.throws(() => validateAppleSceneManifest({ UIApplicationSceneManifest: {
+    ...manifest, UISceneConfigurations: {},
+  } }));
+  configuration.UISceneDelegateClassName = 'UnrelatedSceneDelegate';
+  assert.throws(() => validateAppleSceneManifest({ UIApplicationSceneManifest: manifest }));
+});
 
 test('detached consumer tooling cannot override packed dependencies with source paths', () => {
   const sourcePackage = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));

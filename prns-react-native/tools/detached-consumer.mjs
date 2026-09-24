@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -62,9 +62,21 @@ export function consumerDevDependencies(sdkPackage) {
   }));
 }
 
-export function main(args = process.argv.slice(2)) {
+export function validateAppleSceneManifest(info) {
+  const manifest = info.UIApplicationSceneManifest;
+  assert(manifest, 'the built iOS example requires UIKit scene support');
+  assert.equal(manifest.UIApplicationSupportsMultipleScenes, false);
+  const configurations = manifest.UISceneConfigurations;
+  const role = 'UIWindowSceneSessionRoleApplication';
+  assert.deepEqual(Object.keys(configurations ?? {}), [role]);
+  assert.equal(configurations[role].length, 1);
+  assert.equal(configurations[role][0].UISceneDelegateClassName, 'EXExpoAppSceneDelegate');
+}
+
+export function consumerOptions(args) {
   const { values } = parseArgs({ args, options: {
     android: { type: 'boolean', default: false },
+    ios: { type: 'boolean', default: false },
     'require-ios': { type: 'boolean', default: false },
     'pack-only': { type: 'boolean', default: false },
     keep: { type: 'boolean', default: false },
@@ -72,15 +84,37 @@ export function main(args = process.argv.slice(2)) {
     bindings: { type: 'string' },
   } });
   assert(!values.bindings || values.aggregate, '--bindings requires --aggregate');
-  assert(!values['pack-only'] || (!values.android && !values.bindings), '--pack-only cannot compile Android or check composition bindings');
+  assert(!values['pack-only'] || (!values.android && !values.ios && !values.bindings), '--pack-only cannot compile Android/iOS or check composition bindings');
+  if (values.ios) values['require-ios'] = true;
+  return values;
+}
+
+export function main(args = process.argv.slice(2)) {
+  const values = consumerOptions(args);
+  assert(!values.ios || process.platform === 'darwin', '--ios requires macOS and Xcode');
   const sdk = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const root = dirname(sdk);
   const selection = JSON.parse(readFileSync(join(sdk, 'native-image.json'), 'utf8'));
   validateSelection(selection, values.aggregate);
   const temporary = mkdtempSync(join(tmpdir(), 'prns-expo-consumer-'));
   const log = join(temporary, 'validation.log');
+  const environment = { ...process.env };
+  if (values.ios) {
+    // Keep CocoaPods, Expo, npm and compiler writes inside the detached consumer.
+    // RN's shared download cache has no location override; bypass it here.
+    Object.assign(environment, {
+      TMPDIR: join(temporary, 'tmp'),
+      npm_config_cache: join(temporary, 'npm-cache'),
+      CP_HOME_DIR: join(temporary, 'cocoapods'),
+      CP_CACHE_DIR: join(temporary, 'cocoapods-cache'),
+      CLANG_MODULE_CACHE_PATH: join(temporary, 'clang-module-cache'),
+      __UNSAFE_EXPO_HOME_DIRECTORY: join(temporary, 'expo'),
+      RCT_SKIP_CACHES: '1', COCOAPODS_DISABLE_STATS: 'true', EXPO_NO_TELEMETRY: '1', CI: '1',
+    });
+    mkdirSync(environment.TMPDIR, { recursive: true });
+  }
   function run(command, commandArgs, cwd) {
-    const result = spawnSync(command, commandArgs, { cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+    const result = spawnSync(command, commandArgs, { cwd, env: environment, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
     writeFileSync(log, `${command} ${commandArgs.join(' ')}\n${result.stdout ?? ''}${result.stderr ?? ''}\n`, { flag: 'a' });
     if (result.error) throw result.error;
     assert.equal(result.status, 0, `${command} failed; see ${log}\n${result.stderr ?? ''}`);
@@ -104,7 +138,8 @@ export function main(args = process.argv.slice(2)) {
       writeFileSync(join(temporary, 'receipt.json'), `${JSON.stringify({
         schemaVersion: 1, selection, sdk: archiveReceipt(sdkArchive),
         androidImageContents: 'passed', iosFrameworkContents: appleImages.length ? 'passed' : 'not-run',
-        strictTypeScript: 'not-run', androidSdkKotlin: 'not-run', deviceRuntimeQualification: false,
+        strictTypeScript: 'not-run', androidSdkKotlin: 'not-run', iosSdkCompilation: 'not-run',
+        iosSceneManifest: 'not-run', deviceRuntimeQualification: false,
       }, null, 2)}\n`);
       console.log(`Packed ${selection.provider} SDK contains the selected Android image${appleImages.length ? ' and iOS framework' : ''}; native compilation and runtime qualification were not run.`);
       if (values.keep) console.log(`Archive, receipt and log retained: ${temporary}`);
@@ -152,6 +187,24 @@ export function main(args = process.argv.slice(2)) {
       run('npx', ['--no-install', 'expo', 'prebuild', '--platform', 'android', '--no-install'], temporary);
       run('./gradlew', [':personal-rns-expo:compileDebugKotlin', '--max-workers=4', '--console=plain', '-PreactNativeArchitectures=arm64-v8a'], join(temporary, 'android'));
     }
+    if (values.ios) {
+      run('npx', ['--no-install', 'expo', 'prebuild', '--platform', 'ios', '--no-install'], temporary);
+      const ios = join(temporary, 'ios');
+      run('pod', ['install'], ios);
+      const workspaces = readdirSync(ios).filter(name => name.endsWith('.xcworkspace'));
+      assert.equal(workspaces.length, 1, 'expected one detached iOS example workspace');
+      const workspace = workspaces[0];
+      const scheme = workspace.slice(0, -'.xcworkspace'.length);
+      run('xcrun', ['xcodebuild', '-workspace', join(ios, workspace), '-scheme', scheme,
+        '-configuration', 'Debug', '-sdk', 'iphonesimulator', '-destination', 'generic/platform=iOS Simulator',
+        '-derivedDataPath', join(temporary, 'DerivedData'),
+        '-clonedSourcePackagesDirPath', join(temporary, 'SourcePackages'),
+        '-resultBundlePath', join(temporary, 'ios-build.xcresult'), '-jobs', '4', '-quiet',
+        'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES',
+        'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO', 'build'], ios);
+      const info = join(temporary, 'DerivedData/Build/Products/Debug-iphonesimulator', `${scheme}.app/Info.plist`);
+      validateAppleSceneManifest(JSON.parse(run('plutil', ['-convert', 'json', '-o', '-', info], ios)));
+    }
     const installedSdk = join(temporary, 'node_modules/personal-rns-expo');
     assert.deepEqual(JSON.parse(readFileSync(join(installedSdk, 'native-image.json'), 'utf8')), selection);
     const imageReceipts = images.map(path => {
@@ -164,10 +217,12 @@ export function main(args = process.argv.slice(2)) {
       schemaVersion: 1, selection, sdk: archiveReceipt(sdkArchive), core: archiveReceipt(coreArchive),
       bindings: bindingsArchive ? archiveReceipt(bindingsArchive) : null, images: imageReceipts,
       strictTypeScript: 'passed', androidSdkKotlin: values.android ? 'passed' : 'not-run',
+      iosSdkCompilation: values.ios ? 'passed' : 'not-run',
+      iosSceneManifest: values.ios ? 'passed' : 'not-run',
       iosFrameworkContents: appleImages.length ? 'passed' : 'not-run',
       deviceRuntimeQualification: false,
     }, null, 2)}\n`);
-    console.log(`Detached packed ${values.aggregate ? 'aggregate' : 'default'} consumer passed strict TypeScript${values.android ? ' and Android SDK compilation' : ''}${bindingsArchive ? ' including composition bindings' : ''}.`);
+    console.log(`Detached packed ${values.aggregate ? 'aggregate' : 'default'} consumer passed strict TypeScript${values.android ? ' and Android SDK compilation' : ''}${values.ios ? ' and iOS simulator SDK compilation' : ''}${bindingsArchive ? ' including composition bindings' : ''}.`);
     if (values.keep) console.log(`Consumer, receipt and log retained: ${temporary}`);
     else rmSync(temporary, { recursive: true, force: true });
   } catch (error) {

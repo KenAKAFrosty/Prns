@@ -492,7 +492,17 @@ pub const MESH_TOWER_V2: MemoryProfile = MemoryProfile {
     runtime_reservations: &NRF_RUNTIME_RESERVATIONS,
 };
 
-const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 8] = [
+pub const MUZI_BASE_DUO: MemoryProfile = MemoryProfile {
+    id: MemoryProfileId("muzi-base-duo"),
+    architecture: ProcessorArchitecture::ThumbV7em,
+    address_spaces: &NRF52840_S140_RAM_SPACES,
+    regions: &MESH_TOWER_V2_REGIONS,
+    firmware: firmware_placement(0x26000, 0xE2000, 0xE2000),
+    journals: &MESH_TOWER_JOURNALS,
+    runtime_reservations: &NRF_RUNTIME_RESERVATIONS,
+};
+
+const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 9] = [
     T_ECHO_S140_V6.id,
     T_ECHO_S140_V7.id,
     T096.id,
@@ -501,6 +511,7 @@ const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 8] = [
     MESH_POCKET_10000.id,
     T1000_E.id,
     MESH_TOWER_V2.id,
+    MUZI_BASE_DUO.id,
 ];
 
 pub const NRF52840_MEMORY_X_BINDING: NrfMemoryXBinding = NrfMemoryXBinding {

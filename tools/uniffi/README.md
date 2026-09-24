@@ -34,10 +34,10 @@ python3 tools/ubrn-vendor/vendor.py check
 python3 -m unittest discover -s tools/ubrn-vendor -p 'test_*.py'
 ```
 
-The application's stable entry point remains
-`applications/tools/generated-bindings/generate.py`. It delegates reusable work
-here and keeps only the app recipe and product projections. No generic SDK build
-needs to import or export that application entry point.
+The standalone SDK entry point is
+`prns-react-native/tools/generate.py`. Native compositions can use this same
+module with their own recipe and product projections, without adding a dependency
+from the SDK back to the composition.
 
 Native generation normally omits the CLI `--config` argument. UniFFI 0.31's
 current CLI treats it as a complete replacement for every namespace config,

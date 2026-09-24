@@ -17,7 +17,8 @@
             "minSdkVersion": 29
           },
           "ios": {
-            "deploymentTarget": "18.0"
+            "deploymentTarget": "18.0",
+            "enableSceneSupport": true
           }
         }
       ]

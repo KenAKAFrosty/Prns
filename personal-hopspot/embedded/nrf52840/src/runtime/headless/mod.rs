@@ -41,13 +41,15 @@ use super::entropy::install_hal_runtime_entropy;
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo"
 ))]
 use super::entropy::install_softdevice_runtime_entropy;
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo"
 ))]
 use super::entropy::prepare_softdevice_runtime_entropy;
 use super::entropy::{runtime_entropy, seed_from_hal};
@@ -55,16 +57,21 @@ use super::entropy::{runtime_entropy, seed_from_hal};
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo"
 ))]
 mod bluetooth;
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
 mod remote_control;
-#[cfg(any(feature = "board-t1000e", feature = "board-mesh-tower-v2"))]
+#[cfg(any(
+    feature = "board-t1000e",
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo"
+))]
 #[path = "remote_control_headless.rs"]
 mod remote_control;
-#[cfg(feature = "board-mesh-tower-v2")]
-#[path = "mesh_tower_v2.rs"]
+#[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
+#[path = "button_announce.rs"]
 mod selected;
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
 #[path = "display.rs"]
@@ -84,7 +91,8 @@ const LORA_OUTBOUND_DEPTH: usize = Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAME
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo"
 ))]
 const BLE_OUTBOUND_DEPTH: usize = Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
@@ -103,7 +111,8 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo"
 ))]
 const _: () = assert!(Storage::LINK_SESSIONS > bluetooth::MEMBERS);
 
@@ -149,7 +158,8 @@ static LORA_MANIFOLD_LANE: StaticManifoldLane<
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo"
 ))]
 static BLE_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
@@ -186,7 +196,8 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo"
     ))]
     let ((node_bootstrap, remote_control_bootstrap, ble_bootstrap, entropy), hardware) =
         Board::initialize(|nvmc, rng| {
@@ -213,7 +224,8 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo"
     ))]
     let ble_identity = Some(ble_bootstrap.into_identity());
     #[cfg(feature = "board-t096")]
@@ -247,7 +259,7 @@ pub async fn run(spawner: Spawner) -> ! {
     } = hardware;
     #[cfg(feature = "board-t1000e")]
     install_hal_runtime_entropy(entropy);
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
     let Hardware {
         usb: usb_driver,
         vbus,
@@ -288,26 +300,30 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo"
     ))]
     let entropy = prepare_softdevice_runtime_entropy(entropy);
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo"
     ))]
     let sd = bluetooth::enable(spawner, vbus, ble_identity);
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo"
     ))]
     install_softdevice_runtime_entropy(entropy, sd);
 
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo"
     ))]
     let shared_flash = super::learned_state::take_flash(sd);
     #[cfg(feature = "board-t1000e")]
@@ -384,7 +400,8 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo"
     ))]
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
         manifold_lanes
@@ -436,7 +453,8 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo"
     ))]
     let bluetooth = bluetooth::prepare(ble_identity, ble_supervisor_lane);
     let heartbeat = async move {
@@ -512,7 +530,7 @@ pub async fn run(spawner: Spawner) -> ! {
         gnss,
     )
     .await;
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
     selected::run(
         io,
         lora.run(lora_seam),

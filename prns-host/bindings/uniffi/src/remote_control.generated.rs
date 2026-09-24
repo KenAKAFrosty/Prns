@@ -1,6 +1,8 @@
+// Generated from public prns-core Remote Control declarations. Do not edit.
+// Uniform fallible converters retain ? for nested validation and error conversion.
+#![allow(clippy::needless_question_mark)]
 pub const REMOTE_CONTROL_SEMANTIC_FINGERPRINT: &str =
     "becd93f1924c3ec2e50562f2df71a57b80c6cffb81f20399e616abbdc4e3df5c";
-// Generated from public prns-core Remote Control declarations. Do not edit.
 use crate::transport::BindingError;
 pub struct RemoteControlSecretText(zeroize::Zeroizing<String>);
 uniffi::custom_type!(RemoteControlSecretText, String, {
@@ -1162,8 +1164,8 @@ impl From<prns_core::remote_control::RemoteControlInterfaceInventory>
         Self {
             entries: value
                 .entries()
-                .to_vec()
-                .into_iter()
+                .iter()
+                .cloned()
                 .map(|item| item.into())
                 .collect(),
             continuation: value.continuation().into(),
@@ -1520,8 +1522,8 @@ impl From<prns_core::remote_control::RemoteControlInterfacePeerPage>
             id: value.id.into(),
             peers: value
                 .peers
-                .to_vec()
-                .into_iter()
+                .iter()
+                .cloned()
                 .map(|item| item.into())
                 .collect(),
             continuation: value.continuation().into(),
@@ -1706,7 +1708,7 @@ impl From<prns_core::interfaces::PeerDetails> for RemoteControlPeerDetails {
             prns_core::interfaces::PeerDetails::BleGatt => RemoteControlPeerDetails::BleGatt,
             prns_core::interfaces::PeerDetails::BleCoc => RemoteControlPeerDetails::BleCoc,
             prns_core::interfaces::PeerDetails::WifiRfChannel(value) => {
-                RemoteControlPeerDetails::WifiRfChannel { value: value }
+                RemoteControlPeerDetails::WifiRfChannel { value }
             }
         }
     }
@@ -1830,8 +1832,8 @@ impl From<prns_core::remote_control::RemoteControlControllerInventory>
         Self {
             hashes: value
                 .hashes()
-                .to_vec()
-                .into_iter()
+                .iter()
+                .cloned()
                 .map(|item| item.into())
                 .collect(),
             continuation: value.continuation().into(),
@@ -2117,10 +2119,10 @@ impl From<prns_core::remote_control::RemoteControlProtocolError> for RemoteContr
                 RemoteControlProtocolError::MalformedRequest
             }
             prns_core::remote_control::RemoteControlProtocolError::UnsupportedVersion { found } => {
-                RemoteControlProtocolError::UnsupportedVersion { found: found }
+                RemoteControlProtocolError::UnsupportedVersion { found }
             }
             prns_core::remote_control::RemoteControlProtocolError::UnknownRequestKind { found } => {
-                RemoteControlProtocolError::UnknownRequestKind { found: found }
+                RemoteControlProtocolError::UnknownRequestKind { found }
             }
             prns_core::remote_control::RemoteControlProtocolError::UnsupportedRequest {
                 request,
@@ -2175,7 +2177,7 @@ impl From<prns_host_native::remote_control::RemoteControlExchangeSettlement>
                 rtt_millis,
             } => RemoteControlExchangeSettlement::Completed {
                 response: response.into(),
-                rtt_millis: rtt_millis,
+                rtt_millis,
             },
             prns_host_native::remote_control::RemoteControlExchangeSettlement::Failed {
                 failure,
@@ -2749,25 +2751,25 @@ impl From<prns_core::remote_control::RemoteControlResponseParseError>
     fn from(value: prns_core::remote_control::RemoteControlResponseParseError) -> Self {
         match value {
 prns_core::remote_control::RemoteControlResponseParseError::Truncated => RemoteControlResponseParseError::Truncated,
-prns_core::remote_control::RemoteControlResponseParseError::UnsupportedVersion { found } => RemoteControlResponseParseError::UnsupportedVersion { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownResponseKind { found } => RemoteControlResponseParseError::UnknownResponseKind { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownAnnounceSelfOutcome { found } => RemoteControlResponseParseError::UnknownAnnounceSelfOutcome { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownPowerOutcome { found } => RemoteControlResponseParseError::UnknownPowerOutcome { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownModeOutcome { found } => RemoteControlResponseParseError::UnknownModeOutcome { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownGroupOutcome { found } => RemoteControlResponseParseError::UnknownGroupOutcome { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownLoRaOutcome { found } => RemoteControlResponseParseError::UnknownLoRaOutcome { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownWifiStationOutcome { found } => RemoteControlResponseParseError::UnknownWifiStationOutcome { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownAuthorizeControllerOutcome { found } => RemoteControlResponseParseError::UnknownAuthorizeControllerOutcome { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownRevokeControllerOutcome { found } => RemoteControlResponseParseError::UnknownRevokeControllerOutcome { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownSleepOutcome { found } => RemoteControlResponseParseError::UnknownSleepOutcome { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownApplyOutcome { found } => RemoteControlResponseParseError::UnknownApplyOutcome { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownWifiStageOutcome { found } => RemoteControlResponseParseError::UnknownWifiStageOutcome { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownWifiTransactionStatus { found } => RemoteControlResponseParseError::UnknownWifiTransactionStatus { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownProtocolErrorKind { found } => RemoteControlResponseParseError::UnknownProtocolErrorKind { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownRequestKind { found } => RemoteControlResponseParseError::UnknownRequestKind { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownInterfaceKind { found } => RemoteControlResponseParseError::UnknownInterfaceKind { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownInterfaceMode { found } => RemoteControlResponseParseError::UnknownInterfaceMode { found: found },
-prns_core::remote_control::RemoteControlResponseParseError::UnknownConnectionState { found } => RemoteControlResponseParseError::UnknownConnectionState { found: found },
+prns_core::remote_control::RemoteControlResponseParseError::UnsupportedVersion { found } => RemoteControlResponseParseError::UnsupportedVersion { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownResponseKind { found } => RemoteControlResponseParseError::UnknownResponseKind { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownAnnounceSelfOutcome { found } => RemoteControlResponseParseError::UnknownAnnounceSelfOutcome { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownPowerOutcome { found } => RemoteControlResponseParseError::UnknownPowerOutcome { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownModeOutcome { found } => RemoteControlResponseParseError::UnknownModeOutcome { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownGroupOutcome { found } => RemoteControlResponseParseError::UnknownGroupOutcome { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownLoRaOutcome { found } => RemoteControlResponseParseError::UnknownLoRaOutcome { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownWifiStationOutcome { found } => RemoteControlResponseParseError::UnknownWifiStationOutcome { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownAuthorizeControllerOutcome { found } => RemoteControlResponseParseError::UnknownAuthorizeControllerOutcome { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownRevokeControllerOutcome { found } => RemoteControlResponseParseError::UnknownRevokeControllerOutcome { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownSleepOutcome { found } => RemoteControlResponseParseError::UnknownSleepOutcome { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownApplyOutcome { found } => RemoteControlResponseParseError::UnknownApplyOutcome { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownWifiStageOutcome { found } => RemoteControlResponseParseError::UnknownWifiStageOutcome { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownWifiTransactionStatus { found } => RemoteControlResponseParseError::UnknownWifiTransactionStatus { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownProtocolErrorKind { found } => RemoteControlResponseParseError::UnknownProtocolErrorKind { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownRequestKind { found } => RemoteControlResponseParseError::UnknownRequestKind { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownInterfaceKind { found } => RemoteControlResponseParseError::UnknownInterfaceKind { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownInterfaceMode { found } => RemoteControlResponseParseError::UnknownInterfaceMode { found },
+prns_core::remote_control::RemoteControlResponseParseError::UnknownConnectionState { found } => RemoteControlResponseParseError::UnknownConnectionState { found },
 prns_core::remote_control::RemoteControlResponseParseError::NonCanonicalRequestSet => RemoteControlResponseParseError::NonCanonicalRequestSet,
 prns_core::remote_control::RemoteControlResponseParseError::NonCanonicalCursor => RemoteControlResponseParseError::NonCanonicalCursor,
 prns_core::remote_control::RemoteControlResponseParseError::Malformed => RemoteControlResponseParseError::Malformed,
@@ -3110,7 +3112,7 @@ impl From<prns_host_native::remote_control_service::NativeRemoteControlEvent>
 {
     fn from(value: prns_host_native::remote_control_service::NativeRemoteControlEvent) -> Self {
         match value {
-prns_host_native::remote_control_service::NativeRemoteControlEvent::PairingAvailable { endpoint, observed_at, expires_at, hops, source_interface, public_app_data } => RemoteControlNativeRemoteControlEvent::PairingAvailable { endpoint: endpoint.into(), observed_at: observed_at.into(), expires_at: expires_at.into(), hops: hops, source_interface: source_interface.into(), public_app_data: public_app_data.into_iter().map(|item| item).collect() },
+prns_host_native::remote_control_service::NativeRemoteControlEvent::PairingAvailable { endpoint, observed_at, expires_at, hops, source_interface, public_app_data } => RemoteControlNativeRemoteControlEvent::PairingAvailable { endpoint: endpoint.into(), observed_at: observed_at.into(), expires_at: expires_at.into(), hops, source_interface: source_interface.into(), public_app_data },
 prns_host_native::remote_control_service::NativeRemoteControlEvent::TargetConfirmationRequired { confirmation, window } => RemoteControlNativeRemoteControlEvent::TargetConfirmationRequired { confirmation: confirmation.into(), window: window.into() },
 prns_host_native::remote_control_service::NativeRemoteControlEvent::TargetControllerCommitted { attempt_id } => RemoteControlNativeRemoteControlEvent::TargetControllerCommitted { attempt_id: attempt_id.into() },
 prns_host_native::remote_control_service::NativeRemoteControlEvent::TargetAuthorizationRequired { attempt_id, grant } => RemoteControlNativeRemoteControlEvent::TargetAuthorizationRequired { attempt_id: attempt_id.into(), grant: grant.into() },
@@ -3652,7 +3654,7 @@ impl From<prns_core::routing::links::request::PackedBinaryParseError>
             }
             prns_core::routing::links::request::PackedBinaryParseError::LengthOutOfRange {
                 declared,
-            } => RemoteControlPackedBinaryParseError::LengthOutOfRange { declared: declared },
+            } => RemoteControlPackedBinaryParseError::LengthOutOfRange { declared },
             prns_core::routing::links::request::PackedBinaryParseError::LengthMismatch {
                 declared,
                 actual,
@@ -3716,12 +3718,12 @@ impl From<prns_core::remote_control::RemoteControlPairingMessageParseError>
         match value {
 prns_core::remote_control::RemoteControlPairingMessageParseError::TooLong { actual, maximum } => RemoteControlPairingMessageParseError::TooLong { actual: actual as u64, maximum: maximum as u64 },
 prns_core::remote_control::RemoteControlPairingMessageParseError::Truncated => RemoteControlPairingMessageParseError::Truncated,
-prns_core::remote_control::RemoteControlPairingMessageParseError::UnsupportedVersion { found } => RemoteControlPairingMessageParseError::UnsupportedVersion { found: found },
-prns_core::remote_control::RemoteControlPairingMessageParseError::UnknownKind { found } => RemoteControlPairingMessageParseError::UnknownKind { found: found },
+prns_core::remote_control::RemoteControlPairingMessageParseError::UnsupportedVersion { found } => RemoteControlPairingMessageParseError::UnsupportedVersion { found },
+prns_core::remote_control::RemoteControlPairingMessageParseError::UnknownKind { found } => RemoteControlPairingMessageParseError::UnknownKind { found },
 prns_core::remote_control::RemoteControlPairingMessageParseError::UnexpectedKind { direction, found } => RemoteControlPairingMessageParseError::UnexpectedKind { direction: direction.into(), found: found.into() },
 prns_core::remote_control::RemoteControlPairingMessageParseError::InvalidSigningPublicKey { role } => RemoteControlPairingMessageParseError::InvalidSigningPublicKey { role: role.into() },
-prns_core::remote_control::RemoteControlPairingMessageParseError::UnknownRequestKind { found } => RemoteControlPairingMessageParseError::UnknownRequestKind { found: found },
-prns_core::remote_control::RemoteControlPairingMessageParseError::UnknownAuthority { found } => RemoteControlPairingMessageParseError::UnknownAuthority { found: found },
+prns_core::remote_control::RemoteControlPairingMessageParseError::UnknownRequestKind { found } => RemoteControlPairingMessageParseError::UnknownRequestKind { found },
+prns_core::remote_control::RemoteControlPairingMessageParseError::UnknownAuthority { found } => RemoteControlPairingMessageParseError::UnknownAuthority { found },
 prns_core::remote_control::RemoteControlPairingMessageParseError::TooManyPermissionsForVersion { version, actual, maximum } => RemoteControlPairingMessageParseError::TooManyPermissionsForVersion { version: version.into(), actual: actual as u64, maximum: maximum as u64 },
 prns_core::remote_control::RemoteControlPairingMessageParseError::RequestUnsupportedForVersion { version, request } => RemoteControlPairingMessageParseError::RequestUnsupportedForVersion { version: version.into(), request: request.into() },
 prns_core::remote_control::RemoteControlPairingMessageParseError::NonCanonicalPermissions => RemoteControlPairingMessageParseError::NonCanonicalPermissions,

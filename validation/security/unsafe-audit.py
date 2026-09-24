@@ -43,6 +43,10 @@ GRAPHS = (
     ("desktop-windows", "personal-hopspot/desktop/Cargo.toml", "x86_64-pc-windows-msvc"),
     ("android", "personal-hopspot/mobile/android/rust/Cargo.toml", "aarch64-linux-android"),
     ("ios", "personal-hopspot/mobile/ios/rust/Cargo.toml", "aarch64-apple-ios"),
+    ("sdk-native-linux", "prns-host/impls/native/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("expo-host-linux", "prns-host/bindings/uniffi/image/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("expo-android", "prns-host/bindings/uniffi/image/Cargo.toml", "aarch64-linux-android"),
+    ("expo-ios", "prns-host/bindings/uniffi/image/Cargo.toml", "aarch64-apple-ios"),
     ("nrf52840", "personal-hopspot/embedded/nrf52840/Cargo.toml", "thumbv7em-none-eabihf"),
     (
         "esp32-c6",
@@ -83,6 +87,7 @@ UNSAFE_EXCEPTIONS = {
     "prns-runtime",
     "prns-runtime-embassy",
     "prns-host-c",
+    "prns-expo-android",
     "personal-hopspot-android",
     "personal-hopspot-ios",
     "t-echo",

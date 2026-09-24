@@ -209,6 +209,8 @@ command = ["__RUNNER_PYTHON__", "tools/prns", "run", "repo.host-contract.check"]
 inputs = [
   "tools/repo/generate-host-contract.py",
   "tools/repo/host_contract",
+  "prns-host/schema/native-extensions-v1.json",
+  "prns-host/schema/remote-control-v1.generated.json",
   "prns-host/bindings/uniffi/src/transport.generated.rs",
   "prns-host/bindings/uniffi/coverage.generated.json",
   "prns-react-native/src/generated/host-adapter.generated.ts",
@@ -284,6 +286,18 @@ inputs = ["prns-react-native", "prns-js/src", "prns-js/package.json", "prns-host
 artifacts = "validation-artifacts/results/react-native-sdk"
 
 [[suite]]
+id = "react-native-generated"
+domain = "platform"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 2400
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "generate", "--check"]
+inputs = ["prns-react-native", "prns-host", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-generated"
+
+[[suite]]
 id = "react-native-apple-platform"
 domain = "platform"
 group = "deterministic"
@@ -294,6 +308,66 @@ timeout_seconds = 300
 command = ["npm", "--prefix", "prns-react-native", "run", "test:apple"]
 inputs = ["prns-react-native/ios", "prns-react-native/scripts/test-apple.mjs", "prns-react-native/tests/apple", "prns-react-native/package.json"]
 artifacts = "validation-artifacts/results/react-native-apple-platform"
+
+[[suite]]
+id = "react-native-android-image"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "android", "--targets", "arm64-v8a"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-android-image"
+
+[[suite]]
+id = "react-native-android-consumer"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "node"
+timeout_seconds = 1800
+command = ["npm", "--prefix", "prns-react-native", "run", "test:consumer", "--", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-android-consumer"
+
+[[suite]]
+id = "react-native-apple-image"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "ios", "--sim-only", "--targets", "aarch64-apple-ios-sim"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-apple-image"
+
+[[suite]]
+id = "react-native-mobile-archive"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "node"
+timeout_seconds = 300
+command = ["npm", "--prefix", "prns-react-native", "run", "pack:check", "--", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-mobile-archive"
+
+[[suite]]
+id = "react-native-apple-consumer"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "node"
+timeout_seconds = 1800
+command = ["node", "prns-react-native/tools/detached-consumer.mjs", "--ios", "--require-ios", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-apple-consumer"
 
 [[suite]]
 id = "host-c-contract"
@@ -1301,6 +1375,8 @@ inputs = [
   "personal-hopspot/sdk/hopspot/contract.js",
   "personal-hopspot/sdk/hopspot/contract.cjs",
   "personal-hopspot/sdk/hopspot/contract.d.ts",
+  "personal-hopspot/sdk/hopspot/remote-control.js",
+  "personal-hopspot/sdk/hopspot/remote-control.d.ts",
   "personal-hopspot/sdk/hopspot/native.js",
   "personal-hopspot/sdk/hopspot/native.cjs",
   "personal-hopspot/sdk/hopspot/native.d.ts",

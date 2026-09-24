@@ -244,14 +244,24 @@ def generate(root):
         elem = inner(t)
         if elem:
             converted = convert(elem,'item',direction)
+            if converted == 'item' and not t.startswith('heapless::Vec<'):
+                return expression
             if t.startswith('Option'):
                 return f'{expression}.map(|item| Ok({converted})).transpose()?' if direction=='input' else f'{expression}.map(|item| {converted})'
-            return f'{expression}.into_iter().map(|item| Ok({converted})).collect::<Result<Vec<_>, BindingError>>()?' if direction=='input' else f'{expression}.into_iter().map(|item| {converted}).collect()'
+            if direction=='input':
+                return f'{expression}.into_iter().map(|item| Ok({converted})).collect::<Result<Vec<_>, BindingError>>()?'
+            # Borrow bounded storage until all field accessors have been read;
+            # collect the converted values without an intermediate Vec clone.
+            iterator = f'{expression}.iter().cloned()' if t.startswith('heapless::Vec<') else f'{expression}.into_iter()'
+            return f'{iterator}.collect()' if converted == 'item' else f'{iterator}.map(|item| {converted}).collect()'
         if t.startswith('heapless::String<'): return f'{expression}.to_string()'
         if t in types: return f'{expression}.try_into()?' if direction=='input' else f'{expression}.into()'
         return expression
     fingerprint=hashlib.sha256(json.dumps(types,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-    rust = [f'pub const REMOTE_CONTROL_SEMANTIC_FINGERPRINT: &str = "{fingerprint}";', '// Generated from public prns-core Remote Control declarations. Do not edit.','use crate::transport::BindingError;', '''pub struct RemoteControlSecretText(zeroize::Zeroizing<String>);
+    rust = ['// Generated from public prns-core Remote Control declarations. Do not edit.',
+            '// Uniform fallible converters retain ? for nested validation and error conversion.',
+            '#![allow(clippy::needless_question_mark)]',
+            f'pub const REMOTE_CONTROL_SEMANTIC_FINGERPRINT: &str = "{fingerprint}";', 'use crate::transport::BindingError;', '''pub struct RemoteControlSecretText(zeroize::Zeroizing<String>);
 uniffi::custom_type!(RemoteControlSecretText, String, {
     lower: |value| value.0.to_string(),
     try_lift: |value| Ok(RemoteControlSecretText(zeroize::Zeroizing::new(value))),
@@ -283,7 +293,7 @@ uniffi::custom_type!(RemoteControlSecretCode, u32, {
                     names = [f['name'] for f in v['fields']]
                     pattern = '' if not names else (' { '+', '.join(names)+' }' if input or v['style']=='named' else '('+', '.join(names)+')')
                     converted = [convert(f['type'],f['name'],direction) for f in v['fields']]
-                    payload = '' if not names else (' { '+', '.join(n+': '+c for n,c in zip(names,converted))+' }' if not input or v['style']=='named' else '('+', '.join(converted)+')')
+                    payload = '' if not names else (' { '+', '.join(n if n == c else n+': '+c for n,c in zip(names,converted))+' }' if not input or v['style']=='named' else '('+', '.join(converted)+')')
                     rust += [f'{src.replace("<", "::<")}::{v["name"]}{pattern} => {dst.replace("<", "::<")}::{v["name"]}{payload},']
                 rust += ['}']
             elif item.get('custom'):
@@ -303,10 +313,8 @@ uniffi::custom_type!(RemoteControlSecretCode, u32, {
                     expression = 'value.' + f['name']
                     if not input and not f['public']:
                         expression += '()'
-                        if f['type'].startswith('heapless::Vec<'): expression += '.to_vec()'
-                        elif f.get('borrowed'):
+                        if f.get('borrowed') and not f['type'].startswith('heapless::Vec<'):
                             expression = ('prns_core::remote_control::RemoteControlTargetIdentity::new(*' + expression + '.public_keys())') if f['type']=='RemoteControlTargetIdentity' else '(*' + expression + ')'
-                    if not input and f['public'] and f['type'].startswith('heapless::Vec<'): expression += '.to_vec()'
                     fs.append(f'{f["name"]}: {convert(f["type"],expression,direction)}')
                 rust += ['Self { '+', '.join(fs)+' }']
             rust += [') } }' if input else '} }']

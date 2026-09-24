@@ -29,7 +29,7 @@ accepted = ["LicenseRef-Nordic-SoftDevice"]
 [serialport]
 accepted = ["MPL-2.0"]
 
-# Notice choices for the app's generated native binding runtime. Exact package
+# Notice choices for the SDK's generated native binding runtime. Exact package
 # versions are enforced by deny.toml and the locked release graphs.
 [uniffi]
 accepted = ["MPL-2.0"]
