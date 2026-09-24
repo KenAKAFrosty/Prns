@@ -117,3 +117,11 @@ test('npm packs the selected framework despite the source checkout ignore rule',
     rmSync(temporary, { recursive: true, force: true });
   }
 });
+
+
+test('an aggregate consumer can select a staged SDK while retaining the shared test tooling', () => {
+  const selected = consumerOptions(['--aggregate', '--sdk', '/consumer/target/sdk', '--android']);
+  assert.equal(selected.sdk, '/consumer/target/sdk');
+  assert.equal(selected.aggregate, true);
+  assert.equal(selected.android, true);
+});
