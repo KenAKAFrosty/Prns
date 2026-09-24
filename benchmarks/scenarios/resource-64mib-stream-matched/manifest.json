@@ -27,6 +27,14 @@
         "responder": "personal-rns"
       },
       "text": "RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff."
+    },
+    {
+      "subject": {
+        "path": "direct",
+        "initiator": "rns-1.5.4",
+        "responder": "personal-rns"
+      },
+      "text": "RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff."
     }
   ],
   "description": "The 64-segment incompressible resource stream repeated with both real initiator and responder interfaces explicitly configured for 10 Mbps. That policy selects the 16,384-byte interface MTU tier on both stacks. Compression remains disabled and every segment remains encrypted, hash-proved, assembled, and application-acknowledged; this is the policy-matched counterpart to the default-policy result.",
