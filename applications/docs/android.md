@@ -70,6 +70,16 @@ npm run native:android:standalone
 The first command builds a development client that uses Metro. The second bundles
 JavaScript into a standalone development APK. Both use the development application
 identifier and local debug signing; neither is a production distribution build.
+The standalone command uses the Release configuration and builds without
+installing an app or starting Metro. It checks the bundled JavaScript, minimum
+API, 16 KB alignment and presence of only the `prns_app` native image.
+
+The `application-android-build` suite runs the standalone command in the
+`application-mobile-build` CI matrix. The job builds the complete app with its
+staged aggregate SDK and checks that the canonical SDK and committed product
+bindings stay unchanged. This adds app build coverage alongside standalone SDK
+CI; a build result does not qualify physical Bluetooth or background operation.
+
 Generated Android projects and native build outputs are ignored. The tracked
 Expo config plugin, module sources, and build scripts are the source of truth.
 

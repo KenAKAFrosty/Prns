@@ -95,10 +95,32 @@ Swift lifecycle and release-symbol tests:
 npm --prefix applications run native:ios:test
 ```
 
-Build development clients with `native:ios:client` or `native:android:client`.
-`native:android:standalone` embeds JavaScript in a development APK. These helpers
-refresh generated bindings before packaging the shared Rust image. See the
-[app guide](prns/app/README.md) for platform behavior and physical iOS installation.
+Build the complete app with embedded JavaScript, without installing or launching
+it:
+
+```sh
+npm --prefix applications run native:android:standalone
+npm --prefix applications run native:ios:build
+```
+
+Android produces a locally debug-signed Release APK with the development
+identifier. iOS requires macOS, Xcode and CocoaPods; it compiles an unsigned
+Release app for a generic Apple Silicon iOS simulator. Neither command starts
+Metro or qualifies production distribution. The helpers refresh generated
+bindings and verify the single aggregate image and embedded JavaScript; iOS also
+checks scene/Bluetooth metadata.
+
+The `application-mobile-build` CI matrix runs these commands as
+`application-android-build` and `application-ios-build`, then checks that app
+builds preserve the canonical SDK and committed product bindings. This is full
+app build coverage alongside the standalone SDK jobs; see CI results for the
+actual run outcome. Detached package installation and physical acceptance remain
+separate checks.
+
+Use `native:ios:client` or `native:android:client` for development clients that
+use Metro. The iOS client helper also installs and runs its simulator smoke;
+physical iOS installation uses `native:ios:device`. See the
+[iOS](docs/ios.md) and [Android](docs/android.md) guides for those workflows.
 
 `PRNS_UBRN_CACHE` and `CARGO_TARGET_DIR` can place disposable source/build caches
 on a larger volume. Keep separate caches for different host operating systems.
