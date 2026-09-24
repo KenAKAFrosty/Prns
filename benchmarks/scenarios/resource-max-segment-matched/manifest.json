@@ -1,0 +1,29 @@
+{
+  "name": "resource-max-segment-matched",
+  "version": 1,
+  "order": 5,
+  "title": "Maximum resource segment · matched RNS policy",
+  "category": "Resources",
+  "summary": "Repeat maximum-efficient resource transfers with both endpoint interfaces configured for RNS's 10 Mbps / 16 KiB policy.",
+  "primary_metric": "goodput_bytes_per_sec",
+  "headline": true,
+  "notes": [
+    "Controlled policy comparison: identical workload and protocol with both implementations configured for the stock RNS bitrate and MTU tier."
+  ],
+  "description": "The resource-max-segment workload repeated with both real initiator and responder interfaces explicitly configured for 10 Mbps. That policy selects the 16,384-byte interface MTU tier on both stacks. Transfers still use the normal encrypted, hash-proved, application-acknowledged resource path; this is the policy-matched counterpart to the default-policy result.",
+  "roles": [
+    "responder",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "resource",
+    "payload_len": 1048575,
+    "window": 1,
+    "tcp_bitrate_bps": 10000000,
+    "duration_ms": 30000,
+    "drain_timeout_ms": 30000,
+    "size_seed": 6840346605343539201
+  },
+  "conformance_rule": "exact-resource",
+  "conformance": "Every sent transfer settles, receives its ordered application acknowledgement, and is received with exact application-byte totals and zero failures; the receiver hash-proves each resource before settlement."
+}

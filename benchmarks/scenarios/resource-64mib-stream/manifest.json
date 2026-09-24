@@ -26,6 +26,14 @@
         "responder": "personal-rns"
       },
       "text": "RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff."
+    },
+    {
+      "subject": {
+        "path": "direct",
+        "initiator": "rns-1.5.4",
+        "responder": "personal-rns"
+      },
+      "text": "RNS prepares the next 1 MiB segment in a background thread. Prns proves the current segment before that preparation completes, making RNS enter a coarse 50 ms polling loop. A slower stock receiver gives preparation enough time to finish, avoiding that cliff."
     }
   ],
   "description": "A single large resource transferred whole, over and over, for a fixed wall-time - the multi-segment bulk mechanism. Each logical transfer is exactly 64 maximum-efficient segments, sent one at a time, hash-proved, and application-acknowledged before another logical transfer begins. The payload repeats one shared deterministic maximum-size block, allowing Prns to stream with bounded memory while both participants transmit identical bytes. Compression is disabled on both stacks.",

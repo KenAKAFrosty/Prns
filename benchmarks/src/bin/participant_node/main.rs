@@ -22,6 +22,8 @@ use personal_rns::engine::{
     PrnsCommand, RatchetPolicy, RequestResponseTimeout, SendSinglePacket, SendSinglePacketPayload,
     SendToLink, SendToLinkFailure, SendToLinkPayload, Settlement,
 };
+#[cfg(target_os = "linux")]
+use personal_rns::interfaces::backbone;
 use personal_rns::interfaces::{
     tcp, BitrateBps, ConfiguredInterfacePolicy, EffectiveInterfacePolicy, InterfaceDescriptor,
     InterfaceId, InterfaceKind, MtuPolicy, ReportsStatus,
@@ -44,6 +46,8 @@ use personal_rns::runtime::{
 };
 #[cfg(feature = "fixed-storage")]
 type NodeStorage = personal_rns::storage::Esp32S3<allocator_api2::alloc::Global>;
+#[cfg(target_os = "linux")]
+use personal_rns::backbone::{BackboneClientInterface, BackboneServerConnection};
 #[cfg(not(feature = "fixed-storage"))]
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::tcp::{tune, TcpClientInterface, TcpServerConnection};
@@ -114,6 +118,60 @@ impl Interface for BenchTcpListener {
 
 impl ReportsStatus for BenchTcpListener {}
 
+#[cfg(target_os = "linux")]
+struct BenchBackboneListener {
+    id: InterfaceId,
+    listener: tokio::net::TcpListener,
+    policy: EffectiveInterfacePolicy,
+}
+
+#[cfg(target_os = "linux")]
+impl BenchBackboneListener {
+    async fn bind_with_id(
+        id: InterfaceId,
+        addr: impl tokio::net::ToSocketAddrs,
+        policy: EffectiveInterfacePolicy,
+    ) -> std::io::Result<Self> {
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        Ok(Self {
+            id,
+            listener,
+            policy,
+        })
+    }
+
+    fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.listener.local_addr()
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Interface for BenchBackboneListener {
+    const HW_MTU: usize = backbone::HW_MTU_CAP;
+    const KIND: InterfaceKind = InterfaceKind::BackboneServerPeer;
+
+    fn descriptor(&self) -> InterfaceDescriptor {
+        backbone::descriptor(self.id, self.policy)
+    }
+
+    fn channel_tag(&self) -> &[u8] {
+        self.id.as_bytes()
+    }
+
+    async fn run<Seam: InterfaceSeam>(self, seam: Seam) {
+        let Ok((stream, peer)) = self.listener.accept().await else {
+            return;
+        };
+        tune(&stream);
+        BackboneServerConnection::with_policy(peer.to_string().into_bytes(), stream, self.policy)
+            .run(seam)
+            .await;
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl ReportsStatus for BenchBackboneListener {}
+
 fn fanin_listener_id(index: usize) -> InterfaceId {
     let mut id = [0xC0u8; 8];
     id[7] = index as u8;
@@ -145,6 +203,18 @@ fn benchmark_tcp_policy(profile: &Profile) -> EffectiveInterfacePolicy {
         mtu: (profile.link_mtu > 0).then(|| MtuPolicy::fixed(profile.link_mtu)),
         ..ConfiguredInterfacePolicy::default()
     })
+}
+
+#[cfg(target_os = "linux")]
+fn benchmark_backbone_policy(profile: &Profile) -> EffectiveInterfacePolicy {
+    backbone::configured_policy(ConfiguredInterfacePolicy {
+        bitrate: profile.tcp_bitrate_bps.map(BitrateBps::guess),
+        ..ConfiguredInterfacePolicy::default()
+    })
+}
+
+fn uses_backbone(profile: &Profile) -> bool {
+    cfg!(target_os = "linux") && profile.link_mtu == 0 && profile.tcp_bitrate_bps.is_none()
 }
 
 /// The manifest's compression posture for resource sends. `"off"` is the matrix's
@@ -502,14 +572,14 @@ async fn scenario_main() {
             run_request_endpoint(&manifest, &role, &addr, duration).await;
         }
         ScenarioId::ResourceMaxSegment
-        | ScenarioId::ResourceMaxSegmentUnleashed
+        | ScenarioId::ResourceMaxSegmentMatched
         | ScenarioId::Resource64mibStream
-        | ScenarioId::Resource64mibStreamUnleashed => {
+        | ScenarioId::Resource64mibStreamMatched => {
             run_resource_endpoint(&manifest, &role, &addr, duration).await;
         }
         ScenarioId::RawTransportThroughput
         | ScenarioId::TransportResourceThroughput
-        | ScenarioId::TransportResourceThroughputUnleashed => {
+        | ScenarioId::TransportResourceThroughputMatched => {
             panic!("raw transport only supports the relay role")
         }
     }
@@ -524,12 +594,29 @@ async fn run_relay(manifest: &Manifest, addr: &str) {
         manifest.name.is_transport(),
         "the relay role belongs to raw transport"
     );
+    if uses_backbone(&manifest.profile) {
+        #[cfg(target_os = "linux")]
+        {
+            let policy = benchmark_backbone_policy(&manifest.profile);
+            let side_a = BenchBackboneListener::bind_with_id(TCP_INTERFACE_ID, addr, policy)
+                .await
+                .expect("binds relay side A");
+            let side_b = BenchBackboneListener::bind_with_id(
+                RELAY_SECOND_INTERFACE_ID,
+                "127.0.0.1:0",
+                policy,
+            )
+            .await
+            .expect("binds relay side B");
+            let addr_a = side_a.local_addr().expect("relay side A address");
+            let addr_b = side_b.local_addr().expect("relay side B address");
+            run_bound_relay(side_a, side_b, addr_a, addr_b, "backbone", policy).await;
+            return;
+        }
+        #[cfg(not(target_os = "linux"))]
+        unreachable!("Backbone benchmark interfaces are Linux-only");
+    }
     let policy = benchmark_tcp_policy(&manifest.profile);
-    let bitrate_bps = policy.bitrate.get();
-    let mtu_bytes = policy
-        .mtu
-        .resolve(policy.bitrate)
-        .expect("TCP benchmark policy selects an MTU tier");
     let side_a = BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, addr, policy)
         .await
         .expect("binds relay side A");
@@ -538,6 +625,24 @@ async fn run_relay(manifest: &Manifest, addr: &str) {
         .expect("binds relay side B");
     let addr_a = side_a.local_addr().expect("relay side A address");
     let addr_b = side_b.local_addr().expect("relay side B address");
+    run_bound_relay(side_a, side_b, addr_a, addr_b, "tcp", policy).await;
+}
+
+async fn run_bound_relay<I>(
+    side_a: I,
+    side_b: I,
+    addr_a: std::net::SocketAddr,
+    addr_b: std::net::SocketAddr,
+    interface: &'static str,
+    policy: EffectiveInterfacePolicy,
+) where
+    I: Interface + ReportsStatus + Send + 'static,
+{
+    let bitrate_bps = policy.bitrate.get();
+    let mtu_bytes = policy
+        .mtu
+        .resolve(policy.bitrate)
+        .expect("benchmark interface policy selects an MTU tier");
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(generate_identity_secret()),
         pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
@@ -554,7 +659,8 @@ async fn run_relay(manifest: &Manifest, addr: &str) {
     });
 
     println!(
-        "READY role=relay addr={addr_a}>{addr_b} bitrate_bps={bitrate_bps} mtu_bytes={mtu_bytes}"
+        "READY role=relay addr={addr_a}>{addr_b} interface={} bitrate_bps={bitrate_bps} mtu_bytes={mtu_bytes}",
+        interface
     );
     #[cfg(feature = "scheduler-probe")]
     let relay_handle = node.handle();
@@ -605,6 +711,47 @@ where
     R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
 {
+    if uses_backbone(&manifest.profile) {
+        #[cfg(target_os = "linux")]
+        {
+            let policy = benchmark_backbone_policy(&manifest.profile);
+            let primary = BenchBackboneListener::bind_with_id(TCP_INTERFACE_ID, addr, policy)
+                .await
+                .expect("binds the scenario port");
+            let mut addresses = primary.local_addr().expect("bound address").to_string();
+            let mut servers = vec![primary];
+            for index in 0..manifest.profile.initiator_count.saturating_sub(1) {
+                let extra = BenchBackboneListener::bind_with_id(
+                    fanin_listener_id(index),
+                    "127.0.0.1:0",
+                    policy,
+                )
+                .await
+                .expect("binds an extra listener");
+                addresses.push('+');
+                addresses.push_str(&extra.local_addr().expect("bound address").to_string());
+                servers.push(extra);
+            }
+            let node = PrnsNode::new(PrnsNodeRecipe {
+                transport_identity: None,
+                pre_configured_destinations: [single],
+                app_state,
+                storage: NodeStorage::default(),
+                request_endpoints,
+                remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+                on_event,
+                interfaces: |node: &PrnsNodeHandle| {
+                    for server in servers {
+                        node.add_interface(server);
+                    }
+                },
+                persistence: NoPersistence,
+            });
+            return (node, addresses);
+        }
+        #[cfg(not(target_os = "linux"))]
+        unreachable!("Backbone benchmark interfaces are Linux-only");
+    }
     let tcp_policy = benchmark_tcp_policy(&manifest.profile);
     let primary = BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, addr, tcp_policy)
         .await
@@ -647,6 +794,32 @@ async fn build_initiator_node<F>(
 where
     F: FnMut(PrnsEvent<'_>, &personal_rns::runtime::NoRemoteControlHostControls),
 {
+    if uses_backbone(&manifest.profile) {
+        #[cfg(target_os = "linux")]
+        {
+            let client = BackboneClientInterface::with_id_and_policy(
+                TCP_INTERFACE_ID,
+                addr.to_string(),
+                benchmark_backbone_policy(&manifest.profile),
+                ReconnectPolicy::STANDARD,
+            );
+            return PrnsNode::new(PrnsNodeRecipe {
+                transport_identity: None,
+                pre_configured_destinations: [single],
+                app_state: personal_rns::runtime::NoRemoteControlHostControls,
+                storage: NodeStorage::default(),
+                request_endpoints: request_endpoints![],
+                remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+                on_event,
+                interfaces: |node: &PrnsNodeHandle| {
+                    node.attach(client);
+                },
+                persistence: NoPersistence,
+            });
+        }
+        #[cfg(not(target_os = "linux"))]
+        unreachable!("Backbone benchmark interfaces are Linux-only");
+    }
     let client = TcpClientInterface::with_id_and_policy(
         TCP_INTERFACE_ID,
         addr.to_string(),
