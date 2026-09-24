@@ -29,6 +29,8 @@ GRAPHS = (
     ("desktop Windows", "personal-hopspot/desktop/Cargo.toml", "x86_64-pc-windows-msvc"),
     ("Android", "personal-hopspot/mobile/android/rust/Cargo.toml", "aarch64-linux-android"),
     ("iOS", "personal-hopspot/mobile/ios/rust/Cargo.toml", "aarch64-apple-ios"),
+    ("Prns app Android", "applications/prns/native-composition/Cargo.toml", "aarch64-linux-android"),
+    ("Prns app iOS", "applications/prns/native-composition/Cargo.toml", "aarch64-apple-ios"),
     ("Node addon Linux", "prns-napi/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("Node addon macOS", "prns-napi/Cargo.toml", "aarch64-apple-darwin"),
     ("Node addon Windows", "prns-napi/Cargo.toml", "x86_64-pc-windows-msvc"),
@@ -37,6 +39,9 @@ GRAPHS = (
         "prns-host/impls/native/Cargo.toml",
         "x86_64-unknown-linux-gnu",
     ),
+    ("Expo host", "prns-host/bindings/uniffi/image/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("Expo Android", "prns-host/bindings/uniffi/image/Cargo.toml", "aarch64-linux-android"),
+    ("Expo iOS", "prns-host/bindings/uniffi/image/Cargo.toml", "aarch64-apple-ios"),
     ("nRF52840", "personal-hopspot/embedded/nrf52840/Cargo.toml", "thumbv7em-none-eabihf"),
     (
         "ESP32-C6",
@@ -97,6 +102,13 @@ GRAPHS = (
         "x86_64-pc-windows-msvc",
     ),
 )
+# These product features are additive to the manifest's default features. Keep
+# the other release graphs unchanged, and exclude the app's binding-generator
+# tooling rather than enabling every feature in its workspace.
+GRAPH_FEATURES = {
+    "Prns app Android": ("android",),
+    "Prns app iOS": ("apple",),
+}
 MAVEN = (
     ("androidx.annotation:annotation:1.5.0", "Apache-2.0"),
     ("com.github.mik3y:usb-serial-for-android:3.7.0", "MIT"),
@@ -133,7 +145,7 @@ VENDORED = (
         "libdbus 1.14.4",
         "AFL-2.1",
         "release/licenses/libdbus-AFL-2.1.txt",
-        ("Node addon Linux", "daemon Linux"),
+        ("Node addon Linux", "daemon Linux", "Host SDK native", "Expo host"),
     ),
 )
 
@@ -280,6 +292,7 @@ def generate_graph(
     directory: Path,
     cargo_home: Path,
     binary: str,
+    features: tuple[str, ...] = (),
 ) -> dict:
     output = directory / f"about-{len(list(directory.iterdir()))}.json"
     command = [
@@ -299,6 +312,8 @@ def generate_graph(
         "--output-file",
         str(output),
     ]
+    if features:
+        command.extend(["--features", " ".join(features)])
     process = subprocess.run(
         command,
         cwd=ROOT,
@@ -328,7 +343,10 @@ def notice_bundle() -> str:
             if manifest not in fetched_manifests:
                 fetch_manifest(manifest, cargo_home)
                 fetched_manifests.add(manifest)
-            data = generate_graph(manifest, target, directory, cargo_home, binary)
+            data = generate_graph(
+                manifest, target, directory, cargo_home, binary,
+                features=GRAPH_FEATURES.get(graph, ()),
+            )
             for license_info in data["licenses"]:
                 text = normalized_notice_text(license_info["text"])
                 key = (license_info["id"], text)
@@ -387,7 +405,12 @@ def notice_bundle() -> str:
         "",
     ]
     for graph, manifest, target in GRAPHS:
-        lines.append(f"- {graph}: `{manifest}` (`{target}`, locked resolution)")
+        features = GRAPH_FEATURES.get(graph, ())
+        selection = (
+            ", default features plus " + ", ".join(f"`{feature}`" for feature in features)
+            if features else ""
+        )
+        lines.append(f"- {graph}: `{manifest}` (`{target}`, locked resolution{selection})")
     lines.extend(["", "## Website JavaScript runtime", ""])
     lines.extend(
         [
@@ -407,8 +430,8 @@ def notice_bundle() -> str:
             "statically linked into the ESP32-S3 WPA3-SAE radio artifact.",
             "- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its "
             "`AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by "
-            "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon and "
-            "full Linux `prnsd` native release.",
+            "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon, "
+            "full Linux `prnsd` native release, native Host SDK, and Expo host qualification image.",
         ]
     )
     lines.extend(["", "## Android Maven runtime", ""])

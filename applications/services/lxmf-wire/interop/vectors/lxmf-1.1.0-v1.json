@@ -1,0 +1,827 @@
+{
+  "announce_vectors": [
+    {
+      "display_name_hex": "506572736f6e616c20486f7073706f742045323930",
+      "format": "legacy_two_item",
+      "name": "personal_hopspot_e290_legacy",
+      "origin": "Personal Hopspot E290 embedded descriptor",
+      "python_compression_support": true,
+      "python_display_name": "Personal Hopspot E290",
+      "python_stamp_cost": null,
+      "raw_hex": "92c415506572736f6e616c20486f7073706f742045323930c0"
+    },
+    {
+      "display_name_hex": "50726e732042726f7773657220506c617967726f756e64",
+      "format": "legacy_two_item",
+      "name": "browser_playground_legacy",
+      "origin": "browser playground descriptor",
+      "python_compression_support": true,
+      "python_display_name": "Prns Browser Playground",
+      "python_stamp_cost": null,
+      "raw_hex": "92c41750726e732042726f7773657220506c617967726f756e64c0"
+    },
+    {
+      "display_name_hex": "50696e6e656420507974686f6e204c584d46",
+      "format": "current_three_item",
+      "name": "python_lxmf_current",
+      "origin": "LXMRouter.get_announce_app_data",
+      "python_compression_support": true,
+      "python_display_name": "Pinned Python LXMF",
+      "python_stamp_cost": null,
+      "raw_hex": "93c41250696e6e656420507974686f6e204c584d46c09100"
+    },
+    {
+      "display_name_hex": "50726e73206c6976652070656572",
+      "format": "current_three_item",
+      "name": "prns_direct_current",
+      "origin": "current direct-only no-compression descriptor",
+      "python_compression_support": false,
+      "python_display_name": "Prns live peer",
+      "python_stamp_cost": null,
+      "raw_hex": "93c40e50726e73206c6976652070656572c090"
+    },
+    {
+      "display_name_hex": "200020507974686f6e200020706565722009",
+      "format": "current_three_item",
+      "name": "python_display_normalization",
+      "origin": "LXMRouter display bytes with LXMF helper projection",
+      "python_compression_support": true,
+      "python_display_name": "Python  peer",
+      "python_stamp_cost": null,
+      "raw_hex": "93c412200020507974686f6e200020706565722009c09100"
+    }
+  ],
+  "authority": {
+    "implementation": "Python LXMF",
+    "license": "Reticulum License",
+    "lxmf_core_sha256": "23b280e47f0690d27dfe469c3117f9928363716260dc85c9266f5d91146b8e90",
+    "lxmf_message_sha256": "9a035d03d36e80b615edfb1dbdc44abbbccd672f4a05b0802ad4b98366278e96",
+    "lxmf_stamper_sha256": "eeeba0158546d2e9878ca485ffa4b96dd13ce3e71880d784087c1fdae22538d0",
+    "messagepack": {
+      "implementation": "RNS.vendor.umsgpack",
+      "source_sha256": "dd0ea6e77d55eb65193af824f004e0d4334fb11077de64b232556f9759967708",
+      "version": "2.7.1"
+    },
+    "repository": "https://github.com/markqvist/LXMF.git",
+    "reticulum": {
+      "implementation": "Python RNS",
+      "repository": "https://github.com/markqvist/Reticulum.git",
+      "revision": "ea98db4f53dcf0defc0e71a16e60d28b1229c4e6",
+      "source_sha256": {
+        "Destination.py": "7db80f04e8bac330d1c8a8e57f33c49b7df99798f54c74aae3e2d8e5b3bffbde",
+        "Identity.py": "447d6a8406ab0f824c9c6488de1f14434003d21bdfef65d33d79b20d8a2698e3",
+        "Link.py": "d1ffccda72963bfe910799b62e363fecdbd45bb5038c81ee857beccdcf3c2da1",
+        "Packet.py": "51ce9967598de7bdbf6dfe937c5a1577ae9ddf1b701aef4c54689805a046b7de",
+        "Reticulum.py": "e7c8908081132a6ca26593a833a5a41cb1bedaf45713958a1cac870b758f5fc7",
+        "Transport.py": "97224d31475741e2d943779ce497853140344f5c9898afcaa9b87ddc937b2340"
+      },
+      "vcs": {
+        "url": "https://github.com/markqvist/Reticulum.git",
+        "vcs_info": {
+          "commit_id": "ea98db4f53dcf0defc0e71a16e60d28b1229c4e6",
+          "requested_revision": "ea98db4f53dcf0defc0e71a16e60d28b1229c4e6",
+          "vcs": "git"
+        }
+      },
+      "version": "1.5.2"
+    },
+    "revision": "795fdaa2b0777c13033787d933d1afc94a2377cb",
+    "vcs": {
+      "url": "https://github.com/markqvist/LXMF.git",
+      "vcs_info": {
+        "commit_id": "795fdaa2b0777c13033787d933d1afc94a2377cb",
+        "requested_revision": "795fdaa2b0777c13033787d933d1afc94a2377cb",
+        "vcs": "git"
+      }
+    },
+    "version": "1.1.0"
+  },
+  "command": "PYTHONPATH=target/interop/lxmf-1.1.0 python3.13 interop/python/generate_lxmf_1_1_0_vectors.py",
+  "delivery_constants": {
+    "destination_length": 16,
+    "encrypted_packet_max_content": 295,
+    "link_packet_max_content": 319,
+    "pow_stamp_length": 32,
+    "signature_length": 64,
+    "ticket_length": 16
+  },
+  "fixture_identity": {
+    "classification": "public deterministic test-only identity",
+    "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+    "destination_public_key_hex": "13be4feaeaf204c7fd3358fc9c00721881d174278128227ec674f37f7fe97b6d1398f62c6d1a457c51ba6a4b5f3dbd2f69fca93216218dc8997e416bd17d93ca",
+    "private_keys_committed_only_in_generator": true,
+    "source_destination_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+    "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17"
+  },
+  "generator": "interop/python/generate_lxmf_1_1_0_vectors.py",
+  "generator_source_sha256": "6c776fe88f67ed2a7ac32fa5132f1b0fa027739da177400021f94926f93acb1f",
+  "inbound_oracles": [
+    {
+      "canonical_repack_hex": "94cb41d954fc40000000c4094772656574696e6773c41648656c6c6f2066726f6d20507974686f6e204c584d4680",
+      "description": "Python-valid noncanonical Array16 envelope proving that an exact-four inbound payload is hashed byte-for-byte",
+      "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2a8fdc38ba2c49ba914f83f5dde0ba87d4f746a574c3a050a2cef246a6674fba735fd43b9abb855a108c202d453a7c7b3a7f3374d31af24a7f88633980c4f9506dc0004cb41d954fc40000000c4094772656574696e6773c41648656c6c6f2066726f6d20507974686f6e204c584d4680",
+      "hashed_payload_rule": "received_payload_bytes_unchanged",
+      "message_id_hex": "18a81cd9cbb178b2aa625aeec58492983a34174f2d78215c69e3e69c43411f89",
+      "name": "exact_four_array16_raw_hash",
+      "origin": "constructed and validated by pinned Python LXMF 1.1.0",
+      "python_parse": {
+        "message_id_hex": "18a81cd9cbb178b2aa625aeec58492983a34174f2d78215c69e3e69c43411f89",
+        "result": "message",
+        "signature_validated": true,
+        "unverified_reason": null
+      },
+      "received_payload_hex": "dc0004cb41d954fc40000000c4094772656574696e6773c41648656c6c6f2066726f6d20507974686f6e204c584d4680",
+      "signature_hex": "a8fdc38ba2c49ba914f83f5dde0ba87d4f746a574c3a050a2cef246a6674fba735fd43b9abb855a108c202d453a7c7b3a7f3374d31af24a7f88633980c4f9506",
+      "source_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+      "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17"
+    }
+  ],
+  "messages": [
+    {
+      "actual_method": "opportunistic",
+      "decoded": {
+        "content_hex": "",
+        "fields": {
+          "entries": [],
+          "type": "map"
+        },
+        "timestamp_f64_bits_hex": "41d954fc41000000",
+        "title_hex": ""
+      },
+      "description": "Empty title and content produce Python content_size -1 and remain opportunistic",
+      "desired_method": "opportunistic",
+      "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+      "fields_msgpack_hex": "80",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2d8e9be7c7af2e654e12285a037bb6098591798d5fa93a23f1eaf70f73577adac66286c1e704294897555633f7faa53d5f5b74d1096294b8ff21e55f00304f30294cb41d954fc41000000c400c40080",
+      "ingress": {
+        "carrier_event": "destination_data",
+        "implied_destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+        "normalization": "prepend_implied_destination_hash",
+        "payload_contains_destination_hash": false,
+        "payload_hex": "20f7e44b55b06cff39719106f2bd1fd2d8e9be7c7af2e654e12285a037bb6098591798d5fa93a23f1eaf70f73577adac66286c1e704294897555633f7faa53d5f5b74d1096294b8ff21e55f00304f30294cb41d954fc41000000c400c40080"
+      },
+      "message_id_hex": "cb78dfa0b0fcbdfe7faaa7d7264d9f628a6c43558b9d4a011840276b9cd0baf8",
+      "name": "empty_binary",
+      "origin": "created by pinned Python LXMF 1.1.0 LXMessage.pack",
+      "payload4_hex": "94cb41d954fc41000000c400c40080",
+      "precursor_python_known_answer_input": false,
+      "representation": "packet",
+      "selection_content_size": -1,
+      "signature_hex": "d8e9be7c7af2e654e12285a037bb6098591798d5fa93a23f1eaf70f73577adac66286c1e704294897555633f7faa53d5f5b74d1096294b8ff21e55f00304f302",
+      "source_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+      "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17",
+      "stamp": null,
+      "wire_payload_hex": "94cb41d954fc41000000c400c40080"
+    },
+    {
+      "actual_method": "opportunistic",
+      "decoded": {
+        "content_hex": "78",
+        "fields": {
+          "entries": [],
+          "type": "map"
+        },
+        "timestamp_f64_bits_hex": "41d954fc41000000",
+        "title_hex": ""
+      },
+      "description": "One content byte produces the adjacent Python content_size zero case",
+      "desired_method": "opportunistic",
+      "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+      "fields_msgpack_hex": "80",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd24c55225ca1983cdec19cf48a173da86b2f6550d7159f48762c7017feeb6f41e4504210c5d20f858cb052a433e55ead2d7976459ca8d5f9467507d3221bb4ee0894cb41d954fc41000000c400c4017880",
+      "ingress": {
+        "carrier_event": "destination_data",
+        "implied_destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+        "normalization": "prepend_implied_destination_hash",
+        "payload_contains_destination_hash": false,
+        "payload_hex": "20f7e44b55b06cff39719106f2bd1fd24c55225ca1983cdec19cf48a173da86b2f6550d7159f48762c7017feeb6f41e4504210c5d20f858cb052a433e55ead2d7976459ca8d5f9467507d3221bb4ee0894cb41d954fc41000000c400c4017880"
+      },
+      "message_id_hex": "4d1d5ff5f7134b80717d437453d46aa2d1e5b9730e9228dd621543d8c94fd6d6",
+      "name": "one_byte_content",
+      "origin": "created by pinned Python LXMF 1.1.0 LXMessage.pack",
+      "payload4_hex": "94cb41d954fc41000000c400c4017880",
+      "precursor_python_known_answer_input": false,
+      "representation": "packet",
+      "selection_content_size": 0,
+      "signature_hex": "4c55225ca1983cdec19cf48a173da86b2f6550d7159f48762c7017feeb6f41e4504210c5d20f858cb052a433e55ead2d7976459ca8d5f9467507d3221bb4ee08",
+      "source_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+      "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17",
+      "stamp": null,
+      "wire_payload_hex": "94cb41d954fc41000000c400c4017880"
+    },
+    {
+      "actual_method": "opportunistic",
+      "decoded": {
+        "content_hex": "48656c6c6f2066726f6d20507974686f6e204c584d46",
+        "fields": {
+          "entries": [],
+          "type": "map"
+        },
+        "timestamp_f64_bits_hex": "41d954fc40000000",
+        "title_hex": "4772656574696e6773"
+      },
+      "description": "Precursor Python known-answer input with binary title/content and no fields or stamp",
+      "desired_method": "opportunistic",
+      "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+      "fields_msgpack_hex": "80",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2cfeaf89e57248baad43791a115345482f6b54b6e90aa0d02b5d8eddad1dc6a6a323ec74921c618ae95e69153e9645db6f223d5d387db37ae23f58ef1f056070094cb41d954fc40000000c4094772656574696e6773c41648656c6c6f2066726f6d20507974686f6e204c584d4680",
+      "ingress": {
+        "carrier_event": "destination_data",
+        "implied_destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+        "normalization": "prepend_implied_destination_hash",
+        "payload_contains_destination_hash": false,
+        "payload_hex": "20f7e44b55b06cff39719106f2bd1fd2cfeaf89e57248baad43791a115345482f6b54b6e90aa0d02b5d8eddad1dc6a6a323ec74921c618ae95e69153e9645db6f223d5d387db37ae23f58ef1f056070094cb41d954fc40000000c4094772656574696e6773c41648656c6c6f2066726f6d20507974686f6e204c584d4680"
+      },
+      "message_id_hex": "c00af1f9ba72e66d4b9a41fbe76a55d6bbb1c8dfb9271f0cf660ed101e174c96",
+      "name": "basic_binary",
+      "origin": "created by pinned Python LXMF 1.1.0 LXMessage.pack",
+      "payload4_hex": "94cb41d954fc40000000c4094772656574696e6773c41648656c6c6f2066726f6d20507974686f6e204c584d4680",
+      "precursor_python_known_answer_input": true,
+      "representation": "packet",
+      "selection_content_size": 30,
+      "signature_hex": "cfeaf89e57248baad43791a115345482f6b54b6e90aa0d02b5d8eddad1dc6a6a323ec74921c618ae95e69153e9645db6f223d5d387db37ae23f58ef1f0560700",
+      "source_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+      "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17",
+      "stamp": null,
+      "wire_payload_hex": "94cb41d954fc40000000c4094772656574696e6773c41648656c6c6f2066726f6d20507974686f6e204c584d4680"
+    },
+    {
+      "actual_method": "opportunistic",
+      "decoded": {
+        "content_hex": "800072696368",
+        "fields": {
+          "entries": [
+            {
+              "key": {
+                "decimal": "1",
+                "type": "int"
+              },
+              "value": {
+                "items": [
+                  {
+                    "type": "nil"
+                  },
+                  {
+                    "type": "bool",
+                    "value": true
+                  },
+                  {
+                    "type": "bool",
+                    "value": false
+                  },
+                  {
+                    "decimal": "-33",
+                    "type": "int"
+                  },
+                  {
+                    "decimal": "127",
+                    "type": "int"
+                  },
+                  {
+                    "decimal": "128",
+                    "type": "int"
+                  },
+                  {
+                    "decimal": "65536",
+                    "type": "int"
+                  },
+                  {
+                    "bits_hex": "3ff8000000000000",
+                    "type": "f64"
+                  },
+                  {
+                    "hex": "00ff",
+                    "type": "bin"
+                  },
+                  {
+                    "type": "str",
+                    "utf8_hex": "75746638"
+                  }
+                ],
+                "type": "array"
+              }
+            },
+            {
+              "key": {
+                "decimal": "9",
+                "type": "int"
+              },
+              "value": {
+                "entries": [
+                  {
+                    "key": {
+                      "hex": "62696e2d6b6579",
+                      "type": "bin"
+                    },
+                    "value": {
+                      "items": [
+                        {
+                          "decimal": "1",
+                          "type": "int"
+                        },
+                        {
+                          "decimal": "2",
+                          "type": "int"
+                        }
+                      ],
+                      "type": "array"
+                    }
+                  },
+                  {
+                    "key": {
+                      "type": "str",
+                      "utf8_hex": "737472696e672d6b6579"
+                    },
+                    "value": {
+                      "entries": [
+                        {
+                          "key": {
+                            "type": "str",
+                            "utf8_hex": "6e6573746564"
+                          },
+                          "value": {
+                            "hex": "fe",
+                            "type": "bin"
+                          }
+                        }
+                      ],
+                      "type": "map"
+                    }
+                  }
+                ],
+                "type": "map"
+              }
+            },
+            {
+              "key": {
+                "decimal": "127",
+                "type": "int"
+              },
+              "value": {
+                "entries": [
+                  {
+                    "key": {
+                      "decimal": "-1",
+                      "type": "int"
+                    },
+                    "value": {
+                      "type": "nil"
+                    }
+                  }
+                ],
+                "type": "map"
+              }
+            },
+            {
+              "key": {
+                "type": "str",
+                "utf8_hex": "76656e646f722e657874656e73696f6e"
+              },
+              "value": {
+                "entries": [
+                  {
+                    "key": {
+                      "type": "str",
+                      "utf8_hex": "6f7061717565"
+                    },
+                    "value": {
+                      "hex": "0001",
+                      "type": "bin"
+                    }
+                  }
+                ],
+                "type": "map"
+              }
+            },
+            {
+              "key": {
+                "hex": "0076656e646f72",
+                "type": "bin"
+              },
+              "value": {
+                "items": [
+                  {
+                    "type": "bool",
+                    "value": false
+                  },
+                  {
+                    "entries": [
+                      {
+                        "key": {
+                          "type": "str",
+                          "utf8_hex": "64656570"
+                        },
+                        "value": {
+                          "decimal": "-1",
+                          "type": "int"
+                        }
+                      }
+                    ],
+                    "type": "map"
+                  }
+                ],
+                "type": "array"
+              }
+            }
+          ],
+          "type": "map"
+        },
+        "timestamp_f64_bits_hex": "41d954fc40500000",
+        "title_hex": "ff007469746c65"
+      },
+      "description": "Invalid-UTF8 binary title/content and nested known/unknown MessagePack fields",
+      "desired_method": "opportunistic",
+      "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+      "fields_msgpack_hex": "85019ac0c3c2d0df7fcc80ce00010000cb3ff8000000000000c40200ffa4757466380982c40762696e2d6b6579920102aa737472696e672d6b657981a66e6573746564c401fe7f81ffc0b076656e646f722e657874656e73696f6e81a66f7061717565c4020001c4070076656e646f7292c281a464656570ff",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2e9c18c971203ed69ae8b22eb11aa8a9d7577fcb02782d90fe12888044fe6aa9f255ddad838ea6aaba93c114b2d57b2a407b0b32a07c0bbab391ed6f4f4fc800b94cb41d954fc40500000c407ff007469746c65c40680007269636885019ac0c3c2d0df7fcc80ce00010000cb3ff8000000000000c40200ffa4757466380982c40762696e2d6b6579920102aa737472696e672d6b657981a66e6573746564c401fe7f81ffc0b076656e646f722e657874656e73696f6e81a66f7061717565c4020001c4070076656e646f7292c281a464656570ff",
+      "ingress": {
+        "carrier_event": "destination_data",
+        "implied_destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+        "normalization": "prepend_implied_destination_hash",
+        "payload_contains_destination_hash": false,
+        "payload_hex": "20f7e44b55b06cff39719106f2bd1fd2e9c18c971203ed69ae8b22eb11aa8a9d7577fcb02782d90fe12888044fe6aa9f255ddad838ea6aaba93c114b2d57b2a407b0b32a07c0bbab391ed6f4f4fc800b94cb41d954fc40500000c407ff007469746c65c40680007269636885019ac0c3c2d0df7fcc80ce00010000cb3ff8000000000000c40200ffa4757466380982c40762696e2d6b6579920102aa737472696e672d6b657981a66e6573746564c401fe7f81ffc0b076656e646f722e657874656e73696f6e81a66f7061717565c4020001c4070076656e646f7292c281a464656570ff"
+      },
+      "message_id_hex": "38c2123595750810fd80d35db9a79ffc877bd57385fed88ee791501ed990d9ac",
+      "name": "rich_fields",
+      "origin": "created by pinned Python LXMF 1.1.0 LXMessage.pack",
+      "payload4_hex": "94cb41d954fc40500000c407ff007469746c65c40680007269636885019ac0c3c2d0df7fcc80ce00010000cb3ff8000000000000c40200ffa4757466380982c40762696e2d6b6579920102aa737472696e672d6b657981a66e6573746564c401fe7f81ffc0b076656e646f722e657874656e73696f6e81a66f7061717565c4020001c4070076656e646f7292c281a464656570ff",
+      "precursor_python_known_answer_input": false,
+      "representation": "packet",
+      "selection_content_size": 132,
+      "signature_hex": "e9c18c971203ed69ae8b22eb11aa8a9d7577fcb02782d90fe12888044fe6aa9f255ddad838ea6aaba93c114b2d57b2a407b0b32a07c0bbab391ed6f4f4fc800b",
+      "source_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+      "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17",
+      "stamp": null,
+      "wire_payload_hex": "94cb41d954fc40500000c407ff007469746c65c40680007269636885019ac0c3c2d0df7fcc80ce00010000cb3ff8000000000000c40200ffa4757466380982c40762696e2d6b6579920102aa737472696e672d6b657981a66e6573746564c401fe7f81ffc0b076656e646f722e657874656e73696f6e81a66f7061717565c4020001c4070076656e646f7292c281a464656570ff"
+    },
+    {
+      "actual_method": "direct",
+      "decoded": {
+        "content_hex": "706f772d7374616d706564",
+        "fields": {
+          "entries": [],
+          "type": "map"
+        },
+        "timestamp_f64_bits_hex": "41d954fc40a00000",
+        "title_hex": "506f57"
+      },
+      "description": "Direct packet with a deterministic Python-validated 32-byte proof-of-work stamp",
+      "desired_method": "direct",
+      "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+      "fields_msgpack_hex": "80",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2411020a77fecd0c40a6fae87c90173a7ab1f51231de6f61a06bf410e3390a0d05978e9f7b9d47bae92d51f83d2697d04f23681508c86c8bb67cb150fef94220e95cb41d954fc40a00000c403506f57c40b706f772d7374616d70656480c42000000000000000000000000000000000000000000000000000000000000000bc",
+      "ingress": {
+        "carrier_event": "link_data",
+        "context": 0,
+        "normalization": "identity",
+        "payload_contains_destination_hash": true,
+        "payload_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2411020a77fecd0c40a6fae87c90173a7ab1f51231de6f61a06bf410e3390a0d05978e9f7b9d47bae92d51f83d2697d04f23681508c86c8bb67cb150fef94220e95cb41d954fc40a00000c403506f57c40b706f772d7374616d70656480c42000000000000000000000000000000000000000000000000000000000000000bc"
+      },
+      "message_id_hex": "fcc9c725ca43d1919438d0eaa225f354bf105ef92b36dc1bd3abba8981d03ff7",
+      "name": "pow_stamp_32",
+      "origin": "created by pinned Python LXMF 1.1.0 LXMessage.pack",
+      "payload4_hex": "94cb41d954fc40a00000c403506f57c40b706f772d7374616d70656480",
+      "precursor_python_known_answer_input": false,
+      "representation": "packet",
+      "selection_content_size": 47,
+      "signature_hex": "411020a77fecd0c40a6fae87c90173a7ab1f51231de6f61a06bf410e3390a0d05978e9f7b9d47bae92d51f83d2697d04f23681508c86c8bb67cb150fef94220e",
+      "source_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+      "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17",
+      "stamp": {
+        "hex": "00000000000000000000000000000000000000000000000000000000000000bc",
+        "kind": "proof_of_work",
+        "length": 32,
+        "target_cost": 8,
+        "valid": true,
+        "value": 10
+      },
+      "wire_payload_hex": "95cb41d954fc40a00000c403506f57c40b706f772d7374616d70656480c42000000000000000000000000000000000000000000000000000000000000000bc"
+    },
+    {
+      "actual_method": "direct",
+      "decoded": {
+        "content_hex": "7469636b65742d7374616d706564",
+        "fields": {
+          "entries": [
+            {
+              "key": {
+                "decimal": "12",
+                "type": "int"
+              },
+              "value": {
+                "items": [
+                  {
+                    "bits_hex": "41da90b866800000",
+                    "type": "f64"
+                  },
+                  {
+                    "hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+                    "type": "bin"
+                  }
+                ],
+                "type": "array"
+              }
+            }
+          ],
+          "type": "map"
+        },
+        "timestamp_f64_bits_hex": "41d954fc40f00000",
+        "title_hex": "5469636b6574"
+      },
+      "description": "Direct packet with FIELD_TICKET and a 16-byte ticket-derived stamp",
+      "desired_method": "direct",
+      "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+      "fields_msgpack_hex": "810c92cb41da90b866800000c410a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd240ce57a70ba94c8212f72c5ebe5c87376455888ce4ffaf044e8075f47923c54de5329215013be2c0c489a6847c906c3d6b0b36cd56510234a771341eef91300b95cb41d954fc40f00000c4065469636b6574c40e7469636b65742d7374616d706564810c92cb41da90b866800000c410a0a1a2a3a4a5a6a7a8a9aaabacadaeafc4107b3f617a4b3c8bb76aa0dcf7a3cb4492",
+      "ingress": {
+        "carrier_event": "link_data",
+        "context": 0,
+        "normalization": "identity",
+        "payload_contains_destination_hash": true,
+        "payload_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd240ce57a70ba94c8212f72c5ebe5c87376455888ce4ffaf044e8075f47923c54de5329215013be2c0c489a6847c906c3d6b0b36cd56510234a771341eef91300b95cb41d954fc40f00000c4065469636b6574c40e7469636b65742d7374616d706564810c92cb41da90b866800000c410a0a1a2a3a4a5a6a7a8a9aaabacadaeafc4107b3f617a4b3c8bb76aa0dcf7a3cb4492"
+      },
+      "message_id_hex": "aed78e1918bb319c91df96924361cc3b8e3dd3839f03bab8bcaa9af83f145d5d",
+      "name": "ticket_stamp_16",
+      "origin": "created by pinned Python LXMF 1.1.0 LXMessage.pack",
+      "payload4_hex": "94cb41d954fc40f00000c4065469636b6574c40e7469636b65742d7374616d706564810c92cb41da90b866800000c410a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+      "precursor_python_known_answer_input": false,
+      "representation": "packet",
+      "selection_content_size": 66,
+      "signature_hex": "40ce57a70ba94c8212f72c5ebe5c87376455888ce4ffaf044e8075f47923c54de5329215013be2c0c489a6847c906c3d6b0b36cd56510234a771341eef91300b",
+      "source_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+      "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17",
+      "stamp": {
+        "hex": "7b3f617a4b3c8bb76aa0dcf7a3cb4492",
+        "kind": "ticket",
+        "length": 16,
+        "ticket_expiry_f64_bits_hex": "41da90b866800000",
+        "ticket_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "valid": true,
+        "value": 256
+      },
+      "wire_payload_hex": "95cb41d954fc40f00000c4065469636b6574c40e7469636b65742d7374616d706564810c92cb41da90b866800000c410a0a1a2a3a4a5a6a7a8a9aaabacadaeafc4107b3f617a4b3c8bb76aa0dcf7a3cb4492"
+    },
+    {
+      "actual_method": "opportunistic",
+      "decoded": {
+        "content_hex": "42424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242",
+        "fields": {
+          "entries": [],
+          "type": "map"
+        },
+        "timestamp_f64_bits_hex": "41d954fc42800000",
+        "title_hex": ""
+      },
+      "description": "Exact Python opportunistic single-packet content-size limit",
+      "desired_method": "opportunistic",
+      "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+      "fields_msgpack_hex": "80",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd21922a33b8fa6121c3d35fe012e5f18bde5bd2fa8f52deb2ffce5e19a526d14637e76afd787515e5290282ee34ba8514dce2fba39fed4c7ce02a0fb3274e0b00094cb41d954fc42800000c400c501274242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424280",
+      "ingress": {
+        "carrier_event": "destination_data",
+        "implied_destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+        "normalization": "prepend_implied_destination_hash",
+        "payload_contains_destination_hash": false,
+        "payload_hex": "20f7e44b55b06cff39719106f2bd1fd21922a33b8fa6121c3d35fe012e5f18bde5bd2fa8f52deb2ffce5e19a526d14637e76afd787515e5290282ee34ba8514dce2fba39fed4c7ce02a0fb3274e0b00094cb41d954fc42800000c400c501274242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424280"
+      },
+      "message_id_hex": "285b2d4d634a1d52b04828b9c2dbbec9047fc9b2fc2e6938d06935dbc74cbded",
+      "name": "opportunistic_limit_295",
+      "origin": "created by pinned Python LXMF 1.1.0 LXMessage.pack",
+      "payload4_hex": "94cb41d954fc42800000c400c501274242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424280",
+      "precursor_python_known_answer_input": false,
+      "representation": "packet",
+      "selection_content_size": 295,
+      "signature_hex": "1922a33b8fa6121c3d35fe012e5f18bde5bd2fa8f52deb2ffce5e19a526d14637e76afd787515e5290282ee34ba8514dce2fba39fed4c7ce02a0fb3274e0b000",
+      "source_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+      "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17",
+      "stamp": null,
+      "wire_payload_hex": "94cb41d954fc42800000c400c501274242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424280"
+    },
+    {
+      "actual_method": "direct",
+      "decoded": {
+        "content_hex": "4242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242",
+        "fields": {
+          "entries": [],
+          "type": "map"
+        },
+        "timestamp_f64_bits_hex": "41d954fc42c00000",
+        "title_hex": ""
+      },
+      "description": "One byte over the opportunistic limit, causing Python fallback to Direct packet",
+      "desired_method": "opportunistic",
+      "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+      "fields_msgpack_hex": "80",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2fe48a3c9dbec10f040a1722eaf13113ff13b77044cee04ba8996e26576f36758ab03ccf38be975c7a765f363f1c9970f865ad09fc45a24bb240601c52fcaea0594cb41d954fc42c00000c400c50128424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424280",
+      "ingress": {
+        "carrier_event": "link_data",
+        "context": 0,
+        "normalization": "identity",
+        "payload_contains_destination_hash": true,
+        "payload_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2fe48a3c9dbec10f040a1722eaf13113ff13b77044cee04ba8996e26576f36758ab03ccf38be975c7a765f363f1c9970f865ad09fc45a24bb240601c52fcaea0594cb41d954fc42c00000c400c50128424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424280"
+      },
+      "message_id_hex": "16ad727edf87cbd2e3a25ff26c9a7db3e255eeac2632bea58dc845e4c341e1a9",
+      "name": "opportunistic_over_296",
+      "origin": "created by pinned Python LXMF 1.1.0 LXMessage.pack",
+      "payload4_hex": "94cb41d954fc42c00000c400c50128424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424280",
+      "precursor_python_known_answer_input": false,
+      "representation": "packet",
+      "selection_content_size": 296,
+      "signature_hex": "fe48a3c9dbec10f040a1722eaf13113ff13b77044cee04ba8996e26576f36758ab03ccf38be975c7a765f363f1c9970f865ad09fc45a24bb240601c52fcaea05",
+      "source_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+      "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17",
+      "stamp": null,
+      "wire_payload_hex": "94cb41d954fc42c00000c400c50128424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424242424280"
+    },
+    {
+      "actual_method": "direct",
+      "decoded": {
+        "content_hex": "43434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343",
+        "fields": {
+          "entries": [],
+          "type": "map"
+        },
+        "timestamp_f64_bits_hex": "41d954fc43000000",
+        "title_hex": ""
+      },
+      "description": "Exact Python Direct link-packet content-size limit",
+      "desired_method": "direct",
+      "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+      "fields_msgpack_hex": "80",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2731312e3657cfdd75dc6ccb76d35336549387cfb7d5a25068514a8a2b29ad7e00829a252a82fda0f7e135462db8db38e2f3aa4856b437a3e2f455ac243d2d10694cb41d954fc43000000c400c5013f4343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434380",
+      "ingress": {
+        "carrier_event": "link_data",
+        "context": 0,
+        "normalization": "identity",
+        "payload_contains_destination_hash": true,
+        "payload_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2731312e3657cfdd75dc6ccb76d35336549387cfb7d5a25068514a8a2b29ad7e00829a252a82fda0f7e135462db8db38e2f3aa4856b437a3e2f455ac243d2d10694cb41d954fc43000000c400c5013f4343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434380"
+      },
+      "message_id_hex": "9a86ba40dd911f66dfa51d8a66207dc4c34c7217572b5e870fb0b79694729655",
+      "name": "direct_limit_319",
+      "origin": "created by pinned Python LXMF 1.1.0 LXMessage.pack",
+      "payload4_hex": "94cb41d954fc43000000c400c5013f4343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434380",
+      "precursor_python_known_answer_input": false,
+      "representation": "packet",
+      "selection_content_size": 319,
+      "signature_hex": "731312e3657cfdd75dc6ccb76d35336549387cfb7d5a25068514a8a2b29ad7e00829a252a82fda0f7e135462db8db38e2f3aa4856b437a3e2f455ac243d2d106",
+      "source_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+      "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17",
+      "stamp": null,
+      "wire_payload_hex": "94cb41d954fc43000000c400c5013f4343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434380"
+    },
+    {
+      "actual_method": "direct",
+      "decoded": {
+        "content_hex": "4343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343",
+        "fields": {
+          "entries": [],
+          "type": "map"
+        },
+        "timestamp_f64_bits_hex": "41d954fc43400000",
+        "title_hex": ""
+      },
+      "description": "One byte over the Direct link-packet limit, selecting Resource",
+      "desired_method": "direct",
+      "destination_hash_hex": "021e68345db8a80c29d0c2f193baa5f4",
+      "fields_msgpack_hex": "80",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2832a9676c291dba3062c39abc554e0d698e71299876f99157d6309ed7077d39c9d80a7e30cd1603bf37532c4049aa68a836e285a643020fc91c196238d133f0194cb41d954fc43400000c400c50140434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434380",
+      "ingress": {
+        "carrier_event": "resource_complete",
+        "normalization": "identity",
+        "payload_contains_destination_hash": true,
+        "payload_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2832a9676c291dba3062c39abc554e0d698e71299876f99157d6309ed7077d39c9d80a7e30cd1603bf37532c4049aa68a836e285a643020fc91c196238d133f0194cb41d954fc43400000c400c50140434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434380"
+      },
+      "message_id_hex": "9b95be62bf494fa171dd335f8c290dab4dd72edccfc3ad7ec3c7ab08080e25a5",
+      "name": "direct_over_320",
+      "origin": "created by pinned Python LXMF 1.1.0 LXMessage.pack",
+      "payload4_hex": "94cb41d954fc43400000c400c50140434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434380",
+      "precursor_python_known_answer_input": false,
+      "representation": "resource",
+      "selection_content_size": 320,
+      "signature_hex": "832a9676c291dba3062c39abc554e0d698e71299876f99157d6309ed7077d39c9d80a7e30cd1603bf37532c4049aa68a836e285a643020fc91c196238d133f01",
+      "source_hash_hex": "20f7e44b55b06cff39719106f2bd1fd2",
+      "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17",
+      "stamp": null,
+      "wire_payload_hex": "94cb41d954fc43400000c400c50140434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434343434380"
+    }
+  ],
+  "negative_mutations": [
+    {
+      "based_on": "basic_binary",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2ceeaf89e57248baad43791a115345482f6b54b6e90aa0d02b5d8eddad1dc6a6a323ec74921c618ae95e69153e9645db6f223d5d387db37ae23f58ef1f056070094cb41d954fc40000000c4094772656574696e6773c41648656c6c6f2066726f6d20507974686f6e204c584d4680",
+      "name": "signature_bit_flip",
+      "python_parse": {
+        "message_id_hex": "c00af1f9ba72e66d4b9a41fbe76a55d6bbb1c8dfb9271f0cf660ed101e174c96",
+        "result": "message",
+        "signature_validated": false,
+        "unverified_reason": "signature_invalid"
+      }
+    },
+    {
+      "based_on": "basic_binary",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2cfeaf89e57248baad43791a115345482f6b54b6e90aa0d02b5d8eddad1dc6a6a323ec74921c618ae95e69153e9645db6f223d5d387db37ae23f58ef1f056070094cb41d954fc40000000c4094772656574696e6773c41649656c6c6f2066726f6d20507974686f6e204c584d4680",
+      "name": "content_bit_flip",
+      "python_parse": {
+        "message_id_hex": "ad282198fe604dacbda19c46fdcc56ed7509d2ea5db8ad9dec2678db354860fc",
+        "result": "message",
+        "signature_validated": false,
+        "unverified_reason": "signature_invalid"
+      }
+    },
+    {
+      "based_on": "basic_binary",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f421f7e44b55b06cff39719106f2bd1fd2cfeaf89e57248baad43791a115345482f6b54b6e90aa0d02b5d8eddad1dc6a6a323ec74921c618ae95e69153e9645db6f223d5d387db37ae23f58ef1f056070094cb41d954fc40000000c4094772656574696e6773c41648656c6c6f2066726f6d20507974686f6e204c584d4680",
+      "name": "source_hash_bit_flip",
+      "python_parse": {
+        "message_id_hex": "acc761449b180bd9b29a98099c139ff2c447cd19b065288b12ce9db380e09333",
+        "result": "message",
+        "signature_validated": false,
+        "unverified_reason": "source_unknown"
+      }
+    },
+    {
+      "based_on": "basic_binary",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2cfeaf89e57248baad43791a115345482f6b54b6e90aa0d02b5d8eddad1dc6a6a323ec74921c618ae95e69153e9645db6f223d5d387db37ae23f58ef1f056070094cb41d954fc40000000c4094772656574696e6773c41648656c6c6f2066726f6d20507974686f6e204c584d46",
+      "name": "truncated_payload",
+      "python_parse": {
+        "exception_type": "InsufficientDataException",
+        "result": "exception"
+      }
+    },
+    {
+      "based_on": "pow_stamp_32",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd2411020a77fecd0c40a6fae87c90173a7ab1f51231de6f61a06bf410e3390a0d05978e9f7b9d47bae92d51f83d2697d04f23681508c86c8bb67cb150fef94220e95cb41d954fc40a00000c403506f57c40b706f772d7374616d70656480c42000000000000000000000000000000000000000000000000000000000000000bd",
+      "name": "pow_stamp_bit_flip",
+      "python_parse": {
+        "message_id_hex": "fcc9c725ca43d1919438d0eaa225f354bf105ef92b36dc1bd3abba8981d03ff7",
+        "result": "message",
+        "signature_validated": true,
+        "unverified_reason": null
+      },
+      "stamp_validation": {
+        "kind": "proof_of_work",
+        "target_cost": 8,
+        "valid": false
+      }
+    },
+    {
+      "based_on": "ticket_stamp_16",
+      "full_wire_hex": "021e68345db8a80c29d0c2f193baa5f420f7e44b55b06cff39719106f2bd1fd240ce57a70ba94c8212f72c5ebe5c87376455888ce4ffaf044e8075f47923c54de5329215013be2c0c489a6847c906c3d6b0b36cd56510234a771341eef91300b95cb41d954fc40f00000c4065469636b6574c40e7469636b65742d7374616d706564810c92cb41da90b866800000c410a0a1a2a3a4a5a6a7a8a9aaabacadaeafc4107b3f617a4b3c8bb76aa0dcf7a3cb4493",
+      "name": "ticket_stamp_bit_flip",
+      "python_parse": {
+        "message_id_hex": "aed78e1918bb319c91df96924361cc3b8e3dd3839f03bab8bcaa9af83f145d5d",
+        "result": "message",
+        "signature_validated": true,
+        "unverified_reason": null
+      },
+      "stamp_validation": {
+        "kind": "ticket",
+        "ticket_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "valid": false
+      }
+    }
+  ],
+  "protocol": "LXMF",
+  "python_version": "3.13.7",
+  "release_lane": "python-lxmf-1.1.0-direct-link",
+  "requirements": "interop/python/requirements-lxmf-1.1.0.txt",
+  "requirements_sha256": "71d8614ef459b171c40a9bf7a6f9eab7877374ef069e94c378059422ed505e2a",
+  "schema": 1,
+  "scope": {
+    "deferred": [
+      "broader valid noncanonical Python-inbound canonicalization fixtures",
+      "propagation encryption and propagation-node envelopes",
+      "Paper representation",
+      "router persistence, retries, deduplication, and message sync",
+      "RNS Resource segmentation and resource-hash derivation"
+    ],
+    "included": [
+      "opportunistic destination-DATA envelope",
+      "Direct LinkData envelope",
+      "Direct ResourceComplete envelope",
+      "binary title and content",
+      "rich nested MessagePack fields",
+      "message IDs and signatures",
+      "32-byte proof-of-work stamp",
+      "16-byte ticket-derived stamp and FIELD_TICKET",
+      "packet and Resource threshold boundaries",
+      "signed negative and zero content-size boundaries",
+      "valid noncanonical exact-four inbound raw-byte hashing",
+      "negative signature, content, source, truncation, and stamp mutations",
+      "legacy/current delivery announces and Python display-name normalization"
+    ]
+  },
+  "wire_contract": {
+    "direct_packet_ingress": "complete LXMF bytes in LinkData context NONE",
+    "direct_resource_ingress": "complete LXMF bytes in ResourceComplete",
+    "fixture_payload4_hex": "canonical first-four encoding recorded for Python-generated outbound fixtures; it is not evidence that noncanonical exact-four input is re-encoded",
+    "full_layout": "destination_hash[16] || source_hash[16] || signature[64] || msgpack_payload",
+    "hashed_payload_exact_four": "received msgpack_payload bytes unchanged when the decoded array has exactly four items",
+    "hashed_payload_stamped": "RNS.vendor.umsgpack.packb(decoded_payload[:4]) when the decoded array has more than four items; this corpus emits exactly five",
+    "message_id": "SHA-256(destination_hash || source_hash || hashed_payload)",
+    "opportunistic_ingress": "destination hash implied by RNS DATA; LXMF bytes begin at source hash",
+    "payload": "msgpack([timestamp, title, content, fields, optional_stamp])",
+    "signature": "Ed25519(destination_hash || source_hash || hashed_payload || message_id)"
+  }
+}

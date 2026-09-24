@@ -158,14 +158,14 @@ enum AppleManagerPreparation {
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
+use prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 impl AppleManagerPreparation {
     async fn prepare(
         &self,
         identity: BleIdentity,
-    ) -> Result<
-        prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend,
-        prns_ffi::bluetooth_auto::macos::MacosBleError,
-    > {
+    ) -> Result<PreparedMacosBleBackend, prns_ffi::bluetooth_auto::macos::MacosBleError> {
         use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
 
         match self {
@@ -181,12 +181,40 @@ impl AppleManagerPreparation {
     }
 }
 
+#[cfg(all(test, any(target_os = "macos", target_os = "ios")))]
+mod apple_manager_preparation_tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_preparation_retains_no_restoration_policy_for_retry() {
+        let identity = BleIdentity::new([0; 16]);
+        let prepared = AutoBle::unavailable_without_restoration(identity);
+        assert_eq!(
+            prepared.manager_preparation,
+            AppleManagerPreparation::WithoutRestoration
+        );
+    }
+
+    #[cfg(target_os = "ios")]
+    #[test]
+    fn unavailable_preparation_retains_its_restoration_identifiers() {
+        let identity = BleIdentity::new([0; 16]);
+        let identifiers = CoreBluetoothRestorationIdentifiers::new("central", "peripheral")
+            .expect("the fixture identifiers are valid");
+        let prepared = AutoBle::unavailable_with_restoration(identity, identifiers.clone());
+        assert_eq!(
+            prepared.manager_preparation,
+            AppleManagerPreparation::RestorationAware(identifiers)
+        );
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 impl PreparedAutoBle {
     fn new(
         identity: BleIdentity,
         manager_preparation: AppleManagerPreparation,
-        backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+        backend: Option<PreparedMacosBleBackend>,
     ) -> Self {
         Self {
             identity,
@@ -214,7 +242,7 @@ pub struct PreparedAutoBle {
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
     manager_preparation: AppleManagerPreparation,
-    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+    backend: Option<PreparedMacosBleBackend>,
 }
 
 /// Canonical name for a prepared Apple-platform Bluetooth LE auto-interface.
@@ -340,7 +368,7 @@ struct PreparedPlatformBluetooth {
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
     manager_preparation: AppleManagerPreparation,
-    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+    backend: Option<PreparedMacosBleBackend>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -388,7 +416,7 @@ async fn run_prepared_platform_bluetooth(
     status: BluetoothAutoStatus,
     policy: EffectiveInterfacePolicy,
     manager_preparation: AppleManagerPreparation,
-    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+    backend: Option<PreparedMacosBleBackend>,
 ) {
     use super::BluetoothAuto;
     use prns_ffi::bluetooth_auto::macos::MacosBleBackend;

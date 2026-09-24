@@ -116,7 +116,10 @@ class HostSdkPromotionTests(unittest.TestCase):
                 },
             )
             self.assertEqual(promotion["contractAbi"], 1)
-            self.assertEqual(promotion["schemaVersion"], 1)
+            self.assertEqual(
+                promotion["schemaVersion"],
+                json.loads((stage / "release-index.json").read_text())["schemaVersion"],
+            )
             self.assertEqual(len(promotion["assets"]), 20)
             self.assertTrue((output / "SHA256SUMS").is_file())
             self.assertTrue((output / "promotion.json").is_file())

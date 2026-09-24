@@ -9,12 +9,12 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::backend::{
     central_peripheral_capacity, dial_admission, manager_readiness, scan_lease, scan_op,
-    BoundedRecentSet, DialAdmission, ScanLease, ScanOp,
+    take_inbound_event, BoundedRecentSet, DialAdmission, ScanLease, ScanOp,
 };
 use super::central::{
     closed_central_session_ids, CentralDialCandidate, CentralPeerRegistry, CentralPeerSession,
-    ControlInboxError, RestoredAdmission, RestoredBufferResult, RestoredCallbackBuffer,
-    CENTRAL_CONTROL_INBOUND_CAPACITY,
+    ControlInboxError, DialCompletion, RestorationProfileAction, RestoredAdmission,
+    RestoredBufferResult, RestoredCallbackBuffer, CENTRAL_CONTROL_INBOUND_CAPACITY,
 };
 use super::data_plane::{DataPlane, PendingL2cap};
 use super::discovery::{
@@ -217,9 +217,20 @@ fn startup_requires_central_gatt_and_l2cap_readiness() {
     assert_eq!(
         manager_readiness(*current.borrow())
             .unwrap()
-            .map(|psm| psm.get()),
+            .map(|readiness| readiness.local_psm.get()),
         Some(0x0081)
     );
+}
+
+#[test]
+fn closed_inbound_ingress_is_disabled_without_blocking_other_events() {
+    let mut inbound_open = true;
+    assert_eq!(take_inbound_event::<u8>(None, &mut inbound_open), None);
+    assert!(!inbound_open);
+
+    let mut inbound_open = true;
+    assert_eq!(take_inbound_event(Some(7_u8), &mut inbound_open), Some(7));
+    assert!(inbound_open);
 }
 
 #[test]
@@ -255,7 +266,7 @@ fn bounded_ingress_separates_inbound_and_sighting_pressure() {
     assert_eq!(
         manager_readiness(*manager_current.borrow())
             .unwrap()
-            .map(|psm| psm.get()),
+            .map(|readiness| readiness.local_psm.get()),
         Some(0x0081)
     );
     assert_eq!(inbound_rx.try_recv(), Ok(1));
@@ -640,6 +651,29 @@ fn restored_ownership_precedes_stale_system_link_recovery() {
 }
 
 #[test]
+fn stale_dial_rejection_releases_claim_for_a_later_sighting() {
+    let peer = peer_id(1);
+    let mut registry = CentralPeerRegistry::new(1, 1);
+    assert!(registry.observe(peer, 10_u8, None));
+    assert!(matches!(
+        registry.claim(peer.address()),
+        CentralDialCandidate::Ready { .. }
+    ));
+    assert_eq!(
+        dial_admission(true, false, false, None),
+        DialAdmission::CancelStaleSystemConnection
+    );
+    assert_eq!(registry.remove_peer(peer), Some(10));
+    assert_eq!(registry.peripheral_len(), 0);
+    assert!(registry.observe(peer, 11, None));
+    assert!(matches!(
+        registry.claim(peer.address()),
+        CentralDialCandidate::Ready { peripheral: 11, .. }
+    ));
+    assert!(matches!(registry.begin_session(peer), Ok(None)));
+}
+
+#[test]
 fn scan_op_starts_restarts_and_stops_without_spurious_work() {
     assert_eq!(scan_op(true, false, false), ScanOp::Start);
     assert_eq!(scan_op(true, false, true), ScanOp::Start);
@@ -719,7 +753,7 @@ fn role_cleanup_only_selects_a_session_after_its_data_receiver_closes() {
     drop(data_rx);
     assert!(session.data_receiver_closed());
 
-    let (open_control_tx, _open_control_rx) = mpsc::channel::<Control>(1);
+    let (open_control_tx, open_control_rx) = mpsc::channel::<Control>(1);
     let (open_completion_tx, _open_completion_rx) = oneshot::channel();
     let (open_data_tx, _open_data_rx) = gatt_inbound_channel();
     let open_peer = peer_id(2);
@@ -729,8 +763,44 @@ fn role_cleanup_only_selects_a_session_after_its_data_receiver_closes() {
         open_completion_tx,
         open_data_tx,
     );
+    drop(open_control_rx);
     let sessions = HashMap::from([(closed_peer, session), (open_peer, open_session)]);
     assert!(closed_central_session_ids(&sessions) == vec![closed_peer]);
+}
+
+#[test]
+fn closed_session_reaping_does_not_repeat_a_restoration_cancel() {
+    for restored in [false, true] {
+        let peer = peer_id(1);
+        let (control_tx, _control_rx) = mpsc::channel::<Control>(1);
+        let (completion_tx, mut completion_rx) = oneshot::channel();
+        let (data_tx, data_rx) = gatt_inbound_channel();
+        let mut session =
+            CentralPeerSession::new(peer.address(), control_tx, completion_tx, data_tx);
+        session.configure_restoration_recovery(true, restored);
+        if restored {
+            assert_eq!(
+                session.restoration_profile(
+                    prns_core::interfaces::bluetooth_auto::PeerProtocol::Native
+                ),
+                Ok(RestorationProfileAction::Disconnect),
+            );
+        }
+        let mut sessions = HashMap::from([(peer, session)]);
+        assert!(closed_central_session_ids(&sessions).is_empty());
+        drop(data_rx);
+        let closed = closed_central_session_ids(&sessions);
+        assert!(closed == vec![peer]);
+        for peer in closed {
+            let needs_cancel = sessions.remove(&peer).map(CentralPeerSession::retire);
+            assert_eq!(needs_cancel, Some(!restored));
+        }
+        assert!(closed_central_session_ids(&sessions).is_empty());
+        assert!(matches!(
+            completion_rx.try_recv(),
+            Ok(DialCompletion::Failed)
+        ));
+    }
 }
 
 #[tokio::test]

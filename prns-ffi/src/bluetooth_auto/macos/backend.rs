@@ -17,7 +17,8 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, DialOutcome, Origin, RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, DialOutcome, LinkCapabilities, Origin, RadioMode,
+    ScanningMode,
 };
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
@@ -47,6 +48,10 @@ const RADIO_TRANSITION_TIMEOUT: Duration = Duration::from_secs(2);
 /// delivering callbacks. Any discovery callback renews the scan lease without touching the radio.
 const RADIO_LIVENESS_INTERVAL: Duration = Duration::from_secs(60);
 const SIGHTING_INGRESS_PER_PEER: usize = 4;
+#[cfg(target_os = "ios")]
+const MAX_PEERS: usize = 7;
+#[cfg(target_os = "macos")]
+const MAX_PEERS: usize = 8;
 
 pub(super) const fn central_peripheral_capacity(max_peers: usize) -> usize {
     max_peers.saturating_mul(SIGHTING_INGRESS_PER_PEER)
@@ -150,7 +155,22 @@ pub(super) const fn scan_op(enabled: bool, is_scanning: bool, restart: bool) -> 
     }
 }
 
-pub(super) fn manager_readiness(signals: ManagerSignals) -> Result<Option<Psm>, MacosBleError> {
+pub(super) fn take_inbound_event<T>(event: Option<T>, inbound_open: &mut bool) -> Option<T> {
+    if event.is_none() {
+        *inbound_open = false;
+    }
+    event
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ManagerReadiness {
+    pub(super) local_psm: Psm,
+    pub(super) central_powered_generation: u64,
+}
+
+pub(super) fn manager_readiness(
+    signals: ManagerSignals,
+) -> Result<Option<ManagerReadiness>, MacosBleError> {
     if signals.gatt == PublicationState::Failed {
         crate::diagnostic_log::error!("bluetooth: GATT service publication failed at startup");
         return Err(MacosBleError::PublishFailed);
@@ -165,16 +185,19 @@ pub(super) fn manager_readiness(signals: ManagerSignals) -> Result<Option<Psm>, 
     if signals.central_powered_generation == 0 || signals.gatt != PublicationState::Published {
         return Ok(None);
     }
-    Ok(Some(Psm::new(psm).ok_or(MacosBleError::PublishFailed)?))
+    Ok(Some(ManagerReadiness {
+        local_psm: Psm::new(psm).ok_or(MacosBleError::PublishFailed)?,
+        central_powered_generation: signals.central_powered_generation,
+    }))
 }
 
 async fn wait_for_readiness(
     signals: &mut watch::Receiver<ManagerSignals>,
-) -> Result<(Psm, u64), MacosBleError> {
+) -> Result<ManagerReadiness, MacosBleError> {
     loop {
         let current = *signals.borrow_and_update();
-        if let Some(psm) = manager_readiness(current)? {
-            return Ok((psm, current.central_powered_generation));
+        if let Some(readiness) = manager_readiness(current)? {
+            return Ok(readiness);
         }
         signals.changed().await.map_err(|_| MacosBleError::Closed)?;
     }
@@ -424,14 +447,14 @@ enum DialTaskOutcome {
     },
 }
 
-pub struct MacosBleBackend {
+struct CoreBluetoothBackend {
     _native_thread: NativeThread,
     manager_signals: watch::Receiver<ManagerSignals>,
     manager_signals_open: bool,
     central_powered_generation: u64,
     inbound: tokio_mpsc::Receiver<GattLink>,
+    inbound_open: bool,
     sighting_events: tokio_mpsc::Receiver<()>,
-    psm: Psm,
     seen: BoundedRecentSet<[u8; 6]>,
     central: SendCentralManager,
     central_delegate: SendCentralDelegate,
@@ -445,6 +468,12 @@ pub struct MacosBleBackend {
     radio_enabled: Arc<AtomicBool>,
     scan_liveness_at: tokio::time::Instant,
     advertising_reconcile_at: tokio::time::Instant,
+}
+
+/// CoreBluetooth backend with central and peripheral managers.
+pub struct MacosBleBackend {
+    backend: CoreBluetoothBackend,
+    psm: Psm,
 }
 
 struct NativeThread {
@@ -461,9 +490,9 @@ impl Drop for NativeThread {
     }
 }
 
-/// Prepared CoreBluetooth managers whose delegates and serial queue already exist, while radio
-/// authorization, service publication, and L2CAP readiness remain asynchronous.
-pub struct PreparedMacosBleBackend {
+/// Prepared CoreBluetooth ownership whose delegates and serial queue already exist, while the
+/// radio authorization and service publication remain asynchronous.
+struct PreparedCoreBluetoothBackend {
     native_thread: NativeThread,
     manager_signals: watch::Receiver<ManagerSignals>,
     inbound: tokio_mpsc::Receiver<GattLink>,
@@ -471,6 +500,11 @@ pub struct PreparedMacosBleBackend {
     scan_activity: Arc<AtomicBool>,
     radio_enabled: Arc<AtomicBool>,
     handles: Handles,
+}
+
+/// Prepared dual-role CoreBluetooth managers.
+pub struct PreparedMacosBleBackend {
+    backend: PreparedCoreBluetoothBackend,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -484,19 +518,24 @@ enum ManagerPreparation {
 
 impl ManagerPreparation {
     #[cfg(target_os = "ios")]
-    fn restoration_identifiers(&self) -> Option<&CoreBluetoothRestorationIdentifiers> {
+    fn central_restoration_identifier(&self) -> Option<&str> {
         match self {
-            Self::RestorationAware(identifiers) => Some(identifiers),
+            Self::RestorationAware(identifiers) => Some(identifiers.central()),
+            Self::WithoutRestoration => None,
+        }
+    }
+
+    #[cfg(target_os = "ios")]
+    fn peripheral_restoration_identifier(&self) -> Option<&str> {
+        match self {
+            Self::RestorationAware(identifiers) => Some(identifiers.peripheral()),
             Self::WithoutRestoration => None,
         }
     }
 }
 
 impl MacosBleBackend {
-    #[cfg(target_os = "ios")]
-    pub const MAX_PEERS: usize = 7;
-    #[cfg(target_os = "macos")]
-    pub const MAX_PEERS: usize = 8;
+    pub const MAX_PEERS: usize = MAX_PEERS;
 
     /// Creates CoreBluetooth managers with the existing iOS restoration identifiers.
     ///
@@ -509,7 +548,9 @@ impl MacosBleBackend {
             ManagerPreparation::RestorationAware(legacy_restoration_identifiers());
         #[cfg(not(target_os = "ios"))]
         let manager_preparation = ManagerPreparation::PlatformDefault;
-        Self::prepare_with(identity, manager_preparation).await
+        Self::prepare_with(identity, manager_preparation)
+            .await
+            .map(|backend| PreparedMacosBleBackend { backend })
     }
 
     /// Creates CoreBluetooth managers with stable restoration identifiers supplied by the
@@ -522,7 +563,9 @@ impl MacosBleBackend {
         identity: BleIdentity,
         identifiers: CoreBluetoothRestorationIdentifiers,
     ) -> Result<PreparedMacosBleBackend, MacosBleError> {
-        Self::prepare_with(identity, ManagerPreparation::RestorationAware(identifiers)).await
+        Self::prepare_with(identity, ManagerPreparation::RestorationAware(identifiers))
+            .await
+            .map(|backend| PreparedMacosBleBackend { backend })
     }
 
     /// Creates CoreBluetooth managers without opting into iOS state restoration.
@@ -532,15 +575,23 @@ impl MacosBleBackend {
     pub async fn prepare_without_restoration(
         identity: BleIdentity,
     ) -> Result<PreparedMacosBleBackend, MacosBleError> {
-        Self::prepare_with(identity, ManagerPreparation::WithoutRestoration).await
+        Self::prepare_with(identity, ManagerPreparation::WithoutRestoration)
+            .await
+            .map(|backend| PreparedMacosBleBackend { backend })
     }
 
     async fn prepare_with(
         identity: BleIdentity,
         manager_preparation: ManagerPreparation,
-    ) -> Result<PreparedMacosBleBackend, MacosBleError> {
+    ) -> Result<PreparedCoreBluetoothBackend, MacosBleError> {
         #[cfg(target_os = "ios")]
-        let restoration_identifiers = manager_preparation.restoration_identifiers().cloned();
+        let central_restoration_identifier = manager_preparation
+            .central_restoration_identifier()
+            .map(str::to_owned);
+        #[cfg(target_os = "ios")]
+        let peripheral_restoration_identifier = manager_preparation
+            .peripheral_restoration_identifier()
+            .map(str::to_owned);
         #[cfg(not(target_os = "ios"))]
         let _ = manager_preparation;
         let (manager_signals_tx, manager_signals_rx) = manager_signal_channel();
@@ -573,9 +624,9 @@ impl MacosBleBackend {
                 );
                 let central_proto = ProtocolObject::from_ref(&*central_delegate);
                 #[cfg(target_os = "ios")]
-                let central_options = restoration_identifiers
-                    .as_ref()
-                    .map(|identifiers| central_manager_options(identifiers.central()));
+                let central_options = central_restoration_identifier
+                    .as_deref()
+                    .map(central_manager_options);
                 #[cfg(not(target_os = "ios"))]
                 let central_options: Option<
                     Retained<NSDictionary<NSString, AnyObject>>,
@@ -597,20 +648,20 @@ impl MacosBleBackend {
                     queue.clone(),
                     identity,
                     radio_enabled_for_peripheral,
-                    Self::MAX_PEERS,
+                    MAX_PEERS,
                 );
                 let peripheral_proto = ProtocolObject::from_ref(&*peripheral_delegate);
                 #[cfg(target_os = "ios")]
-                let peripheral_options = restoration_identifiers
-                    .as_ref()
-                    .map(|identifiers| peripheral_manager_options(identifiers.peripheral()));
+                let peripheral_options = peripheral_restoration_identifier
+                    .as_deref()
+                    .map(peripheral_manager_options);
                 #[cfg(not(target_os = "ios"))]
                 let peripheral_options: Option<
                     Retained<NSDictionary<NSString, AnyObject>>,
                 > = None;
-                // SAFETY: the delegate and dispatch queue are retained for at least as long as the
-                // manager, and every Objective-C argument has the framework-declared type.
-                let peripheral: Retained<CBPeripheralManager> = unsafe {
+                // SAFETY: the delegate and dispatch queue are retained for at least as long as
+                // the manager, and every Objective-C argument has the framework-declared type.
+                let peripheral_manager: Retained<CBPeripheralManager> = unsafe {
                     CBPeripheralManager::initWithDelegate_queue_options(
                         CBPeripheralManager::alloc(),
                         Some(peripheral_proto),
@@ -627,7 +678,12 @@ impl MacosBleBackend {
                 });
 
                 let _ = shutdown_rx.recv();
-                let _hold = (central, central_delegate, peripheral_delegate, peripheral);
+                let _hold = (
+                    central,
+                    central_delegate,
+                    peripheral_delegate,
+                    peripheral_manager,
+                );
             })
             .map_err(|_| MacosBleError::Closed)?;
         let native_thread = NativeThread {
@@ -638,7 +694,7 @@ impl MacosBleBackend {
         let handles = handles_rx.await.map_err(|_| MacosBleError::Closed)?;
         // Manager creation has completed. Do not await radio authorization or publication here:
         // callers use `ready` after installing the rest of their lifecycle supervision.
-        Ok(PreparedMacosBleBackend {
+        Ok(PreparedCoreBluetoothBackend {
             native_thread,
             manager_signals: manager_signals_rx,
             inbound: inbound_rx,
@@ -657,6 +713,12 @@ impl MacosBleBackend {
         self.psm
     }
 
+    pub async fn next_sighting(&mut self) -> Option<BleAddress> {
+        self.backend.next_sighting().await
+    }
+}
+
+impl CoreBluetoothBackend {
     fn reconcile_manager_signals(&mut self) {
         let generation = self
             .manager_signals
@@ -794,8 +856,13 @@ impl MacosBleBackend {
     }
 }
 
-impl PreparedMacosBleBackend {
-    pub async fn ready(mut self) -> Result<MacosBleBackend, MacosBleError> {
+struct ReadyCoreBluetoothBackend {
+    backend: CoreBluetoothBackend,
+    local_psm: Psm,
+}
+
+impl PreparedCoreBluetoothBackend {
+    async fn ready(mut self) -> Result<ReadyCoreBluetoothBackend, MacosBleError> {
         let Handles {
             central,
             central_delegate,
@@ -807,7 +874,7 @@ impl PreparedMacosBleBackend {
             wait_for_readiness(&mut self.manager_signals),
         )
         .await;
-        let (psm, central_powered_generation) = match readiness {
+        let readiness = match readiness {
             Ok(result) => result?,
             Err(_) => {
                 crate::diagnostic_log::error!(
@@ -818,36 +885,48 @@ impl PreparedMacosBleBackend {
         };
         crate::diagnostic_log::debug!(
             "bluetooth: central powered, GATT service published, L2CAP listener on PSM {:#06x}",
-            psm.get()
+            readiness.local_psm.get()
         );
-        Ok(MacosBleBackend {
-            _native_thread: self.native_thread,
-            manager_signals: self.manager_signals,
-            manager_signals_open: true,
-            central_powered_generation,
-            inbound: self.inbound,
-            sighting_events: self.sighting_events,
-            psm,
-            seen: BoundedRecentSet::new(central_peripheral_capacity(MacosBleBackend::MAX_PEERS)),
-            central,
-            central_delegate,
-            peripheral_delegate,
-            dial_failures: BoundedRecentSet::new(central_peripheral_capacity(
-                MacosBleBackend::MAX_PEERS,
-            )),
-            dials: JoinSet::new(),
-            queue,
-            scan_enabled: false,
-            advertise_enabled: false,
-            scan_activity: self.scan_activity,
-            radio_enabled: self.radio_enabled,
-            scan_liveness_at: tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL,
-            advertising_reconcile_at: tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL,
+        Ok(ReadyCoreBluetoothBackend {
+            local_psm: readiness.local_psm,
+            backend: CoreBluetoothBackend {
+                _native_thread: self.native_thread,
+                manager_signals: self.manager_signals,
+                manager_signals_open: true,
+                central_powered_generation: readiness.central_powered_generation,
+                inbound: self.inbound,
+                inbound_open: true,
+                sighting_events: self.sighting_events,
+                seen: BoundedRecentSet::new(central_peripheral_capacity(MAX_PEERS)),
+                central,
+                central_delegate,
+                peripheral_delegate,
+                dial_failures: BoundedRecentSet::new(central_peripheral_capacity(MAX_PEERS)),
+                dials: JoinSet::new(),
+                queue,
+                scan_enabled: false,
+                advertise_enabled: false,
+                scan_activity: self.scan_activity,
+                radio_enabled: self.radio_enabled,
+                scan_liveness_at: tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL,
+                advertising_reconcile_at: tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL,
+            },
         })
     }
 }
 
-impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
+impl PreparedMacosBleBackend {
+    pub async fn ready(self) -> Result<MacosBleBackend, MacosBleError> {
+        let ready = self.backend.ready().await?;
+        let psm = ready.local_psm;
+        Ok(MacosBleBackend {
+            backend: ready.backend,
+            psm,
+        })
+    }
+}
+
+impl BleBackend<{ MAX_PEERS }> for CoreBluetoothBackend {
     type Error = MacosBleError;
     type Link = GattLink;
 
@@ -861,6 +940,13 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
             );
         }
         result
+    }
+
+    async fn local_capabilities(
+        &mut self,
+        configured: LinkCapabilities,
+    ) -> Result<LinkCapabilities, MacosBleError> {
+        Ok(configured)
     }
 
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), MacosBleError> {
@@ -914,9 +1000,11 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                     }
                     continue;
                 }
-                inbound = self.inbound.recv() => match inbound {
-                    Some(link) => return BleEvent::Inbound(link),
-                    None => core::future::pending().await,
+                inbound = self.inbound.recv(), if self.inbound_open => {
+                    if let Some(link) = take_inbound_event(inbound, &mut self.inbound_open) {
+                        return BleEvent::Inbound(link);
+                    }
+                    continue;
                 },
                 Some(done) = self.dials.join_next(), if pending_dials => {
                     match done {
@@ -964,9 +1052,7 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                     // Reconcile desired advertising with CoreBluetooth's authoritative state.
                     // Healthy advertising remains untouched; a false state is restarted without
                     // bouncing live inbound sessions.
-                    self.peripheral_delegate
-                        .0
-                        .set_advertising(AdvertisingMode::On);
+                    self.peripheral_delegate.0.set_advertising(AdvertisingMode::On);
                     self.advertising_reconcile_at =
                         tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL;
                     continue;
@@ -1087,7 +1173,43 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
     }
 }
 
-impl Drop for MacosBleBackend {
+impl BleBackend<{ MAX_PEERS }> for MacosBleBackend {
+    type Error = MacosBleError;
+    type Link = GattLink;
+
+    async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), MacosBleError> {
+        self.backend.set_radio_mode(mode).await
+    }
+
+    async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), MacosBleError> {
+        self.backend.set_advertising(mode).await
+    }
+
+    async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), MacosBleError> {
+        self.backend.set_scanning(mode).await
+    }
+
+    async fn local_capabilities(
+        &mut self,
+        configured: LinkCapabilities,
+    ) -> Result<LinkCapabilities, MacosBleError> {
+        self.backend.local_capabilities(configured).await
+    }
+
+    async fn next_event(&mut self) -> BleEvent<GattLink> {
+        self.backend.next_event().await
+    }
+
+    async fn dial(&mut self, address: BleAddress) -> DialOutcome {
+        self.backend.dial(address).await
+    }
+
+    async fn on_link_closed(&mut self, address: BleAddress) {
+        self.backend.on_link_closed(address).await;
+    }
+}
+
+impl Drop for CoreBluetoothBackend {
     fn drop(&mut self) {
         // Drop can run from an arbitrary Tokio or CoreBluetooth-adjacent thread. Close callback
         // ingress immediately, abort owned tasks, and enqueue retained cleanup without synchronously

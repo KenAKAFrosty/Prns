@@ -558,6 +558,22 @@ mod tests {
     }
 
     #[test]
+    fn target_pairing_expiry_during_authorization_is_an_app_facing_message() {
+        let attempt_id = pairing_attempt_id();
+
+        let event = PrnsEvent::from(
+            Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { attempt_id },
+        );
+
+        assert!(matches!(
+            event,
+            PrnsEvent::Message(Message::RemoteControlTargetPairingExpiredDuringAuthorization {
+                attempt_id: observed,
+            }) if observed == attempt_id
+        ));
+    }
+
+    #[test]
     fn controller_pairing_persistence_failure_is_an_app_facing_message() {
         let attempt_id =
             RemoteControlPairingAttemptId::from_test_transcript_digest_bytes([0x83; 32]);
@@ -573,22 +589,6 @@ mod tests {
                     attempt_id: observed,
                 },
             ) if observed == attempt_id
-        ));
-    }
-
-    #[test]
-    fn target_pairing_expiry_during_authorization_is_an_app_facing_message() {
-        let attempt_id = pairing_attempt_id();
-
-        let event = PrnsEvent::from(
-            Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { attempt_id },
-        );
-
-        assert!(matches!(
-            event,
-            PrnsEvent::Message(Message::RemoteControlTargetPairingExpiredDuringAuthorization {
-                attempt_id: observed,
-            }) if observed == attempt_id
         ));
     }
 }

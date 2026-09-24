@@ -359,13 +359,13 @@ pub(super) async fn wifi_connect_task(
                         attempt,
                         ConnectionOutcome::Failed(ConnectionFailure::Driver),
                     );
-                    apply_station_yield(next, &status).await;
+                    apply_station_yield(next, &status, credential_updates).await;
                     continue;
                 }
                 if !status.is_station_uplink_enabled() {
                     let next = recovery.finish_connection(attempt, ConnectionOutcome::Cancelled);
                     recovery.resume_now();
-                    apply_station_yield(next, &status).await;
+                    apply_station_yield(next, &status, credential_updates).await;
                     continue;
                 }
                 boot_stage(BootPhase::WifiConnectionBegin);
@@ -449,7 +449,7 @@ pub(super) async fn wifi_connect_task(
                         next
                     }
                 };
-                apply_station_yield(next, &status).await;
+                apply_station_yield(next, &status, credential_updates).await;
             }
             StationAttempt::Scan(attempt) => {
                 let channel = attempt.channel();
@@ -535,7 +535,7 @@ pub(super) async fn wifi_connect_task(
                         next
                     }
                 };
-                apply_station_yield(next, &status).await;
+                apply_station_yield(next, &status, credential_updates).await;
             }
         }
     }
@@ -568,7 +568,11 @@ fn classify_connection_failure(error: WifiError) -> ConnectionFailure {
     }
 }
 
-async fn apply_station_yield(next: StationYield, status: &AutoWifiStatus<MEMBERS>) {
+async fn apply_station_yield(
+    next: StationYield,
+    status: &AutoWifiStatus<MEMBERS>,
+    credential_updates: &screen::HopspotWifiCredentialMailbox,
+) {
     match next {
         StationYield::Continue | StationYield::MonitorLink | StationYield::Disabled => {}
         StationYield::InterChannel => {
@@ -581,9 +585,13 @@ async fn apply_station_yield(next: StationYield, status: &AutoWifiStatus<MEMBERS
         StationYield::Retry(delay) => {
             let delay_seconds = delay.seconds();
             log::info!("wifi: station recovery delay_secs={delay_seconds}");
-            let _ = embassy_futures::select::select(
+            // New credentials and rollback must not wait out a failed network's backoff
+            // (up to five minutes, longer than the Wi-Fi confirmation window). Leave the
+            // latest command queued for the outer loop, which also resets recovery.
+            let _ = embassy_futures::select::select3(
                 Timer::after(Duration::from_secs(delay_seconds)),
                 status.wait_until_station_uplink_disabled(),
+                credential_updates.wait_until_pending(),
             )
             .await;
         }

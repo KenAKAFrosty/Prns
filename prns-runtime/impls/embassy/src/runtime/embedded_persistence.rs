@@ -3078,6 +3078,181 @@ mod tests {
     }
 
     #[test]
+    fn authorization_store_returns_the_flash_retry_policy_deadline() {
+        let _group_store = lock_discovery_group_store();
+        embassy_futures::block_on(async {
+            let (flash, fail_next_write) = TestFlash::controlled();
+            let mut policy =
+                EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0));
+            policy.retry_interval_millis = 1_234;
+            let mut persistence =
+                EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                    flash,
+                    LAYOUT,
+                    policy,
+                    FixedRouteSnapshotKeys::new(),
+                    (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+                );
+            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+            restore_without_remote_control(&mut persistence, &mut engine, InstantMillis(0)).await;
+            let snapshot = RemoteControlAuthorizationSnapshot::from_slice(&[0x80]).unwrap();
+            fail_next_write.set(true);
+            for now in [8, 9, 1_241] {
+                assert_eq!(
+                    persistence
+                        .store_remote_control_authorization_snapshot(
+                            &engine,
+                            RemoteControlAuthorizationSnapshotKind::TargetAccesses,
+                            &snapshot,
+                            InstantMillis(now),
+                        )
+                        .await,
+                    StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                        failure: EmbeddedPersistenceFailure::Flash,
+                        retry_at: Some(InstantMillis(1_242)),
+                    },
+                );
+            }
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::TargetAccesses,
+                        &snapshot,
+                        InstantMillis(1_242),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Stored,
+            );
+        });
+    }
+
+    #[test]
+    fn authorization_store_returns_the_compaction_cooldown_deadline() {
+        let _group_store = lock_discovery_group_store();
+        embassy_futures::block_on(async {
+            let mut persistence = ready();
+            let engine = EngineState::<crate::storage::GrowableHeap>::default();
+            let snapshot = RemoteControlAuthorizationSnapshot::from_slice(&[0; 512]).unwrap();
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                        &snapshot,
+                        InstantMillis(8),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Stored,
+            );
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                        &snapshot,
+                        InstantMillis(9),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                    failure: EmbeddedPersistenceFailure::Capacity,
+                    retry_at: Some(InstantMillis(HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS)),
+                },
+            );
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                        &snapshot,
+                        InstantMillis(HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress,
+            );
+            assert!(persistence.compaction.is_some());
+        });
+    }
+
+    #[test]
+    fn authorization_store_exposes_retry_after_a_failed_compaction_step() {
+        let _group_store = lock_discovery_group_store();
+        embassy_futures::block_on(async {
+            let (flash, fail_next_write) = TestFlash::controlled();
+            let mut persistence =
+                EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                    flash,
+                    LAYOUT,
+                    EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
+                        0,
+                    )),
+                    FixedRouteSnapshotKeys::new(),
+                    (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+                );
+            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+            restore_without_remote_control(&mut persistence, &mut engine, InstantMillis(0)).await;
+            persistence
+                .require_snapshot(EmbeddedPersistenceTarget::CriticalState, InstantMillis(8));
+            persistence.try_start_compaction(&engine, InstantMillis(8));
+            assert!(persistence.compaction.is_some());
+            fail_next_write.set(true);
+            let snapshot = RemoteControlAuthorizationSnapshot::new();
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                        &snapshot,
+                        InstantMillis(8),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress,
+            );
+            assert!(persistence.compaction.is_none());
+            // progress_compaction records failure internally. One more store call
+            // exposes its retry deadline; the wrapper must then stop calling early.
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                        &snapshot,
+                        InstantMillis(9),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                    failure: EmbeddedPersistenceFailure::Flash,
+                    retry_at: Some(InstantMillis(8 + persistence.policy.retry_interval_millis)),
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn unavailable_authorization_store_has_no_retry_schedule() {
+        let _group_store = lock_discovery_group_store();
+        embassy_futures::block_on(async {
+            let mut persistence = ready();
+            persistence.journal = None;
+            let engine = EngineState::<crate::storage::GrowableHeap>::default();
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::TargetAccesses,
+                        &RemoteControlAuthorizationSnapshot::new(),
+                        InstantMillis(8),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                    failure: EmbeddedPersistenceFailure::Flash,
+                    retry_at: None,
+                },
+            );
+        });
+    }
+
+    #[test]
     fn malformed_newest_discovery_group_record_preserves_the_last_valid_snapshot() {
         let _store = lock_discovery_group_store();
         let now = InstantMillis(1_000);
@@ -3166,7 +3341,7 @@ mod tests {
             );
 
             fail_next_write.set(true);
-            assert!(matches!(
+            assert_eq!(
                 persistence
                     .store_discovery_group_configuration_snapshot(
                         &engine,
@@ -3176,9 +3351,9 @@ mod tests {
                     .await,
                 StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
                     failure: EmbeddedPersistenceFailure::Flash,
-                    ..
+                    retry_at: Some(InstantMillis(2 + persistence.policy.retry_interval_millis)),
                 },
-            ));
+            );
             assert_eq!(
                 restored_discovery_group_configuration_now(),
                 Some(confirmed)
@@ -3382,177 +3557,6 @@ mod tests {
             Some(Some(desired)),
         );
         DISCOVERY_GROUP_CONFIGURATION_STORES.reset_for_test();
-    }
-
-    #[test]
-    fn authorization_store_returns_the_flash_retry_policy_deadline() {
-        embassy_futures::block_on(async {
-            let (flash, fail_next_write) = TestFlash::controlled();
-            let mut policy =
-                EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0));
-            policy.retry_interval_millis = 1_234;
-            let mut persistence =
-                EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
-                    flash,
-                    LAYOUT,
-                    policy,
-                    FixedRouteSnapshotKeys::new(),
-                    (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
-                );
-            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
-            restore_without_remote_control(&mut persistence, &mut engine, InstantMillis(0)).await;
-            let snapshot = RemoteControlAuthorizationSnapshot::from_slice(&[0x80]).unwrap();
-            fail_next_write.set(true);
-            for now in [8, 9, 1_241] {
-                assert_eq!(
-                    persistence
-                        .store_remote_control_authorization_snapshot(
-                            &engine,
-                            RemoteControlAuthorizationSnapshotKind::TargetAccesses,
-                            &snapshot,
-                            InstantMillis(now),
-                        )
-                        .await,
-                    StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
-                        failure: EmbeddedPersistenceFailure::Flash,
-                        retry_at: Some(InstantMillis(1_242)),
-                    },
-                );
-            }
-            assert_eq!(
-                persistence
-                    .store_remote_control_authorization_snapshot(
-                        &engine,
-                        RemoteControlAuthorizationSnapshotKind::TargetAccesses,
-                        &snapshot,
-                        InstantMillis(1_242),
-                    )
-                    .await,
-                StoreRemoteControlAuthorizationSnapshotOutcome::Stored,
-            );
-        });
-    }
-
-    #[test]
-    fn authorization_store_returns_the_compaction_cooldown_deadline() {
-        embassy_futures::block_on(async {
-            let mut persistence = ready();
-            let engine = EngineState::<crate::storage::GrowableHeap>::default();
-            let snapshot = RemoteControlAuthorizationSnapshot::from_slice(&[0; 512]).unwrap();
-            assert_eq!(
-                persistence
-                    .store_remote_control_authorization_snapshot(
-                        &engine,
-                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
-                        &snapshot,
-                        InstantMillis(8),
-                    )
-                    .await,
-                StoreRemoteControlAuthorizationSnapshotOutcome::Stored,
-            );
-            assert_eq!(
-                persistence
-                    .store_remote_control_authorization_snapshot(
-                        &engine,
-                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
-                        &snapshot,
-                        InstantMillis(9),
-                    )
-                    .await,
-                StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
-                    failure: EmbeddedPersistenceFailure::Capacity,
-                    retry_at: Some(InstantMillis(HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS)),
-                },
-            );
-            assert_eq!(
-                persistence
-                    .store_remote_control_authorization_snapshot(
-                        &engine,
-                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
-                        &snapshot,
-                        InstantMillis(HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS),
-                    )
-                    .await,
-                StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress,
-            );
-            assert!(persistence.compaction.is_some());
-        });
-    }
-
-    #[test]
-    fn authorization_store_exposes_retry_after_a_failed_compaction_step() {
-        embassy_futures::block_on(async {
-            let (flash, fail_next_write) = TestFlash::controlled();
-            let mut persistence =
-                EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
-                    flash,
-                    LAYOUT,
-                    EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
-                        0,
-                    )),
-                    FixedRouteSnapshotKeys::new(),
-                    (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
-                );
-            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
-            restore_without_remote_control(&mut persistence, &mut engine, InstantMillis(0)).await;
-            persistence
-                .require_snapshot(EmbeddedPersistenceTarget::CriticalState, InstantMillis(8));
-            persistence.try_start_compaction(&engine, InstantMillis(8));
-            assert!(persistence.compaction.is_some());
-            fail_next_write.set(true);
-            let snapshot = RemoteControlAuthorizationSnapshot::new();
-            assert_eq!(
-                persistence
-                    .store_remote_control_authorization_snapshot(
-                        &engine,
-                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
-                        &snapshot,
-                        InstantMillis(8),
-                    )
-                    .await,
-                StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress,
-            );
-            assert!(persistence.compaction.is_none());
-            // progress_compaction records failure internally. One more store call
-            // exposes its retry deadline; the wrapper must then stop calling early.
-            assert_eq!(
-                persistence
-                    .store_remote_control_authorization_snapshot(
-                        &engine,
-                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
-                        &snapshot,
-                        InstantMillis(9),
-                    )
-                    .await,
-                StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
-                    failure: EmbeddedPersistenceFailure::Flash,
-                    retry_at: Some(InstantMillis(8 + persistence.policy.retry_interval_millis)),
-                },
-            );
-        });
-    }
-
-    #[test]
-    fn unavailable_authorization_store_has_no_retry_schedule() {
-        embassy_futures::block_on(async {
-            let mut persistence = ready();
-            persistence.journal = None;
-            let engine = EngineState::<crate::storage::GrowableHeap>::default();
-            assert_eq!(
-                persistence
-                    .store_remote_control_authorization_snapshot(
-                        &engine,
-                        RemoteControlAuthorizationSnapshotKind::TargetAccesses,
-                        &RemoteControlAuthorizationSnapshot::new(),
-                        InstantMillis(8),
-                    )
-                    .await,
-                StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
-                    failure: EmbeddedPersistenceFailure::Flash,
-                    retry_at: None,
-                },
-            );
-        });
     }
 
     #[test]

@@ -63,6 +63,17 @@ entrypoint = ["bash", "tools/build/android.sh"]
 requires = ["bash", "cargo"]
 
 [[task]]
+id = "build.lxmf.verify"
+summary = "Build and verify the direct LXMF application service against the pinned Python authority."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/verify-lxmf-application.sh"]
+requires = ["bash", "cargo", "python3"]
+setup = "Install the thumbv7em-none-eabihf Rust target and either uv or Python 3.13.7; uv provisions the pinned interpreter automatically."
+
+[[task]]
 id = "build.embedded.assurance"
 summary = "Compose embedded resource evidence with executable proof results."
 domain = "build"
@@ -372,6 +383,16 @@ platforms = ["any"]
 audience = ["developer", "release"]
 entrypoint = ["python3", "tools/repo/generate-host-contract.py"]
 requires = ["python3"]
+
+[[task]]
+id = "repo.host-uniffi.check"
+summary = "Build the default native image and verify generated UniFFI transport through persistent two-node foreign conformance."
+domain = "repo"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/repo/check-host-uniffi.py"]
+requires = ["cargo", "python3", "rustc"]
 
 [[task]]
 id = "repo.host-contract.check"
@@ -1080,3 +1101,19 @@ reason = "Cargo package metadata for the post-bootstrap cargo-tools forwarding a
 [[internal]]
 path = "tools/repo/cargo-tools-command/src/main.rs"
 reason = "Thin Cargo adapter that forwards arguments to the canonical tools/prns task registry."
+
+[[internal]]
+path = "tools/repo/host_contract/uniffi.py"
+reason = "Shared schema-owned UniFFI transport and React Native adapter generation."
+
+[[internal]]
+path = "tools/repo/host_contract/remote_control.py"
+reason = "Schema-owned typed RemoteControl extension transport generation."
+
+[[internal]]
+path = "tools/repo/host_contract/extensions.py"
+reason = "Native extension source and target availability validation for host-contract generation."
+
+[[internal]]
+path = "tools/repo/host_contract/formatting.py"
+reason = "Shared Rust formatting for canonical host-contract generated output."

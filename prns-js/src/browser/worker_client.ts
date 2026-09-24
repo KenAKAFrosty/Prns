@@ -1770,9 +1770,13 @@ async function prepareWorker(
       limits,
       networkExecution: options.networkExecution ?? "EngineWorker",
       crypto: options.crypto ?? options.resourceCrypto ?? Tag("PortableWasm"),
-      ...(options.resourceCompressionModuleUrl === undefined
+      ...(options.resourceCompressionModuleUrl === undefined && options.wasmModuleUrl === undefined
         ? {}
-        : { resourceCompressionModuleUrl: options.resourceCompressionModuleUrl.href }),
+        : {
+            resourceCompressionModuleUrl: (
+              options.resourceCompressionModuleUrl ?? options.wasmModuleUrl
+            )!.href,
+          }),
       ...(options.wasmModuleUrl === undefined
         ? {}
         : { wasmModuleUrl: options.wasmModuleUrl.href }),

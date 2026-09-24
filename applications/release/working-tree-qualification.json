@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "working-tree-source",
+  "sourceRoots": [
+    "Cargo.toml",
+    "VERSION",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "applications",
+    "prns-react-native",
+    "prns-host",
+    "personal-rns",
+    "prns-core",
+    "prns-config",
+    "prns-ffi",
+    "prns-interfaces/impls/tokio",
+    "prns-interfaces/impls/embassy",
+    "prns-runtime/core",
+    "prns-runtime/impls/tokio",
+    "prns-runtime/impls/embassy",
+    "prns-macros",
+    "prns-js",
+    "tools/uniffi",
+    "tools/ubrn-vendor",
+    "tools/repo",
+    "vendor/ubrn"
+  ],
+  "cargoEntrypoints": [
+    "applications/Cargo.toml",
+    "prns-host/bindings/uniffi/image/Cargo.toml",
+    "prns-react-native/platform/android/Cargo.toml"
+  ],
+  "npmPackages": {
+    "personal-rns": "prns-js",
+    "personal-rns-expo": "prns-react-native"
+  },
+  "npmArtifacts": {
+    "personal-rns": "prns-js",
+    "personal-rns-expo": "applications/target/react-native-sdk"
+  }
+}

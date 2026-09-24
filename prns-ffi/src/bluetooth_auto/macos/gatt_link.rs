@@ -404,7 +404,9 @@ impl BleLink for GattLink {
                         peer_id,
                         peripheral_manager,
                         ..
-                    } => peripheral_manager.0.arm_pending_channel(*peer_id, tx),
+                    } => {
+                        peripheral_manager.0.arm_pending_channel(*peer_id, tx);
+                    }
                     ControlPlane::Listener {
                         peer_id, delegate, ..
                     } => delegate.0.arm_pending_channel(*peer_id, tx),

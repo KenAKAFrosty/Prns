@@ -637,7 +637,7 @@ impl<Scan, Open> prns_core::interfaces::ReportsStatus for UsbAutoHost<Scan, Open
 mod tests {
     use super::*;
     use prns_core::interfaces::InterfaceStatus;
-    use prns_runtime::manifold::driver::{manifold_wake, TokioInterfaceSeam};
+    use prns_runtime::manifold::driver::{manifold_wake, ManifoldWakeReceiver, TokioInterfaceSeam};
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -855,7 +855,7 @@ mod tests {
         while wire.read(&mut sink).await.is_ok_and(|n| n > 0) {}
     }
 
-    type HostPeers = (TokioGrantConsumer, TokioGrantProducer);
+    type HostPeers = (ManifoldWakeReceiver, TokioGrantConsumer, TokioGrantProducer);
 
     fn spawn_host<Scan, Open, Fut, S>(scan: Scan, open: Open) -> HostPeers
     where
@@ -865,12 +865,12 @@ mod tests {
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let host = UsbAutoHost::new(host_id(), scan, open, Arc::new(Notify::new()));
-        let (wake_tx, _wake_rx) = manifold_wake();
+        let (wake_tx, wake_rx) = manifold_wake();
         let (in_tx, in_rx) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
         let (out_tx, out_rx) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
         let seam = TokioInterfaceSeam::new(host_id(), in_tx, wake_tx, out_rx);
         tokio::spawn(host.run(seam));
-        (in_rx, out_tx)
+        (wake_rx, in_rx, out_tx)
     }
 
     #[tokio::test(start_paused = true)]

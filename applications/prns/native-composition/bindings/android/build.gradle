@@ -1,0 +1,46 @@
+// Application-owned JSI2 packaging, initialized from uniffi-bindgen-react-native.
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath "com.android.tools.build:gradle:8.7.2"
+  }
+}
+
+apply plugin: "com.android.library"
+
+def getExtOrDefault(name, fallback) {
+  return rootProject.ext.has(name) ? rootProject.ext.get(name) : fallback
+}
+
+android {
+  namespace "com.prnsinternal.nativebindings"
+  compileSdkVersion getExtOrDefault("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion getExtOrDefault("minSdkVersion", 24)
+    targetSdkVersion getExtOrDefault("targetSdkVersion", 34)
+  }
+
+  sourceSets {
+    main {
+      // Only the general SDK packages the selected native image.
+      jniLibs.srcDirs = []
+    }
+  }
+}
+
+repositories {
+  mavenCentral()
+  google()
+}
+
+dependencies {
+  // The runtime and selected image each have one owner.
+  implementation project(":ubjs_react-native")
+  implementation project(":personal-rns-expo")
+  //noinspection GradleDynamicVersion
+  implementation "com.facebook.react:react-native:+"
+}

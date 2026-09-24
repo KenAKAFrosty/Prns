@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "native-extension-availability",
+  "targets": ["native", "uniffi", "c", "napi", "cooperative"],
+  "extensions": [
+    {
+      "name": "destinationPublicKey",
+      "summary": "Look up the public identity learned from an authenticated destination announcement.",
+      "semantics": "Returns an optional 64-byte public key for a destination. It never exports local private identity material. The native UniFFI facade exposes this query to its generated bindings; the Expo HostClient convenience wrapper does not add a separate forwarding method.",
+      "targets": {
+        "native": {"status": "supported", "declarations": [{"path": "prns-host/impls/native/src/owner.rs", "owner": "HostClient", "kind": "function", "name": "destination_public_key"}]},
+        "uniffi": {"status": "supported", "declarations": [{"path": "prns-host/bindings/uniffi/src/facade.rs", "owner": "HostClientHandle", "kind": "function", "name": "destination_public_key"}]},
+        "c": {"status": "unsupported", "reason": "The portable C host contract has no destination public-key query."},
+        "napi": {"status": "unsupported", "reason": "The N-API host projection has no destination public-key query."},
+        "cooperative": {"status": "unsupported", "reason": "The cooperative/browser host projection has no destination public-key query."}
+      }
+    },
+    {
+      "name": "authenticatedAnnounces",
+      "summary": "Observe accepted authenticated announce facts in a native service embedding.",
+      "semantics": "The callback borrows AuthenticatedAnnounce for its duration. Native services copy bounded facts and validate their own protocol-specific destination association. This hook is not a second foreign application-event feed or a projection of lossy announce diagnostics.",
+      "targets": {
+        "native": {"status": "supported", "declarations": [{"path": "prns-host/impls/native/src/embedding.rs", "owner": "NativeEmbedding", "kind": "field", "name": "accepted_announces"}, {"path": "prns-host/impls/native/src/embedding.rs", "kind": "type", "name": "AuthenticatedAnnounce"}]},
+        "uniffi": {"status": "unsupported", "reason": "Authenticated announce observations are native-service callbacks, not a UniFFI event or callback API."},
+        "c": {"status": "unsupported", "reason": "Authenticated announce observations are not projected by the portable C host contract."},
+        "napi": {"status": "unsupported", "reason": "Authenticated announce observations are not projected by the N-API host."},
+        "cooperative": {"status": "unsupported", "reason": "Authenticated announce observations are not projected by the cooperative/browser host."}
+      }
+    },
+    {
+      "name": "preparedInterfaceAttachments",
+      "summary": "Attach native platform transports prepared before host startup or restoration.",
+      "semantics": "The embedding returns every prepared interface or supervisor as NativePreparedAttachment so host inspection and teardown retain ownership. OS managers, authorization and restoration policy stay in native platform integration. Existing canonical AttachInterface commands remain independently available where their backend capabilities permit them.",
+      "targets": {
+        "native": {"status": "supported", "declarations": [{"path": "prns-host/impls/native/src/embedding.rs", "owner": "NativeEmbedding", "kind": "field", "name": "prepare_interfaces"}, {"path": "prns-host/impls/native/src/embedding.rs", "kind": "type", "name": "NativePreparedAttachment"}]},
+        "uniffi": {"status": "unsupported", "reason": "Prepared native platform objects cannot be supplied through the UniFFI host factory."},
+        "c": {"status": "unsupported", "reason": "The native prepared-object hook is not a C operation; existing supplied-pipe and interface commands retain their own semantics."},
+        "napi": {"status": "unsupported", "reason": "The native prepared-object hook is not projected by the N-API host."},
+        "cooperative": {"status": "unsupported", "reason": "The native prepared-object hook is not projected by the cooperative/browser host."}
+      }
+    }
+  ]
+}

@@ -868,6 +868,453 @@ jobs:
             audits/unsafe-snapshot.json
             personal-hopspot/mobile/android/dependencies/release-runtime.tsv
 
+  react-native-sdk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - name: Install native Bluetooth development dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: rustfmt
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: react-native-sdk
+          workspaces: |
+            . -> target
+            prns-host/impls/native -> target
+            prns-host/bindings/uniffi -> target
+            prns-host/bindings/uniffi/image -> target
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Install the standalone SDK toolchain
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+      - name: Verify shared generation and vendor ownership
+        run: |
+          python3 -m unittest discover -s tools/uniffi -p 'test_*.py'
+          python3 -m unittest discover -s tools/ubrn-vendor -p 'test_*.py'
+          python3 tools/ubrn-vendor/vendor.py check
+      - name: Verify SDK and standalone default image
+        run: |
+          python3 validation/run.py run --suite react-native-sdk --suite react-native-generated --expected-sha "$GITHUB_SHA"
+          npm pack ./prns-react-native --dry-run --ignore-scripts
+      - name: Verify native sessions and foreign conformance
+        run: python3 validation/run.py run --suite host-native-session --suite host-uniffi-session --suite host-uniffi-conformance --expected-sha "$GITHUB_SHA"
+      - name: Upload SDK validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-sdk-${{ github.sha }}
+          path: validation-artifacts/results/**
+          if-no-files-found: error
+          retention-days: 7
+
+  react-native-apple-platform:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+      - name: Verify SDK Swift lifecycle integration
+        run: python3 validation/run.py run --suite react-native-apple-platform --expected-sha "$GITHUB_SHA"
+      - name: Upload Swift validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-apple-platform-${{ github.sha }}
+          path: validation-artifacts/results/react-native-apple-platform
+          if-no-files-found: error
+          retention-days: 7
+
+  react-native-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTUP_TOOLCHAIN: "1.98.1"
+    steps:
+      - name: Use the runner temporary directory
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - name: Install host metadata build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: react-native-android
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+      - name: Install pinned SDK native build tools
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+          printf 'ANDROID_NDK_HOME=%s\n' "$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --locked --version 4.1.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Install standalone SDK dependencies
+        run: |
+          npm install --global npm@11.16.0
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+      - name: Build the standalone Android arm64 image
+        run: python3 validation/run.py run --suite react-native-android-image --expected-sha "$GITHUB_SHA"
+      - name: Install and compile the packed detached Android consumer
+        run: python3 validation/run.py run --suite react-native-android-consumer --expected-sha "$GITHUB_SHA"
+      - name: Upload the selected Android image for the combined archive gate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-android-image-${{ github.sha }}
+          path: prns-react-native/android/src/main/jniLibs
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload Android SDK validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-android-${{ github.sha }}
+          path: |
+            validation-artifacts/results/**
+            ${{ runner.temp }}/prns-expo-consumer-*/receipt.json
+            ${{ runner.temp }}/prns-expo-consumer-*/validation.log
+          if-no-files-found: error
+          retention-days: 7
+
+  react-native-apple-image:
+    needs: react-native-android
+    runs-on: macos-latest
+    timeout-minutes: 75
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTUP_TOOLCHAIN: "1.98.1"
+    steps:
+      - name: Use the runner temporary directory
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt
+          targets: aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: react-native-apple-image
+      - name: Record the Apple build toolchain
+        run: |
+          xcodebuild -version
+          pod --version
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Install standalone SDK dependencies
+        run: |
+          npm install --global npm@11.16.0
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: react-native-android-image-${{ github.sha }}
+          path: prns-react-native/android/src/main/jniLibs
+      - name: Build the standalone iOS simulator framework
+        run: python3 validation/run.py run --suite react-native-apple-image --expected-sha "$GITHUB_SHA"
+      - name: Verify the npm archive contains both selected native images
+        run: python3 validation/run.py run --suite react-native-mobile-archive --expected-sha "$GITHUB_SHA"
+      - name: Compile the packaged Expo and Swift SDK in a detached iOS consumer
+        run: python3 validation/run.py run --suite react-native-apple-consumer --expected-sha "$GITHUB_SHA"
+      - name: Upload Apple SDK validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-apple-image-${{ github.sha }}
+          path: |
+            validation-artifacts/results/**
+            ${{ runner.temp }}/prns-expo-consumer-*/receipt.json
+            ${{ runner.temp }}/prns-expo-consumer-*/validation.log
+          if-no-files-found: error
+          retention-days: 7
+
+  application-scaffold:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - name: Install native metadata build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: rustfmt
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: applications -> target
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            applications/package-lock.json
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Build the provider-neutral Prns contract and install the exact application toolchain
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+          python3 applications/tools/generated-bindings/generate.py stage
+          npm --prefix applications ci --ignore-scripts --no-audit --no-fund
+      - name: Verify standalone React Native SDK
+        run: python3 validation/run.py run --suite react-native-sdk --expected-sha "$GITHUB_SHA"
+      - name: Verify application scaffold
+        run: python3 validation/run.py run --suite application-scaffold --expected-sha "$GITHUB_SHA"
+
+  application-native-foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Install native Bluetooth host dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy, rustfmt
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: applications -> target
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            applications/package-lock.json
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Build the provider-neutral Prns contract and install the exact application toolchain
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+          python3 applications/tools/generated-bindings/generate.py stage
+          npm --prefix applications ci --ignore-scripts --no-audit --no-fund
+      - name: Verify native application foundation
+        run: python3 validation/run.py run --suite application-native-foundation --expected-sha "$GITHUB_SHA"
+      - name: Verify SDK default generation survives app generation
+        run: |
+          python3 prns-react-native/tools/generate.py generate --check
+          git diff --exit-code -- prns-react-native
+
+  application-ios-platform:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+      - name: Verify native Swift lifecycle and diagnostic behavior
+        run: python3 validation/run.py run --suite application-ios-platform --expected-sha "$GITHUB_SHA"
+
+  application-mobile-build:
+    name: ${{ matrix.suite }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - suite: application-android-build
+            runner: ubuntu-24.04
+            rust-target: aarch64-linux-android
+          - suite: application-ios-build
+            runner: macos-latest
+            rust-target: aarch64-apple-ios-sim
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTUP_TOOLCHAIN: "1.98.1"
+      PRNS_IOS_DERIVED_DATA: ${{ github.workspace }}/applications/target/ios-ci
+    steps:
+      - name: Use the runner temporary directory
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - name: Install native metadata build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt
+          targets: ${{ matrix.rust-target }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: ${{ matrix.suite }}
+          workspaces: |
+            . -> target
+            applications -> target
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        if: runner.os == 'Linux'
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        if: runner.os == 'Linux'
+        with:
+          packages: platform-tools
+      - name: Install pinned Android native build tools
+        if: runner.os == 'Linux'
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+          printf 'ANDROID_NDK_HOME=%s\n' "$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --locked --version 4.1.2
+      - name: Record the Apple build toolchain
+        if: runner.os == 'macOS'
+        run: |
+          xcodebuild -version
+          pod --version
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            applications/package-lock.json
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Install the app with its staged aggregate SDK
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+          python3 applications/tools/generated-bindings/generate.py stage
+          npm --prefix applications ci --ignore-scripts --no-audit --no-fund
+      - name: Compile and verify the aggregate app
+        run: python3 validation/run.py run --suite "${{ matrix.suite }}" --expected-sha "$GITHUB_SHA"
+      - name: Verify builds preserve both generated packages
+        run: |
+          npm --prefix applications run api:check
+          python3 prns-react-native/tools/generate.py generate --check
+          git diff --exit-code -- prns-react-native applications/prns/native-composition/bindings
+      - name: Upload app build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ matrix.suite }}-${{ github.sha }}
+          path: |
+            validation-artifacts/results/${{ matrix.suite }}/
+            applications/prns/app/android/app/build/outputs/apk/release/app-release.apk
+            applications/target/ios-ci/Build/Products/Release-iphonesimulator/prnsdev.app/Info.plist
+          if-no-files-found: error
+          retention-days: 7
+
+  application-lxmf-direct:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy, rustfmt
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: applications -> target
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Verify bounded wire, current Python authority, and live direct exchange
+        run: python3 validation/run.py run --suite application-lxmf-direct --expected-sha "$GITHUB_SHA"
+
+  application-detached-mobility:
+    name: Application current-source mobility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Install native Bluetooth host dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy, rustfmt
+          targets: thumbv7em-none-eabihf
+          toolchain: stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: prns-js/package-lock.json
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Install the recorded npm toolchain
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+      - name: Verify current application sources as a detached consumer
+        run: python3 validation/run.py run --suite application-current-source-mobility --expected-sha "$GITHUB_SHA"
+
   release-critical:
     name: Release critical
     if: always()
@@ -893,6 +1340,16 @@ jobs:
       - windows-desktop
       - local-interop
       - deny
+      - application-scaffold
+      - application-native-foundation
+      - application-ios-platform
+      - application-mobile-build
+      - application-lxmf-direct
+      - application-detached-mobility
+      - react-native-sdk
+      - react-native-apple-platform
+      - react-native-android
+      - react-native-apple-image
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -922,6 +1379,16 @@ jobs:
       WINDOWS_RESULT: ${{ needs.windows-desktop.result }}
       INTEROP_RESULT: ${{ needs.local-interop.result }}
       DENY_RESULT: ${{ needs.deny.result }}
+      APPLICATION_SCAFFOLD_RESULT: ${{ needs.application-scaffold.result }}
+      APPLICATION_NATIVE_FOUNDATION_RESULT: ${{ needs.application-native-foundation.result }}
+      APPLICATION_IOS_PLATFORM_RESULT: ${{ needs.application-ios-platform.result }}
+      APPLICATION_MOBILE_BUILD_RESULT: ${{ needs.application-mobile-build.result }}
+      APPLICATION_LXMF_DIRECT_RESULT: ${{ needs.application-lxmf-direct.result }}
+      APPLICATION_DETACHED_MOBILITY_RESULT: ${{ needs.application-detached-mobility.result }}
+      REACT_NATIVE_SDK_RESULT: ${{ needs.react-native-sdk.result }}
+      REACT_NATIVE_APPLE_RESULT: ${{ needs.react-native-apple-platform.result }}
+      REACT_NATIVE_ANDROID_RESULT: ${{ needs.react-native-android.result }}
+      REACT_NATIVE_IMAGE_RESULT: ${{ needs.react-native-apple-image.result }}
     steps:
       - name: Require every release-critical lane
         run: |
@@ -940,7 +1407,17 @@ jobs:
             "$APPLE_RESULT" \
             "$WINDOWS_RESULT" \
             "$INTEROP_RESULT" \
-            "$DENY_RESULT"; do
+            "$DENY_RESULT" \
+            "$APPLICATION_SCAFFOLD_RESULT" \
+            "$APPLICATION_NATIVE_FOUNDATION_RESULT" \
+            "$APPLICATION_IOS_PLATFORM_RESULT" \
+            "$APPLICATION_MOBILE_BUILD_RESULT" \
+            "$APPLICATION_LXMF_DIRECT_RESULT" \
+            "$APPLICATION_DETACHED_MOBILITY_RESULT" \
+            "$REACT_NATIVE_SDK_RESULT" \
+            "$REACT_NATIVE_APPLE_RESULT" \
+            "$REACT_NATIVE_ANDROID_RESULT" \
+            "$REACT_NATIVE_IMAGE_RESULT"; do
             test "$result" = "success"
           done
           if [ "$EMBEDDED_REQUIRED" = "true" ]; then

@@ -34,11 +34,17 @@ pub fn event_to_object(env: &Env, event: OwnedEvent) -> napi::Result<Object<'sta
         }
         OwnedEvent::LinkDelivery {
             link_id,
+            local_destination,
+            arrived_at_millis,
             plaintext,
             source_interface,
         } => {
             object.set("type", "linkDelivery")?;
             object.set("linkId", bytes(&link_id))?;
+            if let Some(destination) = local_destination {
+                object.set("localDestination", bytes(&destination))?;
+            }
+            object.set("arrivedAtMillis", arrived_at_millis as f64)?;
             object.set("plaintext", Buffer::from(plaintext))?;
             object.set("sourceInterface", bytes(&source_interface))?;
         }

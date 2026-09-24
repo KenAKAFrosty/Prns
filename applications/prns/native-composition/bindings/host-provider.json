@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "providers": [{
+    "id": "prns-app",
+    "manifest": "../../../Cargo.toml",
+    "package": "prns-app-native",
+    "libraryName": "prns_app",
+    "crateDirectory": "..",
+    "features": ["host-test"],
+    "generationFeatures": ["uniffi-bindgen"]
+  }]
+}

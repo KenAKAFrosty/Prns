@@ -1,0 +1,23 @@
+# App-specific transport only. Host types and converters belong to the SDK.
+[bindings.typescript]
+strictTypeChecking = true
+strictByteArrays = true
+
+[bindings.swift]
+module_name = "PrnsAppBindings"
+
+[bindings.kotlin]
+package_name = "rs.reticulum.prns.app.bindings"
+cdylib_name = "prns_app"
+
+[bindings.typescript.customTypes.CanonicalHostSnapshot]
+typeName = "CanonicalHostSnapshotValue"
+imports = [["type HostSnapshot as CanonicalHostSnapshotValue", "personal-rns/contract"], ["liftHostSnapshot", "personal-rns-expo/contract-adapter"], ["lowerHostSnapshot", "personal-rns-expo/contract-adapter"]]
+intoCustom = "liftHostSnapshot({})"
+fromCustom = "lowerHostSnapshot({})"
+
+[bindings.swift.custom_types.CanonicalHostSnapshot]
+type_name = "HostSnapshot"
+imports = ["PrnsHostExpo"]
+lift = "{}"
+lower = "{}"

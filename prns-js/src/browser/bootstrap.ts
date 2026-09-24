@@ -177,7 +177,7 @@ export async function loadWasmModule(moduleUrl: URL): Promise<
   | Tag<"WasmLoadFailed", { readonly detail: string }>
 > {
   try {
-    const imported: unknown = await import(moduleUrl.href);
+    const imported: unknown = await import(/* @metro-ignore */ /* @vite-ignore */ /* webpackIgnore: true */ moduleUrl.href);
     const module = record(imported, "bundled WebAssembly module");
     const initialize = module.default;
     if (typeof initialize !== "function") {

@@ -5,7 +5,7 @@ from enum import IntEnum
 from typing import Any, Generic, Protocol, TypeAlias, TypeVar
 
 HOST_CONTRACT_ABI = 1
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PRODUCT_VERSION = "0.3.7"
 DESTINATION_HASH_LENGTH = 16
 IDENTITY_HASH_LENGTH = 16
@@ -356,6 +356,8 @@ class EventField(IntEnum):
     PERSISTENCE_CAUSE = 38
     PERSISTENCE_TARGET = 39
     APP_DATA = 40
+    LOCAL_DESTINATION = 41
+    ARRIVED_AT_MILLIS = 42
 
 @dataclass(frozen=True, slots=True)
 class DestinationHash:
@@ -1215,6 +1217,8 @@ class ApplicationEventLinkDelivery:
     link_id: LinkId
     source_interface: InterfaceId
     plaintext: bytes
+    local_destination: DestinationHash | None
+    arrived_at_millis: int
 
 @dataclass(frozen=True, slots=True)
 class DiagnosticEventAnnounceHeard:
