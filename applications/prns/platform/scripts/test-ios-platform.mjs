@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,46 @@ assert.equal(
 );
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sdkRoot = resolve(packageRoot, "../../../prns-react-native");
+
+const developmentClient = readFileSync(
+  resolve(packageRoot, "ios/build-development-client.sh"),
+  "utf8",
+);
+const simulatorArgumentsStart = developmentClient.indexOf("SIMULATOR_ARCH_ARGUMENTS=");
+const simulatorArgumentsEnd = developmentClient.indexOf(
+  '\necho "build-development-client.sh: building ',
+  simulatorArgumentsStart,
+);
+assert.ok(simulatorArgumentsStart >= 0 && simulatorArgumentsEnd > simulatorArgumentsStart);
+const simulatorArguments = developmentClient.slice(simulatorArgumentsStart, simulatorArgumentsEnd);
+for (const [mode, expected] of [
+  ["simulator-build", ["generic/platform=iOS Simulator", "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES"]],
+  ["simulator", ["platform=iOS Simulator,id=test-simulator", "ONLY_ACTIVE_ARCH=YES"]],
+]) {
+  const result = spawnSync(
+    "/bin/bash",
+    [
+      "-c",
+      `set -euo pipefail
+MODE="$1"
+PRNS_IOS_SIMULATOR_UDID=""
+fail() { echo "$*" >&2; exit 1; }
+xcrun() {
+  [[ "$MODE" != simulator-build ]] || fail "build-only must not query simulators"
+  printf '%s' '{"devices":{"test":[{"isAvailable":true,"name":"iPhone Test","udid":"test-simulator","state":"Booted"}]}}'
+}
+${simulatorArguments}
+printf '%s\\n' "$DESTINATION" "\${SIMULATOR_ARCH_ARGUMENTS[@]}"
+`,
+      "simulator-build-arguments",
+      mode,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, `${mode}: ${result.stderr}`);
+  assert.deepEqual(result.stdout.trim().split("\n"), expected);
+}
 
 const recoveryTestDirectory = mkdtempSync(resolve(tmpdir(), "prns-protected-data-recovery-"));
 try {
