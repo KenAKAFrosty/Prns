@@ -4,7 +4,7 @@ The app in [PR #197](https://github.com/KenAKAFrosty/Prns/pull/197) now builds o
 the independent SDK in [PR #251](https://github.com/KenAKAFrosty/Prns/pull/251).
 The integration preserves the published app history through normal merges,
 including upstream `58db1c0c4350e950c77ff9cabfee9d1cda58df1e` and SDK
-`a87990445c24e12b57695210af18e8b05994084f`. The SDK PR should merge first; the
+`6194b5cf15497d090edfeb6a8dc9537574a7cb6c`. The SDK PR should merge first; the
 app PR remains a draft targeting `trunk` until that dependency is accepted.
 
 ## Ownership and packaging
@@ -125,3 +125,10 @@ and [SDK run](https://github.com/KenAKAFrosty/Prns/actions/runs/36055973989/job/
 A focused local reproduction confirms the same failures. Refreshing that
 baseline requires its missing board evidence; this SDK adoption leaves those
 checks intact and does not claim hosted CI is green.
+
+The upstream tester-roster template also lacks the new qualification board's
+CLI/web rows, causing three roster tests to fail. Its catalog, template and
+checks are unchanged from upstream `58db1c0c`; they remain separate from SDK
+adoption. SDK-specific CI setup errors were corrected: jobs set their temporary
+paths after runner startup, packing names the SDK directory explicitly, Android
+selects the installed pinned NDK, and promotion checks the staged schema version.
