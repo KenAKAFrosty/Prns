@@ -82,6 +82,7 @@ export function consumerOptions(args) {
     keep: { type: 'boolean', default: false },
     aggregate: { type: 'boolean', default: false },
     bindings: { type: 'string' },
+    sdk: { type: 'string' },
   } });
   assert(!values.bindings || values.aggregate, '--bindings requires --aggregate');
   assert(!values['pack-only'] || (!values.android && !values.ios && !values.bindings), '--pack-only cannot compile Android/iOS or check composition bindings');
@@ -92,8 +93,9 @@ export function consumerOptions(args) {
 export function main(args = process.argv.slice(2)) {
   const values = consumerOptions(args);
   assert(!values.ios || process.platform === 'darwin', '--ios requires macOS and Xcode');
-  const sdk = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  const root = dirname(sdk);
+  const source = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const sdk = values.sdk ? resolve(values.sdk) : source;
+  const root = dirname(source);
   const selection = JSON.parse(readFileSync(join(sdk, 'native-image.json'), 'utf8'));
   validateSelection(selection, values.aggregate);
   const temporary = mkdtempSync(join(tmpdir(), 'prns-expo-consumer-'));
@@ -147,7 +149,7 @@ export function main(args = process.argv.slice(2)) {
       return;
     }
     const coreArchive = pack(join(root, 'prns-js'));
-    const manifest = JSON.parse(readFileSync(join(sdk, 'example/package.json'), 'utf8'));
+    const manifest = JSON.parse(readFileSync(join(source, 'example/package.json'), 'utf8'));
     manifest.dependencies['personal-rns-expo'] = `file:./${sdkArchive.filename}`;
     manifest.dependencies['personal-rns'] = `file:./${coreArchive.filename}`;
     for (const name of ['core', 'react-native']) {
@@ -172,9 +174,9 @@ export function main(args = process.argv.slice(2)) {
       writeFileSync(join(temporary, 'composition-probe.ts'), `import * as composition from ${JSON.stringify(entry)};\nvoid composition;\n`);
       includes.push('composition-probe.ts');
     }
-    manifest.devDependencies = consumerDevDependencies(JSON.parse(readFileSync(join(sdk, 'package.json'), 'utf8')));
+    manifest.devDependencies = consumerDevDependencies(JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')));
     writeFileSync(join(temporary, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-    for (const file of ['App.tsx', 'index.ts', 'app.json']) cpSync(join(sdk, 'example', file), join(temporary, file));
+    for (const file of ['App.tsx', 'index.ts', 'app.json']) cpSync(join(source, 'example', file), join(temporary, file));
     writeFileSync(join(temporary, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
       target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', lib: ['ES2022', 'DOM'],
       strict: true, noEmit: true, exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true,

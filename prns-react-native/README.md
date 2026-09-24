@@ -101,14 +101,31 @@ python3 prns-react-native/tools/generate.py ios --sim-only --targets aarch64-app
 the Rust build cache. `providers/default.json` builds the SDK's default
 `prns-host-uniffi-image` as `prns_host_mobile`.
 
-An app with native services supplies `--provider /path/to/provider.json`. That
-versioned document contains exactly one provider, whose aggregate crate depends
-on the SDK Rust `rlib` and adds service/product exports. Generation applies the
-selected image name to JSI, Kotlin, and Expo without collapsing distinct native
-namespaces. Pod/Gradle rules reject extra or missing images in this package.
-Remove separate packaging of the previous provider when switching; the app must
-not embed another SDK/default image through another package. SDK converters and
-the public JS API are shared between default and aggregate providers.
+An app with native services supplies `--provider /path/to/provider.json` and
+`--destination /path/to/app/target/host-sdk`. The versioned provider document
+contains exactly one aggregate crate, which depends on the SDK Rust `rlib` and
+adds service/product exports. The shared generator copies the SDK's maintained
+package sources into that disposable destination and generates its selected
+JSI, Swift, and Kotlin bindings there. It leaves this source package's default
+provider unchanged. The staged runtime manifest retains the public peer
+contract and omits development dependencies and scripts.
+
+```sh
+python3 prns-react-native/tools/generate.py \
+  --provider /path/to/provider.json --destination /path/to/app/target/host-sdk generate
+python3 prns-react-native/tools/generate.py \
+  --provider /path/to/provider.json --destination /path/to/app/target/host-sdk generate --check
+python3 prns-react-native/tools/generate.py \
+  --provider /path/to/provider.json --destination /path/to/app/target/host-sdk android --targets arm64-v8a
+```
+
+Select that same staged package in every app consumer, and generate it before
+installing file dependencies. Checking rejects missing or stale staging without
+rewriting it. Native builds write into the destination and preserve existing
+artifacts for the same selected image. Choose a clean destination to switch
+images. Pod/Gradle rules reject extra or missing images; the app must not embed
+another SDK/default image through another package. SDK converters and the public
+JS API have one maintained implementation shared by both provider modes.
 
 Provider source paths resolve relative to the JSON file and are absent from the
 distributed `native-image.json`. Provider `features` apply to native builds and
@@ -178,8 +195,8 @@ contract conformance, package checks, and native builds independently.
 installs the packed SDK, core package, and pinned runtime archives outside this
 checkout, then checks the example and compiles the packaged Android SDK. It
 requires a built default Android image. To check an already-built aggregate image,
-run `node tools/detached-consumer.mjs --aggregate --android --keep` from this
-package. Add `--bindings /absolute/path/to/composition/bindings` to pack and
+run `node tools/detached-consumer.mjs --sdk /path/to/app/target/host-sdk --aggregate --android --keep`
+from this source package. Add `--bindings /absolute/path/to/composition/bindings` to pack and
 TypeScript-check the composition's native export against the same SDK. The
 consumer uses npm overrides to resolve private workspace dependencies to those
 exact packed SDK/core/runtime inputs; the original archives remain unchanged.
@@ -190,7 +207,7 @@ qualification.
 
 After building both native targets, `npm run pack:check` checks the actual npm
 archive for the selected Android image and iOS XCFramework, including each
-framework binary and its metadata. Use `npm run pack:check -- --aggregate --keep`
+framework binary and its metadata. Use `npm run pack:check -- --sdk /path/to/app/target/host-sdk --aggregate --keep`
 for an aggregate provider and a retained archive/receipt. The check does not
 compile or install a mobile app, and a simulator-only framework only qualifies
 simulator packaging. The full consumer command also validates any included Apple
