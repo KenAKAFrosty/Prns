@@ -27,6 +27,9 @@ pub mod mdns;
 pub mod wifi_aware;
 pub mod wifi_direct;
 
+#[cfg(all(target_os = "linux", feature = "linux-packet"))]
+pub mod ethernet;
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub mod usb_serial;
 

@@ -6,19 +6,47 @@ use crate::engine::{
     IssuedCommand, PacketReceiptDelivered, PrnsCommand, SendToChannelFailure, Settlement,
 };
 use crate::manifold::compression;
-use crate::manifold::driver::{HostCommand, StreamInbound};
+use crate::manifold::driver::{HostCommand, StreamInbound, StreamReceiveFailure};
 use crate::routing::links::channel::byte_stream::{parse, MAX_STREAM_CHUNK_LEN, STREAM_DATA_TYPE};
 use crate::routing::links::LinkId;
 use crate::units::RttMillis;
 
 use super::super::PrnsNodeHandle;
-use super::{ByteStreamReader, ByteStreamWriter, StreamId};
+use super::{ByteStreamReader, ByteStreamWriter, StreamId, BYTE_STREAM_RECEIVE_QUEUE_DEPTH};
 
-fn chunk(bytes: &[u8], eof: bool, compressed: bool) -> StreamInbound {
-    StreamInbound {
-        payload: bytes.to_vec(),
-        eof,
-        compressed,
+fn reader_pair() -> (
+    tokio::sync::mpsc::Sender<StreamInbound>,
+    tokio::sync::oneshot::Sender<StreamReceiveFailure>,
+    ByteStreamReader,
+) {
+    let (sink, inbound) = tokio::sync::mpsc::channel(BYTE_STREAM_RECEIVE_QUEUE_DEPTH);
+    let (failure, failure_rx) = tokio::sync::oneshot::channel();
+    (sink, failure, ByteStreamReader::new(inbound, failure_rx))
+}
+
+enum ChunkKind {
+    Plain,
+    Compressed,
+    End,
+}
+
+fn chunk(bytes: &[u8], kind: ChunkKind) -> StreamInbound {
+    match kind {
+        ChunkKind::Plain => StreamInbound {
+            payload: bytes.to_vec(),
+            eof: false,
+            compressed: false,
+        },
+        ChunkKind::Compressed => StreamInbound {
+            payload: bytes.to_vec(),
+            eof: false,
+            compressed: true,
+        },
+        ChunkKind::End => StreamInbound {
+            payload: bytes.to_vec(),
+            eof: true,
+            compressed: false,
+        },
     }
 }
 
@@ -33,35 +61,52 @@ fn delivered() -> PacketReceiptDelivered {
 
 #[tokio::test]
 async fn reader_reassembles_chunks_in_order_and_stops_at_eof() {
-    let (sink, inbound) = tokio::sync::mpsc::unbounded_channel();
-    let mut reader = ByteStreamReader::new(inbound);
-    sink.send(chunk(b"hello ", false, false)).unwrap();
-    sink.send(chunk(b"byte ", false, false)).unwrap();
-    sink.send(chunk(b"stream", true, false)).unwrap();
+    let (sink, _failure, mut reader) = reader_pair();
+    sink.try_send(chunk(b"hello ", ChunkKind::Plain)).unwrap();
+    sink.try_send(chunk(b"byte ", ChunkKind::Plain)).unwrap();
+    sink.try_send(chunk(b"stream", ChunkKind::End)).unwrap();
     let mut out = std::vec::Vec::new();
     reader.read_to_end(&mut out).await.unwrap();
     assert_eq!(out, b"hello byte stream");
 }
 
 #[tokio::test]
-async fn reader_treats_a_dropped_sink_as_end_of_stream() {
-    let (sink, inbound) = tokio::sync::mpsc::unbounded_channel();
-    let mut reader = ByteStreamReader::new(inbound);
-    sink.send(chunk(b"partial", false, false)).unwrap();
+async fn eof_frame_drains_its_payload_across_small_reads() {
+    let (sink, _failure, mut reader) = reader_pair();
+    sink.try_send(chunk(b"final", ChunkKind::End)).unwrap();
+    let mut first = [0; 2];
+    let mut second = [0; 2];
+    reader.read_exact(&mut first).await.unwrap();
+    reader.read_exact(&mut second).await.unwrap();
+    let mut tail = [0; 2];
+    let read = reader.read(&mut tail).await.unwrap();
+    assert_eq!(first, *b"fi");
+    assert_eq!(second, *b"na");
+    assert_eq!(read, 1);
+    assert_eq!(tail.first(), Some(&b'l'));
+    assert_eq!(reader.read(&mut tail).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn reader_rejects_a_stopped_source_with_buffered_data() {
+    let (sink, failure, mut reader) = reader_pair();
+    sink.try_send(chunk(b"partial", ChunkKind::Plain)).unwrap();
     drop(sink);
+    drop(failure);
     let mut out = std::vec::Vec::new();
-    reader.read_to_end(&mut out).await.unwrap();
-    assert_eq!(out, b"partial");
+    let error = reader.read_to_end(&mut out).await.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    assert!(out.is_empty());
 }
 
 #[tokio::test]
 async fn reader_inflates_a_compressed_chunk() {
-    let (sink, inbound) = tokio::sync::mpsc::unbounded_channel();
-    let mut reader = ByteStreamReader::new(inbound);
+    let (sink, _failure, mut reader) = reader_pair();
     let original = std::vec![7u8; 2000];
     let compressed = compression::compress_if_smaller(&original).expect("a run compresses");
-    sink.send(chunk(&compressed, false, true)).unwrap();
-    sink.send(chunk(b"", true, false)).unwrap();
+    sink.try_send(chunk(&compressed, ChunkKind::Compressed))
+        .unwrap();
+    sink.try_send(chunk(b"", ChunkKind::End)).unwrap();
     let mut out = std::vec::Vec::new();
     reader.read_to_end(&mut out).await.unwrap();
     assert_eq!(
@@ -72,12 +117,66 @@ async fn reader_inflates_a_compressed_chunk() {
 
 #[tokio::test]
 async fn reader_errors_on_a_malformed_compressed_chunk() {
-    let (sink, inbound) = tokio::sync::mpsc::unbounded_channel();
-    let mut reader = ByteStreamReader::new(inbound);
-    sink.send(chunk(b"not a bz2 stream", false, true)).unwrap();
+    let (sink, _failure, mut reader) = reader_pair();
+    sink.try_send(chunk(b"not a bz2 stream", ChunkKind::Compressed))
+        .unwrap();
     let mut out = std::vec::Vec::new();
     let err = reader.read_to_end(&mut out).await.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(
+        err.get_ref()
+            .and_then(|source| source.downcast_ref::<StreamReceiveFailure>()),
+        Some(&StreamReceiveFailure::MalformedCompressedChunk)
+    );
+}
+
+#[tokio::test]
+async fn reader_reports_overflow_instead_of_returning_truncated_data() {
+    let (sink, inbound) = tokio::sync::mpsc::channel(1);
+    let (failure, failure_rx) = tokio::sync::oneshot::channel();
+    let mut reader = ByteStreamReader::new(inbound, failure_rx);
+    sink.try_send(chunk(b"partial", ChunkKind::Plain)).unwrap();
+    failure.send(StreamReceiveFailure::Overflowed).unwrap();
+    let mut out = std::vec::Vec::new();
+    let error = reader.read_to_end(&mut out).await.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(
+        error
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<StreamReceiveFailure>()),
+        Some(&StreamReceiveFailure::Overflowed)
+    );
+    assert!(out.is_empty());
+}
+
+#[tokio::test]
+async fn reader_reports_link_loss_as_a_typed_terminal_failure() {
+    let (_sink, failure, mut reader) = reader_pair();
+    failure.send(StreamReceiveFailure::LinkClosed).unwrap();
+    let mut out = std::vec::Vec::new();
+    let error = reader.read_to_end(&mut out).await.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+    assert_eq!(
+        error
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<StreamReceiveFailure>()),
+        Some(&StreamReceiveFailure::LinkClosed)
+    );
+}
+
+#[tokio::test]
+async fn reader_reports_a_stopped_source_without_fabricating_eof() {
+    let (_sink, failure, mut reader) = reader_pair();
+    drop(failure);
+    let mut out = std::vec::Vec::new();
+    let error = reader.read_to_end(&mut out).await.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    assert_eq!(
+        error
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<StreamReceiveFailure>()),
+        Some(&StreamReceiveFailure::SourceStopped)
+    );
 }
 
 #[tokio::test]
@@ -108,7 +207,7 @@ async fn reader_is_withheld_until_the_run_loop_acks_registration() {
         "the reader is held back until the run loop acknowledges the registration",
     );
 
-    ready.send(()).expect("the opener is parked on the ack");
+    ready.send(Ok(())).expect("the opener is parked on the ack");
     open.await.expect("the reader future resolves once acked");
 }
 
@@ -216,7 +315,7 @@ async fn a_mixed_stream_round_trips_writer_to_reader() {
         writer.shutdown().await.unwrap();
     });
 
-    let (sink, inbound) = tokio::sync::mpsc::unbounded_channel();
+    let (sink, _failure, mut reader) = reader_pair();
     loop {
         let HostCommand::AwaitedEngine {
             issued: IssuedCommand { command, .. },
@@ -230,7 +329,7 @@ async fn a_mixed_stream_round_trips_writer_to_reader() {
         };
         let frame = parse(&send.body).unwrap();
         let eof = frame.header.eof;
-        sink.send(StreamInbound {
+        sink.try_send(StreamInbound {
             payload: frame.payload.to_vec(),
             eof,
             compressed: frame.header.compressed,
@@ -245,7 +344,6 @@ async fn a_mixed_stream_round_trips_writer_to_reader() {
     }
     write.await.unwrap();
 
-    let mut reader = ByteStreamReader::new(inbound);
     let mut out = std::vec::Vec::new();
     reader.read_to_end(&mut out).await.unwrap();
     assert_eq!(

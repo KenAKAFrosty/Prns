@@ -1,3 +1,7 @@
+use crate::runtime::{RemoteControlConfigureRadio, RemoteControlInspectRadio};
+use prns_core::remote_control::{
+    RemoteControlRadioConfiguration, RemoteControlRadioOutcome, RemoteControlRadioStatus,
+};
 mod connection;
 
 pub use connection::RemoteControlTargetHandle;
@@ -11,27 +15,27 @@ use crate::routing::links::LinkId;
 use crate::runtime::request_endpoints::RequestEndpointId;
 use crate::runtime::{
     RemoteControlActivateWifiCredentials, RemoteControlAnnounceSelf,
-    RemoteControlAuthorizeController, RemoteControlCancelWifiCredentials,
-    RemoteControlConfirmWifiCredentials, RemoteControlDescribe, RemoteControlDescribeBuild,
-    RemoteControlDescribePower, RemoteControlError, RemoteControlInspectWifiTransaction,
-    RemoteControlInventoryControllers, RemoteControlInventoryInterfaceConfig,
-    RemoteControlInventoryInterfaceDiscoveryGroups, RemoteControlInventoryInterfacePeers,
-    RemoteControlInventoryInterfaces, RemoteControlReplaceInterfaceDiscoveryGroups,
-    RemoteControlRevokeController, RemoteControlSetDisplayAutoOff,
-    RemoteControlSetDisplayVisibility, RemoteControlSetEspRadioMode, RemoteControlSetGnssPower,
-    RemoteControlSetInterfaceGroup, RemoteControlSetInterfaceLoRaProfile,
-    RemoteControlSetInterfaceMode, RemoteControlSetInterfacePower,
-    RemoteControlSetInterfaceWifiStation, RemoteControlSetStationUplink,
-    RemoteControlSetSystemPower, RemoteControlSleepRadios, RemoteControlStageWifiCredentials,
-    RemoteControlWakeRadios,
+    RemoteControlAppMessageExchange, RemoteControlAuthorizeController,
+    RemoteControlCancelWifiCredentials, RemoteControlConfirmWifiCredentials, RemoteControlDescribe,
+    RemoteControlDescribeBuild, RemoteControlDescribeNodeName, RemoteControlDescribePower,
+    RemoteControlError, RemoteControlInspectWifiTransaction, RemoteControlInventoryControllers,
+    RemoteControlInventoryInterfaceConfig, RemoteControlInventoryInterfaceDiscoveryGroups,
+    RemoteControlInventoryInterfacePeers, RemoteControlInventoryInterfaces,
+    RemoteControlReplaceInterfaceDiscoveryGroups, RemoteControlRevokeController,
+    RemoteControlSetDisplayAutoOff, RemoteControlSetDisplayVisibility,
+    RemoteControlSetEspRadioMode, RemoteControlSetGnssPower, RemoteControlSetInterfaceGroup,
+    RemoteControlSetInterfaceLoRaProfile, RemoteControlSetInterfaceMode,
+    RemoteControlSetInterfacePower, RemoteControlSetInterfaceWifiStation, RemoteControlSetNodeName,
+    RemoteControlSetStationUplink, RemoteControlSetSystemPower, RemoteControlSleepRadios,
+    RemoteControlStageWifiCredentials, RemoteControlWakeRadios,
 };
 use crate::units::RttMillis;
 use prns_core::capabilities::power::PowerSnapshot;
 use prns_core::interfaces::{InterfaceId, InterfaceMode};
 use prns_core::remote_control::{
-    RemoteControlApplyOutcome, RemoteControlAuthorizeControllerOutcome, RemoteControlBuildVersion,
-    RemoteControlControllerIdentity, RemoteControlControllerInventory, RemoteControlControllerPage,
-    RemoteControlDescription, RemoteControlDiscoveryGroups,
+    RemoteControlAppMessage, RemoteControlApplyOutcome, RemoteControlAuthorizeControllerOutcome,
+    RemoteControlBuildVersion, RemoteControlControllerIdentity, RemoteControlControllerInventory,
+    RemoteControlControllerPage, RemoteControlDescription, RemoteControlDiscoveryGroups,
     RemoteControlDiscoveryGroupsInventoryOutcome, RemoteControlDiscoveryGroupsReplaceOutcome,
     RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility, RemoteControlEspRadioMode,
     RemoteControlGnssPower, RemoteControlGroupOutcome, RemoteControlInterfaceConfigOutcome,
@@ -127,6 +131,23 @@ impl<
         const RESPONSE_BYTES: usize,
     > RemoteControlHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
 {
+    pub async fn app_message(
+        &self,
+        payload: RemoteControlAppMessage,
+    ) -> Result<(RemoteControlAppMessage, RttMillis), RemoteControlError> {
+        let mut encoded = [0u8; RemoteControlAppMessageExchange::RESPONSE_CAPACITY];
+        let len = RemoteControlAppMessageExchange::write_request(&payload, &mut encoded)?;
+        let (response, rtt) = self.node.request_with_maximum_response_bytes::<{ RemoteControlAppMessageExchange::RESPONSE_CAPACITY }>(
+            self.link_id,
+            RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+            &encoded[..len],
+            RequestResponseTimeout::LinkDefault,
+        ).await.map_err(RemoteControlError::Request)?;
+        Ok((
+            RemoteControlAppMessageExchange::parse_response(response.as_slice())?,
+            rtt,
+        ))
+    }
     remote_control_apply_method!(
         set_system_power,
         RemoteControlSetSystemPower,
@@ -150,6 +171,12 @@ impl<
         RemoteControlSetDisplayAutoOff,
         auto_off,
         RemoteControlDisplayAutoOff
+    );
+    remote_control_apply_method!(
+        set_node_name,
+        RemoteControlSetNodeName,
+        name,
+        prns_core::remote_control::RemoteControlNodeName
     );
     remote_control_apply_method!(
         set_esp_radio_mode,
@@ -229,6 +256,26 @@ impl<
             .map_err(RemoteControlError::Request)?;
         let version = RemoteControlDescribeBuild::parse_response(response.as_slice())?;
         Ok((version, rtt))
+    }
+
+    pub async fn describe_node_name(
+        &self,
+    ) -> Result<(prns_core::remote_control::RemoteControlNodeName, RttMillis), RemoteControlError>
+    {
+        let mut encoded = [0u8; RemoteControlDescribeNodeName::REQUEST.encoded_len()];
+        RemoteControlDescribeNodeName::write_request(&mut encoded)?;
+        let (response, rtt) = self
+            .node
+            .request_with_maximum_response_bytes::<{ RemoteControlDescribeNodeName::RESPONSE_CAPACITY }>(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                &encoded,
+                RequestResponseTimeout::LinkDefault,
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let name = RemoteControlDescribeNodeName::parse_response(response.as_slice())?;
+        Ok((name, rtt))
     }
 
     pub async fn describe_power(&self) -> Result<(PowerSnapshot, RttMillis), RemoteControlError> {
@@ -451,6 +498,62 @@ impl<
             .await
             .map_err(RemoteControlError::Request)?;
         let outcome = RemoteControlSetInterfaceLoRaProfile::parse_response(response.as_slice())?;
+        Ok((outcome, rtt))
+    }
+
+    pub async fn configure_radio(
+        &self,
+        id: InterfaceId,
+        configuration: RemoteControlRadioConfiguration,
+    ) -> Result<(RemoteControlRadioOutcome, RttMillis), RemoteControlError> {
+        let mut encoded = [0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len =
+            RemoteControlConfigureRadio::write_request(id, configuration, &mut encoded)?;
+        let request = encoded
+            .get(..encoded_len)
+            .ok_or(RemoteControlError::Encode(
+                prns_core::remote_control::RemoteControlMessageWriteError::BufferTooShort,
+            ))?;
+        let (response, rtt) = self
+            .node
+            .request_with_maximum_response_bytes::<{
+                RemoteControlConfigureRadio::RESPONSE_CAPACITY
+            }>(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                request,
+                RequestResponseTimeout::LinkDefault,
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let outcome = RemoteControlConfigureRadio::parse_response(response.as_slice())?;
+        Ok((outcome, rtt))
+    }
+
+    pub async fn inspect_radio(
+        &self,
+        id: InterfaceId,
+    ) -> Result<(RemoteControlRadioStatus, RttMillis), RemoteControlError> {
+        let mut encoded = [0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len = RemoteControlInspectRadio::write_request(id, &mut encoded)?;
+        let request = encoded
+            .get(..encoded_len)
+            .ok_or(RemoteControlError::Encode(
+                prns_core::remote_control::RemoteControlMessageWriteError::BufferTooShort,
+            ))?;
+        let (response, rtt) = self
+            .node
+            .request_with_maximum_response_bytes::<{
+                RemoteControlInspectRadio::RESPONSE_CAPACITY
+            }>(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                request,
+                RequestResponseTimeout::LinkDefault,
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let outcome = RemoteControlInspectRadio::parse_response(response.as_slice())?;
         Ok((outcome, rtt))
     }
 

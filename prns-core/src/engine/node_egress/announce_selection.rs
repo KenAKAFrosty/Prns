@@ -60,7 +60,13 @@ pub(in crate::engine) fn fleet_announce_fan_target(
     if let Some(target) = directed_to {
         return FanTarget::Only(target);
     }
-    if source.kind() != supervisor.member_kind() {
+    // Propagation on HaLoW is a physical group send, including back toward
+    // the previous hop. Reticulum's announce deduplication bounds echoes.
+    // Directed path responses returned above retain their exact recipient.
+    if supervisor == InterfaceKind::WifiHaLow {
+        return FanTarget::All;
+    }
+    if source.kind().and_then(InterfaceKind::fanout_kind) != Some(supervisor) {
         return FanTarget::All;
     }
     let source_repeats = interfaces
@@ -79,12 +85,11 @@ pub(in crate::engine) fn fleet_fan_target_reaches_any_member(
     supervisor: InterfaceKind,
     fan_target: FanTarget,
 ) -> bool {
-    let Some(member_kind) = supervisor.member_kind() else {
-        return false;
-    };
     interfaces
         .iter()
-        .filter(|descriptor| descriptor.id.kind() == Some(member_kind))
+        .filter(|descriptor| {
+            descriptor.id.kind().and_then(InterfaceKind::fanout_kind) == Some(supervisor)
+        })
         .any(|descriptor| match fan_target {
             FanTarget::All => true,
             FanTarget::Only(target) => descriptor.id == target,
@@ -106,6 +111,31 @@ mod tests {
         InterfaceMode::Gateway,
         InterfaceMode::Internal,
     ];
+
+    #[test]
+    fn halow_propagates_to_the_shared_medium_but_directed_responses_stay_directed() {
+        let source = InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowPeer, b"source");
+        let shared = InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowBroadcast, b"radio");
+        let rows = [routable_descriptor(source), routable_descriptor(shared)];
+        assert_eq!(
+            fleet_announce_fan_target(
+                AttachedInterfaces::new(&rows),
+                InterfaceKind::WifiHaLow,
+                source,
+                None
+            ),
+            FanTarget::All
+        );
+        assert_eq!(
+            fleet_announce_fan_target(
+                AttachedInterfaces::new(&rows),
+                InterfaceKind::WifiHaLow,
+                source,
+                Some(source)
+            ),
+            FanTarget::Only(source)
+        );
+    }
 
     #[test]
     fn a_fleet_flood_to_a_lone_source_member_reaches_nobody() {

@@ -8,12 +8,12 @@ fn oracle_script() -> PathBuf {
 }
 
 #[test]
-fn stock_rns_1_4_2_ignores_and_preserves_the_prns_section() {
+fn stock_rns_1_5_4_ignores_and_preserves_the_prns_section() {
     let python = support::required_python("SMOKE_PYTHON");
     let output = Command::new(python)
         .arg(oracle_script())
         .output()
-        .expect("spawn RNS 1.4.2 Prns-section oracle");
+        .expect("spawn RNS 1.5.4 Prns-section oracle");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let logs = format!("{stdout}\n{stderr}");
@@ -29,7 +29,7 @@ fn stock_rns_1_4_2_ignores_and_preserves_the_prns_section() {
         .expect("oracle emits its result marker");
     let result: serde_json::Value = serde_json::from_str(result).expect("oracle emits JSON");
 
-    assert_eq!(result["version"], "1.4.2");
+    assert_eq!(result["version"], "1.5.4");
     assert_eq!(result["config_unchanged"], true);
     assert_eq!(result["registered"], serde_json::json!([]));
     assert_eq!(result["loaded_prns"]["resource_mem_in"], "64 MiB");

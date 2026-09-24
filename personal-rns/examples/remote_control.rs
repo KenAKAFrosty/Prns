@@ -64,7 +64,7 @@ async fn main() {
 
     let target = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: target_remote_control,
+        remote_control: target_remote_control.into(),
         pre_configured_destinations: [self_destination],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
@@ -79,7 +79,7 @@ async fn main() {
     let (heard_sender, mut heard_receiver) = tokio::sync::mpsc::unbounded_channel();
     let controller = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: controller_remote_control,
+        remote_control: controller_remote_control.into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,

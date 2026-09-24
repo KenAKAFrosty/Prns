@@ -23,6 +23,7 @@ use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
 use crate::routing::links::request::{
     parse_request_plaintext, parse_response_plaintext, RequestId,
 };
+use crate::routing::links::resources::assembly::AssemblyCorrelation;
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::transported::{
     extra_link_proof_timeout_ms, TrackTransportedLinkError, TransportSwitch, TransportedLink,
@@ -802,13 +803,22 @@ impl<S: StorageLayout> EngineState<S> {
         let Ok((request_id, response_data)) = parse_response_plaintext(plaintext) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
-        let Some(maximum_response_bytes) = self.receipts.pending_request_response_limit(request_id)
+        if self.incoming_assemblies.correlation(&link_id)
+            == Some(AssemblyCorrelation::Response(request_id))
+        {
+            return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
+        }
+        let Some(maximum_response_bytes) = self
+            .receipts
+            .pending_request_response_limit(&link_id, request_id)
         else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
-        let response_size = response_data.len().saturating_sub(2) as u64;
+        // The response value is delivered verbatim, including any MessagePack
+        // binary header. Only parse_response_plaintext's outer envelope is gone.
+        let response_size = response_data.len() as u64;
         if !maximum_response_bytes.allows(response_size) {
-            let Some(proven) = self.receipts.settle_by_request_id(request_id) else {
+            let Some(proven) = self.receipts.settle_by_request_id(&link_id, request_id) else {
                 return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
             };
             self.links.note_inbound(&link_id, arrived_at);
@@ -819,7 +829,7 @@ impl<S: StorageLayout> EngineState<S> {
                 request_id,
             };
         }
-        let Some(proven) = self.receipts.settle_by_request_id(request_id) else {
+        let Some(proven) = self.receipts.settle_by_request_id(&link_id, request_id) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
         self.links.note_inbound(&link_id, arrived_at);

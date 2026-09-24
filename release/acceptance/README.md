@@ -1,5 +1,52 @@
 # Flasher acceptance record
 
+## Pre-1.0 automated release gate
+
+Starting with 0.3.8, pre-1.0 releases (including their hotfixes) use schema-7
+acceptance. Physical testing on every board is optional and does not block a
+version bump or promotion. This policy applies to every embedded target; it does
+not turn simulator or emulator results into claims of physical qualification.
+
+The gate requires **every release-tier suite** from the candidate's validation
+inventory to pass on the exact clean source commit. This includes the
+deterministic virtual-device simulator, unit and integration tests, firmware
+builds and resource checks, target-ISA emulators, applicable platform emulators,
+and the existing browser, interoperability, proof, fuzz, and mutation lanes.
+Unsupported emulator capabilities are not claimed. Signing, reproducibility,
+public review, provenance, rollback, and exact-byte promotion remain required.
+
+For **0.3.8 only**, Kani formal proof qualification is deferred because several
+harnesses timed out and one needs corrected loop bounds. This release does not
+claim passing formal qualification. The committed, candidate-bundled validation
+policy excludes only Kani from the release tier for exactly `VERSION = 0.3.8`;
+all proofs remain scheduled and directly runnable. Other release suites remain
+required. The exception does not apply to hotfixes or later versions, which
+restore the declared proof requirements automatically.
+
+Run `release-readiness.yml` for the final source commit. Download its
+`release-readiness-manifest-COMMIT` artifact after the entire workflow passes.
+After the signed public candidate exists, create acceptance with its bundled
+`qualification/create-flasher-acceptance.py`, using the usual exact-candidate
+arguments plus `--readiness-manifest release-manifest.json` and
+`--readiness-run-id RUN_ID`. The generator validates the complete evidence;
+it does not manufacture passing results. Automated tests may precede public
+candidate publication because they bind the same exact source commit.
+
+Copy the unchanged release manifest into the evidence directory under its
+lowercase SHA-256 filename, then package that directory with
+`qualification/package-flasher-qualification-evidence.py`. Commit the generated
+acceptance record through normal review. Protected finalization independently
+verifies the successful readiness workflow's repository, source SHA, identity,
+and exact downloaded artifact bytes before signing acceptance and its release
+record. A missing, failing, stale, partial, or modified result blocks promotion.
+
+Schema-5 physical matrices, schema-6 scoped hotfix matrices, and the version-bound
+0.3.7 exception remain historical verification formats. They cannot replace
+schema-7 automated evidence for a new pre-1.0 release. The policy does not extend
+to 1.0; that release needs an explicit policy review.
+
+## Historical physical acceptance
+
 The acceptance record is evidence for one exact signed candidate, not a checklist or a place to
 record intentions. Generate it only after the public prerelease exists. The generator binds the
 manifest, manifest signature, signed-candidate archive, and signed roster by exact identity and

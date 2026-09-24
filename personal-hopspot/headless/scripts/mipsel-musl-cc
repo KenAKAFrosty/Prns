@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+: "${ZIG:?Set ZIG to the verified Zig executable}"
+exec "$ZIG" cc -target mipsel-linux-musleabi -mcpu=mips32r2 -msoft-float "$@"

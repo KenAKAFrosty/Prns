@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Generated value transport and the thin UniFFI facade for the shared PRNS host.
 uniffi::setup_scaffolding!();
 

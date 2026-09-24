@@ -183,6 +183,15 @@ fn noindex(title: impl Into<String>, description: impl Into<String>) -> PageHead
 }
 
 fn board_head(board: &'static BoardTarget) -> PageHead {
+    if board.is_linux_appliance() {
+        return indexed(
+            format!("Set up Hopspot on the {} | Prns", board.name),
+            format!(
+                "Get started with Hopspot on the {} with the device setup guide.",
+                board.name
+            ),
+        );
+    }
     if board.is_flashable() {
         return indexed(
             format!("Flash the {} | Prns", board.name),
@@ -197,7 +206,8 @@ fn board_head(board: &'static BoardTarget) -> PageHead {
         Tier::Shipping => "shipping",
         Tier::SdkPreview => "SDK preview",
         Tier::Flashable => "flashable",
-        Tier::Qualification => "hardware qualification",
+        Tier::InstallationPreview => "preview",
+        Tier::Qualification => "release preparation",
         Tier::BringUp => "active bring-up",
         Tier::Roadmap => "roadmap",
     };

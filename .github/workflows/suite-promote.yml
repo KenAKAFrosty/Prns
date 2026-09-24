@@ -12,15 +12,15 @@ on:
         required: true
         type: string
       qualification_run_id:
-        description: Successful protected deployment qualification run ID
-        required: true
+        description: Successful protected deployment qualification run ID; omit for the committed 0.3.8 deferral
+        required: false
         type: string
       qualification_evidence_sha256:
-        description: Independently recorded deployment evidence SHA-256
-        required: true
+        description: Deployment evidence SHA-256; omit for the committed 0.3.8 deferral
+        required: false
         type: string
       flasher_acceptance_commit:
-        description: Reviewed main commit containing the physical flasher acceptance record
+        description: Reviewed main commit containing the flasher release acceptance record
         required: true
         type: string
       flasher_finalization_run_id:
@@ -70,12 +70,29 @@ jobs:
           test "${{ inputs.package_is_public }}" = "true"
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "${{ inputs.image_digest }}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "${{ inputs.qualification_run_id }}" =~ ^[1-9][0-9]*$ ]]
-          [[ "${{ inputs.qualification_evidence_sha256 }}" =~ ^[0-9a-f]{64}$ ]]
           [[ "${{ inputs.flasher_acceptance_commit }}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${{ inputs.flasher_finalization_run_id }}" =~ ^[1-9][0-9]*$ ]]
           [[ "${{ inputs.flasher_release_record_sha256 }}" =~ ^[0-9a-f]{64}$ ]]
-      - name: Verify protected physical flasher finalization custody
+      - name: Enforce the committed deployment qualification policy
+        id: deployment-policy
+        env:
+          QUALIFICATION_RUN_ID: ${{ inputs.qualification_run_id }}
+          QUALIFICATION_EVIDENCE_SHA256: ${{ inputs.qualification_evidence_sha256 }}
+        run: |
+          status="$(./tools/prns release prnsd distribution -- deployment-policy --format status)"
+          case "$status" in
+            required)
+              [[ "$QUALIFICATION_RUN_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
+              [[ "$QUALIFICATION_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
+              ;;
+            deferred)
+              test -z "$QUALIFICATION_RUN_ID"
+              test -z "$QUALIFICATION_EVIDENCE_SHA256"
+              ;;
+            *) exit 1 ;;
+          esac
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Verify protected flasher release finalization custody
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -93,9 +110,8 @@ jobs:
             "success"
           test "$(jq -r '.head_repository.full_name' "${RUNNER_TEMP}/flasher-finalization-run.json")" = \
             "$GITHUB_REPOSITORY"
-          test "$(jq -r '.inputs.version' "${RUNNER_TEMP}/flasher-finalization-run.json")" = \
-            "$(cat VERSION)"
-          test "$(jq -r '.inputs.acceptance_commit' "${RUNNER_TEMP}/flasher-finalization-run.json")" = \
+          test "$(jq -r '.head_branch' "${RUNNER_TEMP}/flasher-finalization-run.json")" = main
+          test "$(jq -r '.head_sha' "${RUNNER_TEMP}/flasher-finalization-run.json")" = \
             "${{ inputs.flasher_acceptance_commit }}"
           gh api \
             "repos/${GITHUB_REPOSITORY}/compare/${SOURCE_COMMIT}...${{ inputs.flasher_acceptance_commit }}" \
@@ -112,6 +128,7 @@ jobs:
           test "$(jq -r '.merge_base_commit.sha' "${RUNNER_TEMP}/acceptance-to-authority.json")" = \
             "${{ inputs.flasher_acceptance_commit }}"
       - name: Verify protected deployment qualification custody
+        if: steps.deployment-policy.outputs.status == 'required'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -125,6 +142,7 @@ jobs:
           test "$(jq -r '.conclusion' "${RUNNER_TEMP}/qualification-run.json")" = "success"
           test "$(jq -r '.head_sha' "${RUNNER_TEMP}/qualification-run.json")" = "$SOURCE_COMMIT"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: steps.deployment-policy.outputs.status == 'required'
         with:
           run-id: ${{ inputs.qualification_run_id }}
           pattern: suite-deployment-qualification-*
@@ -135,6 +153,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          mkdir -p target/release-assets
           version="$(cat VERSION)"
           tag="v${version}"
           gh release view "$tag" \
@@ -143,16 +162,15 @@ jobs:
           test "$(jq -r '.isDraft' target/prerelease.json)" = "false"
           test "$(jq -r '.isPrerelease' target/prerelease.json)" = "true"
           test "$(jq -r '.targetCommitish' target/prerelease.json)" = "$SOURCE_COMMIT"
-          mkdir -p target/release-assets
           gh release download "$tag" --dir target/release-assets
-          jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+          jq -c '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             target/prerelease.json > target/assets-before.json
       - name: Install exact release verifier and registry transport
         run: |
           ./tools/prns release toolchain minisign install -- "${RUNNER_TEMP}/prns-release-bin"
           sudo apt-get update
           sudo apt-get install --yes skopeo
-      - name: Verify Minisign custody, exact inventory, and deployment evidence
+      - name: Verify Minisign custody, exact inventory, and signed deployment policy
         env:
           GH_TOKEN: ${{ github.token }}
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
@@ -168,6 +186,12 @@ jobs:
             --assets target/release-assets \
             --source-commit "$SOURCE_COMMIT" \
             --image-digest "${{ inputs.image_digest }}"
+      - name: Verify and publish deployment qualification
+        if: steps.deployment-policy.outputs.status == 'required'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(cat VERSION)"
           ./tools/prns release prnsd distribution -- deployment-verify \
             --evidence "target/qualification/deployment-qualification-v${version}.json" \
             --evidence-sha256 "${{ inputs.qualification_evidence_sha256 }}" \
@@ -187,9 +211,9 @@ jobs:
             gh release upload "v${version}" "$evidence"
           fi
           gh release view "v${version}" --json assets \
-            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            | jq -c '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             > target/assets-before.json
-      - name: Independently verify physical flasher acceptance and evidence
+      - name: Independently verify flasher release acceptance and evidence
         env:
           GH_TOKEN: ${{ github.token }}
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
@@ -205,6 +229,8 @@ jobs:
             -p release/keys/minisign.pub
           "$PRNS_MINISIGN_BIN" -Vm "$acceptance" -x "$acceptance.minisig" \
             -p release/keys/minisign.pub
+          test "$(jq -r '.release.version' "$record")" = "$version"
+          test "$(jq -r '.release.source_commit' "$record")" = "$SOURCE_COMMIT"
           test "$(jq -r '.acceptance.source_commit' "$record")" = \
             "${{ inputs.flasher_acceptance_commit }}"
           bundle="${assets}/prns-flasher-candidate-v${version}-signed.tar.gz"
@@ -306,8 +332,21 @@ jobs:
           skopeo inspect --raw "docker://${candidate}" > "${RUNNER_TEMP}/anonymous.json"
           actual="sha256:$(sha256sum "${RUNNER_TEMP}/anonymous.json" | awk '{print $1}')"
           test "$actual" = "${{ inputs.image_digest }}"
-          docker pull --platform linux/amd64 "$candidate"
-          docker pull --platform linux/arm64 "$candidate"
+          jq -er '
+            ["amd64", "arm64"][] as $architecture
+            | [.manifests[] | select(
+                .platform.os == "linux" and .platform.architecture == $architecture
+              )] as $matches
+            | if ($matches | length) == 1
+                and ($matches[0].digest | test("^sha256:[0-9a-f]{64}$"))
+              then [$architecture, $matches[0].digest] | @tsv
+              else error("expected one valid Linux manifest for " + $architecture)
+              end
+          ' "${RUNNER_TEMP}/anonymous.json" > "${RUNNER_TEMP}/anonymous-platforms.tsv"
+          while IFS=$'\t' read -r architecture manifest; do
+            docker pull --platform "linux/${architecture}" \
+              "ghcr.io/kenakafrosty/prnsd@${manifest}"
+          done < "${RUNNER_TEMP}/anonymous-platforms.tsv"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
           version: v0.35.0
@@ -341,12 +380,12 @@ jobs:
         run: |
           version="$(cat VERSION)"
           gh release view "v${version}" --json assets \
-            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            | jq -c '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             > target/assets-immediately-before.json
           cmp target/assets-before.json target/assets-immediately-before.json
           gh release edit "v${version}" --prerelease=false --latest=true
           test "$(gh release view "v${version}" --json isPrerelease --jq '.isPrerelease')" = "false"
           gh release view "v${version}" --json assets \
-            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            | jq -c '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             > target/assets-after.json
           cmp target/assets-before.json target/assets-after.json

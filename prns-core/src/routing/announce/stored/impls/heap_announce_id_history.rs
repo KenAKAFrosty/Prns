@@ -35,6 +35,10 @@ impl AnnounceIdHistory for HeapAnnounceIdHistory {
     }
 
     fn swap_remove(&mut self, i: usize, last: usize) {
+        // Restored routes may have empty histories and therefore no materialized slot yet.
+        if self.per_slot.len() <= last {
+            self.per_slot.resize_with(last + 1, Vec::new);
+        }
         self.per_slot.swap(i, last);
         self.per_slot.truncate(last);
     }
@@ -91,5 +95,20 @@ mod tests {
         assert!(!history.history(0).contains(&aid(1)));
         assert!(history.history(1).contains(&aid(10)));
         assert!(history.history(2).is_empty());
+    }
+
+    #[test]
+    fn swap_remove_preserves_sparse_empty_restored_slots() {
+        let mut history = HeapAnnounceIdHistory::default();
+        history.swap_remove(0, 0);
+        assert!(history.history(0).is_empty());
+        history.remember(0, aid(1));
+        history.swap_remove(0, 2);
+        assert!(history.history(0).is_empty());
+        assert!(history.history(1).is_empty());
+        history.remember(1, aid(2));
+        history.swap_remove(0, 1);
+        assert_eq!(history.history(0), [aid(2)]);
+        assert!(history.history(1).is_empty());
     }
 }

@@ -110,7 +110,7 @@ impl<S: StorageLayout> EngineState<S> {
                             wake_schedule_changes.resource_deadlines =
                                 self.resource_deadlines_wake();
                         }
-                        let settlement = self.culled_settlement(culled.kind);
+                        let settlement = self.culled_settlement(culled);
                         settle(sink, culled.command_id, settlement);
                         wake_schedule_changes.remote_control_pairing =
                             self.remote_control_pairing_wake();
@@ -535,7 +535,7 @@ impl<S: StorageLayout> EngineState<S> {
                                 wake_schedule_changes.resource_deadlines =
                                     self.resource_deadlines_wake();
                             }
-                            let settlement = self.culled_settlement(culled.kind);
+                            let settlement = self.culled_settlement(culled);
                             settle(sink, culled.command_id, settlement);
                             wake_schedule_changes.remote_control_pairing =
                                 self.remote_control_pairing_wake();
@@ -927,7 +927,7 @@ impl<S: StorageLayout> EngineState<S> {
                                     wake_schedule_changes.resource_deadlines =
                                         self.resource_deadlines_wake();
                                 }
-                                let settlement = self.culled_settlement(culled.kind);
+                                let settlement = self.culled_settlement(culled);
                                 settle(sink, culled.command_id, settlement);
                                 wake_schedule_changes.remote_control_pairing =
                                     self.remote_control_pairing_wake();
@@ -1262,7 +1262,7 @@ impl<S: StorageLayout> EngineState<S> {
                 );
                 if let Some(culled) = dispatch.culled {
                     culled_request = matches!(culled.kind, ReceiptKind::SendRequest { .. });
-                    let settlement = self.culled_settlement(culled.kind);
+                    let settlement = self.culled_settlement(culled);
                     settle(sink, culled.command_id, settlement);
                 }
             }

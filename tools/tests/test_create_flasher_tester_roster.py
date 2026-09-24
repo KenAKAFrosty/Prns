@@ -35,15 +35,21 @@ class TesterRosterCreatorTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def create(self, name: str) -> dict:
+    def create(self, name: str, version: str = "0.3.7") -> dict:
         output = self.root / name
         CREATOR.create(
             ROOT / "release" / "acceptance" / "roster-template.json",
             self.catalog,
-            "0.4.0",
+            version,
             output,
         )
         return json.loads(output.read_text(encoding="utf-8"))
+
+    def test_pre_one_roster_needs_only_release_owner(self) -> None:
+        roster = self.create("automated.json", "0.3.8")
+        self.assertEqual(set(roster), {"schema", "release", "release_owner", "confirmed_on"})
+        self.assertEqual(roster["schema"], 5)
+        self.assertEqual(roster["release"], {"version": "0.3.8"})
 
     def test_current_roster_contains_exactly_shipping_boards(self) -> None:
         roster = self.create("current.json")
@@ -53,7 +59,7 @@ class TesterRosterCreatorTests(unittest.TestCase):
             if board["availability"] == "shipping"
         }
         self.assertEqual(roster["schema"], 3)
-        self.assertEqual(roster["release"], {"version": "0.4.0"})
+        self.assertEqual(roster["release"], {"version": "0.3.7"})
         self.assertEqual(
             {assignment["board"] for assignment in roster["physical_assignments"]},
             expected,

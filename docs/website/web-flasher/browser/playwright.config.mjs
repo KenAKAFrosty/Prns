@@ -37,7 +37,15 @@ export default defineConfig({
   },
   projects: [
     {
+      name: "readiness",
+      testMatch: "**/*.setup.mjs",
+      retries: 0,
+      timeout: 30_000,
+    },
+    {
       name: "chromium",
+      dependencies: ["readiness"],
+      testIgnore: "**/*.setup.mjs",
       use: { ...devices["Desktop Chrome"] },
     },
   ],

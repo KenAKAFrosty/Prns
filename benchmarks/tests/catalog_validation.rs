@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use benchmarks::{
     load_all_rows, load_catalog, load_implementations, ScenarioTopology, Subject,
-    KNOWN_IMPLEMENTATIONS, RESULT_SCHEMA_VERSION,
+    HISTORICAL_SCENARIOS, KNOWN_IMPLEMENTATIONS, RESULT_SCHEMA_VERSION,
 };
 type HostScenario = (String, String);
 type SubjectSample = (String, u32);
@@ -51,14 +51,15 @@ fn scenario_directories_and_manifests_are_unique_and_complete() {
             "{slug} has malformed cell notes"
         );
     }
+    let current_and_historical = load_catalog()
+        .expect("typed catalog")
+        .into_iter()
+        .map(|manifest| manifest.name.as_str().to_string())
+        .chain(HISTORICAL_SCENARIOS.into_iter().map(str::to_string))
+        .collect();
     assert_eq!(
-        slugs,
-        load_catalog()
-            .expect("typed catalog")
-            .into_iter()
-            .map(|manifest| manifest.name.as_str().to_string())
-            .collect(),
-        "the public suite catalog and scenario directories must agree"
+        slugs, current_and_historical,
+        "scenario directories must contain the public catalog and retained historical manifests"
     );
 }
 

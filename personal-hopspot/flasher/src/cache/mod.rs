@@ -1088,11 +1088,30 @@ mod tests {
 
         assert_eq!(imported.version, "0.2.6");
         assert_eq!(imported.channel, "preview");
-        assert_eq!(imported.artifact_count, 19);
-        assert!(cache
-            .path()
-            .join("releases/0.2.6/heltec-v4/application.bin")
-            .is_file());
+        let manifest_bytes = fs::read(fixture.directory.path().join("flash-manifest.json"))
+            .expect("fixture manifest");
+        let manifest = ValidatedFlashManifest::from_json(&manifest_bytes, &catalog)
+            .expect("valid fixture manifest");
+        let mut artifact_count = 0;
+        for target in manifest.targets() {
+            for part in target.parts() {
+                let source = fixture.directory.path().join(part.path().as_str());
+                let cached = cache
+                    .path()
+                    .join("releases/0.2.6")
+                    .join(target.board_id().as_str())
+                    .join(source.file_name().expect("artifact filename"));
+                assert_eq!(
+                    fs::read(&cached).expect("cached artifact"),
+                    fs::read(&source).expect("source artifact"),
+                    "{}",
+                    part.path().as_str()
+                );
+                artifact_count += 1;
+            }
+        }
+        assert!(artifact_count > 0);
+        assert_eq!(imported.artifact_count, artifact_count);
         assert!(!cache.path().join("channels").exists());
     }
 

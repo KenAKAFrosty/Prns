@@ -9,6 +9,7 @@ extern crate std;
 mod destinations;
 mod flash_identity;
 mod identity;
+mod lora_configuration;
 #[cfg(feature = "display")]
 mod mobile;
 pub mod node_pages;
@@ -18,15 +19,19 @@ mod remote_control;
 #[cfg(feature = "embedded")]
 mod remote_control_executor;
 mod remote_control_inventory;
+mod remote_node_name;
+mod remote_subg_configuration;
 #[cfg(feature = "display")]
 mod screen;
 mod soft_ap;
 mod subg_configuration_store;
+pub use lora_configuration::{LoRaConfigurationResult, LoRaConfigurationService};
 mod wifi_configuration_store;
 
 pub use destinations::{
-    hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
-    HOPSPOT_DESTINATION_COUNT, HOPSPOT_IDENTITY_COUNT,
+    hopspot_destination_hashes, named_delivery_announce_app_data, named_node_announce_app_data,
+    HopspotDestinationHashes, HopspotDestinationSet, HOPSPOT_DESTINATION_COUNT,
+    HOPSPOT_IDENTITY_COUNT, NAMED_DELIVERY_ANNOUNCE_APP_DATA_CAP,
 };
 pub use flash_identity::{
     bootstrap_flash_ble_identity_with_runtime_entropy,
@@ -78,11 +83,13 @@ pub use remote_control_executor::{
     PreparedDiscoveryGroupReplacement,
 };
 pub use remote_control_inventory::{
-    bluetooth_auto_interface_name, decorate_hopspot_remote_control_card,
-    hopspot_remote_control_build_version, remote_control_interface_config_from_snapshots,
-    remote_control_interface_peers_from_snapshots, remote_control_inventory_from_snapshots,
-    singleton_discovery_group,
+    bluetooth_auto_interface_name, decorate_hopspot_radio_card,
+    decorate_hopspot_remote_control_card, hopspot_remote_control_build_version,
+    remote_control_interface_config_from_snapshots, remote_control_interface_peers_from_snapshots,
+    remote_control_inventory_from_snapshots, singleton_discovery_group,
 };
+pub use remote_node_name::apply_remote_node_name;
+pub use remote_subg_configuration::apply_remote_subg_configuration;
 #[cfg(feature = "display")]
 pub use screen::{
     apply_and_persist_subg_configuration, card_label, card_label_max_chars, subg_card,
@@ -98,8 +105,9 @@ pub use screen::{
 pub use screen::{display, face_64x128};
 pub use soft_ap::SoftApLeaseTable;
 pub use subg_configuration_store::{
-    LoadedSubGConfiguration, SubGConfigurationCommitOutcome, SubGConfigurationFlashOperation,
-    SubGConfigurationLoadNotice, SubGConfigurationStore, SubGConfigurationStoreError,
+    LoadedLoRaConfiguration, LoadedSubGConfiguration, SubGConfigurationCommitOutcome,
+    SubGConfigurationFlashOperation, SubGConfigurationLoadNotice, SubGConfigurationStore,
+    SubGConfigurationStoreError,
 };
 pub use wifi_configuration_store::{
     LoadedWifiConfiguration, WifiConfigurationCommitOutcome, WifiConfigurationFlashOperation,
@@ -491,3 +499,8 @@ mod tests {
         assert_eq!(disconnected.as_slice()[0].text(), "Peers 0");
     }
 }
+
+pub mod headless_announce;
+
+#[cfg(all(feature = "display", feature = "lora-2g4"))]
+pub use screen::RadioEditorError;

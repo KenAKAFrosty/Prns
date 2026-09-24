@@ -128,7 +128,7 @@ mod linux_only {
             std::process::exit(1);
         };
         let node = PrnsNode::new(PrnsNodeRecipe {
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
             transport_identity: None,
             pre_configured_destinations: [single_a],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -172,7 +172,7 @@ mod linux_only {
         };
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
         let node = PrnsNode::new(PrnsNodeRecipe {
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
             transport_identity: None,
             pre_configured_destinations: [single(secret(LISTENER_SECRET))],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,

@@ -80,7 +80,7 @@ async fn main() {
         .expect("Hopspot interop TCP server binds");
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(identity),
-        remote_control,
+        remote_control: remote_control.into(),
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: NoRemoteControlHostControls,
         storage: GrowableHeap,

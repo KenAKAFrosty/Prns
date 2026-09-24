@@ -86,7 +86,7 @@ time. Build options such as `--target` or `--profile` can be supplied after
 | `prnsd interfaces [COMMAND]` | Guided typed interface editing, grouped validation and repair, and explicit live apply |
 
 `prnsd status` is the prefixless RNS network-status utility, not a managed-process status command.
-It and the other RNS 1.4.2-compatible one-shot utilities are documented in
+It and the other RNS 1.5.4-compatible one-shot utilities are documented in
 [`docs/prnsd-utilities.md`](prnsd-utilities.md).
 
 `prnsd` and `cargo prnsd` share one per-user managed session. Repeated starts
@@ -114,11 +114,14 @@ cargo build --manifest-path prnsd/Cargo.toml --release --no-default-features \
 
 The official container uses the narrower `tokio-cloud-host` profile, mandatory startup persistence, and a digest-pinned multi-architecture image. Consumer Docker and Railway operation is documented in [`docs/deploy-prnsd.md`](deploy-prnsd.md); image production, staging, template publication, and qualification are release responsibilities documented below.
 
-The unified suite retains the flasher's established physical-acceptance
-boundary. The protected suite public review, signed physical acceptance and
-flasher release record, and protected deployment qualification remain
-independent gates; stable promotion verifies all of them before moving the
-GitHub Release or GHCR tags.
+From 0.3.8 until 1.0, embedded release acceptance requires the complete passing
+exact-source automated release inventory, including the deterministic simulator,
+all tests, and applicable emulators. Full physical qualification on every board
+is optional. Signed acceptance explicitly records this boundary; it does not
+claim hardware was tested. Protected public review, signing, provenance, and
+container artifact verification remain independent gates. Railway deployment
+qualification is explicitly deferred for 0.3.8 as described below. See the
+[automated acceptance policy](../release/acceptance/README.md#pre-10-automated-release-gate).
 
 The default state directories are:
 
@@ -144,15 +147,15 @@ The active native artifact matrix is:
 
 | Artifact | Platform |
 | --- | --- |
-| `prnsd-0.3.7-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64, glibc |
-| `prnsd-0.3.7-aarch64-unknown-linux-gnu.tar.gz` | Linux ARM64, glibc |
-| `prnsd-0.3.7-x86_64-apple-darwin.tar.gz` | macOS Intel |
-| `prnsd-0.3.7-aarch64-apple-darwin.tar.gz` | macOS Apple silicon |
-| `prnsd-0.3.7-x86_64-pc-windows-msvc.zip` | Windows x86_64 |
+| `prnsd-0.3.8-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64, glibc |
+| `prnsd-0.3.8-aarch64-unknown-linux-gnu.tar.gz` | Linux ARM64, glibc |
+| `prnsd-0.3.8-x86_64-apple-darwin.tar.gz` | macOS Intel |
+| `prnsd-0.3.8-aarch64-apple-darwin.tar.gz` | macOS Apple silicon |
+| `prnsd-0.3.8-x86_64-pc-windows-msvc.zip` | Windows x86_64 |
 
 Native archives contain the executable, licenses, third-party notices, Minisign public key, exact build identity, and the commit-bound `source.zip` plus its SHA-256 sidecar. Linux binaries are built natively on Ubuntu 24.04, making glibc 2.39 the supported baseline for this release. The full Linux build statically vendors its `libdbus` code. Every platform archive carries its complete linkage or import report as a signed-inventory asset.
 
-The signed `prnsd-image-v0.3.7.json` asset binds the multi-platform OCI digest to the suite version, source commit, and amd64 and ARM64 child digests. `railway-template-contract-v0.3.7.json` binds the Railway publication to that exact image.
+The signed `prnsd-image-v0.3.8.json` asset binds the multi-platform OCI digest to the suite version, source commit, and amd64 and ARM64 child digests. `railway-template-contract-v0.3.8.json` binds the Railway publication to that exact image.
 
 ### Public staging
 
@@ -216,7 +219,18 @@ Railway's template composer is the publication authority for the Docker-image te
 
 6. Publish a new template revision for each intentional image upgrade instead of mutating a prior release revision.
 
-Before stable promotion, the protected qualification workflow requires a private deployment of the precise template revision, successful public Backbone and WebSocket connections, persistence restoration with the same identity after restart, and an exercised rollback revision. Making the stable GHCR package public is also an explicit first-publication gate; both architectures must be anonymously pullable.
+For 0.3.8, the release owner deferred Railway deployment and template qualification
+because no project or published template exists. The committed
+[`release/deployment/0.3.8.json`](../release/deployment/0.3.8.json) policy is bound
+into the signed suite record and published release notes. It records that public
+Backbone and WebSocket deployment, persistence restoration, and template rollback
+were not qualified; no passing deployment evidence is generated. Omit the two
+deployment-evidence inputs when promoting this version. The deferral does not
+apply to other versions, which still require the protected qualification workflow.
+
+Reproducible container builds, automated release tests, signatures, provenance,
+and anonymous pulls of both architectures remain required for 0.3.8. Making the
+stable GHCR package public remains an explicit first-publication gate.
 
 ### Verify release artifacts
 
@@ -226,8 +240,8 @@ The release checksum inventory and record are verified with the repository's Min
 minisign -Vm SHA256SUMS.txt \
   -x SHA256SUMS.txt.minisig \
   -p minisign.pub
-minisign -Vm release-record-v0.3.7.json \
-  -x release-record-v0.3.7.json.minisig \
+minisign -Vm release-record-v0.3.8.json \
+  -x release-record-v0.3.8.json.minisig \
   -p minisign.pub
 sha256sum --check SHA256SUMS.txt
 ```
@@ -236,10 +250,16 @@ On macOS, use `shasum -a 256 -c SHA256SUMS.txt`. On Windows, compare
 `(Get-FileHash ARCHIVE -Algorithm SHA256).Hash` against the matching
 `SHA256SUMS.txt` entry. The release record binds native archives, signed flasher candidate, source and image SPDX SBOMs, image and platform digests, linkage reports, and GitHub provenance bundles into the exact checksum inventory.
 
-The unified prerelease passes two protected evidence tracks before stable promotion. Physical flasher qualification adds `qualification-evidence-v0.3.7.tar.gz`, a signed acceptance document, and `flasher-release-record-v0.3.7.json`. Railway qualification adds `deployment-qualification-v0.3.7.json`. Promotion accepts only these narrowly named supplements and independently reverifies workflow custody, Minisign signatures, exact source, artifact digests, and live GitHub attestations.
+Flasher release acceptance adds `qualification-evidence-v0.3.8.tar.gz`, a signed
+acceptance document, and `flasher-release-record-v0.3.8.json`. For versions that
+require Railway qualification, the second protected evidence track adds a
+versioned deployment-qualification asset. Version 0.3.8 instead carries the
+explicit deferral in its signed suite record. Promotion independently reverifies
+workflow custody, Minisign signatures, exact source, artifact digests, and live
+GitHub attestations.
 
 ```sh
-gh attestation verify prnsd-0.3.7-x86_64-unknown-linux-gnu.tar.gz \
+gh attestation verify prnsd-0.3.8-x86_64-unknown-linux-gnu.tar.gz \
   --repo KenAKAFrosty/Prns
 gh attestation verify \
   oci://ghcr.io/kenakafrosty/prnsd@sha256:REPLACE_WITH_SIGNED_DIGEST \
@@ -275,9 +295,9 @@ from that verified base and checked again before signing; the suite `VERSION` an
 snapshot version remain unchanged.
 
 Hotfixes retain reproducible builds, dependency review, signing, public review, rollback,
-and exact-byte promotion. They narrow only the rebuilt firmware set and the human physical
-matrix. A hardware deferral is permitted only when committed in the specification and
-explicitly approved in the acceptance record; it is never represented as a completed test.
+and exact-byte promotion. They narrow the rebuilt firmware set. From 0.3.8 until 1.0, hotfixes require the
+same automated release gate as ordinary releases. Older hotfixes retain their
+committed physical matrices and explicit deferrals; no deferral is represented as a passed test.
 See [`release/flash/hotfixes/README.md`](../release/flash/hotfixes/README.md).
 
 Keep `publish = false` on crates until the release checklist for that crate is

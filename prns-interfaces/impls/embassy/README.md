@@ -3,3 +3,96 @@
 This crate is one package in the Personal RNS public Rust graph. Quick overviews, the complete feature guide, API documentation, examples, and the cross-language SDK overview are available at [prns.dev](https://prns.dev) or [reticulum.rs](https://reticulum.rs), and in the [source repository](https://github.com/KenAKAFrosty/Prns).
 
 All public packages use the same engine, release version, and dual MIT/Apache-2.0 license.
+
+## USB bootloader entry
+
+With the `usb` feature, `WebUsbBootloaderEntry::Supported` receives a validated
+`WebUsbBootloaderMode`: `PrnsFlasher` for the existing `0x50` update request,
+or `Uf2HandOff` for the `0x55` recovery-drive request. Callbacks schedule a
+reset after acknowledging the control transfer; board firmware owns the
+bootloader mode and reset implementation. Both requests require the exact
+PRNS signature and an empty data stage. See the
+[T1000-E recovery contract](../../../personal-hopspot/embedded/nrf52840/RECOVERY.md).
+
+## Host-side BLE checks
+
+The `bluetooth-auto-embassy` validation suite runs the production Embassy BLE
+component tests on a normal host, including the Trouble backend, frame pools,
+connection slots, and supervisor. It is registered for PR, release, and scheduled
+validation tiers. PR CI and relevant pre-push checks execute it without a
+connected board. To run it from the repository root:
+
+```console
+python3 validation/run.py run --suite bluetooth-auto-embassy
+```
+
+Member reads use the core's checked `receive_frame` boundary before dispatch.
+A faulty source reporting a length larger than the supplied buffer follows the
+existing transport-closure path instead of reaching an unchecked slice. Tests
+cover exact-capacity and empty frames, invalid lengths, source failure, and
+inactive slots without growing the embedded buffers.
+
+## Duplex fanout
+
+Every active fanout member uses the core receive driver while selected sends
+remain pending, including unselected peers and peers whose sends finished early.
+Each selected send is started exactly once. A local async mutex serializes
+delivery into the fleet's single inbound lane. Pending forwarding retains the
+received frame in that member's existing receive buffer and continues polling
+its send.
+There are no extra packet buffers or spawned tasks; the mutex and per-peer future
+state still have a resource cost that firmware builds must measure.
+
+The shared driver borrows caller-pinned work and the forwarder rather than
+embedding their owned state. Its receive selection also borrows pinned futures
+and uses the shared length validator directly. The [Nordic layout measurement](measurements/ble-duplex-layout.md)
+records the resulting static-memory savings without changing peer capacity,
+packet buffers, or the runtime stack reservation.
+
+Receive, length, send, and forwarding failures retire the affected member without
+restarting another member's send. The existing two-second fanout deadline and
+disable cancellation remain in force, including while forwarding is blocked.
+TX is recorded when the sink settles, so cancellation cannot erase an already
+completed send. RX is recorded after shared-lane delivery settles. Send and
+receive state are separate: cancelled forwarding retires its peer even when
+that peer was unselected or its send already completed.
+
+Once all selected sends settle, no new receive starts; already-received frames
+finish forwarding before fanout returns. The join performs one extra poll pass
+on that transition so earlier members observe later send completions without an
+external wake. It does not spin while forwarding is blocked. Receive pumps remain
+scoped to fanout, not independent tasks.
+
+Tests use real Embassy fleet lanes to cover concurrent peer progress, shared-lane
+pressure, failure isolation, and exact accounting. This is host component evidence,
+not an emulated controller or full embedded node. Native RF behavior and firmware
+resource evidence remain separate.
+
+## Node and supervisor simulation
+
+The simulation package's [`embassy_ble` target](../../../validation/simulation/tests/embassy_ble/main.rs)
+runs this supervisor with virtual BLE radios, real fleet lifecycle channels, and
+coordinated manual time. It checks the exact handshake timeout boundary,
+successful peer admission, and disable teardown on both ends. These scenarios
+run in PR CI and relevant pre-push checks through `virtual-device-simulation`.
+The same target runs three complete Embassy nodes through simultaneous fragmented
+fanout and targeted traffic, checking whole deliveries, command settlement, byte
+accounting, and hub disable/reconnection. The [simulation coverage and limits](../../../validation/simulation/README.md)
+describe the private clock, entropy, and storage fixtures. These are host runtime
+tests; native controllers and board firmware have separate assurance paths.
+
+```console
+python3 validation/run.py run --suite bluetooth-auto-embassy --suite virtual-device-simulation
+```
+
+## Radio transaction firmware size
+
+Radio transactions borrow the caller's immutable previous configuration while
+staging and publishing changes. They still own the staged configuration and
+compare it with the previous snapshot before restoring traffic. Command checks
+that only distinguish `Quiesce` or `Resume` match their variants directly.
+
+The [T-Echo measurement](measurements/radio-transaction-flash.md) compares this
+internal change with the exact prior implementation under the configured
+firmware recipe. Radio initialization, publication acknowledgement, failure
+recovery, and Base Duo 2.4 GHz support retain their existing contracts.

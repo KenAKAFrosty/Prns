@@ -17,6 +17,7 @@ use crate::manifold::driver::{
 use crate::manifold::grant::ManifoldLaneReader;
 use crate::manifold::Host;
 use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
+use crate::runtime::DiscoveryGroupConfigurationStoreExchange;
 use crate::storage::StorageLayout;
 
 use super::super::remote_control_pairing_persistence::{
@@ -54,7 +55,7 @@ pub struct ManifoldWiring<
     pub(super) ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
     pub(super) notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     pub(super) commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
-    pub(super) lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
+    pub(super) lifecycle: Receiver<'static, M, InterfaceLifecycle<'static>, LIFECYCLE>,
     pub(super) handle:
         PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
 }
@@ -76,17 +77,18 @@ pub struct PrnsNode<
     const ROUTED_REQUEST_BYTES: usize = MAX_SEND_REQUEST_DATA_LEN,
     const REQUEST_COMPLETIONS: usize = 0,
     const RESPONSE_BYTES: usize = 0,
+    C = prns_runtime::runtime::NoRemoteControlHostControls,
 > where
     S: StorageLayout,
     M: RawMutex + 'static,
 {
-    node: AssembledNode<St, R, F, S>,
+    node: AssembledNode<St, R, F, S, C>,
     inbound: HeaplessVec<(InterfaceId, &'static mut dyn ManifoldLaneReader), LANE_COUNT>,
     frame_accounting_statuses: HeaplessVec<&'static EmbassyInterfaceStatus, LANE_COUNT>,
     egress: PooledEgress<LANE_COUNT>,
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
-    lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
+    lifecycle: Receiver<'static, M, InterfaceLifecycle<'static>, LIFECYCLE>,
     handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
     host: H,
     descriptors: HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
@@ -127,6 +129,7 @@ impl<
         const COMPLETIONS: usize,
         const REQUEST_COMPLETIONS: usize,
         const RESPONSE_BYTES: usize,
+        C,
     >
     PrnsNode<
         St,
@@ -145,6 +148,7 @@ impl<
         MAX_SEND_REQUEST_DATA_LEN,
         REQUEST_COMPLETIONS,
         RESPONSE_BYTES,
+        C,
     >
 where
     R: RequestEndpointSet<St>,
@@ -152,9 +156,10 @@ where
     S: StorageLayout,
     H: Host,
     M: RawMutex + Sync + 'static,
+    C: prns_runtime::runtime::RemoteControlHostControls,
 {
     pub fn new<'d, D>(
-        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, NoPersistence, C>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -191,6 +196,7 @@ impl<
         const ROUTED_REQUEST_BYTES: usize,
         const REQUEST_COMPLETIONS: usize,
         const RESPONSE_BYTES: usize,
+        C,
     >
     PrnsNode<
         St,
@@ -209,6 +215,7 @@ impl<
         ROUTED_REQUEST_BYTES,
         REQUEST_COMPLETIONS,
         RESPONSE_BYTES,
+        C,
     >
 where
     R: RequestEndpointSet<St>,
@@ -216,10 +223,11 @@ where
     S: StorageLayout,
     H: Host,
     M: RawMutex + Sync + 'static,
+    C: prns_runtime::runtime::RemoteControlHostControls,
 {
     pub fn init_static<'d, D>(
         cell: &'static StaticCell<Self>,
-        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, NoPersistence, C>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -242,7 +250,7 @@ where
 
     pub fn init_in_place<'d, D>(
         slot: &'static mut MaybeUninit<Self>,
-        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, NoPersistence, C>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -265,7 +273,7 @@ where
 
     pub fn init_static_with_persistence<'d, D, P>(
         cell: &'static StaticCell<Self>,
-        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, P>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, P, C>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -291,7 +299,7 @@ where
     )]
     pub fn init_in_place_with_persistence<'d, D, P>(
         slot: &'static mut MaybeUninit<Self>,
-        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, P>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, P, C>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -327,7 +335,7 @@ where
         let node = slot.as_mut_ptr();
         let persistence = unsafe {
             let assembled = &mut *core::ptr::addr_of_mut!((*node).node)
-                .cast::<MaybeUninit<AssembledNode<St, R, F, S>>>();
+                .cast::<MaybeUninit<AssembledNode<St, R, F, S, C>>>();
             let (_, ManuallyAttached, persistence) = assemble_node_in_place(assembled, recipe);
             core::ptr::addr_of_mut!((*node).inbound).write(inbound);
             core::ptr::addr_of_mut!((*node).frame_accounting_statuses)
@@ -352,7 +360,7 @@ where
     }
 
     pub fn new_with_request_capacity<'d, D>(
-        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, NoPersistence, C>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -373,7 +381,7 @@ where
     }
 
     fn build<'d, D>(
-        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, NoPersistence, C>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -443,7 +451,8 @@ where
     /// Runs the manifold with the caller's interface and supervisor tasks.
     pub async fn run(self, drive: impl Future<Output = ()>)
     where
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         self.run_with_inspection_store(&NoInterfaceInspectionStore, drive)
             .await;
@@ -458,7 +467,8 @@ where
     pub async fn run_with_proof_decider<P>(self, should_prove: P, drive: impl Future<Output = ()>)
     where
         P: FnMut(&ProofRequest) -> bool,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         self.run_with_inspection_store_and_proof_decider(
             &NoInterfaceInspectionStore,
@@ -478,7 +488,8 @@ where
         drive: impl Future<Output = ()>,
     ) where
         M: Sync,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         const {
             assert!(
@@ -502,7 +513,8 @@ where
     ) where
         M: Sync,
         P: FnMut(&ProofRequest) -> bool,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         const {
             assert!(
@@ -517,7 +529,8 @@ where
     async fn run_with_inspection_store<Store>(self, store: &Store, drive: impl Future<Output = ()>)
     where
         Store: InterfaceInspectionStore,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         self.run_with_inspection_store_and_proof_decider(store, |_| false, drive)
             .await;
@@ -531,7 +544,8 @@ where
     ) where
         Store: InterfaceInspectionStore,
         P: FnMut(&ProofRequest) -> bool,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         let PrnsNode {
             node,
@@ -549,6 +563,7 @@ where
         let AssembledNode {
             mut engine,
             mut remote_control,
+            controls,
             state,
             mut on_event,
             request_endpoints: _,
@@ -594,6 +609,7 @@ where
         );
         let router = run_router::<
             St,
+            C,
             R,
             M,
             COMMANDS,
@@ -604,6 +620,7 @@ where
             ROUTED_REQUEST_BYTES,
         >(
             &state,
+            &controls,
             &mut remote_control,
             request_channel.receiver(),
             &pairing_persistence_events,
@@ -616,7 +633,8 @@ where
     /// Runs only the manifold for boards that schedule interfaces separately.
     pub async fn run_manifold(&mut self)
     where
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         self.run_manifold_with_inspection_store(&NoInterfaceInspectionStore)
             .await;
@@ -626,7 +644,8 @@ where
     pub async fn run_manifold_with_proof_decider<P>(&mut self, should_prove: P)
     where
         P: FnMut(&ProofRequest) -> bool,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         let mut persistence = NoManifoldPersistence;
         self.run_manifold_with_inspection_store_and_persistence_and_proof_decider(
@@ -646,7 +665,8 @@ where
         store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
     ) where
         M: Sync,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         const {
             assert!(
@@ -669,7 +689,8 @@ where
     ) where
         M: Sync,
         P: FnMut(&ProofRequest) -> bool,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         const {
             assert!(
@@ -689,7 +710,8 @@ where
     async fn run_manifold_with_inspection_store<Store>(&mut self, store: &Store)
     where
         Store: InterfaceInspectionStore,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         let mut persistence = NoManifoldPersistence;
         self.run_manifold_with_inspection_store_and_persistence(store, &mut persistence)
@@ -707,13 +729,21 @@ where
     >(
         &mut self,
         store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
-        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
+        persistence: &mut EmbeddedFlashPersistence<
+            Fl,
+            Keys,
+            Observe,
+            PENDING,
+            impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+            impl AsRef<crate::runtime::NodeNameStoreExchange>,
+        >,
     ) where
         M: Sync,
         Fl: NorFlash,
         Keys: RouteSnapshotKeys,
         Observe: FnMut(EmbeddedPersistenceDiagnostic),
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         const {
             assert!(
@@ -737,7 +767,14 @@ where
     >(
         &mut self,
         store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
-        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
+        persistence: &mut EmbeddedFlashPersistence<
+            Fl,
+            Keys,
+            Observe,
+            PENDING,
+            impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+            impl AsRef<crate::runtime::NodeNameStoreExchange>,
+        >,
         should_prove: Decide,
     ) where
         M: Sync,
@@ -745,7 +782,8 @@ where
         Keys: RouteSnapshotKeys,
         Observe: FnMut(EmbeddedPersistenceDiagnostic),
         Decide: FnMut(&ProofRequest) -> bool,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         const {
             assert!(
@@ -763,7 +801,14 @@ where
 
     pub async fn restore_embedded_persistence<Fl, Keys, Observe, const PENDING: usize>(
         &mut self,
-        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
+        persistence: &mut EmbeddedFlashPersistence<
+            Fl,
+            Keys,
+            Observe,
+            PENDING,
+            impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+            impl AsRef<crate::runtime::NodeNameStoreExchange>,
+        >,
     ) -> EmbeddedPersistenceRestoreReport
     where
         Fl: NorFlash,
@@ -789,7 +834,8 @@ where
     ) where
         Store: InterfaceInspectionStore,
         P: ManifoldPersistence<S>,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         self.run_manifold_with_inspection_store_and_persistence_and_proof_decider(
             store,
@@ -812,7 +858,8 @@ where
         Store: InterfaceInspectionStore,
         P: ManifoldPersistence<S>,
         Decide: FnMut(&ProofRequest) -> bool,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         let PrnsNode {
             node,
@@ -830,6 +877,7 @@ where
         let AssembledNode {
             engine,
             remote_control,
+            controls,
             state,
             on_event,
             request_endpoints: _,
@@ -877,6 +925,7 @@ where
         );
         let router = run_router::<
             St,
+            C,
             R,
             M,
             COMMANDS,
@@ -887,6 +936,7 @@ where
             ROUTED_REQUEST_BYTES,
         >(
             state,
+            controls,
             remote_control,
             request_channel.receiver(),
             &pairing_persistence_events,

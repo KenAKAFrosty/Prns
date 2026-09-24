@@ -1,6 +1,6 @@
 [package]
 name = "prns-interfaces-tokio"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -19,22 +19,26 @@ include = ["src/**", "tests/**", "!tests/**/__pycache__/**", "!tests/**/*.pyc", 
 [lib]
 path = "src/lib.rs"
 
+[[example]]
+name = "halow_datagram"
+required-features = ["wifi-halow"]
+
 [dependencies]
 cfg-if = "1.0"
-prns-config = { version = "=0.3.7", path = "../../../prns-config", optional = true }
+prns-config = { version = "=0.3.8", path = "../../../prns-config", optional = true }
 shlex = { version = "1", optional = true }
 # The permissively licensed Unix transport behind the Prns-owned opaque serial stream.
 # Windows opening and macOS/Windows USB enumeration stay in prns-ffi so platform FFI never
 # leaks into the safe host-interface crate.
 serial2-tokio = { version = "0.1.24", optional = true }
-prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features = false, features = ["tokio-host"] }
-prns-runtime = { package = "prns-runtime-tokio", version = "=0.3.7", path = "../../../prns-runtime/impls/tokio", default-features = false }
+prns-core = { version = "=0.3.8", path = "../../../prns-core", default-features = false, features = ["tokio-host"] }
+prns-runtime = { package = "prns-runtime-tokio", version = "=0.3.8", path = "../../../prns-runtime/impls/tokio", default-features = false }
 heapless = { version = "0.8", default-features = false }
 tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
 socket2 = { version = "0.6", optional = true, features = ["all"] }
 if-addrs = { version = "0.13", optional = true }
 getrandom = { version = "0.2", optional = true }
-tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake", "rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake"] }
 rustls = { version = "0.23", optional = true, default-features = false, features = ["ring"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
 log = { version = "0.4", optional = true, default-features = false }
@@ -57,8 +61,8 @@ nusb = { version = "0.2.4", optional = true, features = ["tokio"] }
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 netdev = { version = "0.45", optional = true }
 
-[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))'.dependencies]
-prns-ffi = { version = "=0.3.7", path = "../../../prns-ffi", optional = true, default-features = false }
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "ios", target_os = "windows"))'.dependencies]
+prns-ffi = { version = "=0.3.8", path = "../../../prns-ffi", optional = true, default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "test-util"] }
@@ -82,7 +86,8 @@ ax25 = ["kiss"]
 rnode = ["dep:tokio", "dep:prns-config", "dep:btleplug", "dep:uuid", "dep:futures-util", "dep:bluer", "tokio/rt"]
 pipe = ["dep:tokio", "tokio/process"]
 backbone = ["tcp"]
-websocket = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:rustls", "dep:futures-util"]
+websocket-server = ["dep:tokio", "tokio/net", "dep:tokio-tungstenite", "dep:futures-util"]
+websocket = ["websocket-server", "dep:rustls", "tokio-tungstenite/rustls-tls-native-roots"]
 browser-rendezvous = ["websocket", "network-device-selection", "dep:serde", "dep:serde_json", "dep:url", "dep:mdns-sd"]
 i2p = ["dep:tokio", "tokio/net", "dep:socket2", "dep:getrandom", "prns-core/i2p"]
 weave = ["serial", "dep:getrandom"]
@@ -93,10 +98,14 @@ wifi-auto-apple = ["wifi-auto", "dep:prns-ffi", "dep:getrandom"]
 wifi-auto-mdns = ["wifi-auto", "dep:mdns-sd", "dep:getrandom"]
 wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
 wifi-aware = ["tcp"]
+wifi-halow = ["dep:tokio", "tokio/net", "dep:prns-ffi", "prns-ffi/linux-packet"]
 usb = ["serial", "tcp", "dep:futures-util", "dep:prns-ffi", "dep:nusb"]
 interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
 config = ["dep:prns-config", "dep:tokio", "dep:if-addrs", "tokio/rt"]
-bluetooth-auto = ["dep:tokio", "tokio/rt", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]
+# Portable policy, handshake, and member supervision without native radio adapters.
+bluetooth-auto-runtime = ["dep:tokio", "tokio/rt", "dep:futures-util"]
+# Production host attachment adds the platform Bluetooth implementations.
+bluetooth-auto = ["bluetooth-auto-runtime", "dep:bluer", "dep:prns-ffi"]
 
 [lints.clippy]
 dbg_macro = "deny"

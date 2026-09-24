@@ -32,10 +32,19 @@ pub struct EmbassyInterfaceSeam<
     const FRAME: usize,
 > {
     id: InterfaceId,
+    channel: ChannelBinding,
+    channel_change_drops: u32,
     inbound: EmbassyGrantProducer<'a, M, FRAME>,
     notify: Sender<'a, M, InterfaceId, NOTIFY>,
     outbound: EmbassyGrantConsumer<'a, M, FRAME>,
     entropy: EntropyHandle<M, S>,
+}
+
+#[derive(Clone, Copy)]
+enum ChannelBinding {
+    Original,
+    Published,
+    Retained,
 }
 
 impl<'a, M, S, const NOTIFY: usize, const FRAME: usize>
@@ -54,6 +63,8 @@ where
     ) -> Self {
         Self {
             id,
+            channel: ChannelBinding::Original,
+            channel_change_drops: 0,
             inbound,
             notify,
             outbound,
@@ -68,14 +79,38 @@ where
     M: RawMutex + Sync + 'static,
     S: EntropySource + Send + 'static,
 {
+    fn set_channel_id(&mut self, id: InterfaceId) {
+        if self.id == id {
+            if matches!(self.channel, ChannelBinding::Original) {
+                self.channel = ChannelBinding::Published;
+            }
+            return;
+        }
+        self.id = id;
+        self.channel = ChannelBinding::Published;
+        // Publication is acknowledged before this boundary, so old-channel
+        // entries form a prefix. Drain that prefix now to prevent A→B→A reuse.
+        while let Some(frame) = self.outbound.try_peek() {
+            if frame.target == FrameTarget::Direct(id) {
+                self.channel = ChannelBinding::Retained;
+                break;
+            }
+            self.complete_outbound(OutboundDisposition::Dropped(
+                crate::manifold::interface_seam::OutboundDropReason::ChannelChanged,
+            ));
+        }
+    }
+
+    fn take_channel_change_drops(&mut self) -> u32 {
+        core::mem::take(&mut self.channel_change_drops)
+    }
+
     fn fill_random(&mut self, bytes: &mut [u8]) {
         self.entropy.fill_random(bytes);
     }
 
     async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
-        let slot = self.inbound.grant().await;
-        slot.target = FrameTarget::Direct(self.id);
-        slot
+        self.inbound.grant().await
     }
 
     async fn commit_inbound(&mut self) {
@@ -83,6 +118,7 @@ where
         if slot.len == 0 {
             return;
         }
+        slot.target = FrameTarget::Direct(self.id);
         self.inbound.commit();
         let _ = self.notify.try_send(self.id);
     }
@@ -98,15 +134,45 @@ where
     }
 
     async fn next_outbound(&mut self) -> &[u8] {
-        self.outbound.release();
-        self.outbound.peek().await.frame()
+        match self.channel {
+            ChannelBinding::Original | ChannelBinding::Published => self.outbound.release(),
+            ChannelBinding::Retained => self.channel = ChannelBinding::Published,
+        }
+        loop {
+            let target = self.outbound.peek().await.target;
+            let accepts = match self.channel {
+                ChannelBinding::Original => true,
+                ChannelBinding::Published | ChannelBinding::Retained => {
+                    target == FrameTarget::Direct(self.id)
+                }
+            };
+            if accepts {
+                return self.outbound.peek().await.frame();
+            }
+            self.complete_outbound(OutboundDisposition::Dropped(
+                crate::manifold::interface_seam::OutboundDropReason::ChannelChanged,
+            ));
+        }
     }
 
     fn accept_outbound_custody(&mut self) {
+        if matches!(self.channel, ChannelBinding::Retained) {
+            self.channel = ChannelBinding::Published;
+        }
         self.outbound.release();
     }
 
-    fn complete_outbound(&mut self, _disposition: OutboundDisposition) {
+    fn complete_outbound(&mut self, disposition: OutboundDisposition) {
+        if matches!(self.channel, ChannelBinding::Retained) {
+            self.channel = ChannelBinding::Published;
+        }
+        if disposition
+            == OutboundDisposition::Dropped(
+                crate::manifold::interface_seam::OutboundDropReason::ChannelChanged,
+            )
+        {
+            self.channel_change_drops = self.channel_change_drops.saturating_add(1);
+        }
         self.outbound.release();
     }
 }

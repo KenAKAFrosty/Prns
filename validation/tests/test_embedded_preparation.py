@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import io
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from validation.hardening.embedded_host import HostPlatform
@@ -67,6 +69,37 @@ class EmbeddedPreparationTests(unittest.TestCase):
     def test_unknown_suite_is_rejected(self) -> None:
         with self.assertRaisesRegex(PreparationError, "unknown embedded assurance suite"):
             requirements_for_suites(("not-a-suite",), HostPlatform.LINUX_AMD64)
+
+    def test_renode_identity_is_specific_to_the_pinned_host_package(self) -> None:
+        packages = {
+            HostPlatform.LINUX_AMD64: ("20260907", "8.0.12"),
+            HostPlatform.LINUX_ARM64: ("20260906", "8.0.16"),
+            HostPlatform.MACOS_ARM64: ("20260906", "8.0.21"),
+            HostPlatform.WINDOWS_AMD64: ("20260906", "8.0.10"),
+        }
+        for host, (build_date, runtime) in packages.items():
+            with self.subTest(host=host):
+                requirement, = requirements_for_suites(
+                    ("embedded-platform-nrf52840",), host
+                )
+                expected = (
+                    "Renode v1.17.0",
+                    f"build: 1.17.0+{build_date}gitf1dd1b4af",
+                    "build type: Release",
+                    f"runtime: .NET {runtime}",
+                )
+                self.assertEqual(requirement.identity, expected)
+                output = subprocess.CompletedProcess([], 0, "\n".join(expected), "")
+                with mock.patch(
+                    "validation.hardening.embedded_readiness.prepare.subprocess.run",
+                    return_value=output,
+                ):
+                    verify_identity(Path("renode"), expected, requirement.identity_scope)
+                    with self.assertRaisesRegex(PreparationError, "emulator identity"):
+                        verify_identity(
+                            Path("renode"), expected[:-1] + ("runtime: .NET 0.0.0",),
+                            requirement.identity_scope,
+                        )
 
     def test_download_requires_the_contract_checksum(self) -> None:
         archive = Archive("https://example.com/tool.tar.xz", "0" * 64)

@@ -1,3 +1,4 @@
+pub(super) use super::subg_configuration::apply_subg_configuration;
 use embassy_time::{Duration, Instant};
 use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
@@ -86,29 +87,27 @@ pub(super) struct Context<'a, D: RetainedDisplayDevice> {
     pub subg_configuration: &'a mut SubGConfigurationState,
 }
 
-pub(super) fn capabilities() -> RemoteControlCapabilities {
-    let mut capabilities = RemoteControlCapabilities::describe_only();
-    for kind in [
-        RemoteControlRequestKind::AnnounceSelf,
-        RemoteControlRequestKind::InventoryInterfaces,
-        RemoteControlRequestKind::SetInterfacePower,
-        RemoteControlRequestKind::SetInterfaceGroup,
-        RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
-        RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
-        RemoteControlRequestKind::InventoryInterfacePeers,
-        RemoteControlRequestKind::InventoryInterfaceConfig,
-        RemoteControlRequestKind::SetInterfaceLoRaProfile,
-        RemoteControlRequestKind::DescribeBuild,
-        RemoteControlRequestKind::DescribePower,
-        RemoteControlRequestKind::SetSystemPower,
-        RemoteControlRequestKind::SetDisplayVisibility,
-        RemoteControlRequestKind::InventoryControllers,
-        RemoteControlRequestKind::AuthorizeController,
-        RemoteControlRequestKind::RevokeController,
-    ] {
-        capabilities = capabilities.with_request(kind);
-    }
-    capabilities
+pub(super) const fn capabilities() -> RemoteControlCapabilities {
+    const CAPABILITIES: RemoteControlCapabilities = RemoteControlCapabilities::describe_only()
+        .with_request(RemoteControlRequestKind::AnnounceSelf)
+        .with_request(RemoteControlRequestKind::InventoryInterfaces)
+        .with_request(RemoteControlRequestKind::SetInterfacePower)
+        .with_request(RemoteControlRequestKind::SetInterfaceGroup)
+        .with_request(RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups)
+        .with_request(RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups)
+        .with_request(RemoteControlRequestKind::InventoryInterfacePeers)
+        .with_request(RemoteControlRequestKind::InventoryInterfaceConfig)
+        .with_request(RemoteControlRequestKind::SetInterfaceLoRaProfile)
+        .with_request(RemoteControlRequestKind::SetNodeName)
+        .with_request(RemoteControlRequestKind::DescribeNodeName)
+        .with_request(RemoteControlRequestKind::DescribeBuild)
+        .with_request(RemoteControlRequestKind::DescribePower)
+        .with_request(RemoteControlRequestKind::SetSystemPower)
+        .with_request(RemoteControlRequestKind::SetDisplayVisibility)
+        .with_request(RemoteControlRequestKind::InventoryControllers)
+        .with_request(RemoteControlRequestKind::AuthorizeController)
+        .with_request(RemoteControlRequestKind::RevokeController);
+    CAPABILITIES
 }
 
 pub(super) async fn execute<D: RetainedDisplayDevice>(
@@ -244,6 +243,12 @@ pub(super) async fn execute<D: RetainedDisplayDevice>(
                 RemoteControlLoRaOutcome::Applied,
             ))
         }
+        RemoteControlHostCommand::SetNodeName { name } => Ok(
+            RemoteControlHostResponse::SetNodeName(super::node_name::set(name).await?),
+        ),
+        RemoteControlHostCommand::DescribeNodeName => Ok(
+            RemoteControlHostResponse::DescribeNodeName(super::node_name::current()),
+        ),
         RemoteControlHostCommand::DescribeBuild => Ok(RemoteControlHostResponse::DescribeBuild(
             hopspot::hopspot_remote_control_build_version()
                 .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?,
@@ -521,60 +526,6 @@ pub(super) async fn apply_scheduled<D: RetainedDisplayDevice>(
             usb_status.disable();
             BluetoothAutoStatus::new(&BLE_SHARED).disable();
             system.set_awake(false);
-        }
-    }
-}
-
-pub(super) async fn apply_subg_configuration(
-    controller: &mut personal_rns::lora::LoRaController<'static>,
-    store: &mut hopspot::SubGConfigurationStore<BoardFlash>,
-    active: &mut SubGConfigurationState,
-    requested: SubGConfigurationState,
-) -> Result<(), RemoteControlHostCommandError> {
-    if *active == requested {
-        return Ok(());
-    }
-    let previous = *active;
-    if controller.apply_configuration(requested).await
-        == personal_rns::lora::LoRaApplyOutcome::Rejected
-    {
-        return Err(RemoteControlHostCommandError::ApplyFailed);
-    }
-    *active = requested;
-    let persistence = match requested {
-        SubGConfigurationState::Configured(configuration) => store.save(configuration).await,
-        SubGConfigurationState::Unconfigured => store.clear().await,
-    };
-    match persistence {
-        hopspot::SubGConfigurationCommitOutcome::Committed => Ok(()),
-        hopspot::SubGConfigurationCommitOutcome::Indeterminate(_) => {
-            if controller.apply_configuration(previous).await
-                != personal_rns::lora::LoRaApplyOutcome::Applied
-            {
-                return Err(RemoteControlHostCommandError::RollbackFailed);
-            }
-            *active = previous;
-            let rollback = match previous {
-                SubGConfigurationState::Configured(configuration) => {
-                    store.save(configuration).await
-                }
-                SubGConfigurationState::Unconfigured => store.clear().await,
-            };
-            if rollback == hopspot::SubGConfigurationCommitOutcome::Committed {
-                Err(RemoteControlHostCommandError::PersistenceFailed)
-            } else {
-                Err(RemoteControlHostCommandError::RollbackFailed)
-            }
-        }
-        hopspot::SubGConfigurationCommitOutcome::NotCommitted(_) => {
-            if controller.apply_configuration(previous).await
-                == personal_rns::lora::LoRaApplyOutcome::Applied
-            {
-                *active = previous;
-                Err(RemoteControlHostCommandError::PersistenceFailed)
-            } else {
-                Err(RemoteControlHostCommandError::RollbackFailed)
-            }
         }
     }
 }

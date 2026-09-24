@@ -1,7 +1,7 @@
+use super::super::remote_control::{NoRemoteControlHostControls, RemoteControlNodeSetup};
 use crate::engine::RatchetPolicy;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentityHash, IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use crate::remote_control::RemoteControlService;
 use crate::routing::announce::{
     derive_destination_hash, derive_plain_destination_hash, expand_name, ExpandNameError,
 };
@@ -113,12 +113,13 @@ pub struct PrnsNodeRecipe<
     Interfaces,
     Storage,
     Persistence = NoPersistence,
+    Controls = NoRemoteControlHostControls,
 > where
     OnEvent: FnMut(PrnsEvent<'_>, &AppState),
 {
     /// The transport role takes a whole identity, never a bare address: a transport node signs (tunnel synthesis), and RNS 1.4.2 keeps a dedicated persisted transport identity.
     pub transport_identity: Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>,
-    pub remote_control: RemoteControlService<'configuration>,
+    pub remote_control: RemoteControlNodeSetup<'configuration, Controls>,
     pub pre_configured_destinations: Destinations,
     pub app_state: AppState,
     /// The storage layout the engine's columns run on: `GrowableHeap` on a std

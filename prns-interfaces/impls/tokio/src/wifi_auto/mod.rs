@@ -39,6 +39,10 @@ use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 mod apple;
 mod discovery;
 mod host_lan;
+mod rendezvous;
+use rendezvous::{
+    bind_rendezvous, canonical_rendezvous_peer, rendezvous_peer_is_local, RendezvousListeners,
+};
 #[cfg(feature = "wifi-auto-mdns")]
 mod mdns;
 #[cfg(feature = "wifi-auto-mdns")]
@@ -308,7 +312,7 @@ enum RendezvousClaimSchedule {
 impl RendezvousClaimSchedule {
     fn when_unbound(
         settings: &AutoWifiSettings,
-        rendezvous_listener: &Option<TcpListener>,
+        rendezvous_listener: &Option<RendezvousListeners>,
     ) -> Self {
         match (
             settings.stock_service_discovery_enabled(),
@@ -321,7 +325,7 @@ impl RendezvousClaimSchedule {
 
     fn after_beacon(
         settings: &AutoWifiSettings,
-        rendezvous_listener: &Option<TcpListener>,
+        rendezvous_listener: &Option<RendezvousListeners>,
         rebind_schedule: RebindSchedule,
     ) -> Self {
         match (
@@ -982,7 +986,8 @@ impl InterfaceSupervisor for AutoWifi {
         let mut rendezvous_listener = settings
             .stock_service_discovery_enabled()
             .then_some(supplied_rendezvous_listener)
-            .flatten();
+            .flatten()
+            .map(RendezvousListeners::Supplied);
         let mut discovery_participation = if rendezvous_listener.is_some() {
             DiscoveryParticipation::Central
         } else {
@@ -1561,7 +1566,7 @@ impl Supervisor {
 
     async fn suspend_until_enabled(
         &mut self,
-        rendezvous_listener: &mut Option<TcpListener>,
+        rendezvous_listener: &mut Option<RendezvousListeners>,
         service_discovery: Option<&ServiceDiscovery>,
         nics: &mut std::vec::Vec<Nic>,
         sockets: &mut Option<Sockets>,
@@ -1586,7 +1591,7 @@ impl Supervisor {
     fn apply_rendezvous_claim(
         &mut self,
         rendezvous_claim: RendezvousClaim,
-        rendezvous_listener: &mut Option<TcpListener>,
+        rendezvous_listener: &mut Option<RendezvousListeners>,
         nics: &mut std::vec::Vec<Nic>,
         sockets: &mut Option<Sockets>,
         network_discovery_owner: NetworkDiscoveryOwner,
@@ -1632,8 +1637,12 @@ impl Supervisor {
         &mut self,
         accepted_connection: io::Result<(TcpStream, SocketAddr)>,
     ) {
+        let accepted_connection = accepted_connection
+            .map(|(stream, address)| (stream, canonical_rendezvous_peer(address)));
         match accepted_connection {
-            Ok((tcp_stream, peer_address)) if is_local_peer(peer_address.ip(), &self.prefixes) => {
+            Ok((tcp_stream, peer_address))
+                if rendezvous_peer_is_local(peer_address, &self.prefixes) =>
+            {
                 if let SocketAddr::V6(peer_v6) = peer_address {
                     let peer = ScopedPeer::from_socket_address(peer_v6);
                     if self.members.contains_key(&peer)
@@ -2696,7 +2705,7 @@ fn platform_gateway_inventory() -> GatewayInventory {
 }
 
 enum RendezvousClaim {
-    Central(TcpListener),
+    Central(RendezvousListeners),
     Satellite,
     Unavailable(io::ErrorKind),
 }
@@ -2716,7 +2725,7 @@ fn classify_rendezvous_bind_error(bind_error: &io::Error) -> RendezvousBindFailu
 }
 
 async fn claim_local_rendezvous() -> RendezvousClaim {
-    match TcpListener::bind(("0.0.0.0", contract::TCP_RENDEZVOUS_PORT)).await {
+    match bind_rendezvous(contract::TCP_RENDEZVOUS_PORT) {
         Ok(rendezvous_listener) => RendezvousClaim::Central(rendezvous_listener),
         Err(bind_error) => match classify_rendezvous_bind_error(&bind_error) {
             RendezvousBindFailure::Satellite => RendezvousClaim::Satellite,
@@ -2728,7 +2737,7 @@ async fn claim_local_rendezvous() -> RendezvousClaim {
 }
 
 async fn accept_maybe(
-    rendezvous_listener: &Option<TcpListener>,
+    rendezvous_listener: &Option<RendezvousListeners>,
 ) -> io::Result<(TcpStream, SocketAddr)> {
     match rendezvous_listener {
         Some(rendezvous_listener) => rendezvous_listener.accept().await,

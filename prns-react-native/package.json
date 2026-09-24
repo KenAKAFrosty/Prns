@@ -35,7 +35,10 @@
     "android/src/main",
     "expo-module.config.json",
     "native-image.json",
-    "README.md"
+    "README.md",
+    "docs/qualification.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
   "scripts": {
     "generate": "python3 tools/generate.py generate",

@@ -55,7 +55,7 @@ async fn main() {
     };
 
     let node = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [me],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,

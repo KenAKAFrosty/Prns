@@ -78,20 +78,23 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
+      - run: ./tools/prns run repo.host-contract.check
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           components: clippy,rustfmt
+      - run: cargo fmt --manifest-path prns-host/abi/c/Cargo.toml -- --check
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: prns-host/abi/c
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            prns-js/package-lock.json
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         with:
           dotnet-version: 8.0.x
-      - run: ./tools/prns run repo.host-contract.check
-      - run: cargo fmt --manifest-path prns-host/abi/c/Cargo.toml -- --check
       - run: cargo clippy --manifest-path prns-host/abi/c/Cargo.toml --all-targets --locked -- -D warnings
       - run: cargo test --manifest-path prns-host/abi/c/Cargo.toml --locked
       - run: cc -std=c11 -Wall -Wextra -Werror -fsyntax-only prns-host/abi/c/tests/header-smoke.c
@@ -183,6 +186,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            prns-napi/package-lock.json
       - run: npm ci --ignore-scripts
         working-directory: prns-napi
       - run: npm run build -- --target ${{ matrix.settings.target }} ${{ matrix.settings.cross }}
@@ -238,6 +244,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            prns-napi/package-lock.json
+            prns-js/package-lock.json
       - run: npm ci --ignore-scripts
         working-directory: prns-napi
       - run: npm ci --ignore-scripts
@@ -303,8 +313,8 @@ jobs:
           npm --prefix prns-js ci --ignore-scripts &&
           npm --prefix prns-js run test:native'
 
-  javascript-hosts:
-    needs: napi-build
+  javascript-browser:
+    # Unit, browser, and package checks do not consume a native binding.
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -317,36 +327,90 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: prns-wasm
-          key: javascript-hosts
+          shared-key: javascript-browser-v1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            prns-wasm/package-lock.json
+            prns-js/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: prns-wasm
+      - run: npm ci --ignore-scripts
+        working-directory: prns-js
+      - name: Build JavaScript once and run unit tests
+        working-directory: prns-js
+        run: |
+          npm run build:code
+          npm run test:built
+      - run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      - name: Build the debug WASM backend
+        run: npm run build:wasm
+        working-directory: prns-wasm
+        env:
+          RUSTFLAGS: "-D warnings"
+      - name: Test the staged browser package
+        working-directory: prns-js
+        run: |
+          npm run stage:browser
+          npm run test:browser:built
+      - name: Build the release WASM backend
+        run: npm run build:package:wasm
+        working-directory: prns-wasm
+      - name: Inspect the complete release package without rebuilding JavaScript
+        working-directory: prns-js
+        run: |
+          npm run stage:package
+          npm run pack:check:built
+
+  javascript-native:
+    needs: napi-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            prns-napi/package-lock.json
+            prns-js/package-lock.json
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.14
-      - run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - run: npm ci --ignore-scripts
         working-directory: prns-napi
-      - run: npm ci --ignore-scripts
-        working-directory: prns-wasm
       - run: npm ci --ignore-scripts
         working-directory: prns-js
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: bindings-x86_64-unknown-linux-gnu
           path: prns-napi
-      - run: npm test
+      - name: Build JavaScript once and exercise Node and Bun
         working-directory: prns-js
-      - run: npm run test:native
-        working-directory: prns-js
-      - run: npm run test:bun
-        working-directory: prns-js
-      - run: npm run test:browser:full
-        working-directory: prns-js
-        env:
-          RUSTFLAGS: "-D warnings"
-      - run: npm run pack:check
-        working-directory: prns-js
+        run: |
+          npm run build:native
+          npm run test:native:built
+          npm run test:bun:built
+
+  javascript-hosts:
+    # Keep the existing required result and reject failed or skipped sub-lanes.
+    needs: [javascript-browser, javascript-native]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BROWSER_RESULT: ${{ needs.javascript-browser.result }}
+      NATIVE_RESULT: ${{ needs.javascript-native.result }}
+    steps:
+      - name: Require browser and native JavaScript checks
+        run: |
+          test "$BROWSER_RESULT" = success
+          test "$NATIVE_RESULT" = success
 
   napi-release-critical:
     needs:
@@ -382,6 +446,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            prns-napi/package-lock.json
+            prns-wasm/package-lock.json
+            prns-js/package-lock.json
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.14
@@ -389,6 +458,10 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: ./.github/actions/reproducible-rust
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: prns-wasm
+          shared-key: javascript-release-package-v1
       - run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - run: npm ci --ignore-scripts
         working-directory: prns-napi
@@ -464,11 +537,20 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            prns-napi/package-lock.json
+            prns-wasm/package-lock.json
+            prns-js/package-lock.json
           registry-url: "https://registry.npmjs.org"
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           targets: wasm32-unknown-unknown
       - uses: ./.github/actions/reproducible-rust
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: prns-wasm
+          shared-key: javascript-release-package-v1
       - run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - run: npm ci --ignore-scripts
         working-directory: prns-napi

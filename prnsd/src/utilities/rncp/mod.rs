@@ -508,7 +508,7 @@ where
     let listener_no_auth = args.no_auth;
     let mut node = PrnsNode::new_with_handle(move |handle| personal_rns::runtime::PrnsNodeRecipe {
         transport_identity: None,
-        remote_control,
+        remote_control: remote_control.into(),
         pre_configured_destinations: [PreConfiguredDestination::Single {
             app_name: APP_NAME,
             aspects: &[RECEIVE_ASPECT],

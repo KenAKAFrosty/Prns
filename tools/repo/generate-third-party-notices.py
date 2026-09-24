@@ -27,6 +27,16 @@ GRAPHS = (
     ("desktop Linux", "personal-hopspot/desktop/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("desktop macOS", "personal-hopspot/desktop/Cargo.toml", "aarch64-apple-darwin"),
     ("desktop Windows", "personal-hopspot/desktop/Cargo.toml", "x86_64-pc-windows-msvc"),
+    (
+        "HaLoW headless",
+        "personal-hopspot/headless/Cargo.toml",
+        "mipsel-unknown-linux-musl",
+    ),
+    (
+        "HaLoW appliance manager",
+        "personal-hopspot/appliance/Cargo.toml",
+        "mipsel-unknown-linux-musl",
+    ),
     ("Android", "personal-hopspot/mobile/android/rust/Cargo.toml", "aarch64-linux-android"),
     ("iOS", "personal-hopspot/mobile/ios/rust/Cargo.toml", "aarch64-apple-ios"),
     ("Prns app Android", "applications/prns/native-composition/Cargo.toml", "aarch64-linux-android"),
@@ -39,6 +49,9 @@ GRAPHS = (
         "prns-host/impls/native/Cargo.toml",
         "x86_64-unknown-linux-gnu",
     ),
+    ("Expo host", "prns-host/bindings/uniffi/image/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("Expo Android", "prns-host/bindings/uniffi/image/Cargo.toml", "aarch64-linux-android"),
+    ("Expo iOS", "prns-host/bindings/uniffi/image/Cargo.toml", "aarch64-apple-ios"),
     ("nRF52840", "personal-hopspot/embedded/nrf52840/Cargo.toml", "thumbv7em-none-eabihf"),
     (
         "ESP32-C6",
@@ -48,6 +61,16 @@ GRAPHS = (
     (
         "ESP32-S3 Heltec E290",
         "personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
+    (
+        "ESP32-S3 Heltec V3",
+        "personal-hopspot/embedded/esp32/boards/heltec-v3/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
+    (
+        "ESP32-S3 XIAO Wio-SX1262",
+        "personal-hopspot/embedded/esp32/boards/xiao-esp32s3-wio-sx1262/Cargo.toml",
         "xtensa-esp32s3-none-elf",
     ),
     (
@@ -142,7 +165,7 @@ VENDORED = (
         "libdbus 1.14.4",
         "AFL-2.1",
         "release/licenses/libdbus-AFL-2.1.txt",
-        ("Node addon Linux", "daemon Linux"),
+        ("Node addon Linux", "daemon Linux", "Host SDK native", "Expo host"),
     ),
 )
 
@@ -170,15 +193,25 @@ def notice_input_paths() -> tuple[Path, ...]:
         if "node_modules" not in Path(relative).parts
     )
     paths.update(ROOT / relative for _, _, relative, _ in VENDORED)
-    for pattern in ("Cargo.toml", "Cargo.lock"):
-        paths.update(
-            path
-            for path in ROOT.rglob(pattern)
-            if not any(
-                part in {".git", "node_modules", "target", "vendor"}
-                for part in path.relative_to(ROOT).parts
-            )
+    tracked = subprocess.run(
+        ["git", "ls-files", "--cached", "--full-name", "-z"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    if tracked.returncode:
+        raise RuntimeError("cannot enumerate tracked notice inputs")
+    paths.update(
+        ROOT / relative
+        for encoded in tracked.stdout.split(b"\0")
+        if encoded
+        for relative in (Path(os.fsdecode(encoded)),)
+        if relative.name in {"Cargo.toml", "Cargo.lock"}
+        and not any(
+            part in {".git", "node_modules", "target", "vendor"}
+            for part in relative.parts
         )
+    )
     return tuple(sorted(paths, key=lambda path: path.relative_to(ROOT).as_posix()))
 
 
@@ -427,8 +460,8 @@ def notice_bundle() -> str:
             "statically linked into the ESP32-S3 WPA3-SAE radio artifact.",
             "- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its "
             "`AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by "
-            "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon and "
-            "full Linux `prnsd` native release.",
+            "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon, "
+            "full Linux `prnsd` native release, native Host SDK, and Expo host qualification image.",
         ]
     )
     lines.extend(["", "## Android Maven runtime", ""])

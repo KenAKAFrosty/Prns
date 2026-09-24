@@ -1,5 +1,14 @@
 # Flasher tester rosters
 
+From 0.3.8 until 1.0, the generator creates a schema-5 release-owner record:
+`schema`, `release.version`, `release_owner`, and `confirmed_on`. It requires no
+physical-board, browser, or installer assignments. Fill in the real release owner
+and date, validate it with the command below, and commit it before candidate
+creation. The signed candidate continues to bind those exact bytes. Automated
+acceptance follows [the release gate](../README.md#pre-10-automated-release-gate).
+
+## Historical physical rosters (through 0.3.7)
+
 Before building the candidate that will be signed, create `VERSION.json` here from the
 catalog-aware template:
 

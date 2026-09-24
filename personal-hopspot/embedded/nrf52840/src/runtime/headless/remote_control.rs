@@ -1,3 +1,4 @@
+pub(super) use super::super::subg_configuration::apply_subg_configuration;
 use embassy_time::{Duration, Instant};
 use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
@@ -6,7 +7,7 @@ use personal_rns::interfaces::subghz::{
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::manifold::embassy::EmbassyInterfaceStatus;
-#[cfg(feature = "board-t096")]
+#[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
 use personal_rns::remote_control::RemoteControlGnssPower;
 use personal_rns::remote_control::{
     RemoteControlApplyOutcome, RemoteControlCapabilities, RemoteControlDiscoveryGroups,
@@ -19,7 +20,7 @@ use personal_rns::runtime::{
     RemoteControlHostCommand, RemoteControlHostCommandError, RemoteControlHostResponse,
 };
 
-#[cfg(feature = "board-t096")]
+#[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
 use crate::boards::selected as board;
 use crate::immediate_display::{ImmediateDisplayDevice, ImmediateDisplayRuntime};
 
@@ -89,7 +90,7 @@ pub(super) struct Context<'a, D: ImmediateDisplayDevice> {
     pub lora_controller: &'a mut personal_rns::lora::LoRaController<'static>,
     pub subg_store: &'a mut ConfigurationStore,
     pub subg_configuration: &'a mut SubGConfigurationState,
-    #[cfg(feature = "board-t096")]
+    #[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
     pub gnss_wanted: &'a mut bool,
 }
 
@@ -106,6 +107,8 @@ pub(super) fn capabilities() -> RemoteControlCapabilities {
         RemoteControlRequestKind::InventoryInterfaceConfig,
         RemoteControlRequestKind::SetInterfaceLoRaProfile,
         RemoteControlRequestKind::DescribeBuild,
+        RemoteControlRequestKind::SetNodeName,
+        RemoteControlRequestKind::DescribeNodeName,
         RemoteControlRequestKind::DescribePower,
         RemoteControlRequestKind::SetSystemPower,
         RemoteControlRequestKind::SetDisplayVisibility,
@@ -116,7 +119,7 @@ pub(super) fn capabilities() -> RemoteControlCapabilities {
     ] {
         capabilities = capabilities.with_request(kind);
     }
-    #[cfg(feature = "board-t096")]
+    #[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
     {
         capabilities = capabilities.with_request(RemoteControlRequestKind::SetGnssPower);
     }
@@ -256,6 +259,12 @@ pub(super) async fn execute<D: ImmediateDisplayDevice>(
                 RemoteControlLoRaOutcome::Applied,
             ))
         }
+        RemoteControlHostCommand::SetNodeName { name } => Ok(
+            RemoteControlHostResponse::SetNodeName(super::node_name::set(name).await?),
+        ),
+        RemoteControlHostCommand::DescribeNodeName => Ok(
+            RemoteControlHostResponse::DescribeNodeName(super::node_name::current()),
+        ),
         RemoteControlHostCommand::DescribeBuild => Ok(RemoteControlHostResponse::DescribeBuild(
             hopspot::hopspot_remote_control_build_version()
                 .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?,
@@ -284,7 +293,7 @@ pub(super) async fn execute<D: ImmediateDisplayDevice>(
                     .await
                     .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
                 restore_desired_interfaces(&context);
-                #[cfg(feature = "board-t096")]
+                #[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
                 if *context.gnss_wanted {
                     board::control_gnss(hopspot::GnssReceiverCommand::Enable);
                 }
@@ -346,7 +355,7 @@ pub(super) async fn execute<D: ImmediateDisplayDevice>(
             };
             Ok(RemoteControlHostResponse::SetDisplayAutoOff(outcome))
         }
-        #[cfg(feature = "board-t096")]
+        #[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
         RemoteControlHostCommand::SetGnssPower { power } => {
             let desired = power == RemoteControlGnssPower::On;
             let outcome = if *context.gnss_wanted == desired {
@@ -613,63 +622,9 @@ pub(super) async fn apply_scheduled<D: ImmediateDisplayDevice>(
             lora_status.disable();
             usb_status.disable();
             BluetoothAutoStatus::new(&BLE_SHARED).disable();
-            #[cfg(feature = "board-t096")]
+            #[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
             board::control_gnss(hopspot::GnssReceiverCommand::Disable);
             system.set_awake(false);
-        }
-    }
-}
-
-pub(super) async fn apply_subg_configuration(
-    controller: &mut personal_rns::lora::LoRaController<'static>,
-    store: &mut ConfigurationStore,
-    active: &mut SubGConfigurationState,
-    requested: SubGConfigurationState,
-) -> Result<(), RemoteControlHostCommandError> {
-    if *active == requested {
-        return Ok(());
-    }
-    let previous = *active;
-    if controller.apply_configuration(requested).await
-        == personal_rns::lora::LoRaApplyOutcome::Rejected
-    {
-        return Err(RemoteControlHostCommandError::ApplyFailed);
-    }
-    *active = requested;
-    let persistence = match requested {
-        SubGConfigurationState::Configured(configuration) => store.save(configuration).await,
-        SubGConfigurationState::Unconfigured => store.clear().await,
-    };
-    match persistence {
-        hopspot::SubGConfigurationCommitOutcome::Committed => Ok(()),
-        hopspot::SubGConfigurationCommitOutcome::Indeterminate(_) => {
-            if controller.apply_configuration(previous).await
-                != personal_rns::lora::LoRaApplyOutcome::Applied
-            {
-                return Err(RemoteControlHostCommandError::RollbackFailed);
-            }
-            *active = previous;
-            let rollback = match previous {
-                SubGConfigurationState::Configured(configuration) => {
-                    store.save(configuration).await
-                }
-                SubGConfigurationState::Unconfigured => store.clear().await,
-            };
-            if rollback == hopspot::SubGConfigurationCommitOutcome::Committed {
-                Err(RemoteControlHostCommandError::PersistenceFailed)
-            } else {
-                Err(RemoteControlHostCommandError::RollbackFailed)
-            }
-        }
-        hopspot::SubGConfigurationCommitOutcome::NotCommitted(_) => {
-            if controller.apply_configuration(previous).await
-                == personal_rns::lora::LoRaApplyOutcome::Applied
-            {
-                *active = previous;
-                Err(RemoteControlHostCommandError::PersistenceFailed)
-            } else {
-                Err(RemoteControlHostCommandError::RollbackFailed)
-            }
         }
     }
 }

@@ -1,0 +1,234 @@
+{
+  "schema": 1,
+  "date": "2026-09-29",
+  "source_commit": "0966fe6b96dc4fe6cb2c67c39e38c823bed3f5c6",
+  "working_tree_dirty_at_build": false,
+  "application_sha256": "3cb73d0896de9c9f9c864d0e282d2accecaa279c2ae63ac0905521afd6dc21b2",
+  "topology": "three fully connected mesh peers; laptop enters source board over wired TCP; source board reaches destination over HaLoW",
+  "profile": {
+    "frequency_mhz": 924,
+    "bandwidth_mhz": 8,
+    "mcs": 2,
+    "guard": "long",
+    "mesh_forwarding": false,
+    "power_save": false,
+    "txpower_dbm": 18
+  },
+  "host": {
+    "announce_seconds": 10,
+    "idle_seconds": 30,
+    "peer_cap": 4,
+    "vendor_polling": "unchanged"
+  },
+  "transfers": [
+    {
+      "phase": "initial",
+      "source": "G4",
+      "destination": "Heltec A",
+      "exit_code": 0,
+      "page_bytes": 3542,
+      "request_rtt_ms": 141
+    },
+    {
+      "phase": "initial",
+      "source": "G4",
+      "destination": "Heltec B",
+      "exit_code": 0,
+      "page_bytes": 3542,
+      "request_rtt_ms": 115
+    },
+    {
+      "phase": "initial",
+      "source": "Heltec A",
+      "destination": "G4",
+      "exit_code": 0,
+      "page_bytes": 3542,
+      "request_rtt_ms": 94
+    },
+    {
+      "phase": "initial",
+      "source": "Heltec A",
+      "destination": "Heltec B",
+      "exit_code": 0,
+      "page_bytes": 3542,
+      "request_rtt_ms": 71
+    },
+    {
+      "phase": "initial",
+      "source": "Heltec B",
+      "destination": "G4",
+      "exit_code": 0,
+      "page_bytes": 3542,
+      "request_rtt_ms": 119
+    },
+    {
+      "phase": "initial",
+      "source": "Heltec B",
+      "destination": "Heltec A",
+      "exit_code": 0,
+      "page_bytes": 3542,
+      "request_rtt_ms": 91
+    },
+    {
+      "phase": "after_restart",
+      "source": "G4",
+      "destination": "Heltec B",
+      "exit_code": 0,
+      "page_bytes": 3542,
+      "request_rtt_ms": 132
+    },
+    {
+      "phase": "after_restart",
+      "source": "Heltec A",
+      "destination": "Heltec B",
+      "exit_code": 0,
+      "page_bytes": 3542,
+      "request_rtt_ms": 161
+    },
+    {
+      "phase": "after_restart",
+      "source": "Heltec B",
+      "destination": "G4",
+      "exit_code": 0,
+      "page_bytes": 3542,
+      "request_rtt_ms": 120
+    },
+    {
+      "phase": "after_restart",
+      "source": "Heltec B",
+      "destination": "Heltec A",
+      "exit_code": 0,
+      "page_bytes": 3542,
+      "request_rtt_ms": 130
+    }
+  ],
+  "healthy_pair_during_outage": {
+    "source": "G4",
+    "destination": "Heltec A",
+    "page_bytes": 3542,
+    "request_rtt_ms": 60,
+    "exit_code": 0
+  },
+  "restart": {
+    "node": "Heltec B",
+    "silence_seconds": 62.49,
+    "same_destination": true,
+    "restored_routes": 4,
+    "restored_destination_identities": 4,
+    "restored_ratchets": 1
+  },
+  "sampled_rss_kib": {
+    "G4": 3772,
+    "Heltec A": 3784,
+    "Heltec B": 3756
+  },
+  "captures": {
+    "G4": {
+      "captured_frames": 357,
+      "outgoing_broadcasts": 36,
+      "broadcasts_seen_by_both_neighbors": 35,
+      "unique_broadcast_payloads": 36,
+      "outgoing_unicast_counts": {
+        "Heltec A": 58,
+        "Heltec B": 82
+      },
+      "overlap": {
+        "overlap_start_index": 0,
+        "overlap_end_index": 35,
+        "broadcasts_in_overlap": 36,
+        "missing_by_neighbor": {
+          "Heltec A": [],
+          "Heltec B": [
+            8
+          ]
+        }
+      },
+      "packet_types": {
+        "broadcast_types": {
+          "1": 36
+        },
+        "unicast_types": {
+          "1": 105,
+          "2": 4,
+          "3": 7,
+          "0": 24
+        }
+      },
+      "pcap_sha256": "185bf8b5398853802b756fdf38161ab3ab6a508aef444d44688e80dff48d2c78",
+      "capture_kernel_drops": 0
+    },
+    "Heltec A": {
+      "captured_frames": 367,
+      "outgoing_broadcasts": 40,
+      "broadcasts_seen_by_both_neighbors": 36,
+      "unique_broadcast_payloads": 40,
+      "outgoing_unicast_counts": {
+        "G4": 59,
+        "Heltec B": 86
+      },
+      "overlap": {
+        "overlap_start_index": 2,
+        "overlap_end_index": 37,
+        "broadcasts_in_overlap": 36,
+        "missing_by_neighbor": {
+          "G4": [],
+          "Heltec B": []
+        }
+      },
+      "packet_types": {
+        "broadcast_types": {
+          "1": 40
+        },
+        "unicast_types": {
+          "1": 111,
+          "2": 3,
+          "3": 6,
+          "0": 25
+        }
+      },
+      "pcap_sha256": "76738d8e484e4fb73f85ac23818db681940c0f623aadeb5b4ddb2cc89dc75ab1",
+      "capture_kernel_drops": 0
+    },
+    "Heltec B": {
+      "captured_frames": 389,
+      "outgoing_broadcasts": 28,
+      "broadcasts_seen_by_both_neighbors": 28,
+      "unique_broadcast_payloads": 28,
+      "outgoing_unicast_counts": {
+        "Heltec A": 55,
+        "G4": 62
+      },
+      "overlap": {
+        "overlap_start_index": 0,
+        "overlap_end_index": 27,
+        "broadcasts_in_overlap": 28,
+        "missing_by_neighbor": {
+          "G4": [],
+          "Heltec A": []
+        }
+      },
+      "packet_types": {
+        "broadcast_types": {
+          "1": 28
+        },
+        "unicast_types": {
+          "1": 84,
+          "2": 4,
+          "3": 4,
+          "0": 25
+        }
+      },
+      "pcap_sha256": "7fe699b91a84dad9b5fbdd548d154bc21d587b36fa75517275f016a737cd790b",
+      "capture_kernel_drops": 0
+    }
+  },
+  "restoration": {
+    "wireless_files_equal": true,
+    "mesh11sd_files_equal": true,
+    "saved_driver_parameters_equal": true,
+    "wireless_pending_edits": false,
+    "all_radio_health_checks_passed": true,
+    "temporary_hosts_flushed_and_stopped": true,
+    "original_tcp_page_verified": true
+  }
+}

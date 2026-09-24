@@ -10,6 +10,7 @@ pub use prns_core::interfaces::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutboundDropReason {
     NotConfigured,
+    ChannelChanged,
     Disabled,
     Disconnected,
     TimedOut,
@@ -33,6 +34,15 @@ pub trait InterfaceSeam {
     }
 
     fn fill_random(&mut self, bytes: &mut [u8]);
+
+    /// Change the destination accepted from this lane after its runtime owner has
+    /// acknowledged the channel publication. Late frames for an old destination
+    /// must be discarded before they can reach the new medium.
+    fn set_channel_id(&mut self, _id: crate::interfaces::InterfaceId) {}
+
+    fn take_channel_change_drops(&mut self) -> u32 {
+        0
+    }
 
     /// The storage the frame being received accumulates in — the seam's granted inbound slot, so a streaming deframer's writes land once, already across the seam. Parks until a slot is free (backpressure: an interface that cannot grant stops reading its medium). Repeated calls before [`commit_inbound`](Self::commit_inbound) return the same storage with its accumulation intact, so one frame may arrive across many reads.
     async fn inbound_sink(&mut self) -> &mut dyn FrameSink;

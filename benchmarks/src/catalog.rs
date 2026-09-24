@@ -6,12 +6,18 @@ use std::str::FromStr;
 use crate::results::Subject;
 use serde::{Deserialize, Serialize};
 
-pub const REFERENCE_VERSION: &str = "1.4.2";
-pub const REFERENCE_IMPLEMENTATION: &str = "rns-1.4.2-compiled";
+pub const REFERENCE_VERSION: &str = "1.5.4";
+pub const REFERENCE_IMPLEMENTATION: &str = "rns-1.5.4";
 pub const IMPLEMENTATIONS: [&str; 2] = ["personal-rns", REFERENCE_IMPLEMENTATION];
-pub const KNOWN_IMPLEMENTATIONS: [&str; 3] = [
+pub const HISTORICAL_SCENARIOS: [&str; 3] = [
+    "resource-max-segment-unleashed",
+    "resource-64mib-stream-unleashed",
+    "transport-resource-throughput-unleashed",
+];
+pub const KNOWN_IMPLEMENTATIONS: [&str; 4] = [
     "personal-rns",
     "rns-1.4.0-compiled",
+    "rns-1.4.2-compiled",
     REFERENCE_IMPLEMENTATION,
 ];
 const STANDARD_ENCRYPTED_LINK_MDU: usize = 383;
@@ -29,14 +35,14 @@ prns_macros::iterable_enum! {
         LinkMessageThroughput,
         RequestResponse,
         ResourceMaxSegment,
-        ResourceMaxSegmentUnleashed,
+        ResourceMaxSegmentMatched,
         #[serde(rename = "resource-64mib-stream")]
         Resource64mibStream,
-        #[serde(rename = "resource-64mib-stream-unleashed")]
-        Resource64mibStreamUnleashed,
+        #[serde(rename = "resource-64mib-stream-matched")]
+        Resource64mibStreamMatched,
         RawTransportThroughput,
         TransportResourceThroughput,
-        TransportResourceThroughputUnleashed,
+        TransportResourceThroughputMatched,
     }
 }
 
@@ -47,12 +53,12 @@ impl ScenarioId {
             Self::LinkMessageThroughput => "link-message-throughput",
             Self::RequestResponse => "request-response",
             Self::ResourceMaxSegment => "resource-max-segment",
-            Self::ResourceMaxSegmentUnleashed => "resource-max-segment-unleashed",
+            Self::ResourceMaxSegmentMatched => "resource-max-segment-matched",
             Self::Resource64mibStream => "resource-64mib-stream",
-            Self::Resource64mibStreamUnleashed => "resource-64mib-stream-unleashed",
+            Self::Resource64mibStreamMatched => "resource-64mib-stream-matched",
             Self::RawTransportThroughput => "raw-transport-throughput",
             Self::TransportResourceThroughput => "transport-resource-throughput",
-            Self::TransportResourceThroughputUnleashed => "transport-resource-throughput-unleashed",
+            Self::TransportResourceThroughputMatched => "transport-resource-throughput-matched",
         }
     }
 
@@ -61,14 +67,14 @@ impl ScenarioId {
             self,
             Self::RawTransportThroughput
                 | Self::TransportResourceThroughput
-                | Self::TransportResourceThroughputUnleashed
+                | Self::TransportResourceThroughputMatched
         )
     }
 
     pub const fn is_transport_resource(self) -> bool {
         matches!(
             self,
-            Self::TransportResourceThroughput | Self::TransportResourceThroughputUnleashed
+            Self::TransportResourceThroughput | Self::TransportResourceThroughputMatched
         )
     }
 }
@@ -268,11 +274,16 @@ pub fn load_catalog() -> Result<Vec<ScenarioManifest>, CatalogError> {
         })?
         .filter_map(Result::ok)
         .filter(|entry| entry.path().is_dir())
-        .count();
-    if directories != ScenarioId::ALL.len() {
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect::<BTreeSet<_>>();
+    let expected_directories = ScenarioId::ALL
+        .into_iter()
+        .map(|scenario| scenario.as_str().to_string())
+        .chain(HISTORICAL_SCENARIOS.into_iter().map(str::to_string))
+        .collect::<BTreeSet<_>>();
+    if directories != expected_directories {
         return Err(CatalogError::Invalid(format!(
-            "expected exactly {} scenario directories, found {directories}",
-            ScenarioId::ALL.len()
+            "scenario directories differ from the current catalog plus retained historical manifests: expected {expected_directories:?}, found {directories:?}"
         )));
     }
     Ok(manifests)
@@ -308,12 +319,12 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
         ScenarioId::LinkMessageThroughput => "link",
         ScenarioId::RequestResponse => "request",
         ScenarioId::ResourceMaxSegment
-        | ScenarioId::ResourceMaxSegmentUnleashed
+        | ScenarioId::ResourceMaxSegmentMatched
         | ScenarioId::Resource64mibStream
-        | ScenarioId::Resource64mibStreamUnleashed => "resource",
+        | ScenarioId::Resource64mibStreamMatched => "resource",
         ScenarioId::RawTransportThroughput => "transport",
         ScenarioId::TransportResourceThroughput
-        | ScenarioId::TransportResourceThroughputUnleashed => "transport-resource",
+        | ScenarioId::TransportResourceThroughputMatched => "transport-resource",
     };
     if manifest.profile.mechanism != expected_mechanism {
         return Err(CatalogError::Invalid(format!(
@@ -326,14 +337,12 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
         ScenarioId::LinkMessageThroughput => ConformanceRule::ExactLink,
         ScenarioId::RequestResponse => ConformanceRule::ExactRequest,
         ScenarioId::ResourceMaxSegment
-        | ScenarioId::ResourceMaxSegmentUnleashed
+        | ScenarioId::ResourceMaxSegmentMatched
         | ScenarioId::Resource64mibStream
-        | ScenarioId::Resource64mibStreamUnleashed => ConformanceRule::ExactResource,
+        | ScenarioId::Resource64mibStreamMatched => ConformanceRule::ExactResource,
         ScenarioId::RawTransportThroughput => ConformanceRule::ExactTransport,
         ScenarioId::TransportResourceThroughput
-        | ScenarioId::TransportResourceThroughputUnleashed => {
-            ConformanceRule::ExactTransportResource
-        }
+        | ScenarioId::TransportResourceThroughputMatched => ConformanceRule::ExactTransportResource,
     };
     if manifest.conformance_rule != expected_conformance {
         return Err(CatalogError::Invalid(format!(
@@ -367,7 +376,7 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
     }
     if matches!(
         manifest.name,
-        ScenarioId::Resource64mibStream | ScenarioId::Resource64mibStreamUnleashed
+        ScenarioId::Resource64mibStream | ScenarioId::Resource64mibStreamMatched
     ) && manifest.profile.payload_len != LARGE_RESOURCE_PAYLOAD_BYTES
     {
         return Err(CatalogError::Invalid(format!(
@@ -456,6 +465,11 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
             manifest.name
         )));
     }
+    let expected_transport_link_mtu = match manifest.name {
+        ScenarioId::TransportResourceThroughput => 524_288,
+        ScenarioId::TransportResourceThroughputMatched => 16_384,
+        _ => 0,
+    };
     if manifest.name.is_transport_resource()
         && (manifest.profile.window != 16
             || manifest.profile.payload_len != 0
@@ -465,7 +479,7 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
             || manifest.profile.drain_timeout_ms != 30_000
             || manifest.profile.size_seed != DEFAULT_SIZE_SEED
             || manifest.profile.link_mtu != 0
-            || manifest.profile.transport_link_mtu != 524_288
+            || manifest.profile.transport_link_mtu != expected_transport_link_mtu
             || manifest.profile.payload_shape != "effective-mtu")
     {
         return Err(CatalogError::Invalid(format!(
@@ -491,12 +505,12 @@ fn validate_manifest(manifest: &ScenarioManifest, path: &Path) -> Result<(), Cat
                 )));
             }
         }
-        ScenarioId::ResourceMaxSegmentUnleashed
-        | ScenarioId::Resource64mibStreamUnleashed
-        | ScenarioId::TransportResourceThroughputUnleashed => {
-            if manifest.profile.tcp_bitrate_bps != Some(1_000_000_000) {
+        ScenarioId::ResourceMaxSegmentMatched
+        | ScenarioId::Resource64mibStreamMatched
+        | ScenarioId::TransportResourceThroughputMatched => {
+            if manifest.profile.tcp_bitrate_bps != Some(10_000_000) {
                 return Err(CatalogError::Invalid(format!(
-                    "{} must explicitly configure a 1 Gbps TCP bitrate policy",
+                    "{} must explicitly configure RNS's 10 Mbps reference policy",
                     manifest.name
                 )));
             }
@@ -594,7 +608,7 @@ mod tests {
                 .iter()
                 .map(|note| note.subject.clone())
                 .collect::<Vec<_>>(),
-            ["rns-1.4.0-compiled", REFERENCE_IMPLEMENTATION]
+            ["rns-1.4.0-compiled", "rns-1.4.2-compiled"]
                 .into_iter()
                 .map(|responder| Subject::Direct {
                     initiator: "personal-rns".into(),
@@ -668,7 +682,7 @@ mod tests {
     fn large_resource_stream_is_exactly_sixty_four_full_segments() {
         for scenario in [
             ScenarioId::Resource64mibStream,
-            ScenarioId::Resource64mibStreamUnleashed,
+            ScenarioId::Resource64mibStreamMatched,
         ] {
             let manifest = load_manifest(scenario).expect("valid large-resource manifest");
             assert_eq!(manifest.profile.payload_len, LARGE_RESOURCE_PAYLOAD_BYTES);

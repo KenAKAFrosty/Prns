@@ -21,6 +21,13 @@ use crate::routing::warmth::WarmestOf;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN};
 
+#[cfg(test)]
+mod link_teardown_tests;
+#[cfg(test)]
+mod pairing_teardown_tests;
+#[cfg(test)]
+mod receipt_expiry_tests;
+
 impl<S: StorageLayout> EngineState<S> {
     pub fn settle_timed_out_receipts(
         &mut self,
@@ -28,7 +35,7 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         while let Some(expired) = self.receipts.pop_expired(now) {
-            let settlement = self.timeout_settlement(expired.kind);
+            let settlement = self.timeout_settlement(expired);
             settle(sink, expired.command_id, settlement);
         }
         WakeSchedules {
@@ -173,11 +180,7 @@ impl<S: StorageLayout> EngineState<S> {
                     if !eligible {
                         continue;
                     }
-                    match descriptor
-                        .id
-                        .kind()
-                        .and_then(InterfaceKind::supervisor_kind)
-                    {
+                    match descriptor.id.kind().and_then(InterfaceKind::fanout_kind) {
                         Some(supervisor) => {
                             let bit = 1u128 << (supervisor as u8);
                             if fleets_emitted & bit == 0 {
@@ -243,6 +246,9 @@ impl<S: StorageLayout> EngineState<S> {
         WakeSchedules {
             link_deadlines: self.link_deadlines_wake(),
             resource_deadlines: self.resource_deadlines_wake(),
+            receipt_timeouts: self.receipt_timeouts_wake(),
+            channel_timeouts: self.channel_timeouts_wake(),
+            remote_control_pairing: self.remote_control_pairing_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }

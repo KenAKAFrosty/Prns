@@ -462,3 +462,102 @@ mod tests {
         assert!(!runtime.user_blanking().is_available());
     }
 }
+
+pub(crate) struct HeadlessBoardDisplay;
+pub(crate) struct HeadlessDisplayRuntime;
+
+impl S3BoardDisplay for HeadlessBoardDisplay {
+    const REMOTE_VISIBILITY_CONTROL: bool = false;
+    const REMOTE_AUTO_OFF_CONTROL: bool = false;
+    type Runtime = HeadlessDisplayRuntime;
+
+    fn into_runtime(self, _now: MonotonicMillis) -> Self::Runtime {
+        HeadlessDisplayRuntime
+    }
+}
+
+impl S3DisplayRuntime for HeadlessDisplayRuntime {
+    type PresentationError = core::convert::Infallible;
+
+    fn user_blanking(&self) -> UserBlanking {
+        UserBlanking::unavailable()
+    }
+
+    fn visibility(&self) -> DisplayVisibility {
+        DisplayVisibility::Unavailable
+    }
+
+    async fn render_and_present(
+        &mut self,
+        _input: RenderInput<'_, '_>,
+        _planned_at: MonotonicMillis,
+        _urgency: PresentationUrgency,
+        _completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<S3Presentation, Self::PresentationError> {
+        Ok(S3Presentation::Unavailable)
+    }
+
+    fn poll_blanking(
+        &mut self,
+        _now: MonotonicMillis,
+        _completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<BlankingDecision, BlankingError> {
+        Ok(BlankingDecision::Settled)
+    }
+
+    fn schedule_blanking(
+        &mut self,
+        _at: MonotonicMillis,
+        _reason: DisplayBlankReason,
+    ) -> Result<(), BlankingError> {
+        Err(BlankingError::UserBlankingUnavailable)
+    }
+
+    fn button_pressed(
+        &mut self,
+        _now: MonotonicMillis,
+        _completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<DisplayButtonOutcome, BlankingError> {
+        Ok(DisplayButtonOutcome::WakeAndConsume)
+    }
+
+    fn request_visible(
+        &mut self,
+        _now: MonotonicMillis,
+        _completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<BlankingDecision, BlankingError> {
+        Ok(BlankingDecision::Settled)
+    }
+
+    fn auto_off(&self) -> Result<DisplayAutoOff, BlankingError> {
+        Err(BlankingError::UserBlankingUnavailable)
+    }
+
+    fn set_auto_off(
+        &mut self,
+        _auto_off: DisplayAutoOff,
+        _now: MonotonicMillis,
+    ) -> Result<DisplayAutoOff, BlankingError> {
+        Err(BlankingError::UserBlankingUnavailable)
+    }
+}
+
+#[cfg(test)]
+mod headless_tests {
+    use super::*;
+
+    #[test]
+    fn headless_display_consumes_buttons_and_rejects_blanking_controls() {
+        let mut runtime = HeadlessBoardDisplay.into_runtime(MonotonicMillis::new(0));
+        assert_eq!(runtime.visibility(), DisplayVisibility::Unavailable);
+        assert!(!runtime.user_blanking().is_available());
+        assert_eq!(
+            runtime.button_pressed(MonotonicMillis::new(1), || MonotonicMillis::new(2)),
+            Ok(DisplayButtonOutcome::WakeAndConsume)
+        );
+        assert_eq!(
+            runtime.auto_off(),
+            Err(BlankingError::UserBlankingUnavailable)
+        );
+    }
+}

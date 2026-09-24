@@ -221,7 +221,7 @@ jobs:
           title="Prns ${version} release candidate"
           manifest_sha256="$(sha256sum target/candidate/flash-manifest.json | awk '{print $1}')"
           notes="$(printf '%s\n\n%s\n%s\n%s\n\n%s' \
-            'Immutable signed candidate under public review. It is not stable until signed physical acceptance and the signed release record pass protected promotion.' \
+            'Immutable signed candidate under public review. It is not stable until signed release acceptance and the signed release record pass protected promotion.' \
             "Source commit: ${SOURCE_COMMIT}" \
             "Signed candidate SHA-256: ${SIGNED_BUNDLE_SHA256}" \
             "Manifest SHA-256: ${manifest_sha256}" \
@@ -255,6 +255,9 @@ jobs:
             target/candidate/qualification/validate-flasher-tester-roster.py
             target/candidate/qualification/flasher_tester_roster.py
             target/candidate/qualification/package-flasher-qualification-evidence.py
+            target/candidate/qualification/flasher_software_acceptance.py
+            target/candidate/qualification/validation_runner.py
+            target/candidate/qualification/validation-manifest.toml
             target/candidate/qualification/tester-roster.json
             target/candidate/audit/release-audit-evidence.md
             target/candidate/metadata/build.json

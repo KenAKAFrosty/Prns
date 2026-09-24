@@ -11,6 +11,18 @@ pub const DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES: usize = 8;
 pub const REMOTE_CONTROL_REQUEST_ENDPOINT_ID: &str = "/remote-control";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlInterfaceWatchSupport {
+    Unavailable,
+    RuntimeSnapshots,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlAppMessageSupport {
+    Unavailable,
+    InstalledHandler,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlCapabilities {
     requests: RemoteControlRequestSet,
 }
@@ -22,7 +34,7 @@ pub enum RemoteControlCapabilitiesError {
 
 impl RemoteControlCapabilities {
     #[must_use]
-    pub fn describe_only() -> Self {
+    pub const fn describe_only() -> Self {
         Self {
             requests: RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         }
@@ -40,7 +52,7 @@ impl RemoteControlCapabilities {
     /// Adds one supported operation while preserving the mandatory `Describe` capability.
     /// Repeating an operation is intentionally idempotent.
     #[must_use]
-    pub fn with_request(mut self, request: RemoteControlRequestKind) -> Self {
+    pub const fn with_request(mut self, request: RemoteControlRequestKind) -> Self {
         let _ = self.requests.insert(request);
         self
     }
@@ -147,6 +159,61 @@ pub struct RemoteControlConfiguration<'a> {
 }
 
 impl<'a> RemoteControlService<'a> {
+    /// Advertise host requests only when an installed provider declares them.
+    pub fn with_installed_controls(
+        self,
+        host: RemoteControlRequestSet,
+        app: RemoteControlAppMessageSupport,
+    ) -> Self {
+        self.with_installed_providers(host, app, RemoteControlInterfaceWatchSupport::Unavailable)
+    }
+
+    /// Include the runtime stream producer only when it is installed on this host.
+    pub fn with_installed_providers(
+        mut self,
+        host: RemoteControlRequestSet,
+        app: RemoteControlAppMessageSupport,
+        interface_watch: RemoteControlInterfaceWatchSupport,
+    ) -> Self {
+        if let Self::Available(config) = &mut self {
+            let mut requests = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+            for kind in config.capabilities.requests().iter() {
+                if !kind.handled_by_host()
+                    && !matches!(
+                        kind,
+                        RemoteControlRequestKind::AppMessage
+                            | RemoteControlRequestKind::WatchInterfaces
+                    )
+                {
+                    requests.insert(kind);
+                }
+            }
+            for kind in host.iter() {
+                if kind.handled_by_host() && config.capabilities.supports(kind) {
+                    requests.insert(kind);
+                }
+            }
+            if matches!(app, RemoteControlAppMessageSupport::InstalledHandler)
+                && config
+                    .capabilities
+                    .supports(RemoteControlRequestKind::AppMessage)
+            {
+                requests.insert(RemoteControlRequestKind::AppMessage);
+            }
+            if matches!(
+                interface_watch,
+                RemoteControlInterfaceWatchSupport::RuntimeSnapshots
+            ) && config
+                .capabilities
+                .supports(RemoteControlRequestKind::WatchInterfaces)
+            {
+                requests.insert(RemoteControlRequestKind::WatchInterfaces);
+            }
+            config.capabilities = RemoteControlCapabilities::from_requests(requests)
+                .unwrap_or(RemoteControlCapabilities::describe_only());
+        }
+        self
+    }
     #[must_use]
     pub fn new(
         identity_secrets: RemoteControlNodeIdentitySecrets,
@@ -438,10 +505,11 @@ mod tests {
             RemoteControlCapabilities::from_requests(RemoteControlRequestSet::empty()),
             Err(RemoteControlCapabilitiesError::DescribeRequired),
         );
-        let capabilities = RemoteControlCapabilities::describe_only()
+        const CAPABILITIES: RemoteControlCapabilities = RemoteControlCapabilities::describe_only()
             .with_request(RemoteControlRequestKind::DescribeBuild)
             .with_request(RemoteControlRequestKind::DescribeBuild);
-        assert!(capabilities.supports(RemoteControlRequestKind::Describe));
-        assert!(capabilities.supports(RemoteControlRequestKind::DescribeBuild));
+        assert!(CAPABILITIES.supports(RemoteControlRequestKind::Describe));
+        assert!(CAPABILITIES.supports(RemoteControlRequestKind::DescribeBuild));
+        assert_eq!(CAPABILITIES.requests().len(), 2);
     }
 }

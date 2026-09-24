@@ -262,7 +262,7 @@ mod tests {
         let server_address = server.local_addr().unwrap().to_string();
         let node_a = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
-            remote_control: test_remote_control(),
+            remote_control: test_remote_control().into(),
             pre_configured_destinations: [test_destination(0xA1)],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
@@ -285,7 +285,7 @@ mod tests {
         let (_rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel::<DestinationHash>();
         let node_b = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
-            remote_control: test_remote_control(),
+            remote_control: test_remote_control().into(),
             pre_configured_destinations: [test_destination(0xB2)],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
@@ -362,7 +362,7 @@ mod tests {
         let restarted_address = restarted_server.local_addr().unwrap().to_string();
         let mut restarted_node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(Zeroizing::new([0xB3; IDENTITY_SECRET_KEY_LEN])),
-            remote_control: test_remote_control(),
+            remote_control: test_remote_control().into(),
             pre_configured_destinations: [test_destination(0xB2)],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
@@ -388,7 +388,7 @@ mod tests {
         );
         let requester_node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
-            remote_control: test_remote_control(),
+            remote_control: test_remote_control().into(),
             pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
@@ -467,7 +467,7 @@ mod tests {
     {
         PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
-            remote_control: test_remote_control(),
+            remote_control: test_remote_control().into(),
             pre_configured_destinations: [destination],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,

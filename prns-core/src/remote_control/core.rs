@@ -172,6 +172,27 @@ impl RemoteControlNodeIdentitySecrets {
             })
     }
 
+    #[cfg(feature = "test-support")]
+    pub(super) fn duplicate_for_fixture(&self) -> Self {
+        fn duplicate(parts: &IdentityParts) -> IdentityParts {
+            IdentityParts {
+                encryption_secret: parts.encryption_secret.cloned(),
+                signing_secret: parts.signing_secret.cloned(),
+                encryption_public: parts.encryption_public,
+                signing_public: parts.signing_public,
+                hash: parts.hash,
+            }
+        }
+        Self {
+            controller: RemoteControlControllerIdentitySecret {
+                parts: duplicate(&self.controller.parts),
+            },
+            target: RemoteControlTargetIdentitySecret {
+                parts: duplicate(&self.target.parts),
+            },
+        }
+    }
+
     pub(crate) fn into_parts(self) -> (IdentityParts, IdentityParts) {
         (self.controller.parts, self.target.parts)
     }

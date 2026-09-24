@@ -6,7 +6,6 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "alloc")] {
         mod heap;
 
-        pub(crate) use heap::HeapIndexEntry;
         pub use heap::HeapLemireIndex;
     }
 }

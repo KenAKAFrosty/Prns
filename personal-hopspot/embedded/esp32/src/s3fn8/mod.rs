@@ -30,7 +30,7 @@ use personal_rns::lora::{LoRaControl, LoRaInterface};
 use personal_rns::manifold::embassy::{
     EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus, InterfaceLifecycle,
 };
-use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
+use personal_rns::manifold::interface_seam::Interface;
 use personal_rns::radios::sx126x::Sx126x;
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
@@ -58,6 +58,8 @@ const BLE_LANE: usize = 1;
 const LANE_COUNT: usize = USB_LANE + LORA_LANE + BLE_LANE;
 const LANE_DEPTH: usize = 1;
 const OUTBOUND_BURST_DEPTH: usize = InternalStorage::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
+const _: () =
+    assert!(OUTBOUND_BURST_DEPTH >= personal_rns::interfaces::usb_auto::DEVICE_MIN_OUTBOUND_FRAMES);
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
 const INTERFACE_CAPACITY: usize = LANE_COUNT + BLE_PEER_CAPACITY + 1;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
@@ -81,8 +83,13 @@ type LoraRadio = Sx126x<
     Output<'static>,
     Delay,
 >;
-type UsbSeam =
-    EmbassyInterfaceSeam<'static, Mtx, S3Fn8EntropySource, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
+type UsbSeam = EmbassyInterfaceSeam<
+    'static,
+    Mtx,
+    S3Fn8EntropySource,
+    NOTIFY_CAP,
+    { personal_rns::interfaces::usb_auto::MAX_DATA_BYTES },
+>;
 type BleFleet = Fleet<Mtx, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type InterfaceStore = EmbassyInterfaceStore<
     Mtx,
@@ -105,6 +112,14 @@ type Node = PrnsNode<
     COMMANDS_CAP,
     LIFECYCLE_CAP,
     COMPLETIONS_CAP,
+    4,
+    { personal_rns::engine::MAX_SEND_REQUEST_DATA_LEN },
+    0,
+    0,
+    personal_rns::runtime::RemoteControlNodeControls<
+        personal_rns::runtime::RemoteControlSupportedHost<AppState>,
+        personal_rns::runtime::NoRemoteControlHostControls,
+    >,
 >;
 type ManifoldLanes = ManifoldLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
 
@@ -131,7 +146,7 @@ static REMOTE_CONTROL_COMMANDS: personal_hopspot_core::HopspotCommandMailbox<
 > = personal_hopspot_core::HopspotCommandMailbox::new();
 static USB_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
-    EMBEDDED_MAX_WIRE_FRAME_LEN,
+    { personal_rns::interfaces::usb_auto::MAX_DATA_BYTES },
     LANE_DEPTH,
     OUTBOUND_BURST_DEPTH,
 > = StaticManifoldLane::new();

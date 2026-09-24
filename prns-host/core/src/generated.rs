@@ -2,7 +2,7 @@ pub const HOST_SEMANTIC_FINGERPRINT: &str =
     "b5ca02be1ea5d61771f3a75eacb4d44447f99754adbeb02b6cd98537ed2fa239";
 pub const HOST_SCHEMA_VERSION: u32 = 2;
 pub const HOST_SCHEMA_ABI: u32 = 1;
-pub const HOST_SCHEMA_PRODUCT_VERSION: &str = "0.3.7";
+pub const HOST_SCHEMA_PRODUCT_VERSION: &str = "0.3.8";
 pub const DESTINATION_HASH_LENGTH: usize = 16;
 pub const IDENTITY_HASH_LENGTH: usize = 16;
 pub const INTERFACE_ID_LENGTH: usize = 8;

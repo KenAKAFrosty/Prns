@@ -34,7 +34,7 @@ STOCK_FETCH_SAVE_DEFECT_MARKER = "Invalid save path"
 STOCK_FETCH_WIRE_COMPLETE_MARKER = "Transfer complete"
 STOCK_FETCH_SAVE_DEFECT_NOTICE = (
     "RNCP_STOCK_FETCH_SAVE_BLOCKED_BY_UPSTREAM "
-    'reason="stock RNS 1.5.0 rncp -f normalizes its save path with os.path.abspath but guards '
+    'reason="stock RNS 1.5.4 rncp -f normalizes its save path with os.path.abspath but guards '
     "it against a forward-slash prefix, so it can never save a fetched file on Windows; the "
     'wire transfer completed, so only the local byte comparison is skipped"'
 )

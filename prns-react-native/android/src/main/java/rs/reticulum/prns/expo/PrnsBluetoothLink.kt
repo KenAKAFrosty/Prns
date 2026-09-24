@@ -1333,7 +1333,7 @@ class PrnsBluetoothLink(
                         }
                         return
                     }
-    
+
                     val columbaRx = service.getCharacteristic(COLUMBA_RX)
                     val columbaTx = service.getCharacteristic(COLUMBA_TX)
                     val columbaIdentity = service.getCharacteristic(COLUMBA_IDENTITY)

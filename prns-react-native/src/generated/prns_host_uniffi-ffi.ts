@@ -843,7 +843,7 @@ interface NativeModuleInterface {
 let _nativeModule: NativeModuleInterface | undefined;
 const getter: () => NativeModuleInterface = () => {
   if (!_nativeModule) {
-    const libPath = { name: "prns_app" };
+    const libPath = { name: "prns_host_mobile" };
     const uniffi = (globalThis as any).uniffi;
     const mod_ = uniffi.open(libPath);
     _nativeModule = mod_.register(DEFINITIONS) as unknown as NativeModuleInterface;

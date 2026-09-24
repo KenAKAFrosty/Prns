@@ -1,0 +1,206 @@
+{
+  "candidate_build": {
+    "schema": 1,
+    "artifact_kind": "linux-application-development-bundle",
+    "qualification": "TCP plus experimental HaLoW; not a firmware image or a signed public release",
+    "cargo_features": [
+      "wifi-halow",
+      "websocket"
+    ],
+    "target": "mipsel-unknown-linux-musl",
+    "source_commit": "936897505ff12eab2a7fb1ff4bd77db0e535db12",
+    "working_tree_dirty": true,
+    "rustc": "rustc 1.98.0-nightly (6bdf43094 2026-06-01)\nbinary: rustc\ncommit-hash: 6bdf43094fae65d298bc430362f116176cd25a3c\ncommit-date: 2026-06-01\nhost: aarch64-apple-darwin\nrelease: 1.98.0-nightly\nLLVM version: 22.1.6",
+    "cargo": "cargo 1.98.0-nightly (fbb61be30 2026-05-26)",
+    "zig_version": "0.15.2",
+    "zig_executable_sha256": "c65cd34917923f575448cc0603dd7c2326da0af0e5c323043d090662dcdf351c",
+    "cargo_lock_sha256": "1e68f720a7327c0069dc7d8324c118ec9a24374a8856720cab5b734f5dd52d75",
+    "rustflags": "-C link-self-contained=no -C target-feature=+crt-static",
+    "c_target": "mipsel-linux-musleabi -mcpu=mips32r2 -msoft-float",
+    "binary": {
+      "path": "personal-hopspot-headless",
+      "bytes": 3709772,
+      "sha256": "9ed814ac3cbcf88d3248014a7687a676ebc45e2a4d50bca948d9f1950722b4c3"
+    },
+    "probe": {
+      "path": "fetch_page",
+      "bytes": 3428260,
+      "sha256": "599e0c79474da0c57dca29f37a905d0d7764a3f4d64ba699070444b1ac79ee25"
+    }
+  },
+  "initial_browser_transfers": {
+    "browser": "154.0.8037.58",
+    "url": "ws://192.168.12.1:4344/",
+    "results": [
+      {
+        "destination": "8a6810881220de9fb787e8e8382b03f3",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 51
+      },
+      {
+        "destination": "c428bf572dc4d3f71528bed98df4577f",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 73
+      },
+      {
+        "destination": "dab23c1a4cd5d397c611e11bb8571070",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 147
+      }
+    ]
+  },
+  "eight_sessions": {
+    "browser": "154.0.8037.58",
+    "url": "ws://192.168.12.1:4344/",
+    "results": [
+      {
+        "destination": "c428bf572dc4d3f71528bed98df4577f",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 139
+      },
+      {
+        "destination": "dab23c1a4cd5d397c611e11bb8571070",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 126
+      },
+      {
+        "destination": "c428bf572dc4d3f71528bed98df4577f",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 116
+      },
+      {
+        "destination": "dab23c1a4cd5d397c611e11bb8571070",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 122
+      },
+      {
+        "destination": "c428bf572dc4d3f71528bed98df4577f",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 145
+      },
+      {
+        "destination": "dab23c1a4cd5d397c611e11bb8571070",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 130
+      },
+      {
+        "destination": "c428bf572dc4d3f71528bed98df4577f",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 85
+      },
+      {
+        "destination": "dab23c1a4cd5d397c611e11bb8571070",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 99
+      }
+    ]
+  },
+  "memory": {
+    "before": "VmHWM:\t    4224 kB\nVmRSS:\t    4148 kB\n",
+    "during_5s": "VmHWM:\t    4668 kB\nVmRSS:\t    4668 kB\ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62249 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62255 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62250 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62252 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62251 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62256 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62253 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62254 ESTABLISHED \n",
+    "during_10s": "VmHWM:\t    4680 kB\nVmRSS:\t    4680 kB\ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62249 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62255 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62250 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62252 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62251 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62256 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62253 ESTABLISHED \ntcp        0      0 ::ffff:192.168.12.1:4344 ::ffff:192.168.12.224:62254 ESTABLISHED \n",
+    "after": "VmHWM:\t    4688 kB\nVmRSS:\t    4208 kB\n"
+  },
+  "captures": {
+    "g4": {
+      "captured_frames": 485,
+      "outgoing_broadcasts": 128,
+      "broadcasts_seen_by_both_neighbors": 123,
+      "unique_broadcast_payloads": 96,
+      "outgoing_unicast_counts": {
+        "ec:b5:0a:ff:85:e9": 25,
+        "ec:b5:0a:ff:86:39": 25
+      }
+    },
+    "heltec": {
+      "captured_frames": 442,
+      "outgoing_broadcasts": 131,
+      "broadcasts_seen_by_both_neighbors": 127,
+      "unique_broadcast_payloads": 96,
+      "outgoing_unicast_counts": {
+        "50:37:cd:ad:32:0e": 21
+      }
+    },
+    "heltec3": {
+      "captured_frames": 447,
+      "outgoing_broadcasts": 142,
+      "broadcasts_seen_by_both_neighbors": 136,
+      "unique_broadcast_payloads": 100,
+      "outgoing_unicast_counts": {
+        "50:37:cd:ad:32:0e": 22
+      }
+    }
+  },
+  "recovery": {
+    "g4": "WIRELESS_MATCH\nMESH_CONFIG_MATCH\nPARAM_MATCH:enable_fixed_rate\nPARAM_MATCH:fixed_mcs\nPARAM_MATCH:fixed_bw\nPARAM_MATCH:fixed_guard\nPARAM_MATCH:fixed_ss\nUCI_CLEAN\nInterface wlan0\n\tifindex 39\n\twdev 0x10000001f\n\taddr 50:37:cd:ad:32:0e\n\tssid ThinkNode-G4\n\ttype AP\n\twiphy 1\n\tchannel 161 (5805 MHz), width: 160 MHz, center1: 5815 MHz\n\ttxpower 18.00 dBm\nhealth check: success\nPersistenceFlushed { cause: Shutdown, target: RoutingState }\nPersistenceFlushed { cause: Shutdown, target: Ratchets }\nhopspot_stopped\n",
+    "heltec": "\nWIRELESS_MATCH\nMESH_CONFIG_MATCH\nPARAM_MATCH:enable_fixed_rate\nPARAM_MATCH:fixed_mcs\nPARAM_MATCH:fixed_bw\nPARAM_MATCH:fixed_guard\nPARAM_MATCH:fixed_ss\nPARAM_MATCH:enable_mcast_rate_control\nUCI_CLEAN\nInterface wlan0\n\tifindex 60\n\twdev 0x100000034\n\taddr ec:b5:0a:ff:85:e9\n\tssid ThinkNode-G4\n\ttype managed\n\twiphy 1\n\tchannel 161 (5805 MHz), width: 160 MHz, center1: 5815 MHz\n\ttxpower 27.00 dBm\nhealth check: success\nPersistenceFlushed { cause: Shutdown, target: RoutingState }\nPersistenceFlushed { cause: Shutdown, target: Ratchets }\nhopspot_stopped\n",
+    "heltec3": "\nWIRELESS_MATCH\nMESH_CONFIG_MATCH\nPARAM_MATCH:enable_fixed_rate\nPARAM_MATCH:fixed_mcs\nPARAM_MATCH:fixed_bw\nPARAM_MATCH:fixed_guard\nPARAM_MATCH:fixed_ss\nPARAM_MATCH:enable_mcast_rate_control\nUCI_CLEAN\nInterface wlan0\n\tifindex 32\n\twdev 0x100000019\n\taddr ec:b5:0a:ff:86:39\n\tssid HT-HD01-C8E9\n\ttype AP\n\twiphy 1\n\tchannel 48 (5240 MHz), width: 160 MHz, center1: 5250 MHz\n\ttxpower 21.00 dBm\nhealth check: success\nPersistenceFlushed { cause: Shutdown, target: RoutingState }\nPersistenceFlushed { cause: Shutdown, target: Ratchets }\nhopspot_stopped\n"
+  },
+  "capture_sha256": {
+    "heltec3.pcap": "b55f6c0c29c4b58183e58856d2c49a37a0699d4641252c6a89ab933572e4129f",
+    "heltec.pcap": "5ce6962293b50a2bbc48a3665b3f6072674a844344cb7ad5cd98eab43bdf8e2e",
+    "g4.pcap": "4d3fdf430674c88b7c057ba412025eeecdadc6d7faa098691c6bd8b6a779f630"
+  },
+  "browser_artifact_sha256": {
+    "pkg/prns_wasm_bg.wasm": "a56c7fb42a26c4fa6d09939d21c64d281136034d6a5b11fc3035224930192741",
+    "pkg/prns_wasm.js": "a092f9b41e6e7fc13aeeff8a34d2c3c19d878d8f3961dc943dcaae896d315236",
+    "sdk/browser/index.js": "af97c2c5b17cc96acf4f18b22fcc49f3b7dbb9093f0fb99bcda76423bf4e1c42",
+    "sdk/casework.js": "9d0f4915affbf105b293b5377763b4272f5382549e569ab56cb252002b0484a0"
+  },
+  "preexisting_g4_tcp_page": {
+    "bytes": 3542,
+    "rtt_ms": 48
+  },
+  "final_build": {
+    "schema": 1,
+    "artifact_kind": "linux-application-development-bundle",
+    "qualification": "TCP plus experimental HaLoW; not a firmware image or a signed public release",
+    "cargo_features": [
+      "wifi-halow",
+      "websocket"
+    ],
+    "target": "mipsel-unknown-linux-musl",
+    "source_commit": "936897505ff12eab2a7fb1ff4bd77db0e535db12",
+    "working_tree_dirty": true,
+    "rustc": "rustc 1.98.0-nightly (6bdf43094 2026-06-01)\nbinary: rustc\ncommit-hash: 6bdf43094fae65d298bc430362f116176cd25a3c\ncommit-date: 2026-06-01\nhost: aarch64-apple-darwin\nrelease: 1.98.0-nightly\nLLVM version: 22.1.6",
+    "cargo": "cargo 1.98.0-nightly (fbb61be30 2026-05-26)",
+    "zig_version": "0.15.2",
+    "zig_executable_sha256": "c65cd34917923f575448cc0603dd7c2326da0af0e5c323043d090662dcdf351c",
+    "cargo_lock_sha256": "6c2a5b04d9921d13674dcc224d1dac7f69d36605ca2e964dda9090073043b370",
+    "rustflags": "-C link-self-contained=no -C target-feature=+crt-static",
+    "c_target": "mipsel-linux-musleabi -mcpu=mips32r2 -msoft-float",
+    "binary": {
+      "path": "personal-hopspot-headless",
+      "bytes": 3710604,
+      "sha256": "e58e77bec27983cbdfac6d4480d2f6ecba88e58effcb191cbe6f8b672b85674d"
+    },
+    "probe": {
+      "path": "fetch_page",
+      "bytes": 3428260,
+      "sha256": "cb81a24edc3e02be755d8ec5b7b5a6d211d2430ab4760762078ac0665f808ac0"
+    }
+  },
+  "final_g4_websocket_smoke": {
+    "browser": "154.0.8037.58",
+    "url": "ws://192.168.12.1:4344/",
+    "results": [
+      {
+        "destination": "ec93be10c5163ece629e91db4e58f93f",
+        "bytes": 3542,
+        "sha256": "1c639c701bceeb3d09b1f95ab43a7535f54324a795bacb1b17cf3b543b6eff1c",
+        "rttMillis": 75
+      }
+    ]
+  }
+}

@@ -662,7 +662,7 @@ async fn run_engine(
     let timeline_origin = prepared_persistence.timeline_origin();
     let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
-        remote_control,
+        remote_control: remote_control.into(),
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,

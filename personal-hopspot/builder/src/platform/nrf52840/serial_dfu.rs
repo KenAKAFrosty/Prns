@@ -11,7 +11,7 @@ use prns_nrf_dfu::{
     DfuDeviceType, DfuImage, SoftdeviceFirmwareId, SoftdeviceRequirements,
 };
 
-use crate::architecture::adapter_for_rust_target;
+use crate::architecture::nrf52840_serial_dfu_adapter;
 use crate::artifact::publish;
 use crate::{
     embedded_cargo_command, run_status, BuildContext, BuildError, FirmwareEvidence, LtoMode,
@@ -83,7 +83,7 @@ pub fn build(
         .arg(&target_directory)
         .env("PRNS_BUILD_VERSION", context.version())
         .current_dir(&crate_dir);
-    let adapter = adapter_for_rust_target(&recipe.rust_target)?;
+    let adapter = nrf52840_serial_dfu_adapter(&recipe.rust_target)?;
     let capture = context.configure_firmware_cargo(
         memory.id().0,
         adapter,

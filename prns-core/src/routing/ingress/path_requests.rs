@@ -154,7 +154,7 @@ impl<S: StorageLayout> EngineState<S> {
             })
             .flatten();
         let Some(route) = held_route else {
-            return self.forward_unrouted_path_request(
+            return self.forward_unavailable_path_request(
                 &request,
                 source_interface,
                 from_local_client,
@@ -178,7 +178,31 @@ impl<S: StorageLayout> EngineState<S> {
         if self.routing_table.responsiveness_of(&request.destination)
             == Some(RouteResponsiveness::Unresponsive)
         {
-            return IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive);
+            return match self.forward_unavailable_path_request(
+                &request,
+                source_interface,
+                from_local_client,
+                now,
+                interfaces,
+            ) {
+                IngestPacketOutcome::Ignored(IgnoreReason::NotForUs) => {
+                    IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive)
+                }
+                outcome => outcome,
+            };
+        }
+
+        if interfaces
+            .descriptor_for(route.receiving_interface)
+            .is_none()
+        {
+            return self.forward_unavailable_path_request(
+                &request,
+                source_interface,
+                from_local_client,
+                now,
+                interfaces,
+            );
         }
 
         let due_at = if from_local_client {
@@ -209,7 +233,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    fn forward_unrouted_path_request<'p>(
+    fn forward_unavailable_path_request<'p>(
         &mut self,
         request: &PathRequest,
         source_interface: InterfaceId,
@@ -369,7 +393,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::AnswerPathRequest { destination: local },
         );
@@ -454,7 +478,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -497,7 +521,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
@@ -520,6 +544,13 @@ mod tests {
         ));
     }
 
+    fn connected_route_interfaces() -> [InterfaceDescriptor; 2] {
+        [
+            routable_descriptor(iface(0xEE)),
+            routable_descriptor(iface(0xB2)),
+        ]
+    }
+
     fn relay_holding_a_cached_route() -> (EngineState<TestStorageLayout>, DestinationHash) {
         let cached = DestinationHash::new(
             bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
@@ -535,7 +566,7 @@ mod tests {
                     source_interface: iface(0xB2),
                     bytes: &mut announce,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
@@ -1064,7 +1095,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             );
         }
 
@@ -1186,7 +1217,7 @@ mod tests {
                     source_interface: iface(0xB2),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
@@ -1258,7 +1289,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::PathResponseScheduleRejected {
                 destination: cached,
@@ -1293,7 +1324,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1313,10 +1344,120 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
             "a different transport id but the same id is the same request, so it is deduplicated",
+        );
+    }
+
+    #[test]
+    fn unresponsive_routes_rediscover_only_with_configured_authority_and_existing_limits() {
+        enum Discovery {
+            Forward,
+            Withhold,
+        }
+        let source = iface(0xA1);
+        for (mode, policy, expected) in [
+            (
+                InterfaceMode::Gateway,
+                RecursivePathRequestPolicy::InheritNode,
+                Discovery::Forward,
+            ),
+            (
+                InterfaceMode::Gateway,
+                RecursivePathRequestPolicy::Disabled,
+                Discovery::Withhold,
+            ),
+            (
+                InterfaceMode::PointToPoint,
+                RecursivePathRequestPolicy::InheritNode,
+                Discovery::Withhold,
+            ),
+            (
+                InterfaceMode::PointToPoint,
+                RecursivePathRequestPolicy::Enabled,
+                Discovery::Forward,
+            ),
+        ] {
+            let (mut relay, cached) = relay_holding_a_cached_route();
+            relay
+                .routing_table
+                .mark_responsiveness(&cached, RouteResponsiveness::Unresponsive);
+            let mut descriptor = discovering_descriptor(source, mode);
+            descriptor.common.forwarding.recursive_path_requests = policy;
+            let view = [descriptor];
+            let mut wire = path_request_wire(cached);
+            let result = relay.ingest_for_test(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                AttachedInterfaces::new(&view),
+            );
+            if matches!(expected, Discovery::Forward) {
+                assert!(
+                    matches!(result, IngestPacketOutcome::ForwardRecursivePathRequest { destination, .. } if destination == cached)
+                );
+                let mut duplicate = path_request_wire(cached);
+                assert_eq!(
+                    relay.ingest_for_test(
+                        InboundPacket {
+                            arrived_at: InstantMillis(1_001),
+                            source_interface: source,
+                            bytes: &mut duplicate,
+                        },
+                        AttachedInterfaces::new(&view)
+                    ),
+                    IngestPacketOutcome::Ignored(IgnoreReason::Duplicate)
+                );
+                let mut bytes = [0; BROADCAST_MTU];
+                let len =
+                    write_path_request_wire_packet(cached, None, &[0x66; 16], &mut bytes).unwrap();
+                assert_eq!(
+                    relay.ingest_for_test(
+                        InboundPacket {
+                            arrived_at: InstantMillis(1_002),
+                            source_interface: source,
+                            bytes: &mut bytes[..len],
+                        },
+                        AttachedInterfaces::new(&view)
+                    ),
+                    IngestPacketOutcome::Ignored(IgnoreReason::Superseded)
+                );
+            } else {
+                assert_eq!(
+                    result,
+                    IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive)
+                );
+            }
+            assert_eq!(
+                relay.routing_table.responsiveness_of(&cached),
+                Some(RouteResponsiveness::Unresponsive)
+            );
+        }
+    }
+
+    #[test]
+    fn a_gateway_rediscovers_a_cached_route_whose_peer_interface_has_retired() {
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let source = iface(0xA1);
+        let view = [discovering_descriptor(source, InterfaceMode::Gateway)];
+        let mut wire = path_request_wire(cached);
+        assert_eq!(
+            relay.ingest_for_test(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                AttachedInterfaces::new(&view)
+            ),
+            IngestPacketOutcome::ForwardRecursivePathRequest {
+                destination: cached,
+                id: [0x55; 16],
+            }
         );
     }
 
@@ -1341,7 +1482,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive),
             "an unresponsive route is withheld so a node with a live path answers instead",
@@ -1363,7 +1504,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1387,7 +1528,7 @@ mod tests {
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            AttachedInterfaces::new(&transporting_interfaces()),
+            AttachedInterfaces::new(&connected_route_interfaces()),
         );
 
         let request = |requester: [u8; 16], id: u8| {
@@ -1406,7 +1547,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut loops_back,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented),
             "the requester is the next hop we would route through; answering would loop",
@@ -1420,7 +1561,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut other_requester,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1440,7 +1581,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
             "a bare destination carries no id, so the reference ignores it",
@@ -1458,7 +1599,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1490,7 +1631,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1506,10 +1647,13 @@ mod tests {
     fn a_roaming_requester_earns_the_extra_grace() {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let requester = iface(0xA1);
-        let roaming_view = [InterfaceDescriptor {
-            mode: InterfaceMode::Roaming,
-            ..routable_descriptor(requester)
-        }];
+        let roaming_view = [
+            InterfaceDescriptor {
+                mode: InterfaceMode::Roaming,
+                ..routable_descriptor(requester)
+            },
+            routable_descriptor(iface(0xB2)),
+        ];
         let mut wire = path_request_wire(cached);
         let _ = relay.ingest_for_test(
             InboundPacket {
@@ -1582,7 +1726,7 @@ mod tests {
                 source_interface: iface(0xA1),
                 bytes: &mut wire,
             },
-            AttachedInterfaces::new(&transporting_interfaces()),
+            AttachedInterfaces::new(&connected_route_interfaces()),
         );
         assert_eq!(
             relay.scheduled_announces.iter().next().unwrap().directed_to,
@@ -1610,6 +1754,7 @@ mod tests {
         let interfaces = [
             routable_descriptor(requester),
             routable_descriptor(iface(0xEE)),
+            routable_descriptor(iface(0xB2)),
         ];
 
         let mut wire = path_request_wire(cached);
@@ -1681,7 +1826,7 @@ mod tests {
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            AttachedInterfaces::new(&transporting_interfaces()),
+            AttachedInterfaces::new(&connected_route_interfaces()),
         );
 
         let mut wire = path_request_wire(cached);
@@ -1692,7 +1837,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
             "without a transport role a node never answers from cache, even holding the route",
@@ -1717,7 +1862,7 @@ mod tests {
                 source_interface: uplink,
                 bytes: &mut announce,
             },
-            AttachedInterfaces::new(&transporting_interfaces()),
+            AttachedInterfaces::new(&connected_route_interfaces()),
         );
 
         let mut wire = path_request_wire(cached);
@@ -1800,7 +1945,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -1818,7 +1963,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut first,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1833,7 +1978,7 @@ mod tests {
                     source_interface: iface(0xB2),
                     bytes: &mut echo,
                 },
-                AttachedInterfaces::new(&transporting_interfaces()),
+                AttachedInterfaces::new(&connected_route_interfaces()),
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
             "the same (destination, id) is a duplicate, not answered again",

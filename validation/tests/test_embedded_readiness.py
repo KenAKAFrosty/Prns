@@ -80,6 +80,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
         inventory = load_inventory()
         platform_inventory = load_platform_inventory()
         self.contract = ReadinessContract(
+            resource_toolchain="1.98.0",
             isa_toolchain=inventory.rust_toolchain,
             architectures=inventory.architectures,
             platforms=platform_inventory.platforms,
@@ -133,7 +134,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 "1.96.0",
                 "--installed",
             ): CommandOutput(0, "", ""),
-            ("rustup", "run", "stable", "rustc", "--version"): CommandOutput(
+            ("rustup", "run", "1.98.0", "rustc", "--version"): CommandOutput(
                 0, "rustc 1.98.0 (commit)\n", ""
             ),
             (
@@ -141,7 +142,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 "target",
                 "list",
                 "--toolchain",
-                "stable",
+                "1.98.0",
                 "--installed",
             ): CommandOutput(0, targets, ""),
             (
@@ -149,7 +150,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 "component",
                 "list",
                 "--toolchain",
-                "stable",
+                "1.98.0",
                 "--installed",
             ): CommandOutput(0, "llvm-tools-test-host\n", ""),
             (
@@ -199,7 +200,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 "",
             ),
             (str(self.paths["renode"]), "--version"): CommandOutput(
-                0, "\n".join(execution.emulator.identity) + "\n", ""
+                0, "\n".join(execution.emulator.package_for_host(HostPlatform.MACOS_ARM64).identity) + "\n", ""
             ),
         }
 
@@ -389,7 +390,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
         )
         contract = replace(self.contract, architectures=architectures)
         outputs = dict(self.outputs)
-        for toolchain in ("1.96.0", "stable"):
+        for toolchain in ("1.96.0", "1.98.0"):
             outputs[
                 (
                     "rustup",

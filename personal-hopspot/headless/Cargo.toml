@@ -1,0 +1,46 @@
+[package]
+name = "personal-hopspot-headless"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Headless host for the shared Personal Hopspot application."
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+personal-hopspot-core = { path = "../core", default-features = false, features = ["host", "compact-node-pages"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "sync", "net", "signal"] }
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+hex = "0.4"
+serde_json = "1"
+
+[features]
+default = []
+wifi-halow = ["personal-rns/wifi-halow"]
+websocket = ["personal-rns/websocket-server"]
+wifi-auto = ["personal-rns/wifi-auto-mdns"]
+
+[dev-dependencies]
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
+tempfile = "3"
+tokio = { version = "1", features = ["process", "io-util"] }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = "s"
+strip = "symbols"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

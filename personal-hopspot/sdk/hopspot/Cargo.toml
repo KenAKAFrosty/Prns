@@ -1,6 +1,6 @@
 [package]
 name = "hopspot"
-version = "0.3.7"
+version = "0.3.8"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -49,6 +49,7 @@ wifi-auto = ["personal-rns/wifi-auto"]
 wifi-auto-apple = ["personal-rns/wifi-auto-apple"]
 wifi-auto-mdns = ["personal-rns/wifi-auto-mdns"]
 wifi-direct = ["personal-rns/wifi-direct"]
+wifi-halow = ["personal-rns/wifi-halow"]
 wifi-aware = ["personal-rns/wifi-aware"]
 usb = ["personal-rns/usb"]
 config = ["personal-rns/config"]
@@ -60,16 +61,18 @@ ax25 = ["personal-rns/ax25"]
 rnode = ["personal-rns/rnode"]
 pipe = ["personal-rns/pipe"]
 backbone = ["personal-rns/backbone"]
+websocket-server = ["personal-rns/websocket-server"]
 websocket = ["personal-rns/websocket"]
 browser-rendezvous = ["personal-rns/browser-rendezvous"]
 i2p = ["personal-rns/i2p"]
 weave = ["personal-rns/weave"]
 shared-instance = ["personal-rns/shared-instance"]
 lora = ["personal-rns/lora"]
+lora-2g4 = ["personal-rns/lora-2g4"]
 esp-now = ["personal-rns/esp-now"]
 
 [dependencies]
-personal-rns = { version = "=0.3.7", path = "../../../personal-rns", default-features = false }
+personal-rns = { version = "=0.3.8", path = "../../../personal-rns", default-features = false }
 
 [lints]
 workspace = true

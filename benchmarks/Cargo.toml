@@ -29,7 +29,7 @@ path = "src/lib.rs"
 bench = false
 
 [dependencies]
-personal-rns = { path = "../personal-rns", features = ["tokio-host", "tcp"] }
+personal-rns = { path = "../personal-rns", features = ["tokio-host", "backbone", "tcp"] }
 prns-macros = { path = "../prns-macros" }
 allocator-api2 = { version = "0.3", optional = true }
 dhat = { version = "0.3", optional = true }

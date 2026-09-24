@@ -82,7 +82,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
     let heard_sink = heard.clone();
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(Zeroizing::new([0xC3; IDENTITY_SECRET_KEY_LEN])),
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [PreConfiguredDestination::Plain {
             app_name: "lxmf",
             aspects: &["delivery"],
@@ -158,7 +158,7 @@ fn run_with_proof_decider_reaches_a_prove_if_recipe_destination() {
 
     let recipe = PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [PreConfiguredDestination::Single {
             app_name: "personal",
             aspects: &["node"],

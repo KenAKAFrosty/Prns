@@ -1,8 +1,8 @@
 use super::*;
 
 #[test]
-fn canonical_matrix_has_fourteen_unique_profile_bound_targets(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn canonical_matrix_has_all_unique_profile_bound_targets() -> Result<(), Box<dyn std::error::Error>>
+{
     let catalog = prns_flash_manifest::board_catalog()?;
     let matrix = Matrix::from_catalog(&catalog)?;
     let targets = matrix
@@ -106,8 +106,50 @@ fn canonical_matrix_has_fourteen_unique_profile_bound_targets(
                 TargetPlatform::Nrf52840
             ),
             (
+                "rak4631",
+                "rak4631",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld",
+                TargetPlatform::Nrf52840
+            ),
+            (
                 "t1000-e",
                 "t1000-e",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-serial-dfu-rust-lld",
+                TargetPlatform::Nrf52840
+            ),
+            (
+                "heltec-v3",
+                "heltec-v3",
+                "xtensa-esp32s3-none-elf",
+                "xtensa-esp32s3-gnu-ld",
+                TargetPlatform::Esp
+            ),
+            (
+                "wio-tracker-l1",
+                "wio-tracker-l1",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld",
+                TargetPlatform::Nrf52840
+            ),
+            (
+                "xiao-esp32s3-wio-sx1262",
+                "xiao-esp32s3-wio-sx1262",
+                "xtensa-esp32s3-none-elf",
+                "xtensa-esp32s3-gnu-ld",
+                TargetPlatform::Esp
+            ),
+            (
+                "rak10724",
+                "rak10724",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld",
+                TargetPlatform::Nrf52840
+            ),
+            (
+                "sensecap-solar-node",
+                "sensecap-solar-node",
                 "thumbv7em-none-eabihf",
                 "thumbv7em-rust-lld",
                 TargetPlatform::Nrf52840
@@ -115,6 +157,20 @@ fn canonical_matrix_has_fourteen_unique_profile_bound_targets(
             (
                 "mesh-tower-v2",
                 "mesh-tower-v2",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld",
+                TargetPlatform::Nrf52840
+            ),
+            (
+                "muzi-base-duo",
+                "muzi-base-duo",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld",
+                TargetPlatform::Nrf52840
+            ),
+            (
+                "wio-tracker-l1-pro-1w",
+                "wio-tracker-l1",
                 "thumbv7em-none-eabihf",
                 "thumbv7em-rust-lld",
                 TargetPlatform::Nrf52840
@@ -136,7 +192,7 @@ fn unknown_targets_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn mesh_tower_alone_selects_thin_lto() -> Result<(), Box<dyn std::error::Error>> {
+fn only_build_only_targets_select_thin_lto() -> Result<(), Box<dyn std::error::Error>> {
     let catalog = prns_flash_manifest::board_catalog()?;
     let matrix = Matrix::from_catalog(&catalog)?;
     let selections = matrix
@@ -145,7 +201,7 @@ fn mesh_tower_alone_selects_thin_lto() -> Result<(), Box<dyn std::error::Error>>
         .collect::<Vec<_>>();
 
     for (target, lto) in selections {
-        let expected = if target == "mesh-tower-v2" {
+        let expected = if matches!(target, "mesh-tower-v2" | "muzi-base-duo") {
             personal_hopspot_builder::LtoMode::Thin
         } else {
             personal_hopspot_builder::LtoMode::Configured

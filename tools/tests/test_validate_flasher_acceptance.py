@@ -24,25 +24,14 @@ SOURCE_COMMIT = "a" * 40
 KEY_ID = "0123456789ABCDEF"
 PUBLISHED_AT = "2026-07-20T12:00:00Z"
 COMPLETED_AT = "2026-07-20T13:00:00Z"
-MODELS = {
-    "heltec-v4": "Heltec LoRa 32 V4 (S3R2)",
-    "heltec-v4-r8": "Heltec LoRa 32 V4 (S3R8)",
-    "heltec-wireless-stick-lite-v3": "Heltec Wireless Stick Lite V3",
-    "t-beam-supreme": "LilyGO T-Beam Supreme",
-    "xiao-esp32-c6": "Seeed XIAO ESP32-C6",
-    "t-echo": "LilyGO T-Echo",
-    "t114": "Heltec Mesh Node T114",
-    "t096": "Heltec Mesh Node T096",
-    "t1000-e": "Seeed SenseCAP T1000-E",
-}
-CATALOG_INTERFACES = {
-    board["slug"]: board["interfaces"]
+CATALOG = {
+    board["slug"]: board
     for board in json.loads(
-        (Path(__file__).resolve().parents[2] / "release" / "flash" / "boards.json").read_text(
-            encoding="utf-8"
-        )
+        (Path(__file__).resolve().parents[2] / "release/flash/boards.json").read_text()
     )["boards"]
 }
+MODELS = {slug: board["display_name"] for slug, board in CATALOG.items()}
+CATALOG_INTERFACES = {slug: board["interfaces"] for slug, board in CATALOG.items()}
 
 
 def manifest() -> dict:
@@ -50,7 +39,7 @@ def manifest() -> dict:
     for board in VALIDATOR.SHIPPING_BOARDS:
         model = MODELS[board]
         esp = board in VALIDATOR.ESP_SERIAL_BOARDS
-        uf2 = board in {"t-echo", "t114", "t096"}
+        uf2 = CATALOG[board]["transport"] == "uf2-mass-storage"
         chip = "esp32c6" if board == "xiao-esp32-c6" else "esp32s3"
         targets.append(
             {
@@ -91,9 +80,9 @@ def manifest() -> dict:
                     else [
                         {
                             "softdevice_family": "s140",
-                            "softdevice_version": "6.1.1",
-                            "fwid": "0x00b6",
-                            "application_base": "0x00026000",
+                            "softdevice_version": CATALOG[board]["build"]["variants"][0]["softdevice_version"],
+                            "fwid": CATALOG[board]["build"]["variants"][0]["fwid"],
+                            "application_base": "0x00027000" if board in {"seeed-wio-tracker-l1", "seeed-sensecap-solar-node-p1"} else "0x00026000",
                             "family_id": "0xada52840",
                             "path": (
                                 "heltec-t114-s140-6.1.1.uf2"
@@ -320,6 +309,9 @@ def complete_roster() -> dict:
         ("t1000-e", "cli"): ("macos", "x86_64"),
         ("t1000-e", "web"): ("windows", "x86_64"),
     }
+    for board in VALIDATOR.SHIPPING_BOARDS:
+        for surface in ("cli", "web"):
+            hosts.setdefault((board, surface), ("linux", "x86_64"))
     physical_assignments = []
     for (board, surface), (os_name, target_architecture) in hosts.items():
         if board not in VALIDATOR.SHIPPING_BOARDS:
@@ -900,8 +892,8 @@ class AcceptanceValidatorTests(unittest.TestCase):
 
     def test_version_bound_maintainer_override_rejects_other_versions(self) -> None:
         record = self.override_acceptance()
-        record["candidate"]["version"] = "0.3.8"
-        self.manifest_document["release"]["version"] = "0.3.8"
+        record["candidate"]["version"] = "0.3.6"
+        self.manifest_document["release"]["version"] = "0.3.6"
         self.manifest_path.write_text(
             json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
         )

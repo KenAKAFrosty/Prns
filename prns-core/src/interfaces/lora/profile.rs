@@ -42,10 +42,14 @@ pub enum RadioProfileError {
         maximum_dbm: i8,
     },
     EmptyPreamble,
+    BandwidthOutsideBand {
+        bandwidth: LoraBandwidth,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RadioProfileCompatibilityError {
+    UnsupportedBand,
     TransmitPowerOutsideRadioRange {
         power_dbm: i8,
         minimum_dbm: i8,
@@ -82,6 +86,19 @@ pub enum AirtimePolicyError {
 }
 
 impl AirtimePolicy {
+    #[cfg(feature = "lora-2g4")]
+    pub(super) fn resolve_unregulated(
+        self,
+    ) -> Result<Option<AirtimeDutyCycle>, AirtimePolicyError> {
+        match self {
+            Self::Regional | Self::Fixed(None) => Ok(None),
+            Self::Fixed(Some(limit)) => {
+                validate_airtime_limit(limit)?;
+                Ok(Some(limit))
+            }
+        }
+    }
+
     pub fn resolve(
         self,
         region: SubGRegion,
@@ -99,17 +116,7 @@ impl AirtimePolicy {
                 Ok(None)
             };
         };
-        for limit in [fixed.limit_short_per_mille, fixed.limit_long_per_mille]
-            .into_iter()
-            .flatten()
-        {
-            if limit == 0 || limit > 1_000 {
-                return Err(AirtimePolicyError::InvalidLimitPerMille { limit });
-            }
-        }
-        if fixed.max_queued_airtime_ms == 0 {
-            return Err(AirtimePolicyError::EmptyQueueBudget);
-        }
+        validate_airtime_limit(fixed)?;
         if let Some(regional_limit) = regional.and_then(|duty| duty.limit_long_per_mille) {
             if fixed
                 .limit_long_per_mille
@@ -124,6 +131,21 @@ impl AirtimePolicy {
         }
         Ok(Some(fixed))
     }
+}
+
+fn validate_airtime_limit(fixed: AirtimeDutyCycle) -> Result<(), AirtimePolicyError> {
+    for limit in [fixed.limit_short_per_mille, fixed.limit_long_per_mille]
+        .into_iter()
+        .flatten()
+    {
+        if limit == 0 || limit > 1_000 {
+            return Err(AirtimePolicyError::InvalidLimitPerMille { limit });
+        }
+    }
+    if fixed.max_queued_airtime_ms == 0 {
+        return Err(AirtimePolicyError::EmptyQueueBudget);
+    }
+    Ok(())
 }
 
 prns_macros::iterable_enum! {
@@ -269,6 +291,11 @@ impl RadioProfile {
     }
 
     pub const fn validate(self) -> Result<(), RadioProfileError> {
+        if !self.modulation.bandwidth().is_sub_ghz() {
+            return Err(RadioProfileError::BandwidthOutsideBand {
+                bandwidth: self.modulation.bandwidth(),
+            });
+        }
         let range = self.region.frequency_range();
         let Modulation::Lora { bandwidth, .. } = self.modulation;
         if !range.contains_nominal_channel(self.frequency, bandwidth.hz()) {
@@ -306,7 +333,11 @@ impl RadioProfile {
             coding_rate,
         } = self.modulation;
         let mut out = HeaplessString::new();
-        if write!(
+        // The integer field bounds require at most 30 bytes, including separators.
+        const {
+            assert!(INVENTORY_CONFIG_CAP >= 30);
+        }
+        let _ = write!(
             out,
             "L,{},{},{},{},{},{},{}",
             self.region.inventory_index(),
@@ -316,12 +347,7 @@ impl RadioProfile {
             coding_rate.denominator(),
             self.tx_power.dbm(),
             self.preamble.count(),
-        )
-        .is_err()
-        {
-            out.clear();
-            let _ = out.push_str("LoRa");
-        }
+        );
         out
     }
 
@@ -336,7 +362,9 @@ impl RadioProfile {
         self.modulation.nominal_bitrate_bps()
     }
 
-    /// RNode firmware `add_airtime` (RNode_Firmware.ino, SX126x arm): the real on-air time of one `frame_bytes` transmission at this profile, counting what the nominal bitrate ignores (preamble, PHY header symbols, CRC bits, sync overhead, low-data-rate widening). Integer throughout; agrees with the firmware's float arithmetic to under a microsecond.
+    /// Matches RNode firmware's legacy airtime accounting, including its
+    /// fractional coded-symbol arithmetic, for SubG interoperability.
+    #[inline]
     pub const fn time_on_air_us(self, frame_bytes: usize) -> u64 {
         let Modulation::Lora {
             spreading_factor,
@@ -420,19 +448,31 @@ impl SubGRegion {
     }
 }
 
-const fn bandwidth_inventory_code(bandwidth: LoraBandwidth) -> u8 {
+pub(super) const fn bandwidth_inventory_code(bandwidth: LoraBandwidth) -> u8 {
     match bandwidth {
         LoraBandwidth::Bw125kHz => 1,
         LoraBandwidth::Bw250kHz => 2,
         LoraBandwidth::Bw500kHz => 5,
+        #[cfg(feature = "lora-2g4")]
+        LoraBandwidth::Bw203kHz => 3,
+        #[cfg(feature = "lora-2g4")]
+        LoraBandwidth::Bw406kHz => 4,
+        #[cfg(feature = "lora-2g4")]
+        LoraBandwidth::Bw812kHz => 8,
     }
 }
 
-fn bandwidth_from_inventory_code(code: u32) -> Option<LoraBandwidth> {
+pub(super) fn bandwidth_from_inventory_code(code: u32) -> Option<LoraBandwidth> {
     match code {
         1 | 125 => Some(LoraBandwidth::Bw125kHz),
         2 | 250 => Some(LoraBandwidth::Bw250kHz),
         5 | 500 => Some(LoraBandwidth::Bw500kHz),
+        #[cfg(feature = "lora-2g4")]
+        3 | 203 => Some(LoraBandwidth::Bw203kHz),
+        #[cfg(feature = "lora-2g4")]
+        4 | 406 => Some(LoraBandwidth::Bw406kHz),
+        #[cfg(feature = "lora-2g4")]
+        8 | 812 => Some(LoraBandwidth::Bw812kHz),
         _ => None,
     }
 }
@@ -498,13 +538,20 @@ pub const DEFAULT_915_PROFILE: RadioProfile =
     crate::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
 
 pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
+    channel_parameters_tag(profile.frequency, profile.modulation)
+}
+
+pub(super) fn channel_parameters_tag(
+    frequency: Frequency,
+    modulation: Modulation,
+) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
     let mut tag = HeaplessVec::new();
-    let _ = tag.extend_from_slice(&profile.frequency.hz().to_be_bytes());
+    let _ = tag.extend_from_slice(&frequency.hz().to_be_bytes());
     let Modulation::Lora {
         spreading_factor,
         bandwidth,
         coding_rate,
-    } = profile.modulation;
+    } = modulation;
     let _ = tag.push(MODULATION_TAG_LORA);
     let _ = tag.push(spreading_factor as u8);
     let _ = tag.extend_from_slice(&bandwidth.hz().to_be_bytes());
@@ -589,6 +636,13 @@ mod tests {
     fn modem_presets_round_trip_through_their_modulation() {
         for preset in ModemPreset::ALL {
             assert_eq!(ModemPreset::matching(preset.modulation()), Some(preset));
+            let profile = US915_AUTO_LORA_PROFILE
+                .with_modulation(preset.modulation())
+                .unwrap();
+            assert_eq!(
+                RadioProfile::parse_inventory_config(profile.inventory_config().as_str()),
+                Some(profile)
+            );
         }
         assert_eq!(ModemPreset::LongFast.modulation().nominal_bitrate_bps(), {
             Modulation::Lora {
@@ -724,5 +778,152 @@ mod tests {
             AirtimePolicy::Fixed(None).resolve(SubGRegion::Custom),
             Ok(None)
         );
+    }
+    #[test]
+    fn every_region_round_trips_both_inventory_formats_and_local_tuning() {
+        for region in RegulatoryRegion::ALL
+            .into_iter()
+            .map(SubGRegion::Regulated)
+            .chain(core::iter::once(SubGRegion::Custom))
+        {
+            let parameters = region.manual_lora_defaults();
+            let profile = RadioProfile::new(
+                region,
+                parameters.frequency(),
+                parameters.modulation(),
+                parameters.tx_power(),
+                parameters.preamble(),
+            )
+            .unwrap();
+            assert_eq!(profile.with_frequency(profile.frequency()), Ok(profile));
+            assert_eq!(
+                RadioProfile::parse_inventory_config(profile.inventory_config().as_str()),
+                Some(profile)
+            );
+            let Modulation::Lora {
+                spreading_factor,
+                bandwidth,
+                coding_rate,
+            } = profile.modulation();
+            let label = match region {
+                SubGRegion::Custom => "Custom",
+                SubGRegion::Regulated(region) => region.label(),
+            };
+            let verbose = std::format!(
+                "LoRa,{label},{},{},{},{},{},{}",
+                profile.frequency().hz(),
+                spreading_factor as u8,
+                bandwidth.hz() / 1000,
+                coding_rate.denominator(),
+                profile.tx_power().dbm(),
+                profile.preamble().count()
+            );
+            assert_eq!(
+                RadioProfile::parse_inventory_config(&verbose),
+                Some(profile)
+            );
+            assert_eq!(
+                RadioProfile::parse_inventory_config(&std::format!("{verbose},preset")),
+                Some(profile)
+            );
+            assert_eq!(
+                RadioProfile::parse_inventory_config(&std::format!("{verbose},preset,extra")),
+                None
+            );
+            assert_eq!(
+                SubGRegion::from_inventory_index(region.inventory_index()),
+                Some(region)
+            );
+        }
+        for (preset, label) in
+            ModemPreset::ALL
+                .into_iter()
+                .zip(["ShortFast", "MediumFast", "LongFast", "LongSlow"])
+        {
+            assert_eq!(preset.label(), label);
+        }
+        for bad in [
+            "L,255,921500,7,5,5,20,18",
+            "L,0,921500,7,5,5,20,18,extra",
+            "LoRa,unknown,921500000,7,500,5,20,18",
+        ] {
+            assert_eq!(RadioProfile::parse_inventory_config(bad), None);
+        }
+        let maximal = RadioProfile::new(
+            SubGRegion::Custom,
+            Frequency::new(900_000_000),
+            Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf12,
+                bandwidth: LoraBandwidth::Bw125kHz,
+                coding_rate: CodingRate::Cr48,
+            },
+            TxPower::new(i8::MIN),
+            PreambleSymbols::new(u16::MAX),
+        )
+        .unwrap();
+        assert!(maximal.inventory_config().len() <= 30);
+        assert_eq!(
+            RadioProfile::parse_inventory_config(maximal.inventory_config().as_str()),
+            Some(maximal)
+        );
+    }
+
+    #[test]
+    fn fixed_limits_validate_both_windows_and_queue_budget() {
+        let valid = AirtimeDutyCycle {
+            limit_short_per_mille: Some(10),
+            limit_long_per_mille: Some(5),
+            max_queued_airtime_ms: 1,
+        };
+        for invalid in [0, 1001, u16::MAX] {
+            for value in [
+                AirtimeDutyCycle {
+                    limit_short_per_mille: Some(invalid),
+                    ..valid
+                },
+                AirtimeDutyCycle {
+                    limit_long_per_mille: Some(invalid),
+                    ..valid
+                },
+            ] {
+                assert_eq!(
+                    AirtimePolicy::Fixed(Some(value)).resolve(SubGRegion::Custom),
+                    Err(AirtimePolicyError::InvalidLimitPerMille { limit: invalid })
+                );
+            }
+        }
+        assert_eq!(
+            AirtimePolicy::Fixed(Some(AirtimeDutyCycle {
+                max_queued_airtime_ms: 0,
+                ..valid
+            }))
+            .resolve(SubGRegion::Custom),
+            Err(AirtimePolicyError::EmptyQueueBudget)
+        );
+    }
+    #[test]
+    fn fixed_airtime_limits_accept_exact_regional_and_physical_boundaries() {
+        for region in [
+            RegulatoryRegion::Us915,
+            RegulatoryRegion::Eu868,
+            RegulatoryRegion::Eu433,
+            RegulatoryRegion::Au915,
+            RegulatoryRegion::Jp920,
+        ]
+        .map(SubGRegion::Regulated)
+        {
+            if let Some(regional) = region.regulatory_duty_cycle() {
+                assert_eq!(
+                    AirtimePolicy::Fixed(Some(regional)).resolve(region),
+                    Ok(Some(regional))
+                );
+            }
+        }
+        let physical = AirtimeDutyCycle {
+            limit_short_per_mille: Some(1000),
+            limit_long_per_mille: Some(1000),
+            max_queued_airtime_ms: 1,
+        };
+        assert_eq!(validate_airtime_limit(physical), Ok(()));
     }
 }

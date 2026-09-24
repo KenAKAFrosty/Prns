@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from pathlib import Path
 
@@ -58,7 +59,8 @@ VALID_TOOLCHAINS = {
 NIGHTLY_TOOLCHAIN_ARGUMENT = "+__NIGHTLY_TOOLCHAIN__"
 RUNNER_PYTHON_ARGUMENT = "__RUNNER_PYTHON__"
 PYTHON_ARGUMENT_PATTERN = re.compile(r"__[A-Z0-9_]*PYTHON[A-Z0-9_]*__")
-MUTATION_SHARDING = "round-robin"
+ROUND_ROBIN_SHARDING = "round-robin"
+EMBEDDED_MIRI_FULL = "embedded-miri-full"
 MUTATION_TIME_PATTERN = re.compile(
     r"^(?P<prefix>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
     r"(?:\.(?P<fraction>\d+))?(?P<zone>Z|[+-]\d{2}:\d{2})$"
@@ -180,7 +182,7 @@ def expanded_suite(suite: dict) -> list[dict]:
             "--shard",
             f"{index}/{total}",
             "--sharding",
-            MUTATION_SHARDING,
+            ROUND_ROBIN_SHARDING,
         ]
         shard["shard"] = {
             "suite": suite["id"],
@@ -191,7 +193,32 @@ def expanded_suite(suite: dict) -> list[dict]:
     return expanded
 
 
+def active_release_deferrals(manifest: dict) -> list[dict]:
+    policy = manifest.get("release_qualification", {})
+    if "release_qualification" not in manifest:
+        return []
+    if not isinstance(policy, dict) or set(policy) != {"kani"}:
+        raise ValidationError("release qualification may defer only Kani for 0.3.8")
+    kani = policy["kani"]
+    if not isinstance(kani, dict) or set(kani) != {"version", "reason"}:
+        raise ValidationError("Kani release deferral requires exactly version and reason")
+    if kani["version"] != "0.3.8":
+        raise ValidationError("Kani release deferral is authorized only for 0.3.8")
+    if not isinstance(kani["reason"], str) or not kani["reason"].strip():
+        raise ValidationError("Kani release deferral requires a non-empty reason")
+    if any("scheduled" not in proof.get("tiers", []) for proof in manifest.get("kani", [])):
+        raise ValidationError("deferred Kani proofs must remain scheduled")
+    try:
+        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise ValidationError("release qualification requires the source or candidate VERSION") from error
+    if version != kani["version"]:
+        return []
+    return [{"domain": "kani", **kani}]
+
+
 def virtual_suites(manifest: dict) -> list[dict]:
+    kani_deferred = bool(active_release_deferrals(manifest))
     suites = [
         expanded
         for suite in manifest.get("suite", [])
@@ -204,7 +231,7 @@ def virtual_suites(manifest: dict) -> list[dict]:
                 "id": f"kani-{name}",
                 "domain": "kani",
                 "group": proof["group"],
-                "tiers": proof["tiers"],
+                "tiers": [tier for tier in proof["tiers"] if not (kani_deferred and tier == "release")],
                 "platform": "any",
                 "toolchain": "kani",
                 "timeout_seconds": proof.get("timeout_seconds", 900),
@@ -425,8 +452,15 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
         shards = suite["shards"]
         if isinstance(shards, bool) or not isinstance(shards, int) or not 2 <= shards <= 16:
             errors.append(f"{location} shards must be an integer from 2 through 16")
-        if suite.get("domain") != "mutation":
-            errors.append(f"{location} may shard only the mutation domain")
+        miri_full = (
+            suite.get("id") == EMBEDDED_MIRI_FULL
+            and suite.get("domain") == "hardening"
+            and suite.get("command") == [
+                RUNNER_PYTHON_ARGUMENT, "-m", "validation.hardening.embedded_miri", "full",
+            ]
+        )
+        if suite.get("domain") != "mutation" and not miri_full:
+            errors.append(f"{location} may shard only the mutation domain or embedded-miri-full")
         command = suite.get("command")
         if isinstance(command, list) and any(
             part in {"--shard", "--sharding"} for part in command
@@ -722,6 +756,8 @@ def verification_report(manifest: dict, check_tools: bool) -> list[str]:
         f"{len(triage)} accepted survivor entries; fingerprints, reasons, reviewers, and expiries "
         "are structurally current.",
     ]
+    for deferral in active_release_deferrals(manifest):
+        lines.append(f"[verify] Release deferral: {deferral['reason']}")
     if check_tools:
         tools = manifest["tools"]
         lines.append(
@@ -763,10 +799,24 @@ def selected_suites(
     platform: str | None = None,
 ) -> list[dict]:
     suites = suite_map(manifest)
-    unknown = set(identifiers) - set(suites)
+    families: dict[str, list[dict]] = {}
+    for suite in suites.values():
+        if shard := suite.get("shard"):
+            families.setdefault(shard["suite"], []).append(suite)
+    if set(families) & set(suites):
+        raise ValidationError("a sharded suite family conflicts with a registered suite ID")
+    unknown = set(identifiers) - set(suites) - set(families)
     if unknown:
         raise ValidationError(f"unknown suites: {sorted(unknown)!r}")
-    selected = [suites[name] for name in identifiers] if identifiers else list(suites.values())
+    if identifiers:
+        selected_by_id = {
+            suite["id"]: suite
+            for name in identifiers
+            for suite in (families[name] if name in families else [suites[name]])
+        }
+        selected = list(selected_by_id.values())
+    else:
+        selected = list(suites.values())
     if domain:
         selected = [suite for suite in selected if suite["domain"] == domain]
     if tier:
@@ -779,7 +829,7 @@ def selected_suites(
     return sorted(selected, key=lambda suite: suite["id"])
 
 
-def ci_matrix(suites: list[dict]) -> dict:
+def ci_matrix(suites: list[dict], emulators: str | None = None) -> dict:
     runners = {
         "any": "ubuntu-24.04",
         "linux": "ubuntu-24.04",
@@ -789,6 +839,10 @@ def ci_matrix(suites: list[dict]) -> dict:
     }
     include = []
     for suite in suites:
+        # These are the same groups that restore prepared emulators in CI.
+        requires_emulators = suite.get("group") in {"embedded-isa", "embedded-platform"}
+        if emulators is not None and requires_emulators != (emulators == "required"):
+            continue
         entry = dict(suite)
         entry["runner"] = runners[suite["platform"]]
         include.append(entry)
@@ -917,6 +971,11 @@ def tool_versions(manifest: dict, suite: dict) -> dict[str, str]:
     return versions
 
 
+def validation_artifact_root() -> Path:
+    root = Path(os.environ.get("PRNS_VALIDATION_ARTIFACTS", ROOT / "validation-artifacts"))
+    return root if root.is_absolute() else ROOT / root
+
+
 def run_suite(manifest: dict, suite: dict, expected_sha: str | None, fuzz_seconds: int) -> bool:
     current_platform = native_platform()
     required_platform = suite["platform"]
@@ -937,9 +996,7 @@ def run_suite(manifest: dict, suite: dict, expected_sha: str | None, fuzz_second
             raise ValidationError(f"HEAD is {commit}, expected exact release SHA {expected_sha}")
         if not worktree_clean:
             raise ValidationError("exact-SHA evidence requires a clean tracked worktree")
-    artifact_root = Path(os.environ.get("PRNS_VALIDATION_ARTIFACTS", ROOT / "validation-artifacts"))
-    if not artifact_root.is_absolute():
-        artifact_root = ROOT / artifact_root
+    artifact_root = validation_artifact_root()
     artifact = artifact_root / "results" / suite["id"]
     artifact.mkdir(parents=True, exist_ok=True)
     command = command_for(suite, fuzz_seconds, artifact)
@@ -1496,6 +1553,32 @@ def aggregate_mutation_results(
     return output, errors
 
 
+def collect_embedded_miri_shards(
+    manifest: dict, suites: list[dict], expected_sha: str, *, require_complete: bool,
+) -> None:
+    selected = [
+        suite for suite in suites
+        if suite.get("shard", {}).get("suite") == EMBEDDED_MIRI_FULL
+    ]
+    if not selected:
+        return
+    registered = [
+        suite for suite in virtual_suites(manifest)
+        if suite.get("shard", {}).get("suite") == EMBEDDED_MIRI_FULL
+    ]
+    if {suite["id"] for suite in selected} != {suite["id"] for suite in registered}:
+        if require_complete:
+            raise ValidationError("full embedded Miri aggregation requires every registered shard")
+        return
+    from validation.hardening.embedded_miri_distribution import collect_proofs
+    from validation.hardening.embedded_miri_shards import ShardError
+
+    try:
+        collect_proofs(registered, validation_artifact_root(), expected_sha)
+    except (ShardError, OSError, subprocess.SubprocessError) as error:
+        raise ValidationError(f"embedded Miri shard aggregation failed: {error}") from error
+
+
 def aggregate(
     manifest: dict,
     expected_sha: str,
@@ -1511,9 +1594,7 @@ def aggregate(
         raise ValidationError(f"aggregate checkout is not exact commit {expected_sha}")
     if not tracked_worktree_is_clean():
         raise ValidationError("aggregate requires a clean tracked worktree")
-    artifact_root = Path(os.environ.get("PRNS_VALIDATION_ARTIFACTS", ROOT / "validation-artifacts"))
-    if not artifact_root.is_absolute():
-        artifact_root = ROOT / artifact_root
+    artifact_root = validation_artifact_root()
     required = selected_suites(manifest, identifiers or [], domain, tier)
     scope = f"domain={domain}" if domain else "all registered domains"
     print(
@@ -1552,6 +1633,7 @@ def aggregate(
     errors.extend(mutation_errors)
     if errors:
         raise ValidationError("\n".join(errors))
+    collect_embedded_miri_shards(manifest, required, expected_sha, require_complete=True)
     output = artifact_root / "release-manifest.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
@@ -1618,6 +1700,10 @@ def build_parser() -> argparse.ArgumentParser:
     matrix.add_argument("--domain")
     matrix.add_argument("--tier", choices=sorted(VALID_TIERS))
     matrix.add_argument("--platform", choices=["current", *sorted(VALID_PLATFORMS)])
+    matrix.add_argument(
+        "--emulators", choices=["required", "none"],
+        help="partition CI suites by their dependency on prepared embedded emulators",
+    )
     run = subcommands.add_parser("run")
     run.add_argument("--suite", action="append", default=[])
     run.add_argument("--domain")
@@ -1627,6 +1713,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--fuzz-seconds", type=int, default=int(os.environ.get("PRNS_FUZZ_SECONDS", "30")))
     toolchain = subcommands.add_parser("toolchain")
     toolchain.add_argument("name", choices=["nightly"])
+    subcommands.add_parser("release-deferrals")
     subcommands.add_parser("prepare-oracles")
     embedded = subcommands.add_parser("prepare-embedded-assurance")
     embedded.add_argument("--root", type=Path, required=True)
@@ -1656,6 +1743,8 @@ def main() -> int:
             for line in verification_report(manifest, arguments.check_tools):
                 print(line)
             print("VALIDATION_REGISTRY_OK")
+        elif arguments.command == "release-deferrals":
+            print(json.dumps(active_release_deferrals(manifest), sort_keys=True))
         elif arguments.command in {"list", "matrix"}:
             suites = selected_suites(
                 manifest,
@@ -1665,17 +1754,18 @@ def main() -> int:
                 arguments.platform,
             )
             if arguments.command == "matrix":
+                matrix = ci_matrix(suites, arguments.emulators)
                 runners = set()
-                for entry in ci_matrix(suites)["include"]:
+                for entry in matrix["include"]:
                     runner = entry["runner"]
                     runners.add(" + ".join(runner) if isinstance(runner, list) else runner)
                 print(
-                    f"[matrix] {len(suites)} suites selected; "
+                    f"[matrix] {len(matrix['include'])} suites selected; "
                     f"runners={', '.join(sorted(runners))}; "
                     "stdout remains CI-ready JSON.",
                     file=sys.stderr,
                 )
-                print(json.dumps(ci_matrix(suites), sort_keys=True))
+                print(json.dumps(matrix, sort_keys=True))
             else:
                 filters = []
                 if arguments.domain:
@@ -1726,11 +1816,29 @@ def main() -> int:
                 f"[run] Plan: {len(suites)} {suite_label}, custody={custody}; all selected suites "
                 "will be attempted even if one fails."
             )
-            results = [
-                run_suite(manifest, suite, arguments.expected_sha, arguments.fuzz_seconds)
-                for suite in suites
-            ]
+            if len(suites) > 1 and all(
+                suite.get("shard", {}).get("suite") == EMBEDDED_MIRI_FULL for suite in suites
+            ):
+                from validation.hardening.embedded_miri_distribution import local_parallelism
+
+                with ThreadPoolExecutor(max_workers=local_parallelism()) as executor:
+                    pending = [
+                        executor.submit(
+                            run_suite, manifest, suite, arguments.expected_sha, arguments.fuzz_seconds,
+                        )
+                        for suite in suites
+                    ]
+                    results = [future.result() for future in pending]
+            else:
+                results = [
+                    run_suite(manifest, suite, arguments.expected_sha, arguments.fuzz_seconds)
+                    for suite in suites
+                ]
             passed = all(results)
+            if passed:
+                collect_embedded_miri_shards(
+                    manifest, suites, arguments.expected_sha or git_head(), require_complete=False,
+                )
             return 0 if passed else 1
         elif arguments.command == "toolchain":
             print(named_toolchain(manifest, arguments.name))

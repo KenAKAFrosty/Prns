@@ -22,7 +22,7 @@ impl EntropySource for HalEntropySource {
     }
 }
 
-#[cfg(feature = "board-t1000e")]
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
 pub(super) type NrfEntropySource = HalEntropySource;
 
 #[cfg(any(feature = "softdevice-s140-v6", feature = "softdevice-s140-v7"))]
@@ -69,7 +69,7 @@ fn install(entropy: RuntimeEntropy<NrfEntropySource>) {
     );
 }
 
-#[cfg(feature = "board-t1000e")]
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
 pub(super) fn install_hal_runtime_entropy(entropy: RuntimeEntropy<NrfEntropySource>) {
     install(entropy);
 }

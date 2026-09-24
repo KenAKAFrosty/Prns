@@ -406,7 +406,7 @@ pub(super) async fn run(
     let request_nnpages = nnpages.clone();
     let mut prns = PrnsNode::new_with_handle(move |handle| PrnsNodeRecipe {
         transport_identity: transport_secret,
-        remote_control,
+        remote_control: remote_control.into(),
         pre_configured_destinations: std::iter::empty(),
         app_state: services::DaemonRequestState::new(
             handle,

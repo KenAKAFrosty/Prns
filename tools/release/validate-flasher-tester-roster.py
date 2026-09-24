@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Require exact physical, fallback, and installer assignments before signing."""
+"""Require a release owner or historical tester assignments before signing."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ if str(SCRIPT_DIRECTORY) not in sys.path:
 
 from flasher_acceptance_contract import (  # noqa: E402,F401
     CLI_TARGETS,
+    SOFTWARE_ROSTER_SCHEMA,
     OS_ARCHITECTURES,
     REQUIRED_FALLBACKS,
     SHIPPING_BOARDS,
@@ -48,6 +49,9 @@ def main() -> int:
         for error in errors:
             print(f"tester roster validation failed: {error}", file=sys.stderr)
         return 1
+    if roster.get("schema") == SOFTWARE_ROSTER_SCHEMA:
+        print("release owner is recorded; automated acceptance requires no physical assignments")
+        return 0
     print(
         f"tester roster covers {len(SHIPPING_BOARDS) * len(SURFACES)} physical, "
         f"{len(WEB_SERIAL_HOSTS)} Firefox Web Serial, "

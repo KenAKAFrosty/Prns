@@ -34,15 +34,24 @@ pub(crate) fn test_remote_control_service_with_capabilities(
         RemoteControlTargetIdentitySecret,
     };
 
-    let identity_secrets = RemoteControlNodeIdentitySecrets::new(
-        RemoteControlControllerIdentitySecret::from(IdentitySecretKey::new(
-            [0x71; crate::identity::IDENTITY_SECRET_KEY_LEN],
-        )),
-        RemoteControlTargetIdentitySecret::from(IdentitySecretKey::new(
-            [0x72; crate::identity::IDENTITY_SECRET_KEY_LEN],
-        )),
-    )
-    .expect("distinct test identities");
+    use prns_core::remote_control::test_support::RemoteControlIdentityFixture;
+    static IDENTITIES: std::sync::OnceLock<RemoteControlIdentityFixture> =
+        std::sync::OnceLock::new();
+    let identity_secrets = IDENTITIES
+        .get_or_init(|| {
+            RemoteControlIdentityFixture::new(
+                RemoteControlNodeIdentitySecrets::new(
+                    RemoteControlControllerIdentitySecret::from(IdentitySecretKey::new(
+                        [0x71; crate::identity::IDENTITY_SECRET_KEY_LEN],
+                    )),
+                    RemoteControlTargetIdentitySecret::from(IdentitySecretKey::new(
+                        [0x72; crate::identity::IDENTITY_SECRET_KEY_LEN],
+                    )),
+                )
+                .expect("distinct test identities"),
+            )
+        })
+        .fresh_secrets();
     RemoteControlService::with_capabilities(
         identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,

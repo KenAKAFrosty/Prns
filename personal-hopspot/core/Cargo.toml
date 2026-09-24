@@ -11,6 +11,7 @@ description = "Shared Personal Hopspot application state, canonical display face
 build = "build.rs"
 
 [features]
+lora-2g4 = ["personal-rns/lora-2g4", "prns-core/lora-2g4"]
 default = ["display", "remote-control-pairing"]
 display = ["dep:embedded-graphics"]
 embedded = ["personal-rns/embassy-host", "dep:embassy-sync"]
@@ -18,6 +19,7 @@ host = ["personal-rns/tokio-host"]
 remote-control-pairing = []
 source-archive = ["personal-rns/large-static-responses"]
 compact-node-pages = []
+omit-coming-from-rns = []
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["flash"] }

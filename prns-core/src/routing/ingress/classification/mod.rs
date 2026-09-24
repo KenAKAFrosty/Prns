@@ -183,6 +183,11 @@ impl<'a> Ingress<'a> {
             return Self::Malformed;
         }
         let (_, payload) = bytes.split_at_mut(payload_offset);
+        // RNS 1.5.4 Packet.unpack rejects a header without any wire data.
+        // Header parsing itself remains useful for constructing outbound packets.
+        if payload.is_empty() {
+            return Self::Malformed;
+        }
 
         let received_hops = local_adjusted_hops(header.hops.saturating_add(1), source_interface);
 

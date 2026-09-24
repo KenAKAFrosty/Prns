@@ -18,6 +18,7 @@ import tempfile
 import types
 import zipfile
 
+from deployment_qualification_policy import qualification_policy
 from flasher_manifest import FLASH_MANIFEST_SCHEMA, target_artifacts
 
 
@@ -1219,6 +1220,10 @@ def suite_record_value(root: Path, inventory: Path, commit: str) -> dict:
         }
         for name, checksum in sorted(expected.items())
     ]
+    railway_record = {"contract": railway_name}
+    qualification = qualification_policy(ROOT, version)
+    if qualification["status"] == "deferred":
+        railway_record["qualification"] = qualification
     return {
         "assets": assets,
         "attestations": attestations,
@@ -1236,9 +1241,7 @@ def suite_record_value(root: Path, inventory: Path, commit: str) -> dict:
         },
         "inventory": file_identity(inventory),
         "linkage": linkage,
-        "railway": {
-            "contract": railway_name,
-        },
+        "railway": railway_record,
         "release": {
             "source_commit": commit,
             "version": version,
@@ -1537,6 +1540,14 @@ def verify_deployment_evidence(arguments: argparse.Namespace) -> None:
     print(f"verified protected deployment qualification {evidence_path.name}")
 
 
+def print_deployment_policy(arguments: argparse.Namespace) -> None:
+    policy = qualification_policy(ROOT, suite_version())
+    if arguments.format == "status":
+        print(policy["status"])
+    else:
+        print(canonical_json(policy).decode("utf-8"), end="")
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser()
     commands = root.add_subparsers(dest="command", required=True)
@@ -1680,6 +1691,10 @@ def parser() -> argparse.ArgumentParser:
     suite_verify.add_argument("--source-commit", required=True)
     suite_verify.add_argument("--image-digest", required=True)
     suite_verify.set_defaults(run=verify_suite_release)
+
+    policy = commands.add_parser("deployment-policy")
+    policy.add_argument("--format", choices=("json", "status"), default="json")
+    policy.set_defaults(run=print_deployment_policy)
 
     deployment = commands.add_parser("deployment-evidence")
     deployment.add_argument("--source-commit", required=True)

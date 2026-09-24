@@ -9,13 +9,13 @@ use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::{Operation, SpiDevice};
 
 use prns_core::interfaces::lora::{
-    CodingRate as ProfileCodingRate, LoRaNetwork, LoraBandwidth as ProfileBandwidth,
+    CodingRate as ProfileCodingRate, LoRaNetwork, LoRaProfile, LoraBandwidth as ProfileBandwidth,
     Modulation as ProfileModulation, RadioProfile, RadioProfileCompatibilityError,
     SpreadingFactor as ProfileSpreadingFactor, RNODE_LORA_SYNC_WORD,
 };
 use prns_core::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 
-use super::{LoRaRadio, RadioRecovery};
+use super::{BandRadioError, LoRaRadio, RadioRecovery};
 pub use super::{RadioEvent, ReceivedAirFrame};
 
 #[allow(dead_code)]
@@ -226,6 +226,67 @@ impl FrontendControl {
     }
 }
 
+/// Board-owned indication of actual SX126x transmit and receive activity.
+///
+/// Receive activity begins when the radio reports a preamble or valid header and ends when
+/// that reception completes or fails. Transmit activity spans the complete transmit attempt,
+/// including error and cancellation paths.
+#[derive(Debug, Clone, Copy)]
+pub enum RadioActivityControl {
+    None,
+    TxRx {
+        enter_transmit: fn(),
+        leave_transmit: fn(),
+        enter_receive: fn(),
+        leave_receive: fn(),
+    },
+}
+
+impl RadioActivityControl {
+    fn enter_receive(&self) {
+        if let Self::TxRx { enter_receive, .. } = self {
+            enter_receive();
+        }
+    }
+
+    fn leave_receive(&self) {
+        if let Self::TxRx { leave_receive, .. } = self {
+            leave_receive();
+        }
+    }
+}
+
+enum TransmitActivityGuard {
+    Disabled,
+    Active { leave_transmit: fn() },
+}
+
+impl TransmitActivityGuard {
+    fn enter(control: &RadioActivityControl) -> Self {
+        match control {
+            RadioActivityControl::None => Self::Disabled,
+            RadioActivityControl::TxRx {
+                enter_transmit,
+                leave_transmit,
+                ..
+            } => {
+                enter_transmit();
+                Self::Active {
+                    leave_transmit: *leave_transmit,
+                }
+            }
+        }
+    }
+}
+
+impl Drop for TransmitActivityGuard {
+    fn drop(&mut self) {
+        if let Self::Active { leave_transmit } = self {
+            leave_transmit();
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BoardConfig {
     /// `Some(v)` if a TCXO is fed from DIO3 at voltage `v`; `None` for a bare XTAL.
@@ -244,6 +305,7 @@ pub struct BoardConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
+    UnsupportedProfile,
     Spi,
     Busy,
     Dio1,
@@ -298,6 +360,7 @@ pub struct Sx126x<SPI, BUSY, DIO1, RST, DLY> {
     reset: RST,
     delay: DLY,
     config: BoardConfig,
+    radio_activity_control: &'static RadioActivityControl,
     freq_hz: u32,
     modulation: Modulation,
     packet: LoraPacket,
@@ -329,6 +392,7 @@ where
             reset,
             delay,
             config,
+            radio_activity_control: &RadioActivityControl::None,
             freq_hz: 915_000_000,
             modulation: Modulation::Lora {
                 spreading_factor: SpreadingFactor::Sf7,
@@ -344,6 +408,11 @@ where
             tx_power_dbm: 14,
             tx_staging: [0u8; MAX_LORA_PAYLOAD],
         }
+    }
+
+    pub fn with_radio_activity_control(mut self, control: &'static RadioActivityControl) -> Self {
+        self.radio_activity_control = control;
+        self
     }
 
     async fn wait_busy(&mut self) -> Result<(), Error> {
@@ -554,7 +623,9 @@ where
         // EasyDMA (and most SPI DMA) can only source from RAM; the caller's payload may be flash-resident (`&'static`), so stage it through the RAM `tx_staging` field.
         self.tx_staging[..len].copy_from_slice(payload);
 
+        self.radio_activity_control.leave_receive();
         self.config.frontend_control.enter_transmit();
+        let _activity = TransmitActivityGuard::enter(self.radio_activity_control);
         self.standby().await?;
         self.set_packet_params(len as u8).await?;
         self.write_tx_payload(len).await?;
@@ -589,6 +660,7 @@ where
 
     /// Arm continuous RX: restamp the RX-side max payload length, clear stale IRQs, enter SetRx continuous. [`read_frame`](Self::read_frame) waits WITHOUT re-arming, so a host-side select that cancels the read mid-listen leaves the radio receiving (the RxDone IRQ latches) rather than guillotining an in-flight multi-hundred-ms LoRa frame.
     pub async fn arm_rx(&mut self) -> Result<(), Error> {
+        self.radio_activity_control.leave_receive();
         self.config.frontend_control.enter_receive();
         self.standby().await?;
         self.set_packet_params(0xFF).await?;
@@ -625,6 +697,7 @@ where
     ) -> Result<RadioEvent, Error> {
         match classify_rx_irq(flags) {
             IrqEventKind::Frame => {
+                self.radio_activity_control.leave_receive();
                 let mut status = [0u8; 3];
                 self.read_command(op::GET_RX_BUFFER_STATUS, &mut status)
                     .await?;
@@ -649,11 +722,26 @@ where
                 self.read_buffer(offset, &mut buf[..len]).await?;
                 Ok(RadioEvent::Frame(ReceivedAirFrame { len, phy }))
             }
-            IrqEventKind::PreambleDetected => Ok(RadioEvent::PreambleDetected),
-            IrqEventKind::HeaderValid => Ok(RadioEvent::HeaderValid),
-            IrqEventKind::HeaderError => Ok(RadioEvent::HeaderError),
-            IrqEventKind::CrcError => Ok(RadioEvent::CrcError),
-            IrqEventKind::Timeout => Ok(RadioEvent::Timeout),
+            IrqEventKind::PreambleDetected => {
+                self.radio_activity_control.enter_receive();
+                Ok(RadioEvent::PreambleDetected)
+            }
+            IrqEventKind::HeaderValid => {
+                self.radio_activity_control.enter_receive();
+                Ok(RadioEvent::HeaderValid)
+            }
+            IrqEventKind::HeaderError => {
+                self.radio_activity_control.leave_receive();
+                Ok(RadioEvent::HeaderError)
+            }
+            IrqEventKind::CrcError => {
+                self.radio_activity_control.leave_receive();
+                Ok(RadioEvent::CrcError)
+            }
+            IrqEventKind::Timeout => {
+                self.radio_activity_control.leave_receive();
+                Ok(RadioEvent::Timeout)
+            }
             IrqEventKind::Other => Ok(RadioEvent::SpuriousInterrupt),
         }
     }
@@ -815,12 +903,28 @@ where
             | Error::UnexpectedTransmitInterrupt(_)
             | Error::Reset
             | Error::Timeout => RadioRecovery::Reinitialize,
-            Error::Crc | Error::BufferTooSmall => RadioRecovery::Continue,
+            Error::UnsupportedProfile | Error::Crc | Error::BufferTooSmall => {
+                RadioRecovery::Continue
+            }
         }
     }
 
     async fn initialize(&mut self, profile: RadioProfile) -> Result<(), Self::Error> {
-        Sx126x::init(self, radio_config(profile)).await
+        Sx126x::init(self, radio_config(profile)?).await
+    }
+
+    async fn initialize_band(
+        &mut self,
+        profile: LoRaProfile,
+    ) -> Result<(), BandRadioError<Self::Error>> {
+        let profile = match profile {
+            LoRaProfile::SubG(profile) => profile,
+            #[cfg(feature = "lora-2g4")]
+            LoRaProfile::Ghz24(_) => return Err(BandRadioError::UnsupportedBand),
+        };
+        Sx126x::init(self, radio_config(profile).map_err(BandRadioError::Radio)?)
+            .await
+            .map_err(BandRadioError::Radio)
     }
 
     async fn idle(&mut self) -> Result<(), Self::Error> {
@@ -864,7 +968,7 @@ fn sync_word_for_network(network: LoRaNetwork) -> u16 {
     }
 }
 
-fn radio_config(profile: RadioProfile) -> RadioConfig {
+fn radio_config(profile: RadioProfile) -> Result<RadioConfig, Error> {
     let ProfileModulation::Lora {
         spreading_factor,
         bandwidth,
@@ -884,6 +988,10 @@ fn radio_config(profile: RadioProfile) -> RadioConfig {
         ProfileBandwidth::Bw125kHz => Bandwidth::Bw125,
         ProfileBandwidth::Bw250kHz => Bandwidth::Bw250,
         ProfileBandwidth::Bw500kHz => Bandwidth::Bw500,
+        #[cfg(feature = "lora-2g4")]
+        ProfileBandwidth::Bw203kHz | ProfileBandwidth::Bw406kHz | ProfileBandwidth::Bw812kHz => {
+            return Err(Error::UnsupportedProfile)
+        }
     };
     let coding_rate = match coding_rate {
         ProfileCodingRate::Cr45 => CodingRate::Cr4_5,
@@ -891,7 +999,7 @@ fn radio_config(profile: RadioProfile) -> RadioConfig {
         ProfileCodingRate::Cr47 => CodingRate::Cr4_7,
         ProfileCodingRate::Cr48 => CodingRate::Cr4_8,
     };
-    RadioConfig {
+    Ok(RadioConfig {
         frequency_hz: profile.frequency().hz(),
         modulation: Modulation::Lora {
             spreading_factor,
@@ -906,7 +1014,7 @@ fn radio_config(profile: RadioProfile) -> RadioConfig {
         },
         network: LoRaNetwork::Reticulum,
         tx_power_dbm: profile.tx_power().dbm(),
-    }
+    })
 }
 
 fn image_calibration_pair(frequency_hz: u32) -> [u8; 2] {
@@ -969,6 +1077,36 @@ mod tests {
     use embedded_hal_async::spi::SpiDevice;
     use prns_core::interfaces::lora::TxPower;
     use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
+
+    static TX_ACTIVITY_STARTED: AtomicU8 = AtomicU8::new(0);
+    static TX_ACTIVITY_FINISHED: AtomicU8 = AtomicU8::new(0);
+    static RX_ACTIVITY_STARTED: AtomicU8 = AtomicU8::new(0);
+    static RX_ACTIVITY_FINISHED: AtomicU8 = AtomicU8::new(0);
+
+    fn tx_activity_started() {
+        TX_ACTIVITY_STARTED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn tx_activity_finished() {
+        TX_ACTIVITY_FINISHED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn rx_activity_started() {
+        RX_ACTIVITY_STARTED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn rx_activity_finished() {
+        RX_ACTIVITY_FINISHED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn activity_control() -> &'static RadioActivityControl {
+        &RadioActivityControl::TxRx {
+            enter_transmit: tx_activity_started,
+            leave_transmit: tx_activity_finished,
+            enter_receive: rx_activity_started,
+            leave_receive: rx_activity_finished,
+        }
+    }
 
     #[derive(Debug)]
     struct MockErr;
@@ -1244,9 +1382,58 @@ mod tests {
     }
 
     #[test]
+    fn band_adapter_preserves_subg_initialization_commands() {
+        let legacy_log: Log = Rc::new(RefCell::new(Vec::new()));
+        let band_log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut legacy = Sx126x::new(
+            MockSpi::new(legacy_log.clone()),
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        let mut band = Sx126x::new(
+            MockSpi::new(band_log.clone()),
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        assert_eq!(block_on(legacy.initialize(US915_AUTO_LORA_PROFILE)), Ok(()));
+        assert_eq!(
+            block_on(band.initialize_band(LoRaProfile::SubG(US915_AUTO_LORA_PROFILE))),
+            Ok(())
+        );
+        assert_eq!(*band_log.borrow(), *legacy_log.borrow());
+    }
+
+    #[cfg(feature = "lora-2g4")]
+    #[test]
+    fn band_adapter_rejects_high_frequency_before_spi_access() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi::new(log.clone()),
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        assert_eq!(
+            block_on(radio.initialize_band(LoRaProfile::Ghz24(
+                prns_core::interfaces::lora::GHZ24_BALANCED_PROFILE,
+            ))),
+            Err(BandRadioError::UnsupportedBand),
+        );
+        assert!(log.borrow().is_empty());
+    }
+
+    #[test]
     fn reticulum_profile_maps_to_the_existing_sx126x_configuration() {
         assert_eq!(
-            radio_config(US915_AUTO_LORA_PROFILE),
+            radio_config(US915_AUTO_LORA_PROFILE).expect("supported SubG profile"),
             RadioConfig {
                 frequency_hz: 921_500_000,
                 modulation: Modulation::Lora {
@@ -1350,7 +1537,10 @@ mod tests {
             )
         );
 
-        block_on(radio.init(radio_config(US915_AUTO_LORA_PROFILE))).expect("init");
+        block_on(
+            radio.init(radio_config(US915_AUTO_LORA_PROFILE).expect("supported SubG profile")),
+        )
+        .expect("init");
         assert_eq!(radio.tx_power_dbm, 8);
         assert!(
             log.borrow()
@@ -1551,7 +1741,10 @@ mod tests {
             MockDelay,
             board(),
         );
-        block_on(radio.init(radio_config(US915_AUTO_LORA_PROFILE))).expect("init");
+        block_on(
+            radio.init(radio_config(US915_AUTO_LORA_PROFILE).expect("supported SubG profile")),
+        )
+        .expect("init");
         block_on(radio.arm_rx()).expect("arm receive");
 
         let mut buffer = [0; MAX_LORA_PAYLOAD];
@@ -1672,5 +1865,84 @@ mod tests {
             result,
             Err(Error::UnexpectedTransmitInterrupt(irq::HEADER_ERR))
         );
+    }
+
+    #[test]
+    fn board_activity_callbacks_span_transmit_and_received_airtime() {
+        TX_ACTIVITY_STARTED.store(0, Ordering::Relaxed);
+        TX_ACTIVITY_FINISHED.store(0, Ordering::Relaxed);
+        RX_ACTIVITY_STARTED.store(0, Ordering::Relaxed);
+        RX_ACTIVITY_FINISHED.store(0, Ordering::Relaxed);
+
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi::new(log),
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        )
+        .with_radio_activity_control(activity_control());
+
+        assert_eq!(block_on(radio.transmit(b"activity")), Ok(()));
+        assert_eq!(TX_ACTIVITY_STARTED.load(Ordering::Relaxed), 1);
+        assert_eq!(TX_ACTIVITY_FINISHED.load(Ordering::Relaxed), 1);
+        RX_ACTIVITY_FINISHED.store(0, Ordering::Relaxed);
+
+        radio.spi.irq_flags = irq::PREAMBLE_DETECTED;
+        let mut received = [0u8; MAX_LORA_PAYLOAD];
+        assert!(matches!(
+            block_on(radio.read_event(&mut received)),
+            Ok(RadioEvent::PreambleDetected)
+        ));
+        assert_eq!(RX_ACTIVITY_STARTED.load(Ordering::Relaxed), 1);
+
+        radio.spi.irq_flags = irq::RX_DONE;
+        assert!(matches!(
+            block_on(radio.read_event(&mut received)),
+            Ok(RadioEvent::Frame(_))
+        ));
+        assert_eq!(RX_ACTIVITY_FINISHED.load(Ordering::Relaxed), 1);
+
+        let mut timed_out = Sx126x::new(
+            MockSpi::new(Rc::new(RefCell::new(Vec::new()))),
+            MockWait,
+            Dio1NeverHigh,
+            MockOut,
+            MockDelay,
+            board(),
+        )
+        .with_radio_activity_control(activity_control());
+        assert_eq!(
+            block_on(timed_out.transmit(b"timeout")),
+            Err(Error::Timeout)
+        );
+        assert_eq!(TX_ACTIVITY_STARTED.load(Ordering::Relaxed), 2);
+        assert_eq!(TX_ACTIVITY_FINISHED.load(Ordering::Relaxed), 2);
+
+        struct PendingDelay;
+        impl DelayNs for PendingDelay {
+            async fn delay_ns(&mut self, _ns: u32) {
+                core::future::pending::<()>().await;
+            }
+        }
+        let mut cancelled = Sx126x::new(
+            MockSpi::new(Rc::new(RefCell::new(Vec::new()))),
+            BusyNeverLow,
+            MockWait,
+            MockOut,
+            PendingDelay,
+            board(),
+        )
+        .with_radio_activity_control(activity_control());
+        {
+            let mut attempt = core::pin::pin!(cancelled.transmit(b"cancel"));
+            let mut context = core::task::Context::from_waker(core::task::Waker::noop());
+            assert!(attempt.as_mut().poll(&mut context).is_pending());
+            assert_eq!(TX_ACTIVITY_STARTED.load(Ordering::Relaxed), 3);
+            assert_eq!(TX_ACTIVITY_FINISHED.load(Ordering::Relaxed), 2);
+        }
+        assert_eq!(TX_ACTIVITY_FINISHED.load(Ordering::Relaxed), 3);
     }
 }

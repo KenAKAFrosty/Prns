@@ -30,7 +30,7 @@ type MeshTowerV2SpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Dela
 type MeshTowerV2Radio =
     Sx126x<MeshTowerV2SpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type MeshTowerV2LoraInterface = LoRaInterface<'static, MeshTowerV2Radio>;
+pub(crate) type MeshTowerV2LoraInterface = LoRaInterface<'static, 'static, MeshTowerV2Radio>;
 
 type MeshTowerV2UsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
 

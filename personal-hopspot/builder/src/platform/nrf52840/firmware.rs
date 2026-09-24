@@ -1,5 +1,3 @@
-use personal_hopspot_memory::MemoryProfile;
-
 use super::binary;
 use crate::architecture::adapter_for_rust_target;
 use crate::{embedded_cargo_command, BuildContext, BuildError, FirmwareEvidence, LtoMode};
@@ -31,10 +29,9 @@ impl Output {
 
 pub fn build(
     context: &BuildContext<'_>,
-    profile: &MemoryProfile,
+    target_id: &str,
     recipe: Recipe<'_>,
 ) -> Result<Output, BuildError> {
-    let target_id = profile.id.as_str();
     let crate_dir = context
         .repository()
         .join("personal-hopspot")

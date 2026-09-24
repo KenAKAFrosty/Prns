@@ -76,7 +76,7 @@ fn the_standard_timeline_origin_is_unix_epoch_aligned() {
 fn boot_blackholes_seed_against_the_resumed_timeline() {
     let mut prns = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
@@ -130,7 +130,7 @@ async fn a_tolerated_write_failure_is_retried_while_the_node_keeps_running() {
     let persistence = NodePersistence::custom_dir(&directory).unwrap();
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
@@ -223,7 +223,7 @@ fn remote_control_authorizations_restore_as_complete_runtime_tables() {
     let mut store = FileStore::new(&directory);
     let mut source = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
@@ -299,7 +299,7 @@ fn remote_control_authorizations_restore_as_complete_runtime_tables() {
 
     let mut restored = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,

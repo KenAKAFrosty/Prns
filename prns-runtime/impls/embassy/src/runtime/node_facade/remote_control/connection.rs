@@ -1,4 +1,7 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
+use prns_core::remote_control::{
+    RemoteControlRadioConfiguration, RemoteControlRadioOutcome, RemoteControlRadioStatus,
+};
 
 use crate::engine::{EstablishLinkFailure, IdentifyFailure};
 use crate::identity::IdentityHash;
@@ -16,9 +19,9 @@ use crate::wire::DestinationHash;
 use prns_core::capabilities::power::PowerSnapshot;
 use prns_core::interfaces::InterfaceMode;
 use prns_core::remote_control::{
-    RemoteControlApplyOutcome, RemoteControlAuthorizeControllerOutcome, RemoteControlBuildVersion,
-    RemoteControlControllerIdentity, RemoteControlControllerInventory, RemoteControlControllerPage,
-    RemoteControlDescription, RemoteControlDiscoveryGroups,
+    RemoteControlAppMessage, RemoteControlApplyOutcome, RemoteControlAuthorizeControllerOutcome,
+    RemoteControlBuildVersion, RemoteControlControllerIdentity, RemoteControlControllerInventory,
+    RemoteControlControllerPage, RemoteControlDescription, RemoteControlDiscoveryGroups,
     RemoteControlDiscoveryGroupsInventoryOutcome, RemoteControlDiscoveryGroupsReplaceOutcome,
     RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility, RemoteControlEspRadioMode,
     RemoteControlGnssPower, RemoteControlGroupOutcome, RemoteControlInterfaceConfigOutcome,
@@ -157,6 +160,12 @@ impl<
         RemoteControlDisplayAutoOff
     );
     remote_control_target_apply_method!(
+        set_node_name,
+        SetNodeName,
+        name,
+        prns_core::remote_control::RemoteControlNodeName
+    );
+    remote_control_target_apply_method!(
         set_esp_radio_mode,
         SetEspRadioMode,
         mode,
@@ -201,6 +210,18 @@ impl<
             .map_err(Into::into)
     }
 
+    pub async fn app_message(
+        &self,
+        payload: RemoteControlAppMessage,
+    ) -> Result<(RemoteControlAppMessage, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(crate::remote_control::RemoteControlRequestKind::AppMessage)?;
+        self.remote_control
+            .app_message(payload)
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn describe(
         &self,
     ) -> Result<(RemoteControlDescription, RttMillis), RemoteControlTargetOperationError> {
@@ -216,6 +237,20 @@ impl<
             .admit(RemoteControlDescribeBuild::REQUEST.kind())?;
         self.remote_control
             .describe_build()
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn describe_node_name(
+        &self,
+    ) -> Result<
+        (prns_core::remote_control::RemoteControlNodeName, RttMillis),
+        RemoteControlTargetOperationError,
+    > {
+        self.connection
+            .admit(crate::runtime::RemoteControlDescribeNodeName::REQUEST.kind())?;
+        self.remote_control
+            .describe_node_name()
             .await
             .map_err(Into::into)
     }
@@ -335,6 +370,31 @@ impl<
             .admit(RemoteControlRequestKind::SetInterfaceLoRaProfile)?;
         self.remote_control
             .set_interface_lora_profile(id, profile)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn configure_radio(
+        &self,
+        id: InterfaceId,
+        configuration: RemoteControlRadioConfiguration,
+    ) -> Result<(RemoteControlRadioOutcome, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::ConfigureRadio)?;
+        self.remote_control
+            .configure_radio(id, configuration)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn inspect_radio(
+        &self,
+        id: InterfaceId,
+    ) -> Result<(RemoteControlRadioStatus, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::InspectRadio)?;
+        self.remote_control
+            .inspect_radio(id)
             .await
             .map_err(Into::into)
     }

@@ -432,6 +432,12 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlRequestKind::InspectWifiTransaction,
             RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
             RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
+            RemoteControlRequestKind::AppMessage,
+            RemoteControlRequestKind::WatchInterfaces,
+            RemoteControlRequestKind::SetNodeName,
+            RemoteControlRequestKind::DescribeNodeName,
+            RemoteControlRequestKind::InspectRadio,
+            RemoteControlRequestKind::ConfigureRadio,
         ],
     );
     assert_eq!(
@@ -467,6 +473,12 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlResponseKind::InspectWifiTransaction,
             RemoteControlResponseKind::InventoryInterfaceDiscoveryGroups,
             RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups,
+            RemoteControlResponseKind::AppMessage,
+            RemoteControlResponseKind::WatchInterfaces,
+            RemoteControlResponseKind::SetNodeName,
+            RemoteControlResponseKind::DescribeNodeName,
+            RemoteControlResponseKind::InspectRadio,
+            RemoteControlResponseKind::ConfigureRadio,
             RemoteControlResponseKind::ProtocolError,
         ],
     );
@@ -1356,7 +1368,7 @@ fn inventory_power_and_sleep_messages_round_trip() {
             tx_bytes: 1,
             rx_bytes: 2,
             links: 3,
-            rate_bytes_per_sec: 4,
+            rate_bytes_per_sec: ::core::num::NonZeroU32::new(4),
         })
         .unwrap();
 
@@ -1540,7 +1552,7 @@ fn inventory_responses_reject_overlong_and_noncanonical_fields() {
         tx_bytes: 1,
         rx_bytes: 2,
         links: 3,
-        rate_bytes_per_sec: 4,
+        rate_bytes_per_sec: ::core::num::NonZeroU32::new(4),
     };
     let mut entry_wire = [0u8; RemoteControlInterfaceEntry::ENCODED_LEN];
     entry.write_into(&mut entry_wire).unwrap();
@@ -1589,7 +1601,7 @@ fn inventory_responses_reject_overlong_and_noncanonical_fields() {
             rx_bytes: 2,
             links: 3,
             destinations: 4,
-            rate_bytes_per_sec: 5,
+            rate_bytes_per_sec: ::core::num::NonZeroU32::new(5),
             radio: RadioIndication::NotRadio,
             details: PeerDetails::NotApplicable,
         })
@@ -1762,6 +1774,216 @@ fn desired_state_and_wifi_transaction_parsers_refuse_noncanonical_values() {
     );
 }
 
+#[test]
+fn missing_inventory_rate_round_trips_as_unavailable() {
+    use crate::interfaces::{
+        ConnectionState, InterfaceId, InterfaceKind, InterfaceMode, PeerDetails, RadioIndication,
+        INTERFACE_ID_LEN,
+    };
+    let entry = RemoteControlInterfaceEntry {
+        id: InterfaceId::new([0x02; INTERFACE_ID_LEN]),
+        kind: InterfaceKind::TcpServer,
+        mode: InterfaceMode::PointToPoint,
+        connection: ConnectionState::Connected,
+        enabled: true,
+        tx_bytes: 0,
+        rx_bytes: 0,
+        links: 0,
+        rate_bytes_per_sec: None,
+    };
+    let mut wire = [0u8; RemoteControlInterfaceEntry::ENCODED_LEN];
+    entry.write_into(&mut wire).unwrap();
+    assert_eq!(RemoteControlInterfaceEntry::parse(&wire), Ok(entry));
+
+    let mut page =
+        RemoteControlInterfacePeerPage::empty(InterfaceId::new([0x07; INTERFACE_ID_LEN]));
+    page.push(RemoteControlInterfacePeer {
+        id: InterfaceId::new([0x08; INTERFACE_ID_LEN]),
+        connection: ConnectionState::Connected,
+        tx_bytes: 0,
+        rx_bytes: 0,
+        links: 0,
+        destinations: 0,
+        rate_bytes_per_sec: None,
+        radio: RadioIndication::NotRadio,
+        details: PeerDetails::NotApplicable,
+    })
+    .unwrap();
+    let response = RemoteControlResponse::InventoryInterfacePeers(
+        RemoteControlInterfacePeersOutcome::Page(page),
+    );
+    let mut bytes = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
+    let count = response.write_into(&mut bytes).unwrap();
+    assert_eq!(
+        RemoteControlResponse::parse(bytes.get(..count).unwrap()),
+        Ok(response)
+    );
+}
+
+#[test]
+fn bounded_app_message_round_trips_at_both_limits() {
+    for size in [0, REMOTE_CONTROL_APP_MESSAGE_CAP] {
+        let source = std::vec![0x5a; size];
+        let message = RemoteControlAppMessage::from_slice(&source).unwrap();
+        for request in [true, false] {
+            let mut bytes = [0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+            if request {
+                let operation = RemoteControlRequest::AppMessage(message.clone());
+                let count = operation.write_into(&mut bytes).unwrap();
+                assert_eq!(
+                    RemoteControlRequest::parse(bytes.get(..count).unwrap()),
+                    Ok(operation)
+                );
+            } else {
+                let reply = RemoteControlResponse::AppMessage(message.clone());
+                let count = reply.write_into(&mut bytes).unwrap();
+                assert_eq!(
+                    RemoteControlResponse::parse(bytes.get(..count).unwrap()),
+                    Ok(reply)
+                );
+            }
+        }
+    }
+    assert!(
+        RemoteControlAppMessage::from_slice(&[0u8; REMOTE_CONTROL_APP_MESSAGE_CAP + 1]).is_err()
+    );
+    let oversized = [0u8; REMOTE_CONTROL_APP_MESSAGE_CAP + 3];
+    let mut request = oversized;
+    request[0] = RemoteControlProtocolVersion::V1.wire_value();
+    request[1] = RemoteControlRequestKind::AppMessage.wire_value();
+    assert!(RemoteControlRequest::parse(&request).is_err());
+}
+
+#[test]
+fn watch_interfaces_requires_a_canonical_stream_id() {
+    use crate::routing::links::channel::byte_stream::StreamId;
+
+    let stream_id = StreamId::new(0x3fff).unwrap();
+    let request = RemoteControlRequest::WatchInterfaces { stream_id };
+    let response = RemoteControlResponse::WatchInterfaces { stream_id };
+    let mut request_bytes = [0; RemoteControlRequest::MAX_ENCODED_LEN];
+    let request_len = request.write_into(&mut request_bytes).unwrap();
+    assert_eq!(request_len, 4);
+    assert_eq!(
+        RemoteControlRequest::parse(request_bytes.get(..request_len).unwrap()),
+        Ok(request)
+    );
+    let mut response_bytes = [0; RemoteControlResponse::MAX_ENCODED_LEN];
+    let response_len = response.write_into(&mut response_bytes).unwrap();
+    assert_eq!(response_len, 4);
+    assert_eq!(
+        RemoteControlResponse::parse(response_bytes.get(..response_len).unwrap()),
+        Ok(response)
+    );
+
+    for invalid_body in [&[0x40, 0x00][..], &[0x3f][..], &[0x00, 0x01, 0x00][..]] {
+        let mut frame = [
+            RemoteControlProtocolVersion::V1.wire_value(),
+            RemoteControlRequestKind::WatchInterfaces.wire_value(),
+            0,
+            0,
+            0,
+        ];
+        let frame_len = 2 + invalid_body.len();
+        frame
+            .get_mut(2..frame_len)
+            .unwrap()
+            .copy_from_slice(invalid_body);
+        assert!(RemoteControlRequest::parse(frame.get(..frame_len).unwrap()).is_err());
+        frame[1] = RemoteControlResponseKind::WatchInterfaces.wire_value();
+        assert!(RemoteControlResponse::parse(frame.get(..frame_len).unwrap()).is_err());
+    }
+}
+
+#[test]
+fn installed_capabilities_intersect_service_and_provider() {
+    assert!(!RemoteControlRequestSet::all_operator().supports(RemoteControlRequestKind::AppMessage));
+    assert!(!RemoteControlRequestSet::all_operator()
+        .supports(RemoteControlRequestKind::WatchInterfaces));
+    let secrets =
+        RemoteControlNodeIdentitySecrets::generate_with_runtime_entropy(&mut runtime_entropy(0x39))
+            .unwrap();
+    let configured = RemoteControlCapabilities::describe_only()
+        .with_request(RemoteControlRequestKind::DescribeBuild)
+        .with_request(RemoteControlRequestKind::InventoryInterfaces)
+        .with_request(RemoteControlRequestKind::AppMessage)
+        .with_request(RemoteControlRequestKind::WatchInterfaces);
+    let service = RemoteControlService::with_capabilities(
+        secrets,
+        RemoteControlInitialControllerGrants::Nobody,
+        RemoteControlSelfAnnouncement::Unavailable,
+        configured,
+    );
+    let mut host = RemoteControlRequestSet::only(RemoteControlRequestKind::DescribeBuild);
+    host.insert(RemoteControlRequestKind::InventoryInterfacePeers);
+    let installed =
+        service.with_installed_controls(host, RemoteControlAppMessageSupport::Unavailable);
+    let available = installed.available_requests();
+    assert!(available.supports(RemoteControlRequestKind::Describe));
+    assert!(available.supports(RemoteControlRequestKind::DescribeBuild));
+    assert!(!available.supports(RemoteControlRequestKind::InventoryInterfaces));
+    assert!(!available.supports(RemoteControlRequestKind::InventoryInterfacePeers));
+    assert!(!available.supports(RemoteControlRequestKind::AppMessage));
+    assert!(!available.supports(RemoteControlRequestKind::WatchInterfaces));
+    let app_only = RemoteControlService::with_capabilities(
+        RemoteControlNodeIdentitySecrets::generate_with_runtime_entropy(&mut runtime_entropy(0x3a))
+            .unwrap(),
+        RemoteControlInitialControllerGrants::Nobody,
+        RemoteControlSelfAnnouncement::Unavailable,
+        configured,
+    )
+    .with_installed_controls(
+        RemoteControlRequestSet::empty(),
+        RemoteControlAppMessageSupport::InstalledHandler,
+    );
+    assert!(app_only
+        .available_requests()
+        .supports(RemoteControlRequestKind::AppMessage));
+    assert!(!app_only
+        .available_requests()
+        .supports(RemoteControlRequestKind::DescribeBuild));
+    assert!(!app_only
+        .available_requests()
+        .supports(RemoteControlRequestKind::WatchInterfaces));
+    let watch_only = RemoteControlService::with_capabilities(
+        RemoteControlNodeIdentitySecrets::generate_with_runtime_entropy(&mut runtime_entropy(0x3b))
+            .unwrap(),
+        RemoteControlInitialControllerGrants::Nobody,
+        RemoteControlSelfAnnouncement::Unavailable,
+        configured,
+    )
+    .with_installed_providers(
+        RemoteControlRequestSet::empty(),
+        RemoteControlAppMessageSupport::Unavailable,
+        RemoteControlInterfaceWatchSupport::RuntimeSnapshots,
+    );
+    assert!(watch_only
+        .available_requests()
+        .supports(RemoteControlRequestKind::WatchInterfaces));
+    assert!(!watch_only
+        .available_requests()
+        .supports(RemoteControlRequestKind::AppMessage));
+}
+
+#[test]
+fn installed_runtime_producer_cannot_enable_an_unconfigured_watch() {
+    let service = RemoteControlService::with_capabilities(
+        RemoteControlNodeIdentitySecrets::generate_with_runtime_entropy(&mut runtime_entropy(0x3b))
+            .unwrap(),
+        RemoteControlInitialControllerGrants::Nobody,
+        RemoteControlSelfAnnouncement::Unavailable,
+        RemoteControlCapabilities::describe_only(),
+    )
+    .with_installed_providers(
+        RemoteControlRequestSet::empty(),
+        RemoteControlAppMessageSupport::Unavailable,
+        RemoteControlInterfaceWatchSupport::RuntimeSnapshots,
+    );
+    assert!(!service
+        .available_requests()
+        .supports(RemoteControlRequestKind::WatchInterfaces));
+}
+
 proptest! {
     #[test]
     fn every_successfully_parsed_request_round_trips_through_its_writer(
@@ -1790,4 +2012,108 @@ proptest! {
             prop_assert_eq!(RemoteControlResponse::parse(encoded), Ok(response));
         }
     }
+}
+
+#[test]
+fn node_names_are_trimmed_bounded_printable_utf8() {
+    assert!(RemoteControlNodeName::new("Rooftop RAK").is_some());
+    assert!(RemoteControlNodeName::new("Λ גג 🛰").is_some());
+    assert!(RemoteControlNodeName::new(&"a".repeat(REMOTE_CONTROL_NODE_NAME_CAP)).is_some());
+    for refused in [
+        "",
+        " leading",
+        "trailing ",
+        "tab\there",
+        "line\nbreak",
+        &"a".repeat(REMOTE_CONTROL_NODE_NAME_CAP + 1),
+    ] {
+        assert_eq!(RemoteControlNodeName::new(refused), None, "{refused:?}");
+    }
+}
+
+#[test]
+fn node_name_requests_and_responses_round_trip_and_reject_malformed_bodies() {
+    let name = RemoteControlNodeName::new("Rooftop RAK").unwrap();
+    for request in [
+        RemoteControlRequest::SetNodeName { name },
+        RemoteControlRequest::DescribeNodeName,
+    ] {
+        let mut bytes = [0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let written = request.write_into(&mut bytes).unwrap();
+        assert_eq!(written, request.encoded_len());
+        assert_eq!(
+            RemoteControlRequest::parse(bytes.get(..written).unwrap()),
+            Ok(request)
+        );
+    }
+    let malformed = |kind: RemoteControlRequestKind, body: &[u8]| {
+        let mut bytes = vec![
+            RemoteControlProtocolVersion::V1.wire_value(),
+            kind.wire_value(),
+        ];
+        bytes.extend_from_slice(body);
+        RemoteControlRequest::parse(&bytes)
+    };
+    let refused = Err(crate::remote_control::RemoteControlRequestParseError::Malformed);
+    assert_eq!(
+        malformed(RemoteControlRequestKind::DescribeNodeName, &[0]),
+        refused
+    );
+    assert_eq!(
+        malformed(RemoteControlRequestKind::SetNodeName, &[]),
+        refused
+    );
+    assert_eq!(
+        malformed(RemoteControlRequestKind::SetNodeName, &[3, b'a', b'b']),
+        refused
+    );
+    assert_eq!(
+        malformed(RemoteControlRequestKind::SetNodeName, &[2, b' ', b'a']),
+        refused
+    );
+    assert_eq!(
+        malformed(RemoteControlRequestKind::SetNodeName, &[2, 0xff, 0xfe]),
+        refused
+    );
+
+    let longest = RemoteControlNodeName::new(&"n".repeat(REMOTE_CONTROL_NODE_NAME_CAP)).unwrap();
+    for (response, kind) in [
+        (
+            RemoteControlResponse::SetNodeName(RemoteControlApplyOutcome::Applied),
+            RemoteControlRequestKind::SetNodeName,
+        ),
+        (
+            RemoteControlResponse::DescribeNodeName(longest),
+            RemoteControlRequestKind::DescribeNodeName,
+        ),
+    ] {
+        let mut bytes = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
+        let written = response.write_into(&mut bytes).unwrap();
+        assert_eq!(
+            RemoteControlResponse::parse(bytes.get(..written).unwrap()),
+            Ok(response)
+        );
+        assert!(written <= kind.maximum_response_encoded_len());
+    }
+}
+
+#[test]
+fn node_name_snapshots_round_trip_and_refuse_unknown_versions() {
+    let name = RemoteControlNodeName::new("Rooftop RAK").unwrap();
+    let mut encoded = [0u8; NODE_NAME_SNAPSHOT_MAX_LEN];
+    let written = name.encode_snapshot(&mut encoded);
+    assert_eq!(
+        RemoteControlNodeName::decode_snapshot(encoded.get(..written).unwrap()),
+        Some(name)
+    );
+    let mut future = encoded;
+    future[0] = NODE_NAME_SNAPSHOT_VERSION + 1;
+    assert_eq!(
+        RemoteControlNodeName::decode_snapshot(future.get(..written).unwrap()),
+        None
+    );
+    assert_eq!(
+        RemoteControlNodeName::decode_snapshot(encoded.get(..written - 1).unwrap()),
+        None
+    );
 }

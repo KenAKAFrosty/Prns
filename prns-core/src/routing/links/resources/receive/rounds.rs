@@ -410,8 +410,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
             Err(refusal) => {
-                let settled_request = self.settle_response_claim(&link_id, &update.hash);
-                self.retire_incoming_resource(&link_id, &update.hash);
+                let settled_request = self.abandon_incoming_resource(&link_id, &update.hash);
                 IngestPacketOutcome::IncomingResourceFailed {
                     link_id,
                     hash: update.hash,
@@ -2060,6 +2059,7 @@ mod dynamics_tests {
                 failed: std::vec::Vec::new(),
                 segments: std::vec::Vec::new(),
                 response_segments: std::vec::Vec::new(),
+                responses: std::vec::Vec::new(),
                 assembled: std::vec::Vec::new(),
                 mismatched: std::vec::Vec::new(),
                 requests: std::vec::Vec::new(),

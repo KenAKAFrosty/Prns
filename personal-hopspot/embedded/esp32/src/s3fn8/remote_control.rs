@@ -530,52 +530,19 @@ async fn apply_subg_configuration(
     active: &mut SubGConfigurationState,
     requested: SubGConfigurationState,
 ) -> Result<(), RemoteControlHostCommandError> {
-    if *active == requested {
-        return Ok(());
-    }
-    let previous = *active;
-    if controller.apply_configuration(requested).await
-        == personal_rns::lora::LoRaApplyOutcome::Rejected
-    {
-        return Err(RemoteControlHostCommandError::ApplyFailed);
-    }
-    *active = requested;
-    let persistence = match requested {
-        SubGConfigurationState::Configured(configuration) => store.save(configuration).await,
-        SubGConfigurationState::Unconfigured => store.clear().await,
-    };
-    match persistence {
-        hopspot::SubGConfigurationCommitOutcome::Committed => Ok(()),
-        hopspot::SubGConfigurationCommitOutcome::Indeterminate(_) => {
-            if controller.apply_configuration(previous).await
-                != personal_rns::lora::LoRaApplyOutcome::Applied
-            {
-                return Err(RemoteControlHostCommandError::RollbackFailed);
+    hopspot::apply_remote_subg_configuration(
+        async |configuration| match controller.apply_configuration(configuration).await {
+            personal_rns::lora::LoRaApplyOutcome::Applied => Ok(()),
+            personal_rns::lora::LoRaApplyOutcome::Rejected
+            | personal_rns::lora::LoRaApplyOutcome::IdentityExhausted => {
+                Err(RemoteControlHostCommandError::ApplyFailed)
             }
-            *active = previous;
-            let rollback = match previous {
-                SubGConfigurationState::Configured(configuration) => {
-                    store.save(configuration).await
-                }
-                SubGConfigurationState::Unconfigured => store.clear().await,
-            };
-            if rollback == hopspot::SubGConfigurationCommitOutcome::Committed {
-                Err(RemoteControlHostCommandError::PersistenceFailed)
-            } else {
-                Err(RemoteControlHostCommandError::RollbackFailed)
-            }
-        }
-        hopspot::SubGConfigurationCommitOutcome::NotCommitted(_) => {
-            if controller.apply_configuration(previous).await
-                == personal_rns::lora::LoRaApplyOutcome::Applied
-            {
-                *active = previous;
-                Err(RemoteControlHostCommandError::PersistenceFailed)
-            } else {
-                Err(RemoteControlHostCommandError::RollbackFailed)
-            }
-        }
-    }
+        },
+        store,
+        active,
+        requested,
+    )
+    .await
 }
 
 fn snapshots(

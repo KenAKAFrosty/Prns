@@ -38,6 +38,7 @@ use crate::wire::{DestinationHash, WirePacketHeader};
 pub(crate) struct IngestEffects<'a> {
     pub destination_identity_expiry: Option<InstantMillis>,
     pub accepted_announce: Option<AcceptedAnnounceEffect<'a>>,
+    pub discovered_path: Option<DiscoveredPath>,
     pub remote_control_pairing_availability:
         Option<RemoteControlPairingAvailabilityObservation<'a>>,
     pub held_announce_release: WakeSchedule,
@@ -48,10 +49,17 @@ impl Default for IngestEffects<'_> {
         Self {
             destination_identity_expiry: None,
             accepted_announce: None,
+            discovered_path: None,
             remote_control_pairing_availability: None,
             held_announce_release: WakeSchedule::Unchanged,
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct DiscoveredPath {
+    pub destination: DestinationHash,
+    pub hops: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,6 +249,10 @@ pub enum IngestPacketOutcome<'p> {
     /// A validated and policy-approved advertisement is waiting for an
     /// incoming Resource row, or a retry coalesced into that existing wait.
     ResourceAdmissionPending,
+    ResourceResponseSuperseded {
+        link_id: LinkId,
+        hash: ResourceHash,
+    },
     /// The offer cannot wait: it can never fit, this target has no pending
     /// queue, or the bounded queue is full.
     ResourceCapacityRejected {

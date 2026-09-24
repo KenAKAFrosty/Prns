@@ -5,6 +5,8 @@ from datetime import date
 
 from flasher_acceptance_contract import (
     CLI_TARGETS,
+    SOFTWARE_ROSTER_SCHEMA,
+    software_qualification,
     ESP_SERIAL_BOARDS,
     OS_ARCHITECTURES,
     REQUIRED_FALLBACKS,
@@ -434,6 +436,16 @@ def validate_roster(
     empty = TesterRoster(physical={}, web_serial={}, fallbacks={}, installations={})
     if not isinstance(roster, dict):
         return empty, ["tester roster must be a JSON object"]
+    if roster.get("schema") == SOFTWARE_ROSTER_SCHEMA:
+        reject_unknown(roster, {"schema", "release", "release_owner", "confirmed_on"}, "roster", errors)
+        if not software_qualification(expected_version):
+            errors.append("software roster requires a pre-1.0 release from 0.3.8 onward")
+        if roster.get("release") != {"version": expected_version}:
+            errors.append("tester roster release identity differs from the candidate")
+        if not real_identity(roster.get("release_owner")):
+            errors.append("tester roster must name a nonsecret release_owner identity")
+        validate_date(roster.get("confirmed_on"), errors)
+        return empty, errors
     reject_unknown(roster, TOP_LEVEL_FIELDS, "roster", errors)
     if roster.get("schema") != 3:
         errors.append("tester roster schema must be 3")

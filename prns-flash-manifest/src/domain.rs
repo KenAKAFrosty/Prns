@@ -7,7 +7,7 @@ pub use target::{
     SoftdeviceIdentity, SoftdeviceVersion, Uf2Compatibility, Uf2Part, Uf2Target, Uf2Variant,
     UsbVidPid, ValidatedChannelDescriptor, ValidatedFlashManifest,
     ValidatedNrfSerialDfuCompatibility, ValidatedNrfSerialDfuSerialTransport,
-    ValidatedOfflineKeySigningInfo, ValidatedReleaseInfo,
+    ValidatedOfflineKeySigningInfo, ValidatedReleaseInfo, WebUsbControlRequest,
 };
 pub use values::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, DomainValueError, FlashFrequency,

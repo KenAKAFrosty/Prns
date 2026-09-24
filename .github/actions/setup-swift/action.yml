@@ -1,0 +1,30 @@
+name: Set up verified Swift
+description: Import the pinned Swiftly signing key before the upstream installer verifies its signature.
+inputs:
+  swift-version:
+    description: Exact Swift toolchain version
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup-linux-apt
+      if: runner.os == 'Linux'
+    - name: Import verified Swiftly signing key
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        key_path="${RUNNER_TEMP}/swiftly-signing-key.asc"
+        curl --compressed --fail --silent --show-error --location --proto '=https' --retry 3 \
+          https://www.swift.org/keys/automatic-signing-key-4.asc --output "${key_path}"
+        if gzip --test "${key_path}" 2>/dev/null; then
+          gzip --decompress --stdout "${key_path}" > "${key_path}.decoded"
+          key_path="${key_path}.decoded"
+        fi
+        fingerprint="$(gpg --batch --with-colons --show-keys "${key_path}" |
+          awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print $10; primary = 0 }')"
+        test "${fingerprint}" = E813C892820A6FA13755B268F167DF1ACF9CE069
+        gpg --batch --import "${key_path}"
+    - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
+      with:
+        swift-version: ${{ inputs.swift-version }}

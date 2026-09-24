@@ -24,7 +24,7 @@ async fn main() {
         .await
         .expect("the mixed multi-hop TCP server binds");
     let node = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: Some(Zeroizing::new([0xD2; IDENTITY_SECRET_KEY_LEN])),
         pre_configured_destinations: [] as [personal_rns::runtime::PreConfiguredDestination; 0],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,

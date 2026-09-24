@@ -1,4 +1,4 @@
-use super::{mesh_tower_v2, TargetRecipe};
+use super::TargetRecipe;
 use personal_hopspot_builder::LtoMode;
 
 const ESP_MANIFEST: &str = "personal-hopspot/embedded/esp32/Cargo.toml";
@@ -46,17 +46,14 @@ impl<'a> TargetRecipe<'a> {
                 features: vec![recipe.cargo_feature.as_str()],
                 configured_lto: LtoMode::Configured,
             },
-            Self::MeshTowerV2 => {
-                let recipe = mesh_tower_v2::recipe();
-                RecipeIdentity {
-                    kind: "build-only",
-                    manifest: NRF52840_MANIFEST,
-                    package: recipe.package,
-                    binary: recipe.binary,
-                    features: recipe.cargo_features.split(',').collect(),
-                    configured_lto: recipe.lto,
-                }
-            }
+            Self::BuildOnly(target) => RecipeIdentity {
+                kind: "build-only",
+                manifest: NRF52840_MANIFEST,
+                package: target.recipe.package,
+                binary: target.recipe.binary,
+                features: target.recipe.cargo_features.split(',').collect(),
+                configured_lto: target.recipe.lto,
+            },
         }
     }
 }

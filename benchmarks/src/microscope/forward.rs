@@ -263,15 +263,20 @@ impl Forward {
                 fill_random: &mut |bytes| relay_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 should_accept_resource: &mut |_| false,
-                sink: &mut |reaction| {
-                    if let EngineReaction::Directive(Directive::EmitFrame {
-                        target, fill, ..
-                    }) = reaction
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Directive(Directive::EmitFrame { target, fill, .. })
+                        if target == IF_UP =>
                     {
-                        if target == IF_UP && fill(&mut scratch[..]).is_some() {
+                        if fill(&mut scratch[..]).is_some() {
                             forwarded = true;
                         }
                     }
+                    EngineReaction::Directive(Directive::ForwardFrame { target, .. })
+                        if target == IF_UP =>
+                    {
+                        forwarded = true;
+                    }
+                    _ => {}
                 },
             },
         );

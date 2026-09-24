@@ -280,6 +280,7 @@ mod tests {
                 "evidence": {
                     "kind": "miri",
                     "coverage": "stacked",
+                    "scope": "focused",
                     "completed_tests": 1
                 }
             },

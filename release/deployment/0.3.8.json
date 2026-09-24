@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "version": "0.3.8",
+  "status": "deferred",
+  "release_owner": "github:KenAKAFrosty",
+  "reason": "The release owner deferred Railway deployment qualification for 0.3.8 because no Railway project or published template is available. Public Backbone and WebSocket deployment, persistence restoration, and template rollback have not been qualified. Automated release tests and container artifact verification remain required."
+}

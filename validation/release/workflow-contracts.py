@@ -11,6 +11,11 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = tuple(sorted((ROOT / ".github" / "workflows").glob("*.yml")))
+LOCAL_ACTIONS = tuple(sorted(
+    path
+    for pattern in ("action.yml", "action.yaml")
+    for path in (ROOT / ".github" / "actions").rglob(pattern)
+))
 ACTION_PATTERN = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", re.MULTILINE)
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 JOB_PATTERN = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\n")
@@ -156,7 +161,7 @@ def validate() -> list[str]:
         return ["release/flash/action-pins.json has an unsupported shape"]
 
     used: set[str] = set()
-    for workflow in WORKFLOWS:
+    for workflow in (*WORKFLOWS, *LOCAL_ACTIONS):
         text = workflow.read_text(encoding="utf-8")
         errors.extend(validate_resource_bounds(workflow, text))
         for reference in ACTION_PATTERN.findall(text):
@@ -454,7 +459,7 @@ def validate() -> list[str]:
         "release-embedded-resources-${{ matrix.id }}-${{ github.run_id }}",
         "release-readiness-embedded-*-${{ github.run_id }}",
         "release-embedded-assurance-${{ github.sha }}",
-        "needs: [inventory, qualify, embedded-assurance]",
+        "needs: [inventory, qualify, qualify-emulated, embedded-assurance]",
     ):
         if assurance_gate not in readiness:
             errors.append(
@@ -711,6 +716,43 @@ def validate() -> list[str]:
                     f"ci.yml {resource_job_name} does not upload {evidence}"
                 )
     release_critical = ci_jobs.get("release-critical", "")
+    for job, result in (
+        ("react-native-sdk", "REACT_NATIVE_SDK_RESULT"),
+        ("react-native-apple-platform", "REACT_NATIVE_APPLE_RESULT"),
+        ("react-native-android", "REACT_NATIVE_ANDROID_RESULT"),
+        ("react-native-apple-image", "REACT_NATIVE_IMAGE_RESULT"),
+    ):
+        if not ci_jobs.get(job) or any(gate not in release_critical for gate in (
+            f"- {job}", f"{result}: ${{{{ needs.{job}.result }}}}", f'"${result}"',
+        )):
+            errors.append(f"release-critical does not require standalone SDK lane {job}")
+        if "applications/" in ci_jobs.get(job, ""):
+            errors.append(f"standalone SDK lane {job} depends on the application tree")
+    sdk_job = ci_jobs.get("react-native-sdk", "")
+    for suite in ("react-native-sdk", "react-native-generated", "host-native-session",
+                  "host-uniffi-session", "host-uniffi-conformance"):
+        if f"--suite {suite}" not in sdk_job:
+            errors.append(f"standalone SDK CI omits validation suite {suite}")
+    for job, suites in (
+        ("react-native-apple-platform", ("react-native-apple-platform",)),
+        ("react-native-android", ("react-native-android-image", "react-native-android-consumer")),
+        ("react-native-apple-image", ("react-native-apple-image", "react-native-mobile-archive",
+                                      "react-native-apple-consumer")),
+    ):
+        for suite in suites:
+            if f"--suite {suite}" not in ci_jobs.get(job, ""):
+                errors.append(f"standalone SDK lane {job} omits validation suite {suite}")
+    sdk_toolchain = json.loads((ROOT / "vendor/ubrn/source-lock.json").read_text())["toolchain"]
+    android_job = ci_jobs.get("react-native-android", "")
+    for pinned_tool in (f'ndk;{sdk_toolchain["androidNdk"]}',
+                        f'cargo install cargo-ndk --locked --version {sdk_toolchain["cargoNdk"]}'):
+        if pinned_tool not in android_job:
+            errors.append(f"standalone Android SDK CI lacks pinned tool {pinned_tool}")
+    for job in ("react-native-android", "react-native-apple-image"):
+        if f'RUSTUP_TOOLCHAIN: "{sdk_toolchain["rust"]}"' not in ci_jobs.get(job, ""):
+            errors.append(f"standalone SDK lane {job} differs from the reviewed Rust toolchain")
+        if "name: react-native-android-image-${{ github.sha }}" not in ci_jobs.get(job, ""):
+            errors.append(f"standalone SDK lane {job} lacks exact-commit Android artifact custody")
     for capstone_gate in (
         "- integration-capstones",
         "INTEGRATION_CAPSTONES_RESULT: ${{ needs.integration-capstones.result }}",
@@ -807,8 +849,8 @@ def validate() -> list[str]:
             rf'(?ms)^\[\[suite\]\]\nid = "{re.escape(pilot)}"\n(.*?)(?=^\[\[suite\]\]|\Z)',
             manifest_document,
         )
-        if pilot_block is None or 'enforcement = "advisory"' not in pilot_block.group(1):
-            errors.append(f"{pilot} is not explicitly advisory")
+        if pilot_block is None or 'enforcement = "required"' not in pilot_block.group(1):
+            errors.append(f"{pilot} is not a required automated release check")
     esp_resources = re.search(
         r'(?ms)^\[\[suite\]\]\nid = "esp32-firmware-check"\n(.*?)(?=^\[\[suite\]\]|\Z)',
         manifest_document,
@@ -1091,6 +1133,13 @@ def validate() -> list[str]:
         ROOT / ".github" / "workflows" / "flasher-finalize-evidence.yml"
     ).read_text(encoding="utf-8")
     for finalization_gate in (
+        "Verify automated release-readiness workflow custody",
+        ".software_validation.workflow_run_id",
+        ".software_validation.sha256",
+        '.head_sha == $sha and .conclusion == "success"',
+        '.event == "workflow_dispatch" and .path == ".github/workflows/release-readiness.yml"',
+        '--name "release-readiness-manifest-${source_commit}"',
+        'cmp "target/qualification-evidence/${digest}" target/readiness-custody/release-manifest.json',
         "qualification_evidence_sha256:",
         'PYTHONDONTWRITEBYTECODE: "1"',
         "qualification-evidence-v${RELEASE_VERSION}.tar.gz",
@@ -1165,8 +1214,12 @@ def validate() -> list[str]:
         "./tools/prns release verify --",
         "./tools/prns release public-review -- verify",
         "gh attestation verify \"$bundle\"",
-        "docker pull --platform linux/amd64",
-        "docker pull --platform linux/arm64",
+        'test "$actual" = "${{ inputs.image_digest }}"',
+        '["amd64", "arm64"][] as $architecture',
+        '.platform.os == "linux" and .platform.architecture == $architecture',
+        'if ($matches | length) == 1',
+        'docker pull --platform "linux/${architecture}"',
+        'ghcr.io/kenakafrosty/prnsd@${manifest}',
         "Promote semver and latest only to the verified digest",
     ):
         if suite_gate not in suite_promotion:

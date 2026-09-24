@@ -55,7 +55,7 @@ pub struct Fleet<
     const LIFECYCLE: usize,
 > {
     wire: FleetWire<M, FRAME, NOTIFY>,
-    lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
+    lifecycle: Sender<'static, M, InterfaceLifecycle<'static>, LIFECYCLE>,
 }
 
 impl<M: RawMutex + 'static, const FRAME: usize, const NOTIFY: usize, const LIFECYCLE: usize>
@@ -64,7 +64,7 @@ impl<M: RawMutex + 'static, const FRAME: usize, const NOTIFY: usize, const LIFEC
     #[must_use]
     pub(super) fn new(
         wire: FleetWire<M, FRAME, NOTIFY>,
-        lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
+        lifecycle: Sender<'static, M, InterfaceLifecycle<'static>, LIFECYCLE>,
     ) -> Self {
         Self { wire, lifecycle }
     }

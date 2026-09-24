@@ -60,6 +60,9 @@ REQUIRED_RELEASE_FILES = (
     "qualification/serve-flasher-candidate.py",
     "qualification/verify-flasher-candidate-files.py",
     "qualification/validate-flasher-tester-roster.py",
+    "qualification/flasher_software_acceptance.py",
+    "qualification/validation_runner.py",
+    "qualification/validation-manifest.toml",
     "qualification/tester-roster.json",
     "website/index.html",
     "website/404.html",
@@ -157,6 +160,9 @@ def verify_qualification_kit(root: Path, roster_version: str, tester_roster: Pat
         / "verify-flasher-candidate-files.py",
         "qualification/validate-flasher-tester-roster.py": release_tools
         / "validate-flasher-tester-roster.py",
+        "qualification/flasher_software_acceptance.py": repository / "tools/release/flasher_software_acceptance.py",
+        "qualification/validation_runner.py": repository / "validation/run.py",
+        "qualification/validation-manifest.toml": repository / "validation/manifest.toml",
         "qualification/tester-roster.json": tester_roster,
     }
     for relative, source in exact_sources.items():

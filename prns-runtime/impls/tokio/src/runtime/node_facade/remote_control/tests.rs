@@ -171,6 +171,151 @@ async fn describe_preserves_transport_and_response_failures() {
 }
 
 #[tokio::test]
+async fn watch_interfaces_registers_its_reader_before_the_authenticated_request() {
+    let (handle, mut command_rx) = test_handle();
+    let link_id = LinkId::new([0x74; 16]);
+    let stream_id = crate::runtime::StreamId::new(0x123).unwrap();
+    let requesting = tokio::spawn(async move {
+        handle
+            .remote_control(link_id)
+            .watch_interfaces(stream_id)
+            .await
+    });
+    let Some(HostCommand::RegisterStreamReader {
+        link_id: registered_link,
+        stream_id: registered_stream,
+        ready,
+        ..
+    }) = command_rx.recv().await
+    else {
+        panic!("watch registers its stream reader first");
+    };
+    assert_eq!(registered_link, link_id);
+    assert_eq!(registered_stream, stream_id);
+    assert!(command_rx.try_recv().is_err());
+    assert!(ready.send(Ok(())).is_ok());
+
+    let Some(HostCommand::RequestAny(request)) = command_rx.recv().await else {
+        panic!("watch then sends its authenticated request");
+    };
+    assert_eq!(request.link_id, link_id);
+    assert_eq!(request.data.as_slice(), &[1, 0x20, 0x01, 0x23]);
+    assert_eq!(
+        request.maximum_response_bytes,
+        crate::runtime::RemoteControlWatchInterfaces::MAXIMUM_RESPONSE_BYTES,
+    );
+    assert!(request
+        .completion
+        .send(Ok((
+            encoded_response(&RemoteControlResponse::WatchInterfaces { stream_id }),
+            RttMillis::new(40),
+        )))
+        .is_ok());
+    let (reader, rtt) = requesting.await.unwrap().unwrap();
+    assert_eq!(rtt, RttMillis::new(40));
+    drop(reader);
+}
+
+#[tokio::test]
+async fn duplicate_watch_reader_fails_locally_before_sending_a_request() {
+    let (handle, mut command_rx) = test_handle();
+    let requesting = tokio::spawn(async move {
+        handle
+            .remote_control(LinkId::new([0x74; 16]))
+            .watch_interfaces(crate::runtime::StreamId::new(0x123).unwrap())
+            .await
+    });
+    let Some(HostCommand::RegisterStreamReader { ready, .. }) = command_rx.recv().await else {
+        panic!("watch registers its reader first");
+    };
+    ready
+        .send(Err(
+            crate::runtime::StreamReaderRegistrationError::AlreadyRegistered,
+        ))
+        .unwrap();
+    assert!(matches!(
+        requesting.await.unwrap(),
+        Err(super::RemoteControlWatchOpenError::Registration(
+            crate::runtime::StreamReaderRegistrationError::AlreadyRegistered
+        ))
+    ));
+    assert!(matches!(
+        command_rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty | mpsc::error::TryRecvError::Disconnected)
+    ));
+}
+
+#[tokio::test]
+async fn radio_exchanges_preserve_configuration_status_outcomes_and_response_limits() {
+    use prns_core::interfaces::InterfaceId;
+    use prns_core::remote_control::{
+        RemoteControlRadioConfiguration, RemoteControlRadioOutcome, RemoteControlRadioStatus,
+        RemoteControlRequest,
+    };
+    let id = InterfaceId::new(*b"radio-id");
+    let link = LinkId::new([0x76; 16]);
+    for outcome in RemoteControlRadioOutcome::ALL {
+        let (handle, mut commands) = test_handle();
+        let requesting = tokio::spawn(async move {
+            handle
+                .remote_control(link)
+                .configure_radio(id, RemoteControlRadioConfiguration::Unconfigured)
+                .await
+        });
+        let Some(HostCommand::RequestAny(request)) = commands.recv().await else {
+            panic!("expected configuration request")
+        };
+        assert_eq!(
+            RemoteControlRequest::parse(request.data.as_slice()),
+            Ok(RemoteControlRequest::ConfigureRadio {
+                id,
+                configuration: RemoteControlRadioConfiguration::Unconfigured
+            })
+        );
+        assert_eq!(
+            request.maximum_response_bytes,
+            crate::runtime::RemoteControlConfigureRadio::MAXIMUM_RESPONSE_BYTES
+        );
+        assert!(request
+            .completion
+            .send(Ok((
+                encoded_response(&RemoteControlResponse::ConfigureRadio(outcome)),
+                RttMillis::new(12)
+            )))
+            .is_ok());
+        assert!(
+            matches!(requesting.await, Ok(Ok((found, rtt))) if found == outcome && rtt == RttMillis::new(12))
+        );
+    }
+    let (handle, mut commands) = test_handle();
+    let requesting =
+        tokio::spawn(async move { handle.remote_control(link).inspect_radio(id).await });
+    let Some(HostCommand::RequestAny(request)) = commands.recv().await else {
+        panic!("expected inspection request")
+    };
+    assert_eq!(
+        RemoteControlRequest::parse(request.data.as_slice()),
+        Ok(RemoteControlRequest::InspectRadio { id })
+    );
+    assert_eq!(
+        request.maximum_response_bytes,
+        crate::runtime::RemoteControlInspectRadio::MAXIMUM_RESPONSE_BYTES
+    );
+    assert!(request
+        .completion
+        .send(Ok((
+            encoded_response(&RemoteControlResponse::InspectRadio(
+                RemoteControlRadioStatus::UnknownInterface
+            )),
+            RttMillis::new(13)
+        )))
+        .is_ok());
+    assert!(
+        matches!(requesting.await, Ok(Ok((RemoteControlRadioStatus::UnknownInterface, rtt))) if rtt == RttMillis::new(13))
+    );
+}
+
+#[tokio::test]
 async fn generic_exchange_uses_request_specific_bounds_and_rejects_mismatched_responses() {
     use prns_core::remote_control::{RemoteControlRequest, RemoteControlRequestKind};
     for kind in RemoteControlRequestKind::ALL {

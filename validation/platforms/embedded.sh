@@ -17,4 +17,6 @@ cargo build \
     --features "lora,bluetooth-auto,usb"
 ./tools/prns build embedded resources report --all --platform nrf52840
 
+./tools/prns build hopspot sensecap-solar-node
+
 echo "EMBEDDED_BUILD_GATE_OK"

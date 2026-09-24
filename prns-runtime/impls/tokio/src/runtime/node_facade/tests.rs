@@ -1,8 +1,9 @@
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
+use portable_atomic::AtomicU64;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 

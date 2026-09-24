@@ -1,0 +1,11 @@
+{
+  "binding": {
+    "radio": "radio1",
+    "interface": "default_radio1",
+    "device": "wlan0"
+  },
+  "channel": "Us924Mhz8Mhz",
+  "preset": "Mcs2LongGuard18Dbm",
+  "mesh_paths": "ProactiveRequests",
+  "mesh_id": "Hopspot"
+}

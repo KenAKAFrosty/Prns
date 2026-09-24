@@ -34,7 +34,13 @@ pub fn path_request_egress_eligible(
     ingress_id: Option<InterfaceId>,
     audience: PathRequestAudience,
 ) -> bool {
-    if !descriptor.capabilities.allows_transmit() || ingress_id == Some(descriptor.id) {
+    if !descriptor.capabilities.allows_transmit()
+        || ingress_id == Some(descriptor.id)
+        || descriptor
+            .id
+            .kind()
+            .is_some_and(InterfaceKind::is_shared_broadcast)
+    {
         return false;
     }
     match audience {
@@ -119,6 +125,24 @@ pub fn slowest_eligible_bitrate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_uses_halow_peers_and_never_the_announce_only_group_lane() {
+        use crate::engine::test_support::routable_descriptor;
+        let peer = InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowPeer, b"peer");
+        let broadcast = InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowBroadcast, b"radio");
+        for audience in [
+            PathRequestAudience::Network,
+            PathRequestAudience::BoundaryAndGateway,
+        ] {
+            let mut peer_row = routable_descriptor(peer);
+            peer_row.mode = InterfaceMode::Gateway;
+            let mut group_row = routable_descriptor(broadcast);
+            group_row.mode = InterfaceMode::Gateway;
+            assert!(path_request_egress_eligible(&peer_row, None, audience));
+            assert!(!path_request_egress_eligible(&group_row, None, audience));
+        }
+    }
 
     #[test]
     fn bitrate_vectors_are_ceiling_rounded() {

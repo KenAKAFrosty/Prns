@@ -83,7 +83,7 @@ pub fn build(
     let capture = context.configure_firmware_cargo(
         memory.id().0,
         adapter,
-        LtoMode::Configured,
+        configured_lto(memory.id().0),
         &mut cargo,
     )?;
     let firmware = context.run_firmware_build(
@@ -145,6 +145,13 @@ pub fn build(
     })
 }
 
+fn configured_lto(target_id: &str) -> LtoMode {
+    match target_id {
+        "mesh-tower-v2" | "muzi-base-duo" => LtoMode::Thin,
+        _ => LtoMode::Configured,
+    }
+}
+
 fn cargo_features(board_feature: &str, application_link: Uf2ApplicationLink) -> String {
     application_link.cargo_feature().map_or_else(
         || board_feature.to_string(),
@@ -155,6 +162,13 @@ fn cargo_features(board_feature: &str, application_link: Uf2ApplicationLink) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn promoted_headless_boards_keep_their_developer_lto_mode() {
+        assert_eq!(configured_lto("mesh-tower-v2"), LtoMode::Thin);
+        assert_eq!(configured_lto("muzi-base-duo"), LtoMode::Thin);
+        assert_eq!(configured_lto("t-echo-s140-v6"), LtoMode::Configured);
+    }
 
     #[test]
     fn linked_softdevice_is_added_to_board_features() -> Result<(), Box<dyn std::error::Error>> {

@@ -79,6 +79,8 @@ def generate(provider, cli, env, check):
         '// Generated canonical host fingerprint.\n'
         f'export const HOST_SEMANTIC_FINGERPRINT = {json.dumps(fingerprint.group(1))};\n')
     files.update(selection_files(provider))
+    for name in ('LICENSE-MIT', 'LICENSE-APACHE'):
+        files[PACKAGE / name] = (ROOT / name).read_text()
     tooling.synchronize_outputs(files, check, PACKAGE, PACKAGE / 'outputs.json')
 
 

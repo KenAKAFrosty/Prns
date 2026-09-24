@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "wifi-halow")]
+pub mod wifi_halow;
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "log")] {
         #[allow(unused_imports)]
@@ -72,7 +75,7 @@ pub mod pipe;
 #[cfg(feature = "config")]
 mod host_network;
 
-#[cfg(feature = "websocket")]
+#[cfg(feature = "websocket-server")]
 pub mod websocket;
 
 #[cfg(feature = "browser-rendezvous")]
@@ -108,5 +111,5 @@ pub mod usb_auto;
 #[cfg(feature = "shared-instance")]
 pub mod shared_instance;
 
-#[cfg(feature = "bluetooth-auto")]
+#[cfg(any(feature = "bluetooth-auto", feature = "bluetooth-auto-runtime"))]
 pub mod bluetooth_auto;

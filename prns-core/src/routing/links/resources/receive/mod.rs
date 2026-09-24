@@ -3,9 +3,20 @@
 pub mod cancel;
 pub mod conclude;
 pub mod gate;
+#[cfg(test)]
+mod metadata_response_limits;
 pub mod offload;
 pub mod part_hash;
 pub mod rounds;
 #[cfg(test)]
+mod split_admission_tests;
+mod split_delivery;
+#[cfg(test)]
+mod split_ownership_tests;
+#[cfg(test)]
+mod split_response_failures_tests;
+#[cfg(test)]
 pub mod tests_support;
 pub mod watchdog;
+#[cfg(test)]
+mod whole_response_limits;

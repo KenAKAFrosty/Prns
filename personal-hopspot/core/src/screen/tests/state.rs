@@ -338,6 +338,10 @@ fn remote_control_pairing_is_capability_gated_and_opens_then_cancels_from_the_sc
         UiAction::CloseRemoteControlPairing
     );
     assert!(state.global_selected());
+
+    state.remote_control_pairing_close_failed();
+    assert_eq!(state.mode, UiMode::RemoteControlPairing { approve: false });
+    assert!(!state.global_selected());
 }
 
 #[test]

@@ -173,7 +173,7 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: screen::node_pages::NodePageRoutes,
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event: move |event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {

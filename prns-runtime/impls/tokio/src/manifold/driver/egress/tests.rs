@@ -31,6 +31,62 @@ fn no_ifacs() -> InterfaceIfacs {
     InterfaceIfacs::default()
 }
 
+#[test]
+fn shared_announces_use_one_channel_per_radio_and_preserve_restricted_targets() {
+    let family = InterfaceKind::WifiHaLow;
+    let radio = InterfaceId::from_channel_tag(family, b"radio");
+    let other = InterfaceId::from_channel_tag(family, b"other");
+    let broadcast = InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowBroadcast, b"radio");
+    let other_broadcast =
+        InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowBroadcast, b"other");
+    let first = InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowPeer, b"first");
+    let second = InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowPeer, b"second");
+    let mut egress = Egress::new(vec![]);
+    let mut receivers = Vec::new();
+    for (id, owner) in [
+        (broadcast, radio),
+        (other_broadcast, other),
+        (first, radio),
+        (second, radio),
+    ] {
+        let (tx, rx) = tokio_grant_lane(128, 4);
+        egress.add_lane(id, owner, tx, None);
+        receivers.push(rx);
+    }
+    assert_eq!(
+        egress.announce_targets(family, FanTarget::All),
+        vec![broadcast, other_broadcast]
+    );
+    assert_eq!(
+        egress.announce_targets(family, FanTarget::Only(first)),
+        vec![first]
+    );
+    assert_eq!(
+        egress.announce_targets(family, FanTarget::AllExcept(first)),
+        vec![other_broadcast, second]
+    );
+    assert_eq!(
+        egress.broadcast_targets(family, FanTarget::All),
+        vec![first, second]
+    );
+
+    let mut scratch = WireScratch::new(128);
+    let mut pacers = InterfacePacers::default();
+    let ifacs = no_ifacs();
+    let mut router = TokioDirectiveEgress {
+        egress: &mut egress,
+        ifacs: &ifacs,
+        pacers: &mut pacers,
+        scratch: &mut scratch,
+        now: InstantMillis(0),
+    };
+    router.send_to_fleet(family, FanTarget::All, b"path request");
+    assert!(receivers[0].try_peek().is_none());
+    assert!(receivers[1].try_peek().is_none());
+    assert_eq!(receivers[2].try_peek().unwrap().frame(), b"path request");
+    assert_eq!(receivers[3].try_peek().unwrap().frame(), b"path request");
+}
+
 fn forwarded_header(hops: u8) -> WirePacketHeader {
     WirePacketHeader {
         ifac_flag: IfacFlag::Open,

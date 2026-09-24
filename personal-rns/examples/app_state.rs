@@ -15,17 +15,6 @@ struct StatusBoard {
     hits: Cell<u32>,
 }
 
-impl RemoteControlHostControls for StatusBoard {
-    async fn execute_remote_control(
-        &self,
-        command: RemoteControlHostCommand,
-    ) -> Result<RemoteControlHostResponse, RemoteControlHostCommandError> {
-        NoRemoteControlHostControls
-            .execute_remote_control(command)
-            .await
-    }
-}
-
 struct Status;
 impl RequestEndpoint<StatusBoard> for Status {
     const ENDPOINT_ID: &'static str = STATUS_ENDPOINT_ID;
@@ -44,17 +33,6 @@ impl RequestEndpoint<StatusBoard> for Status {
 
 struct AnnounceRelay {
     heard: tokio::sync::mpsc::UnboundedSender<DestinationHash>,
-}
-
-impl RemoteControlHostControls for AnnounceRelay {
-    async fn execute_remote_control(
-        &self,
-        command: RemoteControlHostCommand,
-    ) -> Result<RemoteControlHostResponse, RemoteControlHostCommandError> {
-        NoRemoteControlHostControls
-            .execute_remote_control(command)
-            .await
-    }
 }
 
 fn forward_announces(event: PrnsEvent<'_>, relay: &AnnounceRelay) {
@@ -78,7 +56,7 @@ async fn main() {
         .to_string();
     let responder = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: common::remote_control_service(0xD0, 0xD1),
+        remote_control: common::remote_control_service(0xD0, 0xD1).into(),
         pre_configured_destinations: [responder_destination],
         app_state: StatusBoard {
             greeting: "hello",
@@ -97,7 +75,7 @@ async fn main() {
     let client = TcpClientInterface::new(server_address);
     let requester = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: common::remote_control_service(0xD2, 0xD3),
+        remote_control: common::remote_control_service(0xD2, 0xD3).into(),
         pre_configured_destinations: [requester_destination()],
         app_state: AnnounceRelay {
             heard: heard_sender,

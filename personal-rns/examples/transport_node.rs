@@ -26,7 +26,7 @@ async fn main() {
         transport_identity: Some(
             try_generate_identity_secret().expect("identity generation failed"),
         ),
-        remote_control: common::remote_control_service(0xD0, 0xD1),
+        remote_control: common::remote_control_service(0xD0, 0xD1).into(),
         pre_configured_destinations: [example_destination()],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
@@ -42,7 +42,7 @@ async fn main() {
     let announcer_client = TcpClientInterface::new(relay_address.clone());
     let announcing_node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: common::remote_control_service(0xD2, 0xD3),
+        remote_control: common::remote_control_service(0xD2, 0xD3).into(),
         pre_configured_destinations: [announcing_destination],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
@@ -59,7 +59,7 @@ async fn main() {
     let listener_client = TcpClientInterface::new(relay_address);
     let listening_node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: common::remote_control_service(0xD4, 0xD5),
+        remote_control: common::remote_control_service(0xD4, 0xD5).into(),
         pre_configured_destinations: [example_destination()],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,

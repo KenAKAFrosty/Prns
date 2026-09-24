@@ -247,7 +247,7 @@ fn utility_node() -> Result<UtilityNode, TransientRemoteControlIdentityError> {
     let remote_control = transient_remote_control_service()?;
     Ok(PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control,
+        remote_control: remote_control.into(),
         pre_configured_destinations: std::iter::empty(),
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,

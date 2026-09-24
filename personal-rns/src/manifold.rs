@@ -14,8 +14,9 @@ pub mod tokio {
         HostCommand, HostResourceMetadata, HostResourcePayload, HostResourcePayloadError,
         ManifoldWiring, PoolWorkers, ProvideDecompressedHostCommand, RequestAnyHostCommand,
         ResourceInbound, RespondAnyHostCommand, SendResourceHostCommand,
-        SendResourceSegmentHostCommand, StreamInbound, TokioClock, TokioGrantConsumer,
-        TokioGrantProducer, TokioHost, TokioInterfaceSeam, TokioInterfaceStatus,
+        SendResourceSegmentHostCommand, StreamInbound, StreamReceiveFailure, TokioClock,
+        TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
+        TokioInterfaceStatus,
     };
 
     #[cfg(feature = "scheduler-tuning")]

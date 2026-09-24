@@ -3,7 +3,7 @@
 >Coming from RNS
 >>
 
-Your config, your identity file, and your apps carry over unchanged. The interoperability suite proves it against real RNS 1.4.2 nodes in CI. Everything below is what's new.
+Your config, your identity file, and your apps carry over unchanged. The interoperability suite proves it against real RNS 1.5.4 nodes in CI. Everything below is what's new.
 
 >>`!Brand-new interfaces`!
 
@@ -113,7 +113,11 @@ OTLP-capable builds can export to an OpenTelemetry collector. The source include
 >>
 >>`!Performance you can measure yourself`!
 
-The benchmark harness runs Prns and stock RNS side by side on your machine, under identical workloads, and records conformance, throughput, latency, CPU, memory, and optionally energy. The published results peak at 89× the throughput, 48× smaller peak-memory footprint, and 33× the energy efficiency of stock RNS 1.4.2. The harness provisions the pinned RNS reference environment, and every number it prints is made on your hardware.
+The benchmark harness compares Prns with stock interpreted RNS 1.5.4 under the same scenario-owned workloads. Published throughput peaks at 110.22× for single-packet delivery on an Apple M4. Across 30 host/scenario comparisons, the middle half is roughly 5×–25×, the median is 9.62×, and the full range is 1.02×–110.22×.
+
+In separate Linux workloads, Prns uses about 97% less peak memory than stock RNS for the sender of the matched-policy 64-segment stream, and about 98% less processor energy per request for request/response. These are loopback measurements on three named machines. Processor energy is measured above idle, not whole-device power or battery life; radio and application speedups depend on the workload.
+
+The harness provisions the pinned reference environment, and every number it prints is made on your hardware. See benchmarks/README.md in the source for the summary, calculation, and measurement scope; benchmarks/RESULTS.md links the full published tables.
 
 >>`!Serve NomadNet pages directly from the daemon`!
 

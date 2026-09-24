@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Default image for standalone Expo/RN applications.
 //! Native compositions depend on prns-host-uniffi directly and replace this image.
 pub use prns_host_uniffi::*;

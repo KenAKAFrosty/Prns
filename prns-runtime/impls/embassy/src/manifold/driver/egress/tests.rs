@@ -60,6 +60,61 @@ fn pooled_egress_distinguishes_a_full_lane_from_missing_topology() {
 }
 
 #[test]
+fn usb_announce_and_control_reply_survive_until_the_device_drains_egress() {
+    use crate::interfaces::usb_auto::{
+        device_descriptor, DEVICE_MIN_OUTBOUND_FRAMES, DEVICE_USB_BITRATE_BPS, MAX_DATA_BYTES,
+    };
+    let id = InterfaceId::from_channel_tag(InterfaceKind::UsbAutoDevice, b"announce-reply");
+    let announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
+    let reply = b"controller reply";
+    for (depth, expected) in [
+        (1, std::vec![announce.clone()]),
+        (
+            DEVICE_MIN_OUTBOUND_FRAMES,
+            std::vec![announce.clone(), reply.to_vec()],
+        ),
+    ] {
+        let (producer, mut consumer) = leaked_grant_lane::<MAX_DATA_BYTES>(depth);
+        let mut egress: PooledEgress<1> = PooledEgress::new();
+        assert!(egress
+            .push(id, std::boxed::Box::leak(std::boxed::Box::new(producer)))
+            .is_ok());
+        let mut pacers = [InterfacePacer::from_descriptor(
+            id,
+            &device_descriptor(id, DEVICE_USB_BITRATE_BPS),
+        )];
+        // Reproduce the engine's announce followed immediately by the request runner's reply,
+        // without granting the USB consumer a poll between the two emissions.
+        for directive in [
+            Directive::SendAnnounce {
+                target: id,
+                bytes: &announce,
+                hops: 0,
+            },
+            Directive::Send {
+                target: id,
+                bytes: reply,
+            },
+        ] {
+            route_reaction(
+                EngineReaction::Directive(directive),
+                &mut egress,
+                &[],
+                &mut pacers,
+                InstantMillis(0),
+                &mut |_| {},
+            );
+        }
+        let mut received = std::vec::Vec::new();
+        while let Some(frame) = consumer.try_peek() {
+            received.push(frame.frame().to_vec());
+            consumer.release();
+        }
+        assert_eq!(received, expected);
+    }
+}
+
+#[test]
 fn a_fleet_lane_masks_direct_and_broadcast_frames_once() {
     use crate::interfaces::{IfacContext, IfacSize};
 

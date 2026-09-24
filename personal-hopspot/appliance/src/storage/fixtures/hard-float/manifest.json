@@ -1,0 +1,1 @@
+{"schema":1,"version":"hard-float","board":"morse,ekh03v3","abi":"mips32r2-le-o32-soft-float-static","compressed":{"bytes":75,"sha256":"842280045a074ed60d5844333ab16104af4e6817b350f1e5dcbd8e2ef20c7b91"},"executable":{"bytes":256,"sha256":"88435cde01e97ef737c9ad433e57139fb6ffe36c52a85a374d326939804d8180"}}

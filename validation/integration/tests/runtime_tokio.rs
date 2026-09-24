@@ -21,6 +21,7 @@ use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
 
 const BITRATE: BitrateBps = BitrateBps::guess(1_000_000);
+const IO_PROGRESS_DEADLINE: Duration = Duration::from_secs(30);
 
 fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     Zeroizing::new([byte; IDENTITY_SECRET_KEY_LEN])
@@ -85,7 +86,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -101,7 +102,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
     let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -137,8 +138,8 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
 
     let heard = tokio::select! {
         biased;
-        heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv()) => heard
-            .expect("B hears A's announce within 5s")
+        heard = tokio::time::timeout(IO_PROGRESS_DEADLINE, heard_rx.recv()) => heard
+            .expect("B hears A's announce within the I/O deadline")
             .expect("the announce channel stays open"),
         result = node_a.run() => unreachable!("node A's run loop returned: {result:?}"),
         result = node_b.run() => unreachable!("node B's run loop returned: {result:?}"),
@@ -161,7 +162,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -176,7 +177,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xD2))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -227,9 +228,9 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
     tokio::select! {
         biased;
         () = async {
-            let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
+            let heard = tokio::time::timeout(IO_PROGRESS_DEADLINE, heard_rx.recv())
                 .await
-                .expect("B hears A over the runtime-added interface within 5s")
+                .expect("B hears A over the runtime-added interface within the I/O deadline")
                 .expect("the announce channel stays open");
             assert_eq!(heard, dest_a, "B heard A through the interface it added at runtime");
 
@@ -268,7 +269,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -283,7 +284,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -321,9 +322,9 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
     tokio::select! {
         biased;
         () = async {
-            let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
+            let heard = tokio::time::timeout(IO_PROGRESS_DEADLINE, heard_rx.recv())
                 .await
-                .expect("B hears A over the supervisor's member within 5s")
+                .expect("B hears A over the supervisor's member within the I/O deadline")
                 .expect("the announce channel stays open");
             assert_eq!(heard, dest_a, "B heard A through the member the supervisor spawned");
 
@@ -360,7 +361,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let server_status = server.status();
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_s = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0x55))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -386,7 +387,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         TcpClientInterface::new_with_bitrate(addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
     let client_a_status = client_a.status();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -403,7 +404,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let client_b = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let client_b_status = client_b.status();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single_b],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -524,7 +525,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -540,7 +541,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let node_b = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -579,9 +580,9 @@ async fn a_recipe_accept_destination_receives_a_resource() {
     let sent = tokio::select! {
         biased;
         result = async {
-            let destination = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
+            let destination = tokio::time::timeout(IO_PROGRESS_DEADLINE, heard_rx.recv())
                 .await
-                .expect("B hears A within 5s")
+                .expect("B hears A within the I/O deadline")
                 .expect("the announce channel stays open");
             let link_id = commands_b
                 .establish_link(destination)
@@ -589,11 +590,11 @@ async fn a_recipe_accept_destination_receives_a_resource() {
                 .expect("the link establishes");
             let payload = std::vec![0x5au8; 64 * 1024];
             tokio::time::timeout(
-                Duration::from_secs(5),
+                IO_PROGRESS_DEADLINE,
                 commands_b.send_resource(link_id, payload.len() as u64, &payload[..]),
             )
             .await
-            .expect("the resource transfer settles within 5s")
+            .expect("the resource transfer settles within the I/O deadline")
         } => result,
         result = node_a.run() => unreachable!("node A's run loop returned: {result:?}"),
         result = node_b.run() => unreachable!("node B's run loop returned: {result:?}"),

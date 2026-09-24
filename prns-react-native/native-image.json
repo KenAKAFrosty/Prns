@@ -1,5 +1,5 @@
 {
   "schemaVersion": 1,
-  "provider": "prns-app",
-  "libraryName": "prns_app"
+  "provider": "default",
+  "libraryName": "prns_host_mobile"
 }

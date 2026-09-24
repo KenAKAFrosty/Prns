@@ -23,7 +23,7 @@ use prns_runtime::runtime::node_introspection::fold_logical_interface_inventory;
 use super::super::PrnsNodeHandle;
 use super::{
     drive_interfaces, ByteAccounting, DriverMsg, Fleet, InterfacePlacement, RegisteredInterface,
-    RetiredMemberBytes, RetiredMemberFrameAccounting, RuntimeIfac,
+    RetiredMemberBytes, RetiredMemberFrameAccounting, RuntimeIfac, StatusRegistration,
 };
 
 struct LiveRun {
@@ -50,13 +50,13 @@ fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
     (PrnsNodeHandle::over(commands), command_rx)
 }
 
-struct StatusInterface {
+pub(super) struct StatusInterface {
     tag: std::vec::Vec<u8>,
-    status: TokioInterfaceStatus,
+    pub(super) status: TokioInterfaceStatus,
 }
 
 impl StatusInterface {
-    fn new(tag: &[u8]) -> Self {
+    pub(super) fn new(tag: &[u8]) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::Pipe, tag);
         Self {
             tag: tag.to_vec(),
@@ -67,7 +67,7 @@ impl StatusInterface {
         }
     }
 
-    fn id(&self) -> InterfaceId {
+    pub(super) fn id(&self) -> InterfaceId {
         self.status.id()
     }
 }
@@ -199,7 +199,7 @@ async fn a_fleet_member_inherits_its_supervisors_ifac() {
     );
 }
 
-fn registered_status(view: StatusView, membership: Membership) -> RegisteredInterface {
+pub(super) fn registered_status(view: StatusView, membership: Membership) -> RegisteredInterface {
     RegisteredInterface {
         view,
         placement: InterfacePlacement {
@@ -259,6 +259,7 @@ async fn a_departed_fleet_members_bytes_retire_into_its_supervisor() {
         .send(DriverMsg::Add {
             id: member_id,
             supervisor: Some(supervisor_id),
+            registration: StatusRegistration::new(0, member.status_view().as_ref()),
             build: Box::new(|| {
                 let run: Pin<Box<dyn Future<Output = ()>>> = Box::pin(async {});
                 run
@@ -403,6 +404,7 @@ async fn a_self_completing_interface_run_deregisters_it() {
         .send(DriverMsg::Add {
             id,
             supervisor: None,
+            registration: StatusRegistration::Unreported,
             build: Box::new(|| {
                 let run: Pin<Box<dyn Future<Output = ()>>> = Box::pin(async {});
                 run
@@ -454,6 +456,7 @@ async fn replacement_waits_for_the_previous_same_id_run_to_drop() {
                 .send(DriverMsg::Add {
                     id,
                     supervisor: None,
+                    registration: StatusRegistration::Unreported,
                     build: Box::new(move || {
                         let guard = LiveRun::new(live, overlaps);
                         let _ = started_tx.send(());
@@ -506,6 +509,7 @@ async fn panicking_interfaces_are_deregistered_without_stopping_the_driver() {
         .send(DriverMsg::Add {
             id: build_id,
             supervisor: None,
+            registration: StatusRegistration::Unreported,
             build: Box::new(|| std::panic::panic_any("interface build")),
         })
         .expect("the driver is listening");
@@ -513,6 +517,7 @@ async fn panicking_interfaces_are_deregistered_without_stopping_the_driver() {
         .send(DriverMsg::Add {
             id: run_id,
             supervisor: None,
+            registration: StatusRegistration::Unreported,
             build: Box::new(|| Box::pin(async { std::panic::panic_any("interface run") })),
         })
         .expect("the driver is listening");
@@ -520,6 +525,7 @@ async fn panicking_interfaces_are_deregistered_without_stopping_the_driver() {
         .send(DriverMsg::Add {
             id: healthy_id,
             supervisor: None,
+            registration: StatusRegistration::Unreported,
             build: Box::new(|| Box::pin(async {})),
         })
         .expect("the driver is listening");
@@ -563,6 +569,7 @@ async fn a_panicking_supervisor_stops_its_members() {
         .send(DriverMsg::Add {
             id: supervisor_id,
             supervisor: None,
+            registration: StatusRegistration::Unreported,
             build: Box::new(|| {
                 Box::pin(async move {
                     let _ = panic_rx.await;
@@ -575,6 +582,7 @@ async fn a_panicking_supervisor_stops_its_members() {
         .send(DriverMsg::Add {
             id: member_id,
             supervisor: Some(supervisor_id),
+            registration: StatusRegistration::Unreported,
             build: Box::new(|| {
                 let _ = member_ready_tx.send(());
                 Box::pin(std::future::pending())
@@ -606,4 +614,34 @@ async fn a_panicking_supervisor_stops_its_members() {
     let mut expected = std::vec![supervisor_id, member_id];
     expected.sort_unstable();
     assert_eq!(removed, expected);
+}
+
+#[test]
+fn concurrent_command_ids_and_attachment_epochs_cross_u32_boundary() {
+    let (handle, _receiver) = handle();
+    let start = u64::from(u32::MAX) - 10;
+    handle.ids.store(start, Ordering::Relaxed);
+    handle.attachment_epochs.store(start, Ordering::Relaxed);
+    let mut results = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                let handle = &handle;
+                scope.spawn(move || {
+                    (0..1_000)
+                        .map(|_| (handle.mint().0, handle.next_attachment_epoch()))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let mut epochs: Vec<_> = results.iter().map(|(_, epoch)| *epoch).collect();
+    results.sort_unstable_by_key(|(id, _)| *id);
+    epochs.sort_unstable();
+    let ids: Vec<_> = results.into_iter().map(|(id, _)| id).collect();
+    let expected: Vec<_> = (start..start + 4_000).collect();
+    assert_eq!((ids, epochs), (expected.clone(), expected));
 }

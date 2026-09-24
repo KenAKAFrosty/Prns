@@ -26,12 +26,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
+      - name: reject stale third-party notice inputs before compilation
+        run: ./tools/prns repo notices check-inputs
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-      - name: reject stale third-party notice inputs before compilation
-        run: ./tools/prns repo notices check-inputs
       - name: registry, format, and documentation gate
         run: bash validation/hygiene/fmt-docs.sh
 
@@ -62,8 +62,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - run: cargo test --workspace --locked
-      - name: doc (intra-doc links are load-bearing navigation)
-        run: cargo doc --locked -p prns-core -p prns-runtime -p personal-rns --no-deps --document-private-items --quiet
 
   cargo-check:
     name: Cargo check (${{ matrix.name }})
@@ -74,23 +72,42 @@ jobs:
         include:
           - name: Linux
             runner: ubuntu-24.04
+            platform: linux
             command: ./tools/prns repo cargo-check
           - name: macOS
             runner: macos-latest
+            platform: macos
             command: ./tools/prns repo cargo-check
           - name: Windows
             runner: windows-latest
+            platform: windows
             command: .\tools\prns.cmd repo cargo-check
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    env:
+      RUSTFLAGS: "-D warnings --cfg aes_armv8"
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: Identify the Cargo-check compiler and flags
+        id: compiler
+        shell: bash
+        run: |
+          python -c 'import hashlib, os, subprocess; identity = subprocess.check_output(["rustc", "-vV"]) + os.environ["RUSTFLAGS"].encode() + os.environ["CARGO_INCREMENTAL"].encode(); print("key=" + hashlib.sha256(identity).hexdigest())' >> "$GITHUB_OUTPUT"
+      # This target contains multiple independent workspaces. Cache it intact:
+      # rust-cache's per-workspace cleanup cannot retain their combined graph.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          shared-key: repository-cargo-check
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/repo-cargo-check/${{ matrix.platform }}
+          key: repository-cargo-check-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.key }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', '**/.cargo/config.toml', '**/rust-toolchain*', 'tools/**/*.py') }}
+          restore-keys: |
+            repository-cargo-check-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.key }}-
       - name: Install Linux native development packages
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libsdl2-dev pkg-config
@@ -100,12 +117,8 @@ jobs:
       - name: Compile-check every host-compatible Cargo workspace
         run: ${{ matrix.command }}
 
-  feature-configs:
-    # The jobs above only build the default features (`std` + `std-sync-host`). The async host
-    # lane (tokio-host/tcp/udp) and the embassy-host lane are feature-gated, so the default
-    # `clippy`/`test` never compile, lint, or run them — that is exactly how a tokio-host
-    # `clippy::expect_used` and a non-exhaustive `match` in an embassy test both reached main
-    # unseen. This job lints, tests, and doc-checks each lane on its own.
+  feature-core:
+    # Core allocation and metrics features.
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -115,16 +128,38 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           components: clippy
-          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-      - name: Install Linux desktop link dependency
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+        with:
+          shared-key: feature-core-v1
+          workspaces: |
+            .
       - name: clippy and test — prns-core external-alloc
         run: bash validation/native/external-alloc.sh
       # Counter dimensions are feature-gated, so the default workspace test does not compile or
       # execute their owning tests. Keep the regression that motivated iterable enums on a PR lane.
       - name: test — prns-core runtime-metrics
         run: cargo test -p prns-core --features std,runtime-metrics --locked
+
+  feature-tokio:
+    # Tokio interfaces, runtime, and umbrella feature forwarding.
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: feature-tokio-v1
+          workspaces: |
+            .
+            prns-interfaces/impls/tokio
+            prns-runtime/impls/tokio
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       # The tokio interface crate: every host interface family above the engine's tokio-host bind,
       # linted/tested/doc'd as the standalone workspace consumers actually build. --all-features is
       # honest here — the per-OS BLE backends live in target tables, so Linux gets BlueR and never
@@ -157,6 +192,25 @@ jobs:
       # also proves the weak-edge forwarding resolves them to the tokio impls.
       - name: clippy — personal-rns umbrella, tokio-host lane + families
         run: cargo clippy -p personal-rns --features tokio-host,tcp,udp,wifi-auto,shared-instance --all-targets --locked -- -D warnings
+
+  feature-embassy:
+    # Embassy interfaces, runtime, and controlled-time simulation.
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: feature-embassy-v1
+          workspaces: |
+            .
+            prns-interfaces/impls/embassy
+            prns-runtime/impls/embassy
       # The same lane-neutral family names on the embassy lane (host-compiled), proving the weak
       # edges resolve them to the embassy impls instead.
       - name: clippy — personal-rns umbrella, embassy-host lane + families
@@ -166,6 +220,28 @@ jobs:
       - name: clippy — prns-interfaces-embassy (all features)
         run: cargo clippy --all-features --all-targets --locked -- -D warnings
         working-directory: prns-interfaces/impls/embassy
+      - name: clippy — virtual-device simulation with controlled time
+        run: cargo clippy --locked -p prns-simulation --features controlled-time --all-targets -- -D warnings
+      - name: test — Embassy BLE components and virtual-device simulation without hardware
+        run: python3 validation/run.py run --suite bluetooth-auto-embassy --suite virtual-device-simulation --expected-sha "$GITHUB_SHA"
+      - name: Upload Embassy BLE host evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embassy-ble-host-evidence
+          retention-days: 7
+          path: |
+            validation-artifacts/results/bluetooth-auto-embassy
+            validation-artifacts/results/virtual-device-simulation
+            validation-artifacts/results/core-work-simulation/**/case.json
+            validation-artifacts/results/core-work-simulation/**/original.json
+            validation-artifacts/results/core-work-simulation/**/reduced.json
+            validation-artifacts/results/core-work-simulation/**/original.stderr.log
+            validation-artifacts/results/remote-control-simulation/**/case.json
+            validation-artifacts/results/remote-control-simulation/**/original.json
+            validation-artifacts/results/remote-control-simulation/**/reduced.json
+            validation-artifacts/results/remote-control-simulation/**/original.stderr.log
+          if-no-files-found: ignore
       - name: doc — prns-interfaces-embassy (all features)
         run: cargo doc --locked --no-deps --document-private-items --all-features --quiet
         env:
@@ -182,6 +258,29 @@ jobs:
         working-directory: prns-runtime/impls/embassy
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
+
+  feature-applications:
+    # Desktop, configuration, daemon, and browser compilation.
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: feature-applications-v1
+          workspaces: |
+            personal-hopspot/desktop
+            prns-config
+            prnsd
+            prns-wasm
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       # Hopspot desktop face (personal-hopspot/desktop): its own stable-toolchain
       # workspace, it consumes the runtime Message/Diagnostic enums by *exhaustive* match. Nothing
       # else in CI builds it (fmt-check only fmt-checks the workspace), so a new runtime event variant
@@ -209,6 +308,24 @@ jobs:
         run: cargo clippy --target wasm32-unknown-unknown --all-targets --locked -- -D warnings
         working-directory: prns-wasm
 
+  feature-configs:
+    # Preserve the required check name while independent feature lanes run together.
+    if: always()
+    needs: [feature-core, feature-tokio, feature-embassy, feature-applications]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CORE_RESULT: ${{ needs.feature-core.result }}
+      TOKIO_RESULT: ${{ needs.feature-tokio.result }}
+      EMBASSY_RESULT: ${{ needs.feature-embassy.result }}
+      APPLICATIONS_RESULT: ${{ needs.feature-applications.result }}
+    steps:
+      - name: Require every feature lane
+        run: |
+          for result in "$CORE_RESULT" "$TOKIO_RESULT" "$EMBASSY_RESULT" "$APPLICATIONS_RESULT"; do
+            test "$result" = success
+          done
+
   integration-capstones:
     # Keep the live cross-crate capstones independently retryable: engine + runtime binds + real
     # interface implementations over live loopback sockets, through public API only.
@@ -225,7 +342,8 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
-          shared-key: integration-capstones
+          shared-key: integration-capstones-v2
+          workspaces: validation/integration
       - name: Install Linux native development packages
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: clippy — validation integration capstones
@@ -249,14 +367,24 @@ jobs:
           toolchain: 1.96.0
           components: clippy,rustfmt
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-        with:
-          shared-key: flasher-contracts
+      - name: Website Rust format
+        run: cargo fmt --manifest-path docs/website/Cargo.toml -- --check
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24.18.0"
           cache: npm
           cache-dependency-path: docs/website/package-lock.json
+      - name: Exact JavaScript graph and fake-serial suite
+        working-directory: docs/website
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run test:flasher
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: flasher-contracts-v2
+          workspaces: |
+            .
+            docs/website
       - uses: cargo-bins/cargo-binstall@57726869e28f4038a847ec56e5fdd9142fded110
         with:
           version: "1.21.0"
@@ -278,17 +406,8 @@ jobs:
         run: cargo clippy --locked -p prns-flash-manifest -p hopspot-flash --all-targets -- -D warnings
       - name: Website Rust shell
         run: cargo clippy --manifest-path docs/website/Cargo.toml --locked --all-targets -- -D warnings
-      - name: Website Rust format
-        run: cargo fmt --manifest-path docs/website/Cargo.toml -- --check
       - name: Website Rust contract tests
         run: cargo test --manifest-path docs/website/Cargo.toml --locked
-      - name: Exact JavaScript graph and fake-serial suite
-        working-directory: docs/website
-        run: |
-          npm ci --ignore-scripts --no-audit --no-fund
-          npm run test:flasher
-          npm run build:flasher
-          npm run build:css
       - name: Production browser-test and embedded-output boundary
         working-directory: docs/website
         run: |
@@ -297,6 +416,16 @@ jobs:
           ./node_modules/.bin/playwright install --with-deps chromium
           npm run test:browser
           npm run test:production-boundary
+      - name: Upload browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flasher-browser-failure
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            docs/website/target/browser-tests/report
+            docs/website/target/browser-tests/results
       - name: Production engine and lock audit
         run: |
           python3 validation/security/npm-production-audit.py
@@ -312,10 +441,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - name: Release critical-path preflight
-        run: python3 validation/run.py run --suite release-contracts --expected-sha "$GITHUB_SHA"
       - name: Tool task registry and implementation syntax
         run: ./tools/prns verify
+      - name: Release critical-path preflight
+        run: python3 validation/run.py run --suite release-contracts --expected-sha "$GITHUB_SHA"
 
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
@@ -335,6 +464,13 @@ jobs:
         with:
           toolchain: 1.90.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          key: standalone-workspaces-v2
+          workspaces: |
+            .
+            prns-config
+            prns-napi
+            prnsd
       - name: Prove and check the advertised MSRV
         run: |
           rustc --version | grep -E '^rustc 1\.90\.0 '
@@ -456,7 +592,7 @@ jobs:
     needs: embedded-resource-selection
     if: needs.embedded-resource-selection.outputs.miri_required == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -507,6 +643,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: embedded-target-isa
+      - uses: ./.github/actions/setup-linux-apt
       - name: install emulator build and runtime dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential libgcrypt20 libglib2.0-dev libpixman-1-dev libsdl2-2.0-0 libslirp0 ninja-build pkg-config python3-setuptools python3-venv xz-utils
       - name: install checksum-pinned ESP compiler and tools
@@ -665,6 +802,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
+      - uses: ./.github/actions/setup-linux-apt
       - name: Install Linux native development packages
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
@@ -773,7 +911,7 @@ jobs:
       - name: check — complete prnsd release profile (Windows)
         run: cargo check --locked --no-default-features --features tokio-host,observability,tray
         working-directory: prnsd
-      # Lint + compile parity with the Linux desktop-face step in feature-configs: this is what would
+      # Lint + compile parity with the Linux desktop-face step in feature-applications: this is what would
       # have caught the snapshot-refactor type mismatch that left main non-compiling.
       - name: clippy — hopspot desktop face (Windows)
         run: cargo clippy --all-targets --locked -- -D warnings
@@ -798,13 +936,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - name: install the reference RNS (rns==1.4.2)
+      - name: install the reference RNS (rns==1.5.4)
         run: uv venv /tmp/rns && uv pip install --python /tmp/rns/bin/python -r validation/oracles/requirements.txt
-      - name: install the control-RPC reference RNS (rns==1.4.2)
+      - name: install the control-RPC reference RNS (rns==1.5.4)
         run: uv venv /tmp/rns-rpc && uv pip install --python /tmp/rns-rpc/bin/python -r validation/oracles/requirements.txt
-      - name: install the interop reference RNS (rns==1.5.0)
+      - name: install the interop reference RNS (rns==1.5.4)
         run: uv venv /tmp/rns-interop && uv pip install --python /tmp/rns-interop/bin/python -r validation/interop/requirements.txt
-      - name: install the interop control-RPC reference RNS (rns==1.5.0)
+      - name: install the interop control-RPC reference RNS (rns==1.5.4)
         run: uv venv /tmp/rns-interop-rpc && uv pip install --python /tmp/rns-interop-rpc/bin/python -r validation/interop/requirements.txt
       - name: PR deterministic oracle lane
         run: python3 validation/run.py run --domain oracles --tier pr --expected-sha "$GITHUB_SHA"
@@ -867,6 +1005,212 @@ jobs:
             THIRD_PARTY_NOTICES.md
             audits/unsafe-snapshot.json
             personal-hopspot/mobile/android/dependencies/release-runtime.tsv
+
+  react-native-sdk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - name: Install native Bluetooth development dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: rustfmt
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: react-native-sdk
+          workspaces: |
+            . -> target
+            prns-host/impls/native -> target
+            prns-host/bindings/uniffi -> target
+            prns-host/bindings/uniffi/image -> target
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Install the standalone SDK toolchain
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+      - name: Verify shared generation and vendor ownership
+        run: |
+          python3 -m unittest discover -s tools/uniffi -p 'test_*.py'
+          python3 -m unittest discover -s tools/ubrn-vendor -p 'test_*.py'
+          python3 tools/ubrn-vendor/vendor.py check
+      - name: Verify SDK and standalone default image
+        run: |
+          python3 validation/run.py run --suite react-native-sdk --suite react-native-generated --expected-sha "$GITHUB_SHA"
+          npm --prefix prns-react-native pack --dry-run --ignore-scripts
+      - name: Verify native sessions and foreign conformance
+        run: python3 validation/run.py run --suite host-native-session --suite host-uniffi-session --suite host-uniffi-conformance --expected-sha "$GITHUB_SHA"
+      - name: Upload SDK validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-sdk-${{ github.sha }}
+          path: validation-artifacts/results/**
+          if-no-files-found: error
+          retention-days: 7
+
+  react-native-apple-platform:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+      - name: Verify SDK Swift lifecycle integration
+        run: python3 validation/run.py run --suite react-native-apple-platform --expected-sha "$GITHUB_SHA"
+      - name: Upload Swift validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-apple-platform-${{ github.sha }}
+          path: validation-artifacts/results/react-native-apple-platform
+          if-no-files-found: error
+          retention-days: 7
+
+  react-native-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTUP_TOOLCHAIN: "1.98.1"
+      TMPDIR: ${{ runner.temp }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - name: Install host metadata build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: react-native-android
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+      - name: Install pinned SDK native build tools
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+          cargo install cargo-ndk --locked --version 4.1.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Install standalone SDK dependencies
+        run: |
+          npm install --global npm@11.16.0
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+      - name: Build the standalone Android arm64 image
+        run: python3 validation/run.py run --suite react-native-android-image --expected-sha "$GITHUB_SHA"
+      - name: Install and compile the packed detached Android consumer
+        run: python3 validation/run.py run --suite react-native-android-consumer --expected-sha "$GITHUB_SHA"
+      - name: Upload the selected Android image for the combined archive gate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-android-image-${{ github.sha }}
+          path: prns-react-native/android/src/main/jniLibs
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload Android SDK validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-android-${{ github.sha }}
+          path: |
+            validation-artifacts/results/**
+            ${{ runner.temp }}/prns-expo-consumer-*/receipt.json
+            ${{ runner.temp }}/prns-expo-consumer-*/validation.log
+          if-no-files-found: error
+          retention-days: 7
+
+  react-native-apple-image:
+    needs: react-native-android
+    runs-on: macos-latest
+    timeout-minutes: 75
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTUP_TOOLCHAIN: "1.98.1"
+      TMPDIR: ${{ runner.temp }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt
+          targets: aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: react-native-apple-image
+      - name: Record the Apple build toolchain
+        run: |
+          xcodebuild -version
+          pod --version
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Install standalone SDK dependencies
+        run: |
+          npm install --global npm@11.16.0
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: react-native-android-image-${{ github.sha }}
+          path: prns-react-native/android/src/main/jniLibs
+      - name: Build the standalone iOS simulator framework
+        run: python3 validation/run.py run --suite react-native-apple-image --expected-sha "$GITHUB_SHA"
+      - name: Verify the npm archive contains both selected native images
+        run: python3 validation/run.py run --suite react-native-mobile-archive --expected-sha "$GITHUB_SHA"
+      - name: Compile the packaged Expo and Swift SDK in a detached iOS consumer
+        run: python3 validation/run.py run --suite react-native-apple-consumer --expected-sha "$GITHUB_SHA"
+      - name: Upload Apple SDK validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-apple-image-${{ github.sha }}
+          path: |
+            validation-artifacts/results/**
+            ${{ runner.temp }}/prns-expo-consumer-*/receipt.json
+            ${{ runner.temp }}/prns-expo-consumer-*/validation.log
+          if-no-files-found: error
+          retention-days: 7
 
   application-scaffold:
     runs-on: ubuntu-24.04
@@ -1024,6 +1368,10 @@ jobs:
       - application-ios-platform
       - application-lxmf-direct
       - application-detached-mobility
+      - react-native-sdk
+      - react-native-apple-platform
+      - react-native-android
+      - react-native-apple-image
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -1058,6 +1406,10 @@ jobs:
       APPLICATION_IOS_PLATFORM_RESULT: ${{ needs.application-ios-platform.result }}
       APPLICATION_LXMF_DIRECT_RESULT: ${{ needs.application-lxmf-direct.result }}
       APPLICATION_DETACHED_MOBILITY_RESULT: ${{ needs.application-detached-mobility.result }}
+      REACT_NATIVE_SDK_RESULT: ${{ needs.react-native-sdk.result }}
+      REACT_NATIVE_APPLE_RESULT: ${{ needs.react-native-apple-platform.result }}
+      REACT_NATIVE_ANDROID_RESULT: ${{ needs.react-native-android.result }}
+      REACT_NATIVE_IMAGE_RESULT: ${{ needs.react-native-apple-image.result }}
     steps:
       - name: Require every release-critical lane
         run: |
@@ -1081,7 +1433,11 @@ jobs:
             "$APPLICATION_NATIVE_FOUNDATION_RESULT" \
             "$APPLICATION_IOS_PLATFORM_RESULT" \
             "$APPLICATION_LXMF_DIRECT_RESULT" \
-            "$APPLICATION_DETACHED_MOBILITY_RESULT"; do
+            "$APPLICATION_DETACHED_MOBILITY_RESULT" \
+            "$REACT_NATIVE_SDK_RESULT" \
+            "$REACT_NATIVE_APPLE_RESULT" \
+            "$REACT_NATIVE_ANDROID_RESULT" \
+            "$REACT_NATIVE_IMAGE_RESULT"; do
             test "$result" = "success"
           done
           if [ "$EMBEDDED_REQUIRED" = "true" ]; then

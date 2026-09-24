@@ -281,6 +281,7 @@ jobs:
           stage target/flasher/candidate/qualification/validate-flasher-acceptance.py
           stage target/flasher/candidate/qualification/flasher_acceptance_contract.py
           stage target/flasher/candidate/qualification/flasher_board_catalog.py
+          stage target/flasher/candidate/qualification/flasher_hotfix.py
           stage target/flasher/candidate/qualification/flasher_manifest.py
           stage target/flasher/candidate/qualification/flasher_memory_contracts.py
           stage target/flasher/candidate/qualification/serve-flasher-candidate.py
@@ -288,6 +289,9 @@ jobs:
           stage target/flasher/candidate/qualification/validate-flasher-tester-roster.py
           stage target/flasher/candidate/qualification/flasher_tester_roster.py
           stage target/flasher/candidate/qualification/package-flasher-qualification-evidence.py
+          stage target/flasher/candidate/qualification/flasher_software_acceptance.py
+          stage target/flasher/candidate/qualification/validation_runner.py
+          stage target/flasher/candidate/qualification/validation-manifest.toml
           stage target/flasher/candidate/qualification/tester-roster.json
           stage target/flasher/candidate/audit/release-audit-evidence.md
           stage target/flasher/candidate/metadata/build.json
@@ -374,6 +378,18 @@ jobs:
           version="$(cat VERSION)"
           tag="v${version}"
           title="Prns ${version} unified release candidate"
+          ./tools/prns release prnsd distribution -- deployment-policy \
+            > "${RUNNER_TEMP}/deployment-policy.json"
+          notes="${RUNNER_TEMP}/release-notes.txt"
+          echo 'Signed unified suite candidate. Stable promotion requires independent release, OCI, and anonymous-pull verification.' > "$notes"
+          python3 validation/run.py release-deferrals \
+            > "${RUNNER_TEMP}/release-deferrals.json"
+          jq -r '.[].reason' "${RUNNER_TEMP}/release-deferrals.json" >> "$notes"
+          if [[ "$(jq -r '.status' "${RUNNER_TEMP}/deployment-policy.json")" = deferred ]]; then
+            jq -r '.reason' "${RUNNER_TEMP}/deployment-policy.json" >> "$notes"
+          else
+            echo 'Protected deployment qualification is also required.' >> "$notes"
+          fi
           if gh release view "$tag" > "${RUNNER_TEMP}/release.txt" 2>/dev/null; then
             gh release view "$tag" \
               --json isDraft,isPrerelease,targetCommitish,name \
@@ -397,7 +413,7 @@ jobs:
             gh release create "$tag" \
               --target "$GITHUB_SHA" \
               --title "$title" \
-              --notes "Signed unified suite candidate. Stable promotion requires independent release, OCI, anonymous-pull, and deployment verification." \
+              --notes-file "$notes" \
               --draft \
               --prerelease \
               --latest=false

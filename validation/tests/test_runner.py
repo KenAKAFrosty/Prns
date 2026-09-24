@@ -597,6 +597,45 @@ expires = "yesterday"
             str(root / "results/runner-artifact-environment-self-test"),
         )
 
+    def test_kani_deferral_is_exact_version_and_release_only(self) -> None:
+        baseline = copy.deepcopy(self.manifest)
+        baseline.pop("release_qualification")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for version in ("0.3.8", "0.3.8-hotfix.1", "0.3.9", "1.0.0"):
+                (root / "VERSION").write_text(version + "\n")
+                with self.subTest(version=version), mock.patch.object(runner, "ROOT", root):
+                    for tier in ("pr", "release", "scheduled", None):
+                        before = runner.selected_suites(baseline, [], None, tier)
+                        expected = [suite for suite in before if not (
+                            version == "0.3.8" and tier == "release" and suite["domain"] == "kani"
+                        )]
+                        actual = runner.selected_suites(self.manifest, [], None, tier)
+                        self.assertEqual([suite["id"] for suite in actual], [suite["id"] for suite in expected])
+                        self.assertEqual(
+                            [suite for suite in actual if suite["domain"] != "kani"],
+                            [suite for suite in before if suite["domain"] != "kani"],
+                        )
+                    proof = "kani-" + self.manifest["kani"][0]["name"]
+                    self.assertEqual(len(runner.selected_suites(self.manifest, [proof], None, None)), 1)
+                    self.assertEqual(bool(runner.active_release_deferrals(self.manifest)), version == "0.3.8")
+        self.assertEqual(self.manifest["kani"], baseline["kani"])
+
+    def test_kani_deferral_rejects_invalid_or_missing_policy_inputs(self) -> None:
+        for change in ("version", "reason", "domain", "extra", "scheduled"):
+            manifest = copy.deepcopy(self.manifest)
+            policy = manifest["release_qualification"]
+            if change == "version": policy["kani"]["version"] = "0.3.9"
+            elif change == "reason": policy["kani"]["reason"] = ""
+            elif change == "domain": policy["fuzz"] = policy.pop("kani")
+            elif change == "extra": policy["kani"]["until"] = "forever"
+            else: manifest["kani"][0]["tiers"] = ["release"]
+            with self.subTest(change=change), self.assertRaises(runner.ValidationError):
+                runner.selected_suites(manifest, [], None, "release")
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(runner, "ROOT", Path(directory)):
+            with self.assertRaisesRegex(runner.ValidationError, "VERSION"):
+                runner.selected_suites(self.manifest, [], None, "release")
+
     def test_ci_matrix_is_deterministic(self) -> None:
         first = json.dumps(
             {"include": runner.selected_suites(self.manifest, [], "kani", "release")},
@@ -609,6 +648,40 @@ expires = "yesterday"
         self.assertEqual(first, second)
         identifiers = [entry["id"] for entry in json.loads(first)["include"]]
         self.assertEqual(identifiers, sorted(identifiers))
+
+    def test_emulator_matrix_partitions_preserve_every_suite_and_runner(self) -> None:
+        emulated_ids = {
+            "embedded-isa-riscv32imac", "embedded-isa-thumbv7em",
+            "embedded-isa-xtensa-esp32s3", "embedded-platform-esp32s3",
+            "embedded-platform-nrf52840",
+        }
+        for domain, tier in ((None, "release"), ("hardening", "release"),
+                             ("hardening", "scheduled")):
+            with self.subTest(domain=domain, tier=tier):
+                command = [sys.executable, str(RUNNER_PATH), "matrix", "--tier", tier]
+                if domain:
+                    command += ["--domain", domain]
+                matrices = {}
+                for mode in (None, "none", "required"):
+                    result = subprocess.run(
+                        command + (["--emulators", mode] if mode else []),
+                        check=True, capture_output=True, text=True,
+                    )
+                    matrices[mode] = json.loads(result.stdout)["include"]
+                    self.assertIn(f"{len(matrices[mode])} suites selected", result.stderr)
+                independent, emulated = matrices["none"], matrices["required"]
+                self.assertTrue(independent)
+                self.assertEqual({entry["id"] for entry in emulated}, emulated_ids)
+                self.assertTrue(emulated_ids.isdisjoint(entry["id"] for entry in independent))
+                self.assertEqual(
+                    sorted(independent + emulated, key=lambda entry: entry["id"]),
+                    matrices[None],
+                )
+
+    def test_emulator_filter_keeps_ungrouped_suites(self) -> None:
+        suite = {"id": "portable-check", "platform": "any"}
+        self.assertEqual(runner.ci_matrix([suite], "none"), runner.ci_matrix([suite]))
+        self.assertEqual(runner.ci_matrix([suite], "required"), {"include": []})
 
     def test_mutation_aggregate_merges_all_complete_shards(self) -> None:
         manifest = mutation_manifest()

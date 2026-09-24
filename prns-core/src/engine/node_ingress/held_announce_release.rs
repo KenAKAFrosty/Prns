@@ -1,8 +1,8 @@
 use super::journal_route_removal;
 use crate::engine::settlement::settle;
 use crate::engine::{
-    AnnounceIngest, EngineReaction, EngineState, InstantMillis, Journaled, PathFound, Settlement,
-    WakeSchedule, WakeSchedules,
+    EngineReaction, EngineState, InstantMillis, Journaled, PathFound, Settlement, WakeSchedule,
+    WakeSchedules,
 };
 use crate::interfaces::{AttachedInterfaces, InterfaceCommonPolicy, InterfaceId};
 use crate::routing::announce::{Announce, AnnounceArrival};
@@ -66,7 +66,7 @@ impl<S: StorageLayout> EngineState<S> {
             };
             let identity_hash = arrival.announce.public_keys.identity_hash();
             let mut effects = IngestEffects::default();
-            let ingest = self.ingest_announce(
+            self.ingest_announce(
                 identity_hash,
                 &arrival,
                 &mut *fill_random,
@@ -90,14 +90,14 @@ impl<S: StorageLayout> EngineState<S> {
                         .map_or(expiry, |current: InstantMillis| current.min(expiry)),
                 );
             }
-            if let AnnounceIngest::Accepted(accepted) = ingest {
+            if let Some(path) = effects.discovered_path.take() {
                 released_any = true;
-                while let Some(settled) = self.pop_settled_path_request(&accepted.destination) {
+                while let Some(settled) = self.pop_settled_path_request(&path.destination) {
                     settle(
                         sink,
                         settled.command_id,
                         Settlement::RequestPath(Ok(PathFound {
-                            hops: crate::units::HopCount(accepted.hops),
+                            hops: crate::units::HopCount(path.hops),
                         })),
                     );
                 }

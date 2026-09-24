@@ -82,7 +82,7 @@
       }
     },
     {
-      "availability": "qualification",
+      "availability": "shipping",
       "slug": "heltec-e290",
       "display_name": "Heltec Vision Master E290-HF",
       "silicon": "ESP32-S3R8 + HT-RA62-HF/SX1262 (Octal PSRAM)",
@@ -122,7 +122,7 @@
       }
     },
     {
-      "availability": "qualification",
+      "availability": "shipping",
       "slug": "heltec-wireless-stick-lite-v3",
       "display_name": "Heltec Wireless Stick Lite V3",
       "silicon": "ESP32-S3FN8 + SX1262",
@@ -318,7 +318,7 @@
       }
     },
     {
-      "availability": "qualification",
+      "availability": "shipping",
       "slug": "mesh-pocket-5000",
       "display_name": "Heltec MeshPocket 5000 mAh",
       "silicon": "nRF52840 + SX1262 + 2.13-inch e-ink",
@@ -364,7 +364,7 @@
       }
     },
     {
-      "availability": "qualification",
+      "availability": "shipping",
       "slug": "mesh-pocket-10000",
       "display_name": "Heltec MeshPocket 10000 mAh",
       "silicon": "nRF52840 + SX1262 + 2.13-inch e-ink",
@@ -457,6 +457,52 @@
     },
     {
       "availability": "shipping",
+      "slug": "rak4631",
+      "display_name": "RAK WisBlock Starter Kit",
+      "silicon": "nRF52840 + SX1262",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "rak4631-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "rak4631",
+        "board_feature": "board-rak4631",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "RAK4631",
+        "board_identity": {
+          "match": "exact-shared",
+          "value": "wisblock-rak4631-board"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (RAK WisBlock 4631)",
+          "serial_number": "PERSONAL-RNS-RAK4631-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "memory_profile": "rak4631",
+            "family_id": "0xada52840",
+            "application_link": "softdevice-s140-v6",
+            "target_directory": "target/rak4631",
+            "filename": "rak4631-s140-6.1.1.uf2"
+          }
+        ]
+      }
+    },
+    {
+      "availability": "shipping",
       "slug": "t1000-e",
       "display_name": "Seeed SenseCAP T1000-E",
       "silicon": "nRF52840 + LR1110",
@@ -526,6 +572,324 @@
           "family_id": "0xada52840",
           "filename": "t1000e.uf2"
         }
+      }
+    },
+    {
+      "availability": "shipping",
+      "slug": "mesh-tower-v2",
+      "display_name": "Heltec MeshTower V2",
+      "silicon": "nRF52840 + SX1262 + KCT8103L PA",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "mesh-tower-v2-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "heltec-mesh-tower-v2",
+        "board_feature": "board-mesh-tower-v2",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "HT-n5262",
+        "board_identity": {
+          "match": "exact-shared",
+          "value": "ht-n5262"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (Heltec MeshTower V2)",
+          "serial_number": "PERSONAL-RNS-MTWR-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "memory_profile": "mesh-tower-v2",
+            "family_id": "0xada52840",
+            "application_link": "softdevice-s140-v6",
+            "target_directory": "target/mesh-tower-v2",
+            "filename": "heltec-mesh-tower-v2-s140-6.1.1.uf2"
+          }
+        ]
+      }
+    },
+    {
+      "availability": "shipping",
+      "slug": "muzi-base-duo",
+      "display_name": "muzi works Base Duo",
+      "silicon": "nRF52840 + LR1121",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "muzi-base-duo-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "muzi-base-duo",
+        "board_feature": "board-muzi-base-duo",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "muzi-Base",
+        "board_identity": {
+          "match": "exact",
+          "value": "muzi-base-board"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (muzi Base Duo)",
+          "serial_number": "PERSONAL-RNS-MBDUO-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "memory_profile": "muzi-base-duo",
+            "family_id": "0xada52840",
+            "application_link": "softdevice-s140-v6",
+            "target_directory": "target/muzi-base-duo",
+            "filename": "muzi-base-duo-s140-6.1.1.uf2"
+          }
+        ]
+      }
+    },
+    {
+      "availability": "shipping",
+      "slug": "heltec-v3",
+      "display_name": "Heltec V3/V3.1",
+      "silicon": "ESP32-S3 + SX1262 (no PSRAM)",
+      "interfaces": [
+        "BLE Auto",
+        "LoRa",
+        "USB Auto"
+      ],
+      "icon": "espressif",
+      "transport": "esp-serial",
+      "expected_chip": "esp32s3",
+      "flash_size": 8388608,
+      "preparation_profile": "esp-usb-boot",
+      "provisioning": null,
+      "build": {
+        "kind": "esp",
+        "chip": "esp32s3",
+        "rust_target": "xtensa-esp32s3-none-elf",
+        "memory_profile": "heltec-v3",
+        "partition_table": "partitions-hopspot-8mb.csv",
+        "package": "hopspot-heltec-v3",
+        "binary": "hopspot-heltec-v3",
+        "flash_size_label": "8mb",
+        "flash_mode": "dio",
+        "flash_frequency": "40m",
+        "before_reset": "default-reset",
+        "after_reset": "hard-reset"
+      }
+    },
+    {
+      "availability": "shipping",
+      "slug": "seeed-wio-tracker-l1",
+      "display_name": "Seeed Wio Tracker L1",
+      "silicon": "nRF52840 + SX1262",
+      "interfaces": [
+        "BLE Auto",
+        "LoRa",
+        "USB Auto"
+      ],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "wio-tracker-l1-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "wio-tracker-l1",
+        "board_feature": "board-wio-tracker-l1",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "TRACKER L1",
+        "board_identity": {
+          "match": "exact-shared",
+          "value": "tracker l1"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (Wio Tracker L1)",
+          "serial_number": "PERSONAL-RNS-WIO-L1-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "7.3.0",
+            "fwid": "0x0123",
+            "memory_profile": "wio-tracker-l1",
+            "family_id": "0xada52840",
+            "application_link": "softdevice-s140-v7",
+            "target_directory": "target/wio-tracker-l1",
+            "filename": "wio-tracker-l1-s140-7.3.0.uf2"
+          }
+        ]
+      }
+    },
+    {
+      "availability": "shipping",
+      "slug": "xiao-esp32s3-wio-sx1262",
+      "display_name": "Seeed XIAO ESP32-S3 + Wio-SX1262",
+      "silicon": "ESP32-S3 + SX1262",
+      "interfaces": [
+        "Wi-Fi Auto",
+        "TCP Client",
+        "BLE Auto",
+        "LoRa",
+        "ESP-NOW",
+        "USB Auto"
+      ],
+      "icon": "espressif",
+      "transport": "esp-serial",
+      "expected_chip": "esp32s3",
+      "flash_size": 8388608,
+      "preparation_profile": "esp-usb-boot",
+      "provisioning": {
+        "format": "HSPCFG1",
+        "version": 1,
+        "offset": 53248,
+        "size": 4096,
+        "ssid_max_bytes": 32,
+        "password_max_bytes": 64,
+        "tcp_client": {
+          "target_format": "ipv4-or-dns",
+          "max_clients": 1,
+          "default_port": 4242,
+          "hostname_max_bytes": 253
+        }
+      },
+      "build": {
+        "kind": "esp",
+        "chip": "esp32s3",
+        "rust_target": "xtensa-esp32s3-none-elf",
+        "partition_table": "partitions-hopspot-8mb.csv",
+        "package": "hopspot-xiao-esp32s3-wio-sx1262",
+        "binary": "hopspot-xiao-esp32s3-wio-sx1262",
+        "flash_size_label": "8mb",
+        "flash_mode": "dio",
+        "flash_frequency": "40m",
+        "before_reset": "usb-reset",
+        "after_reset": "watchdog-reset",
+        "memory_profile": "xiao-esp32s3-wio-sx1262"
+      }
+    },
+    {
+      "availability": "shipping",
+      "slug": "rak10724",
+      "display_name": "RAK WisMesh 1W Booster Kit",
+      "silicon": "nRF52840 + SX1262 1W",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "rak10724-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "rak10724",
+        "board_feature": "board-rak10724",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "RAK4631",
+        "board_identity": {
+          "match": "exact-shared",
+          "value": "wisblock-rak4631-board"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (RAK WisMesh 1W)",
+          "serial_number": "PERSONAL-RNS-RAK10724-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "memory_profile": "rak10724",
+            "family_id": "0xada52840",
+            "application_link": "softdevice-s140-v6",
+            "target_directory": "target/rak10724",
+            "filename": "rak10724-s140-6.1.1.uf2"
+          }
+        ]
+      }
+    },
+    {
+      "availability": "shipping",
+      "slug": "seeed-sensecap-solar-node-p1",
+      "display_name": "SenseCAP Solar Node P1 / P1-Pro",
+      "silicon": "nRF52840 + SX1262",
+      "interfaces": ["LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "sensecap-solar-node-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "sensecap-solar-node",
+        "board_feature": "board-sensecap-solar-node",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "SENSECAP",
+        "board_identity": {
+          "match": "exact",
+          "value": "nrf52840-seeedsensecapsolarp1-v1"
+        },
+        "alternative_board_identities": [
+          {
+            "match": "exact-shared",
+            "value": "nrf52840-seeedxiao-v1"
+          }
+        ],
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (SenseCAP Solar Node)",
+          "serial_number": "PERSONAL-RNS-SOLARNODE-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "7.3.0",
+            "fwid": "0x0123",
+            "memory_profile": "sensecap-solar-node",
+            "family_id": "0xada52840",
+            "application_link": "bare-metal",
+            "target_directory": "target/sensecap-solar-node",
+            "filename": "sensecap-solar-node-s140-7.3.0.uf2"
+          }
+        ]
       }
     }
   ]

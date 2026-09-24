@@ -665,6 +665,7 @@ where
     let state = core::mem::replace(&mut progress.state, ControllerGrantPersistenceState::Ready);
     let ControllerGrantPersistenceState::WaitingInitialStore(pending) = state else {
         let ControllerGrantPersistenceState::WaitingRollbackStore { settlement } = state else {
+            progress.state = state;
             return None;
         };
         if stored.is_err() {
@@ -709,50 +710,22 @@ where
     let applied = match activation.activate(remote_control) {
         Ok(applied) => applied,
         Err(_) => {
-            if !submit_controller_grant_rollback(remote_control, stores) {
-                progress.state = ControllerGrantPersistenceState::Unrecoverable;
-                return fail_controller_grant_settlement(commands, settlement);
-            }
-            progress.state = ControllerGrantPersistenceState::WaitingRollbackStore {
-                settlement: Some(settlement),
-            };
-            return None;
+            remote_control.require_authorization_recovery();
+            progress.state = ControllerGrantPersistenceState::Unrecoverable;
+            return fail_controller_grant_settlement(commands, settlement);
         }
     };
     match settlement {
         ControllerGrantSettlement::Local { id, operation } => {
             let Some(success) = operation.success(&applied) else {
-                if applied.roll_back(remote_control).is_err() {
-                    progress.state = ControllerGrantPersistenceState::Unrecoverable;
-                    return fail_controller_grant_settlement(
-                        commands,
-                        ControllerGrantSettlement::Local { id, operation },
-                    );
-                }
-                if !submit_controller_grant_rollback(remote_control, stores) {
-                    progress.state = ControllerGrantPersistenceState::Unrecoverable;
-                    return fail_controller_grant_settlement(
-                        commands,
-                        ControllerGrantSettlement::Local { id, operation },
-                    );
-                }
-                progress.state = ControllerGrantPersistenceState::WaitingRollbackStore {
-                    settlement: Some(ControllerGrantSettlement::Local { id, operation }),
-                };
-                return None;
+                remote_control.require_authorization_recovery();
+                progress.state = ControllerGrantPersistenceState::Unrecoverable;
+                return fail_controller_grant_settlement(
+                    commands,
+                    ControllerGrantSettlement::Local { id, operation },
+                );
             };
-            if !commands.settle_remote_control_controller_grant(id, success) {
-                if applied.roll_back(remote_control).is_err() {
-                    progress.state = ControllerGrantPersistenceState::Unrecoverable;
-                    return None;
-                }
-                if submit_controller_grant_rollback(remote_control, stores) {
-                    progress.state =
-                        ControllerGrantPersistenceState::WaitingRollbackStore { settlement: None };
-                } else {
-                    progress.state = ControllerGrantPersistenceState::Unrecoverable;
-                }
-            }
+            let _settled = commands.settle_remote_control_controller_grant(id, success);
             None
         }
         ControllerGrantSettlement::Remote(pending) => {
@@ -760,19 +733,7 @@ where
                 pending,
                 VerifiedControllerGrantPersistenceOutcome::Committed,
             );
-            if respond_verified_controller_grant(commands, ready) {
-                return None;
-            }
-            if applied.roll_back(remote_control).is_err() {
-                progress.state = ControllerGrantPersistenceState::Unrecoverable;
-                return None;
-            }
-            if submit_controller_grant_rollback(remote_control, stores) {
-                progress.state =
-                    ControllerGrantPersistenceState::WaitingRollbackStore { settlement: None };
-            } else {
-                progress.state = ControllerGrantPersistenceState::Unrecoverable;
-            }
+            let _responded = respond_verified_controller_grant(commands, ready);
             None
         }
     }
@@ -1133,6 +1094,7 @@ fn begin_verified_controller_grant_persistence<M: RawMutex>(
 
 pub(super) async fn run_router<
     St,
+    C,
     R,
     M,
     const COMMANDS: usize,
@@ -1143,6 +1105,7 @@ pub(super) async fn run_router<
     const REQUEST_BYTES: usize,
 >(
     state: &St,
+    controls: &C,
     remote_control: &mut AssembledRemoteControl,
     requests: Receiver<'_, M, RunnerRequest<REQUEST_BYTES>, REQUESTS>,
     pairing_events: &RemoteControlPairingPersistenceEvents<M>,
@@ -1151,7 +1114,8 @@ pub(super) async fn run_router<
 ) where
     R: RequestEndpointSet<St>,
     M: RawMutex + Sync,
-    St: prns_runtime::runtime::RemoteControlHostControls,
+    C: prns_runtime::runtime::RemoteControlHostControls
+        + prns_runtime::runtime::RemoteControlAppMessages<St>,
 {
     let mut authorization_transaction = RemoteControlPairingAuthorizationTransactionState::new();
     let mut authorization_persistence = RemoteControlAuthorizationPersistenceProgress::new();
@@ -1284,6 +1248,7 @@ pub(super) async fn run_router<
                             VerifiedControllerGrantStart::Dispatch => {
                                 dispatch_prepared::<
                                     St,
+                                    C,
                                     R,
                                     M,
                                     COMMANDS,
@@ -1293,6 +1258,7 @@ pub(super) async fn run_router<
                                     0,
                                 >(
                                     state,
+                                    controls,
                                     commands,
                                     request,
                                     PreparedRunnerRequest::RemoteControl(verified),
@@ -1306,6 +1272,7 @@ pub(super) async fn run_router<
                 };
                 dispatch_prepared::<
                     St,
+                    C,
                     R,
                     M,
                     COMMANDS,
@@ -1313,7 +1280,7 @@ pub(super) async fn run_router<
                     REQUEST_COMPLETIONS,
                     RESPONSE_BYTES,
                     REQUEST_BYTES,
-                >(state, commands, request, prepared)
+                >(state, controls, commands, request, prepared)
                 .await;
             }
         }
@@ -1394,6 +1361,7 @@ async fn next_pairing_persistence_input<M: RawMutex>(
 #[inline(never)]
 async fn dispatch_prepared<
     St,
+    C,
     R,
     M,
     const COMMANDS: usize,
@@ -1403,13 +1371,15 @@ async fn dispatch_prepared<
     const REQUEST_BYTES: usize,
 >(
     state: &St,
+    controls: &C,
     commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
     request: RunnerRequest<REQUEST_BYTES>,
     prepared: PreparedRunnerRequest,
 ) where
     R: RequestEndpointSet<St>,
     M: RawMutex + Sync,
-    St: prns_runtime::runtime::RemoteControlHostControls,
+    C: prns_runtime::runtime::RemoteControlHostControls
+        + prns_runtime::runtime::RemoteControlAppMessages<St>,
 {
     let inbound = InboundRequest::new(
         request.destination,
@@ -1434,7 +1404,7 @@ async fn dispatch_prepared<
                 request.data.len()
             );
             dispatch_verified_admitted_remote_control_request(
-                state, &commands, inbound, &mut body, verified,
+                state, controls, &commands, inbound, &mut body, verified,
             )
             .await
         }
@@ -1811,6 +1781,7 @@ mod tests {
         >(&mut remote_control, &request);
         block_on(dispatch_prepared::<
             crate::runtime::NoRemoteControlHostControls,
+            crate::runtime::NoRemoteControlHostControls,
             StaticRoutes,
             M,
             1,
@@ -1819,6 +1790,7 @@ mod tests {
             0,
             16,
         >(
+            &crate::runtime::NoRemoteControlHostControls,
             &crate::runtime::NoRemoteControlHostControls,
             handle,
             request,
@@ -1866,6 +1838,7 @@ mod tests {
         >(&mut remote_control, &request);
         block_on(dispatch_prepared::<
             crate::runtime::NoRemoteControlHostControls,
+            crate::runtime::NoRemoteControlHostControls,
             DestinationRoutes,
             M,
             1,
@@ -1874,6 +1847,7 @@ mod tests {
             0,
             16,
         >(
+            &crate::runtime::NoRemoteControlHostControls,
             &crate::runtime::NoRemoteControlHostControls,
             handle,
             request,
@@ -1915,15 +1889,26 @@ mod tests {
         let grant = super::super::node_facade::test_remote_control_grant(
             RemoteControlRequestKind::Describe,
         );
-        let router =
-            run_router::<crate::runtime::NoRemoteControlHostControls, (), M, 1, 0, 0, 0, 1, 16>(
-                &crate::runtime::NoRemoteControlHostControls,
-                &mut remote_control,
-                requests.receiver(),
-                &pairing_events,
-                None,
-                handle,
-            );
+        let router = run_router::<
+            crate::runtime::NoRemoteControlHostControls,
+            crate::runtime::NoRemoteControlHostControls,
+            (),
+            M,
+            1,
+            0,
+            0,
+            0,
+            1,
+            16,
+        >(
+            &crate::runtime::NoRemoteControlHostControls,
+            &crate::runtime::NoRemoteControlHostControls,
+            &mut remote_control,
+            requests.receiver(),
+            &pairing_events,
+            None,
+            handle,
+        );
         let exercise = async {
             assert_eq!(
                 handle.set_remote_control_controller_grant(grant).await,
@@ -1982,6 +1967,7 @@ mod tests {
         assert!(requests.try_send(request).is_ok());
         let router = run_router::<
             crate::runtime::NoRemoteControlHostControls,
+            crate::runtime::NoRemoteControlHostControls,
             DestinationRoutes,
             M,
             1,
@@ -1991,6 +1977,7 @@ mod tests {
             1,
             16,
         >(
+            &crate::runtime::NoRemoteControlHostControls,
             &crate::runtime::NoRemoteControlHostControls,
             &mut remote_control,
             requests.receiver(),
@@ -2076,6 +2063,7 @@ mod tests {
 
         let router = run_router::<
             crate::runtime::NoRemoteControlHostControls,
+            crate::runtime::NoRemoteControlHostControls,
             (),
             M,
             1,
@@ -2085,6 +2073,7 @@ mod tests {
             1,
             { RemoteControlRequest::MAX_ENCODED_LEN },
         >(
+            &crate::runtime::NoRemoteControlHostControls,
             &crate::runtime::NoRemoteControlHostControls,
             &mut remote_control,
             requests.receiver(),
@@ -2130,7 +2119,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_administrator_grant_rolls_back_when_its_success_response_cannot_be_queued() {
+    fn remote_administrator_grant_survives_when_its_success_response_cannot_be_queued() {
         use crate::remote_control::{
             RemoteControlControllerAuthority, RemoteControlControllerGrant,
             RemoteControlControllerGrantTable, RemoteControlRequest, RemoteControlRequestKind,
@@ -2169,6 +2158,7 @@ mod tests {
 
         let router = run_router::<
             crate::runtime::NoRemoteControlHostControls,
+            crate::runtime::NoRemoteControlHostControls,
             (),
             M,
             1,
@@ -2179,26 +2169,39 @@ mod tests {
             { RemoteControlRequest::MAX_ENCODED_LEN },
         >(
             &crate::runtime::NoRemoteControlHostControls,
+            &crate::runtime::NoRemoteControlHostControls,
             &mut remote_control,
             requests.receiver(),
             &pairing_events,
             Some(&authorization_stores),
             handle,
         );
-        let persist = async {
-            authorization_stores.settle_next_test_store(Ok(())).await;
-            authorization_stores.settle_next_test_store(Ok(())).await;
-        };
-        match block_on(select(persist, router)) {
-            Either::First(()) => {}
-            Either::Second(()) => panic!("router returned"),
+        {
+            use core::future::Future;
+            let mut router = core::pin::pin!(router);
+            let mut context = core::task::Context::from_waker(core::task::Waker::noop());
+            assert!(router.as_mut().poll(&mut context).is_pending());
+            block_on(authorization_stores.settle_next_test_store(Ok(())));
+            assert!(router.as_mut().poll(&mut context).is_pending());
+            let mut unexpected_rollback =
+                core::pin::pin!(authorization_stores.wait_for_next_test_store());
+            assert!(unexpected_rollback.as_mut().poll(&mut context).is_pending());
         }
-
-        assert!(remote_control
-            .controller_grants()
-            .unwrap()
-            .grant_for(&operator.identity_hash())
-            .is_none());
+        let expected_operator = RemoteControlControllerGrant::new(
+            operator,
+            RemoteControlControllerAuthority::Operator,
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        )
+        .unwrap();
+        let mut expected = [administrator, expected_operator];
+        expected.sort_by_key(|grant| *grant.controller().identity_hash().as_bytes());
+        assert_eq!(
+            remote_control
+                .controller_grants()
+                .unwrap()
+                .grants_in_identity_hash_order(),
+            &expected
+        );
         let Ok(issued) = commands.try_receive() else {
             panic!("prefilled command remains queued")
         };
@@ -2207,6 +2210,183 @@ mod tests {
             PrnsCommand::CloseLink(close) if close.link_id == LinkId::new([0x91; 16])
         ));
         assert!(commands.try_receive().is_err());
+    }
+
+    #[test]
+    fn committed_grant_activation_mismatch_stays_unrecoverable_without_rollback() {
+        use crate::remote_control::RemoteControlRequestKind;
+        use crate::runtime::RemoteControlControllerGrantControl;
+        use core::future::Future;
+        enum Change {
+            Add,
+            Update,
+            Revoke,
+        }
+        for change in [Change::Add, Change::Update, Change::Revoke] {
+            type M = CriticalSectionRawMutex;
+            let commands = Channel::<M, crate::engine::IssuedCommand, 1>::new();
+            let completions = crate::runtime::CompletionPool::<M, 0>::new();
+            let handle = PrnsNodeHandle::new(commands.sender(), &completions);
+            let stores = RemoteControlAuthorizationStoreExchange::new();
+            let mut remote = remote_control();
+            let grant = super::super::node_facade::test_remote_control_grant;
+            let prior = grant(RemoteControlRequestKind::Describe);
+            let candidate = grant(RemoteControlRequestKind::AnnounceSelf);
+            if !matches!(change, Change::Add) {
+                remote.set_controller_grant(prior).unwrap();
+            }
+            let mut changing = std::boxed::Box::pin(async {
+                match change {
+                    Change::Add | Change::Update => assert_eq!(
+                        handle.set_remote_control_controller_grant(candidate).await,
+                        Err(
+                            super::super::SetRemoteControlControllerGrantServiceError::Unavailable
+                                .into()
+                        )
+                    ),
+                    Change::Revoke => assert_eq!(
+                        handle
+                            .revoke_remote_control_controller(*prior.controller())
+                            .await,
+                        Err(
+                            super::super::RevokeRemoteControlControllerServiceError::Unavailable
+                                .into()
+                        )
+                    ),
+                }
+            });
+            let mut context = core::task::Context::from_waker(core::task::Waker::noop());
+            assert!(changing.as_mut().poll(&mut context).is_pending());
+            let command = block_on(handle.next_remote_control_controller_grant_command());
+            let mut progress = ControllerGrantPersistenceProgress::new();
+            begin_controller_grant_persistence(
+                &mut progress,
+                &mut remote,
+                &RemoteControlPairingAuthorizationTransactionState::new(),
+                Some(&stores),
+                handle,
+                command,
+            );
+            assert!(progress.is_waiting_for_store());
+            block_on(stores.wait_for_next_test_store());
+            match change {
+                Change::Revoke => {
+                    remote.revoke_controller(prior.controller()).unwrap();
+                }
+                Change::Add | Change::Update => {
+                    remote.set_controller_grant(candidate).unwrap();
+                }
+            }
+            for _ in 0..2 {
+                assert!(progress_controller_grant_persistence(
+                    &mut progress,
+                    &mut remote,
+                    &stores,
+                    handle,
+                    Ok(())
+                )
+                .is_none());
+                assert!(matches!(
+                    progress.state,
+                    ControllerGrantPersistenceState::Unrecoverable
+                ));
+                assert!(!remote.is_available());
+                let mut unexpected_rollback = core::pin::pin!(stores.wait_for_next_test_store());
+                assert!(unexpected_rollback.as_mut().poll(&mut context).is_pending());
+            }
+            block_on(changing);
+            assert!(commands.try_receive().is_err());
+        }
+    }
+
+    #[test]
+    fn cancelled_local_grant_changes_keep_the_committed_table_without_a_rollback_store() {
+        use crate::remote_control::{RemoteControlControllerGrantTable, RemoteControlRequestKind};
+        use crate::runtime::RemoteControlControllerGrantControl;
+        use core::future::Future;
+        enum Change {
+            Add,
+            Replace,
+            Revoke,
+        }
+        for change in [Change::Add, Change::Replace, Change::Revoke] {
+            type M = CriticalSectionRawMutex;
+            let commands = Channel::<M, crate::engine::IssuedCommand, 1>::new();
+            let completions = crate::runtime::CompletionPool::<M, 0>::new();
+            let handle = PrnsNodeHandle::new(commands.sender(), &completions);
+            let stores = RemoteControlAuthorizationStoreExchange::new();
+            let mut remote = remote_control();
+            let prior = super::super::node_facade::test_remote_control_grant(
+                RemoteControlRequestKind::Describe,
+            );
+            let candidate = super::super::node_facade::test_remote_control_grant(
+                RemoteControlRequestKind::AnnounceSelf,
+            );
+            let administrator = crate::remote_control::RemoteControlControllerGrant::new(
+                controller(0x53),
+                crate::remote_control::RemoteControlControllerAuthority::Administrator,
+                crate::remote_control::RemoteControlRequestSet::all(),
+            )
+            .unwrap();
+            remote.set_controller_grant(administrator).unwrap();
+            if !matches!(change, Change::Add) {
+                remote.set_controller_grant(prior).unwrap();
+            }
+            let mut changing = std::boxed::Box::pin(async {
+                match change {
+                    Change::Add | Change::Replace => {
+                        handle
+                            .set_remote_control_controller_grant(candidate)
+                            .await
+                            .unwrap();
+                    }
+                    Change::Revoke => {
+                        handle
+                            .revoke_remote_control_controller(*prior.controller())
+                            .await
+                            .unwrap();
+                    }
+                }
+            });
+            let mut context = core::task::Context::from_waker(core::task::Waker::noop());
+            assert!(changing.as_mut().poll(&mut context).is_pending());
+            let command = block_on(handle.next_remote_control_controller_grant_command());
+            let mut progress = ControllerGrantPersistenceProgress::new();
+            begin_controller_grant_persistence(
+                &mut progress,
+                &mut remote,
+                &RemoteControlPairingAuthorizationTransactionState::new(),
+                Some(&stores),
+                handle,
+                command,
+            );
+            assert!(progress.is_waiting_for_store());
+            block_on(stores.wait_for_next_test_store());
+            drop(changing);
+            assert!(progress_controller_grant_persistence(
+                &mut progress,
+                &mut remote,
+                &stores,
+                handle,
+                Ok(())
+            )
+            .is_none());
+            assert!(progress.is_ready());
+            let mut unexpected_rollback = core::pin::pin!(stores.wait_for_next_test_store());
+            assert!(unexpected_rollback.as_mut().poll(&mut context).is_pending());
+            let mut expected = std::vec![administrator];
+            if !matches!(change, Change::Revoke) {
+                expected.push(candidate);
+            }
+            expected.sort_by_key(|grant| *grant.controller().identity_hash().as_bytes());
+            assert_eq!(
+                remote
+                    .controller_grants()
+                    .unwrap()
+                    .grants_in_identity_hash_order(),
+                expected.as_slice()
+            );
+        }
     }
 
     #[test]
@@ -2248,6 +2428,7 @@ mod tests {
 
         let router = run_router::<
             crate::runtime::NoRemoteControlHostControls,
+            crate::runtime::NoRemoteControlHostControls,
             (),
             M,
             1,
@@ -2257,6 +2438,7 @@ mod tests {
             1,
             { RemoteControlRequest::MAX_ENCODED_LEN },
         >(
+            &crate::runtime::NoRemoteControlHostControls,
             &crate::runtime::NoRemoteControlHostControls,
             &mut remote_control,
             requests.receiver(),
@@ -2320,15 +2502,26 @@ mod tests {
         let grant = super::super::node_facade::test_remote_control_grant(
             RemoteControlRequestKind::Describe,
         );
-        let router =
-            run_router::<crate::runtime::NoRemoteControlHostControls, (), M, 1, 0, 0, 0, 1, 16>(
-                &crate::runtime::NoRemoteControlHostControls,
-                &mut remote_control,
-                requests.receiver(),
-                &pairing_events,
-                Some(&authorization_stores),
-                handle,
-            );
+        let router = run_router::<
+            crate::runtime::NoRemoteControlHostControls,
+            crate::runtime::NoRemoteControlHostControls,
+            (),
+            M,
+            1,
+            0,
+            0,
+            0,
+            1,
+            16,
+        >(
+            &crate::runtime::NoRemoteControlHostControls,
+            &crate::runtime::NoRemoteControlHostControls,
+            &mut remote_control,
+            requests.receiver(),
+            &pairing_events,
+            Some(&authorization_stores),
+            handle,
+        );
         let exercise = async {
             let setting = handle.set_remote_control_controller_grant(grant);
             let inspect_while_unsettled = async {
@@ -2404,15 +2597,26 @@ mod tests {
             attempt_id,
             grant: pairing_grant,
         });
-        let router =
-            run_router::<crate::runtime::NoRemoteControlHostControls, (), M, 1, 0, 0, 0, 1, 16>(
-                &crate::runtime::NoRemoteControlHostControls,
-                &mut remote_control,
-                requests.receiver(),
-                &pairing_events,
-                Some(&authorization_stores),
-                handle,
-            );
+        let router = run_router::<
+            crate::runtime::NoRemoteControlHostControls,
+            crate::runtime::NoRemoteControlHostControls,
+            (),
+            M,
+            1,
+            0,
+            0,
+            0,
+            1,
+            16,
+        >(
+            &crate::runtime::NoRemoteControlHostControls,
+            &crate::runtime::NoRemoteControlHostControls,
+            &mut remote_control,
+            requests.receiver(),
+            &pairing_events,
+            Some(&authorization_stores),
+            handle,
+        );
         let exercise = async {
             let (app_mutation, (target_inventory, target_resolution)) = join(
                 handle.set_remote_control_controller_grant(app_grant),

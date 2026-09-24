@@ -71,6 +71,7 @@ class EspEnvironment:
 
 @dataclass(frozen=True)
 class ReadinessContract:
+    resource_toolchain: str
     isa_toolchain: str
     architectures: tuple[Architecture, ...]
     platforms: tuple[Platform, ...]

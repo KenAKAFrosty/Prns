@@ -3,6 +3,7 @@ use personal_rns::interfaces::lora::{
     CodingRate, Frequency, LoraBandwidth, Modulation, PreambleSymbols, RadioProfile,
     SpreadingFactor, TxPower,
 };
+use personal_rns::interfaces::lora::{LoRaConfiguration, LoRaConfigurationState};
 use personal_rns::interfaces::subghz::regions::us915::Us915;
 use personal_rns::interfaces::subghz::{
     RegulatoryRegion, ResolvedSubGMode, SubGConfiguration, SubGConfigurationState, SubGMode,
@@ -16,6 +17,7 @@ const LEGACY_PROFILE_KIND: u8 = 1;
 const LEGACY_DEFAULT_KIND: u8 = 2;
 const CONFIGURATION_KIND: u8 = 3;
 const UNCONFIGURED_KIND: u8 = 4;
+const GHZ24_CONFIGURATION_KIND: u8 = 5;
 const MODE_AUTO_LORA: u8 = 1;
 const MODE_MANUAL_LORA: u8 = 2;
 const MODE_TURBO: u8 = 3;
@@ -42,7 +44,14 @@ pub struct LoadedSubGConfiguration {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadedLoRaConfiguration {
+    pub state: LoRaConfigurationState,
+    pub notice: Option<SubGConfigurationLoadNotice>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubGConfigurationStoreError<E> {
+    UnsupportedConfiguration,
     Flash {
         operation: SubGConfigurationFlashOperation,
         error: E,
@@ -85,6 +94,42 @@ where
     pub async fn load(
         &mut self,
     ) -> Result<LoadedSubGConfiguration, SubGConfigurationStoreError<F::Error>> {
+        let loaded = self.load_radio().await?;
+        let state = match loaded.state {
+            LoRaConfigurationState::Unconfigured => SubGConfigurationState::Unconfigured,
+            LoRaConfigurationState::Configured(LoRaConfiguration::SubG(configuration)) => {
+                SubGConfigurationState::Configured(configuration)
+            }
+            #[cfg(feature = "lora-2g4")]
+            LoRaConfigurationState::Configured(LoRaConfiguration::Ghz24(_)) => {
+                return Err(SubGConfigurationStoreError::UnsupportedConfiguration)
+            }
+        };
+        Ok(LoadedSubGConfiguration {
+            state,
+            notice: loaded.notice,
+        })
+    }
+
+    pub async fn save_radio(
+        &mut self,
+        state: LoRaConfigurationState,
+    ) -> SubGConfigurationCommitOutcome<F::Error> {
+        match state {
+            LoRaConfigurationState::Unconfigured => self.clear().await,
+            LoRaConfigurationState::Configured(LoRaConfiguration::SubG(configuration)) => {
+                self.save(configuration).await
+            }
+            #[cfg(feature = "lora-2g4")]
+            LoRaConfigurationState::Configured(LoRaConfiguration::Ghz24(profile)) => {
+                self.commit(StoredValue::Ghz24(profile)).await
+            }
+        }
+    }
+
+    pub async fn load_radio(
+        &mut self,
+    ) -> Result<LoadedLoRaConfiguration, SubGConfigurationStoreError<F::Error>> {
         self.validate_layout()?;
         let slots = self
             .read_slots(SubGConfigurationFlashOperation::Read)
@@ -94,14 +139,14 @@ where
                 .iter()
                 .any(|slot| !matches!(slot, Slot::Erased))
                 .then_some(SubGConfigurationLoadNotice::Reset);
-            return Ok(LoadedSubGConfiguration {
-                state: SubGConfigurationState::Unconfigured,
+            return Ok(LoadedLoRaConfiguration {
+                state: LoRaConfigurationState::Unconfigured,
                 notice,
             });
         };
         let Some(record) = slots[active].record() else {
-            return Ok(LoadedSubGConfiguration {
-                state: SubGConfigurationState::Unconfigured,
+            return Ok(LoadedLoRaConfiguration {
+                state: LoRaConfigurationState::Unconfigured,
                 notice: Some(SubGConfigurationLoadNotice::Reset),
             });
         };
@@ -117,8 +162,11 @@ where
         } else {
             None
         };
-        Ok(LoadedSubGConfiguration {
-            state: record.value.state(),
+        Ok(LoadedLoRaConfiguration {
+            state: record
+                .value
+                .state()
+                .ok_or(SubGConfigurationStoreError::UnsupportedConfiguration)?,
             notice,
         })
     }
@@ -339,14 +387,26 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StoredValue {
     Configuration(SubGConfiguration),
+    #[cfg(feature = "lora-2g4")]
+    Ghz24(personal_rns::interfaces::lora::Ghz24Profile),
+    #[cfg(not(feature = "lora-2g4"))]
+    UnsupportedGhz24([u8; PROFILE_PAYLOAD_LEN]),
     Unconfigured,
 }
 
 impl StoredValue {
-    const fn state(self) -> SubGConfigurationState {
+    const fn state(self) -> Option<LoRaConfigurationState> {
         match self {
-            Self::Configuration(configuration) => SubGConfigurationState::Configured(configuration),
-            Self::Unconfigured => SubGConfigurationState::Unconfigured,
+            Self::Configuration(configuration) => Some(LoRaConfigurationState::Configured(
+                LoRaConfiguration::SubG(configuration),
+            )),
+            Self::Unconfigured => Some(LoRaConfigurationState::Unconfigured),
+            #[cfg(feature = "lora-2g4")]
+            Self::Ghz24(profile) => Some(LoRaConfigurationState::Configured(
+                LoRaConfiguration::Ghz24(profile),
+            )),
+            #[cfg(not(feature = "lora-2g4"))]
+            Self::UnsupportedGhz24(_) => None,
         }
     }
 }
@@ -401,6 +461,10 @@ fn encode_record(generation: u64, value: StoredValue) -> [u8; RECORD_LEN] {
     bytes[6] = match value {
         StoredValue::Configuration(_) => CONFIGURATION_KIND,
         StoredValue::Unconfigured => UNCONFIGURED_KIND,
+        #[cfg(feature = "lora-2g4")]
+        StoredValue::Ghz24(_) => GHZ24_CONFIGURATION_KIND,
+        #[cfg(not(feature = "lora-2g4"))]
+        StoredValue::UnsupportedGhz24(_) => GHZ24_CONFIGURATION_KIND,
     };
     bytes[7] = 0;
     bytes[8..16].copy_from_slice(&generation.to_le_bytes());
@@ -409,6 +473,23 @@ fn encode_record(generation: u64, value: StoredValue) -> [u8; RECORD_LEN] {
             encode_configuration(configuration, &mut bytes[PAYLOAD_OFFSET..])
         }
         StoredValue::Unconfigured => 0,
+        #[cfg(not(feature = "lora-2g4"))]
+        StoredValue::UnsupportedGhz24(payload) => {
+            bytes[PAYLOAD_OFFSET..PAYLOAD_OFFSET + PROFILE_PAYLOAD_LEN].copy_from_slice(&payload);
+            PROFILE_PAYLOAD_LEN
+        }
+        #[cfg(feature = "lora-2g4")]
+        StoredValue::Ghz24(profile) => {
+            encode_parameters(
+                profile.frequency(),
+                profile.modulation(),
+                profile.tx_power(),
+                profile.preamble(),
+                0,
+                &mut bytes[PAYLOAD_OFFSET..PAYLOAD_OFFSET + PROFILE_PAYLOAD_LEN],
+            );
+            PROFILE_PAYLOAD_LEN
+        }
     };
     bytes[16..18].copy_from_slice(&(payload_len as u16).to_le_bytes());
     bytes[18..20].fill(0);
@@ -462,6 +543,16 @@ fn decode_record(bytes: &[u8; RECORD_LEN]) -> Option<StoredRecord> {
             StoredValue::Configuration(decode_configuration(&payload[..length])?),
             false,
         ),
+        #[cfg(feature = "lora-2g4")]
+        (SCHEMA_VERSION, GHZ24_CONFIGURATION_KIND, PROFILE_PAYLOAD_LEN) => (
+            StoredValue::Ghz24(decode_ghz24(&payload[..PROFILE_PAYLOAD_LEN])?),
+            false,
+        ),
+        #[cfg(not(feature = "lora-2g4"))]
+        (SCHEMA_VERSION, GHZ24_CONFIGURATION_KIND, PROFILE_PAYLOAD_LEN) => (
+            StoredValue::UnsupportedGhz24(payload[..PROFILE_PAYLOAD_LEN].try_into().ok()?),
+            false,
+        ),
         (SCHEMA_VERSION, UNCONFIGURED_KIND, 0) => (StoredValue::Unconfigured, false),
         _ => return None,
     };
@@ -513,26 +604,71 @@ fn manual_configuration(profile: RadioProfile) -> SubGConfiguration {
 }
 
 fn encode_profile(profile: RadioProfile, out: &mut [u8]) {
-    out[..4].copy_from_slice(&profile.frequency().hz().to_le_bytes());
+    encode_parameters(
+        profile.frequency(),
+        profile.modulation(),
+        profile.tx_power(),
+        profile.preamble(),
+        region_code(profile.region()),
+        out,
+    )
+}
+
+fn encode_parameters(
+    frequency: Frequency,
+    modulation: Modulation,
+    power: TxPower,
+    preamble: PreambleSymbols,
+    region: u8,
+    out: &mut [u8],
+) {
+    out[..4].copy_from_slice(&frequency.hz().to_le_bytes());
     let Modulation::Lora {
         spreading_factor,
         bandwidth,
         coding_rate,
-    } = profile.modulation();
+    } = modulation;
     out[4] = spreading_factor as u8;
     out[5] = match bandwidth {
         LoraBandwidth::Bw125kHz => 1,
         LoraBandwidth::Bw250kHz => 2,
         LoraBandwidth::Bw500kHz => 3,
+        #[cfg(feature = "lora-2g4")]
+        LoraBandwidth::Bw203kHz => 4,
+        #[cfg(feature = "lora-2g4")]
+        LoraBandwidth::Bw406kHz => 5,
+        #[cfg(feature = "lora-2g4")]
+        LoraBandwidth::Bw812kHz => 6,
     };
     out[6] = coding_rate as u8;
-    out[7] = profile.tx_power().dbm().to_le_bytes()[0];
-    out[8..10].copy_from_slice(&profile.preamble().count().to_le_bytes());
-    out[10] = region_code(profile.region());
+    out[7] = power.dbm().to_le_bytes()[0];
+    out[8..10].copy_from_slice(&preamble.count().to_le_bytes());
+    out[10] = region;
     out[11] = 0;
 }
 
 fn decode_profile(bytes: &[u8]) -> Option<RadioProfile> {
+    let (frequency, modulation, power, preamble) = decode_parameters(bytes)?;
+    RadioProfile::new(
+        decode_region(*bytes.get(10)?)?,
+        frequency,
+        modulation,
+        power,
+        preamble,
+    )
+    .ok()
+}
+
+#[cfg(feature = "lora-2g4")]
+fn decode_ghz24(bytes: &[u8]) -> Option<personal_rns::interfaces::lora::Ghz24Profile> {
+    let (frequency, modulation, power, preamble) = decode_parameters(bytes)?;
+    if *bytes.get(10)? != 0 {
+        return None;
+    }
+    personal_rns::interfaces::lora::Ghz24Profile::new(frequency, modulation, power, preamble).ok()
+}
+
+fn decode_parameters(bytes: &[u8]) -> Option<(Frequency, Modulation, TxPower, PreambleSymbols)> {
     if bytes.len() != PROFILE_PAYLOAD_LEN || bytes[11] != 0 {
         return None;
     }
@@ -551,6 +687,12 @@ fn decode_profile(bytes: &[u8]) -> Option<RadioProfile> {
         1 => LoraBandwidth::Bw125kHz,
         2 => LoraBandwidth::Bw250kHz,
         3 => LoraBandwidth::Bw500kHz,
+        #[cfg(feature = "lora-2g4")]
+        4 => LoraBandwidth::Bw203kHz,
+        #[cfg(feature = "lora-2g4")]
+        5 => LoraBandwidth::Bw406kHz,
+        #[cfg(feature = "lora-2g4")]
+        6 => LoraBandwidth::Bw812kHz,
         _ => return None,
     };
     let coding_rate = match bytes[6] {
@@ -560,8 +702,7 @@ fn decode_profile(bytes: &[u8]) -> Option<RadioProfile> {
         8 => CodingRate::Cr48,
         _ => return None,
     };
-    RadioProfile::new(
-        decode_region(bytes[10])?,
+    Some((
         Frequency::new(u32::from_le_bytes(bytes[..4].try_into().ok()?)),
         Modulation::Lora {
             spreading_factor,
@@ -570,8 +711,7 @@ fn decode_profile(bytes: &[u8]) -> Option<RadioProfile> {
         },
         TxPower::new(i8::from_le_bytes([bytes[7]])),
         PreambleSymbols::new(u16::from_le_bytes(bytes[8..10].try_into().ok()?)),
-    )
-    .ok()
+    ))
 }
 
 const fn region_code(region: SubGRegion) -> u8 {
@@ -875,6 +1015,132 @@ mod tests {
     }
 
     #[test]
+    fn mode_and_region_decoders_reject_unknown_tags_and_inexact_lengths() {
+        assert_eq!(decode_configuration(&[]), None);
+        for tag in 0..=u8::MAX {
+            assert_eq!(decode_region(tag).is_some(), (1..=12).contains(&tag));
+            for length in 1..=MANUAL_CONFIGURATION_PAYLOAD_LEN + 1 {
+                let mut bytes = std::vec![0; length];
+                bytes[0] = tag;
+                if length > 1 {
+                    bytes[1] = 1;
+                }
+                assert_eq!(
+                    decode_configuration(&bytes).is_some(),
+                    tag == MODE_AUTO_LORA && length == MODE_CONFIGURATION_PAYLOAD_LEN
+                );
+            }
+            assert_eq!(
+                decode_configuration(&[MODE_AUTO_LORA, tag]).is_some(),
+                tag == 1
+            );
+        }
+    }
+
+    #[test]
+    fn journal_checksum_matches_the_ieee_crc32_check_vector() {
+        assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
+        assert_eq!(crc32(b""), 0);
+    }
+
+    #[test]
+    fn legacy_profile_codec_preserves_each_sub_ghz_bandwidth() {
+        for bandwidth in [
+            LoraBandwidth::Bw125kHz,
+            LoraBandwidth::Bw250kHz,
+            LoraBandwidth::Bw500kHz,
+        ] {
+            let profile = US915_AUTO_LORA_PROFILE
+                .with_modulation(Modulation::Lora {
+                    spreading_factor: SpreadingFactor::Sf7,
+                    bandwidth,
+                    coding_rate: CodingRate::Cr45,
+                })
+                .unwrap();
+            let mut bytes = [0; PROFILE_PAYLOAD_LEN];
+            encode_profile(profile, &mut bytes);
+            assert_eq!(decode_profile(&bytes), Some(profile));
+        }
+    }
+
+    #[test]
+    fn authenticated_but_invalid_record_headers_and_lengths_are_rejected() {
+        for (offset, value) in [
+            (0, 0),
+            (4, 0xff),
+            (6, 0xff),
+            (7, 1),
+            (16, 0xff),
+            (16, 17),
+            (18, 1),
+            (24, 1),
+        ] {
+            let mut record = encode_record(9, StoredValue::Configuration(Us915::auto_lora()));
+            record[offset] = value;
+            record[CHECKSUM_OFFSET..CHECKSUM_OFFSET + 4].fill(0);
+            record[COMMIT_OFFSET..COMMIT_OFFSET + 4].fill(0);
+            let checksum = crc32(&record);
+            record[CHECKSUM_OFFSET..CHECKSUM_OFFSET + 4].copy_from_slice(&checksum.to_le_bytes());
+            assert_eq!(
+                decode_record(&committed(record)),
+                None,
+                "header offset {offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_invalid_older_slot_does_not_report_recovery_of_a_newer_valid_record() {
+        for corrupt_generation in [7, 9] {
+            let mut flash = ByteFlash::erased();
+            flash.bytes[..RECORD_LEN].copy_from_slice(&committed(encode_record(
+                8,
+                StoredValue::Configuration(Us915::auto_lora()),
+            )));
+            let mut invalid =
+                committed(encode_record(corrupt_generation, StoredValue::Unconfigured));
+            invalid[CHECKSUM_OFFSET] ^= 1;
+            flash.bytes[4096..4096 + RECORD_LEN].copy_from_slice(&invalid);
+            let mut store = SubGConfigurationStore::new(flash, PAGES);
+            let loaded = block_on(store.load_radio()).unwrap();
+            assert_eq!(
+                loaded.notice,
+                if corrupt_generation == 9 {
+                    Some(SubGConfigurationLoadNotice::Recovered)
+                } else {
+                    None
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn reconciliation_with_an_unexpected_valid_generation_stays_indeterminate() {
+        let mut flash = ByteFlash::erased();
+        flash.bytes[4096..4096 + RECORD_LEN]
+            .copy_from_slice(&committed(encode_record(9, StoredValue::Unconfigured)));
+        let mut store = SubGConfigurationStore::new(flash, PAGES);
+        assert_eq!(
+            block_on(store.reconcile_commit(
+                StoredRecord {
+                    generation: 10,
+                    value: StoredValue::Unconfigured,
+                    legacy: false
+                },
+                Some(StoredRecord {
+                    generation: 8,
+                    value: StoredValue::Unconfigured,
+                    legacy: false
+                }),
+                SubGConfigurationStoreError::VerificationFailed,
+            )),
+            SubGConfigurationCommitOutcome::Indeterminate(
+                SubGConfigurationStoreError::VerificationFailed
+            )
+        );
+    }
+
+    #[test]
     fn erased_flash_is_unconfigured() {
         let mut store = SubGConfigurationStore::new(ByteFlash::erased(), PAGES);
         assert_eq!(
@@ -900,6 +1166,192 @@ mod tests {
             block_on(store.load()).unwrap().state,
             SubGConfigurationState::Unconfigured
         );
+    }
+
+    #[test]
+    fn remote_profile_changes_and_clears_survive_a_reboot() {
+        use crate::apply_remote_subg_configuration;
+        let mut store = SubGConfigurationStore::new(ByteFlash::erased(), PAGES);
+        let mut active = SubGConfigurationState::Unconfigured;
+        for requested in [
+            SubGConfigurationState::Configured(manual_configuration_for(SubGRegion::Custom)),
+            SubGConfigurationState::Configured(Us915::auto_lora()),
+            SubGConfigurationState::Unconfigured,
+        ] {
+            let mut applied = Vec::new();
+            assert_eq!(
+                block_on(apply_remote_subg_configuration(
+                    async |state| {
+                        applied.push(state);
+                        Ok(())
+                    },
+                    &mut store,
+                    &mut active,
+                    requested,
+                )),
+                Ok(())
+            );
+            let mut rebooted = SubGConfigurationStore::new(
+                ByteFlash::from_bytes(store.flash.bytes.clone()),
+                PAGES,
+            );
+            assert_eq!(
+                (active, block_on(rebooted.load()).unwrap().state, applied),
+                (requested, requested, std::vec![requested])
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_remote_profile_never_changes_flash_or_active_state() {
+        use personal_rns::runtime::RemoteControlHostCommandError as Error;
+        let mut store = SubGConfigurationStore::new(ByteFlash::erased(), PAGES);
+        let mut active = SubGConfigurationState::Unconfigured;
+        let result = block_on(crate::apply_remote_subg_configuration(
+            async |_| Err(Error::ApplyFailed),
+            &mut store,
+            &mut active,
+            SubGConfigurationState::Configured(Us915::auto_lora()),
+        ));
+        assert_eq!(
+            (result, active, store.flash.writes, store.flash.erases),
+            (
+                Err(Error::ApplyFailed),
+                SubGConfigurationState::Unconfigured,
+                0,
+                0
+            )
+        );
+    }
+
+    #[test]
+    fn failed_remote_profile_save_restores_radio_and_reboot_state() {
+        use personal_rns::runtime::RemoteControlHostCommandError as Error;
+        let requested = SubGConfigurationState::Configured(Us915::auto_lora());
+        for flash in [
+            ByteFlash::erased().with_fault(Fault::WriteBefore(0)),
+            ByteFlash::erased()
+                .with_fault(Fault::WriteAfter(2))
+                .with_fault(Fault::ReadBefore(2)),
+        ] {
+            let mut store = SubGConfigurationStore::new(flash, PAGES);
+            let mut active = SubGConfigurationState::Unconfigured;
+            let mut applied = Vec::new();
+            let result = block_on(crate::apply_remote_subg_configuration(
+                async |state| {
+                    applied.push(state);
+                    Ok(())
+                },
+                &mut store,
+                &mut active,
+                requested,
+            ));
+            let mut rebooted =
+                SubGConfigurationStore::new(ByteFlash::from_bytes(store.flash.bytes), PAGES);
+            assert_eq!(
+                (
+                    result,
+                    active,
+                    block_on(rebooted.load()).unwrap().state,
+                    applied
+                ),
+                (
+                    Err(Error::PersistenceFailed),
+                    SubGConfigurationState::Unconfigured,
+                    SubGConfigurationState::Unconfigured,
+                    std::vec![requested, SubGConfigurationState::Unconfigured]
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn unconfirmed_flash_rollback_is_reported_instead_of_claiming_a_restored_profile() {
+        use personal_rns::runtime::RemoteControlHostCommandError as Error;
+        let flash = ByteFlash::erased()
+            .with_fault(Fault::WriteAfter(2))
+            .with_fault(Fault::ReadBefore(2))
+            .with_fault(Fault::WriteBefore(3));
+        let mut store = SubGConfigurationStore::new(flash, PAGES);
+        let mut active = SubGConfigurationState::Unconfigured;
+        let requested = SubGConfigurationState::Configured(Us915::auto_lora());
+        let result = block_on(crate::apply_remote_subg_configuration(
+            async |_| Ok(()),
+            &mut store,
+            &mut active,
+            requested,
+        ));
+        let mut rebooted =
+            SubGConfigurationStore::new(ByteFlash::from_bytes(store.flash.bytes), PAGES);
+        assert_eq!(
+            (result, active, block_on(rebooted.load()).unwrap().state),
+            (
+                Err(Error::RollbackFailed),
+                SubGConfigurationState::Unconfigured,
+                requested
+            )
+        );
+    }
+
+    #[test]
+    fn rejected_radio_rollback_preserves_the_actual_running_state() {
+        use personal_rns::runtime::RemoteControlHostCommandError as Error;
+        let mut store = SubGConfigurationStore::new(
+            ByteFlash::erased().with_fault(Fault::WriteBefore(0)),
+            PAGES,
+        );
+        let mut active = SubGConfigurationState::Unconfigured;
+        let requested = SubGConfigurationState::Configured(Us915::auto_lora());
+        let result = block_on(crate::apply_remote_subg_configuration(
+            async |state| {
+                if state == requested {
+                    Ok(())
+                } else {
+                    Err(Error::ApplyFailed)
+                }
+            },
+            &mut store,
+            &mut active,
+            requested,
+        ));
+        assert_eq!((result, active), (Err(Error::RollbackFailed), requested));
+    }
+
+    #[test]
+    fn retrying_the_running_profile_after_failed_rollback_confirms_durability() {
+        use personal_rns::runtime::RemoteControlHostCommandError as Error;
+        let mut store = SubGConfigurationStore::new(
+            ByteFlash::erased().with_fault(Fault::WriteBefore(0)),
+            PAGES,
+        );
+        let mut active = SubGConfigurationState::Unconfigured;
+        let requested = SubGConfigurationState::Configured(Us915::auto_lora());
+        assert_eq!(
+            block_on(crate::apply_remote_subg_configuration(
+                async |state| if state == requested {
+                    Ok(())
+                } else {
+                    Err(Error::ApplyFailed)
+                },
+                &mut store,
+                &mut active,
+                requested,
+            )),
+            Err(Error::RollbackFailed)
+        );
+        assert_eq!(active, requested);
+        assert_eq!(
+            block_on(crate::apply_remote_subg_configuration(
+                async |_| panic!("the radio already has the requested profile"),
+                &mut store,
+                &mut active,
+                requested,
+            )),
+            Ok(())
+        );
+        let mut rebooted =
+            SubGConfigurationStore::new(ByteFlash::from_bytes(store.flash.bytes), PAGES);
+        assert_eq!(block_on(rebooted.load()).unwrap().state, requested);
     }
 
     #[test]
@@ -987,6 +1439,14 @@ mod tests {
                 error: FakeError::PowerCut,
             })
         );
+    }
+
+    #[test]
+    fn matching_readback_completes_without_an_unnecessary_reconciliation_read() {
+        let flash = ByteFlash::erased().with_fault(Fault::ReadBefore(3));
+        let mut store = SubGConfigurationStore::new(flash, PAGES);
+        expect_committed(block_on(store.save(Us915::auto_lora())));
+        assert_eq!(store.flash.reads, 3);
     }
 
     #[test]
@@ -1114,6 +1574,98 @@ mod tests {
     }
 
     #[test]
+    fn flash_layout_validation_covers_independent_granularities_and_exact_page_size() {
+        fn valid<const READ: usize, const WRITE: usize, const ERASE: usize>(
+            pages: [u32; 2],
+        ) -> bool {
+            SubGConfigurationStore::new(FakeFlash::<READ, WRITE, ERASE, 8192>::erased(), pages)
+                .validate_layout()
+                .is_ok()
+        }
+        assert!(valid::<1, 1, 48>([0, 48]));
+        assert!(valid::<1, 4, 48>([0, 96]));
+        assert!(valid::<1, 4, 48>([96, 0]));
+        assert!(valid::<3, 4, 48>([0, 48]));
+        assert!(valid::<48, 4, 48>([48, 0]));
+        assert!(valid::<1, 4, 4096>([4096, 0]));
+        assert!(!valid::<0, 4, 4096>(PAGES));
+        assert!(!valid::<1, 0, 4096>(PAGES));
+        assert!(!valid::<1, 4, 0>(PAGES));
+        assert!(!valid::<5, 4, 4096>(PAGES));
+        assert!(!valid::<1, 3, 4096>(PAGES));
+        assert!(!valid::<1, 4, 32>([0, 32]));
+        assert!(!valid::<1, 4, 4096>([0, 4095]));
+        assert!(!valid::<3, 4, 4096>(PAGES));
+        assert!(!valid::<1, 4, 4097>([0, 4097]));
+        assert!(!valid::<1, 4, 49>([0, 49]));
+        assert!(!valid::<3, 1, 49>([0, 49]));
+        assert!(!valid::<1, 4, 4096>([0, 8192]));
+        assert!(!valid::<1, 4, 4096>([0, 0]));
+        #[cfg(target_pointer_width = "64")]
+        assert!(!valid::<1, 4, { u32::MAX as usize + 1 }>(PAGES));
+    }
+
+    #[cfg(feature = "lora-2g4")]
+    #[test]
+    fn high_frequency_storage_codec_covers_every_modulation_and_rejects_unknown_fields() {
+        use personal_rns::interfaces::lora::{Ghz24Profile, GHZ24_BALANCED_PROFILE};
+        for (sf, sf_wire) in [
+            (SpreadingFactor::Sf5, 5),
+            (SpreadingFactor::Sf6, 6),
+            (SpreadingFactor::Sf7, 7),
+            (SpreadingFactor::Sf8, 8),
+            (SpreadingFactor::Sf9, 9),
+            (SpreadingFactor::Sf10, 10),
+            (SpreadingFactor::Sf11, 11),
+            (SpreadingFactor::Sf12, 12),
+        ] {
+            for (bw, bw_wire) in [
+                (LoraBandwidth::Bw203kHz, 4),
+                (LoraBandwidth::Bw406kHz, 5),
+                (LoraBandwidth::Bw812kHz, 6),
+            ] {
+                for (cr, cr_wire) in [
+                    (CodingRate::Cr45, 5),
+                    (CodingRate::Cr46, 6),
+                    (CodingRate::Cr47, 7),
+                    (CodingRate::Cr48, 8),
+                ] {
+                    let profile = Ghz24Profile::new(
+                        GHZ24_BALANCED_PROFILE.frequency(),
+                        Modulation::Lora {
+                            spreading_factor: sf,
+                            bandwidth: bw,
+                            coding_rate: cr,
+                        },
+                        TxPower::new(11),
+                        PreambleSymbols::new(18),
+                    )
+                    .unwrap();
+                    let mut bytes = [0; PROFILE_PAYLOAD_LEN];
+                    encode_parameters(
+                        profile.frequency(),
+                        profile.modulation(),
+                        profile.tx_power(),
+                        profile.preamble(),
+                        0,
+                        &mut bytes,
+                    );
+                    assert_eq!(&bytes[4..7], &[sf_wire, bw_wire, cr_wire]);
+                    assert_eq!(decode_ghz24(&bytes), Some(profile));
+                    for index in [4, 5, 6, 10, 11] {
+                        let mut invalid = bytes;
+                        invalid[index] = 0xff;
+                        assert_eq!(decode_ghz24(&invalid), None);
+                    }
+                    for len in 0..PROFILE_PAYLOAD_LEN {
+                        assert_eq!(decode_ghz24(&bytes[..len]), None);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn incompatible_flash_shapes_and_page_layouts_fail_closed() {
         type WideWriteFlash = FakeFlash<1, 8, 4096, CAPACITY>;
         type SmallEraseFlash = FakeFlash<1, 1, 32, 64>;
@@ -1145,6 +1697,280 @@ mod tests {
             SubGConfigurationCommitOutcome::NotCommitted(
                 SubGConfigurationStoreError::InvalidLayout
             )
+        );
+    }
+    #[cfg(feature = "lora-2g4")]
+    #[test]
+    fn both_bands_and_clear_share_the_existing_journal() {
+        use personal_rns::interfaces::lora::GHZ24_BALANCED_PROFILE;
+        let mut store = SubGConfigurationStore::new(ByteFlash::erased(), PAGES);
+        for state in [
+            LoRaConfigurationState::Configured(LoRaConfiguration::SubG(Us915::auto_lora())),
+            LoRaConfigurationState::Configured(LoRaConfiguration::Ghz24(GHZ24_BALANCED_PROFILE)),
+            LoRaConfigurationState::Unconfigured,
+        ] {
+            assert_eq!(
+                block_on(store.save_radio(state)),
+                SubGConfigurationCommitOutcome::Committed
+            );
+            assert_eq!(block_on(store.load_radio()).unwrap().state, state);
+        }
+        let mut profile = GHZ24_BALANCED_PROFILE;
+        for bandwidth in [
+            LoraBandwidth::Bw203kHz,
+            LoraBandwidth::Bw406kHz,
+            LoraBandwidth::Bw812kHz,
+        ] {
+            profile = profile
+                .with_modulation(Modulation::Lora {
+                    spreading_factor: SpreadingFactor::Sf7,
+                    bandwidth,
+                    coding_rate: CodingRate::Cr45,
+                })
+                .unwrap();
+            let state = LoRaConfigurationState::Configured(LoRaConfiguration::Ghz24(profile));
+            assert_eq!(
+                block_on(store.save_radio(state)),
+                SubGConfigurationCommitOutcome::Committed
+            );
+            assert_eq!(block_on(store.load_radio()).unwrap().state, state);
+            assert_eq!(
+                block_on(store.load()),
+                Err(SubGConfigurationStoreError::UnsupportedConfiguration)
+            );
+        }
+    }
+
+    #[cfg(not(feature = "lora-2g4"))]
+    #[test]
+    fn unsupported_committed_band_does_not_resurrect_an_older_subg_channel() {
+        let mut store = SubGConfigurationStore::new(ByteFlash::erased(), PAGES);
+        assert_eq!(
+            block_on(store.save(Us915::auto_lora())),
+            SubGConfigurationCommitOutcome::Committed
+        );
+        assert_eq!(
+            block_on(store.commit(StoredValue::UnsupportedGhz24([0; PROFILE_PAYLOAD_LEN]))),
+            SubGConfigurationCommitOutcome::Committed
+        );
+        assert_eq!(
+            block_on(store.load_radio()),
+            Err(SubGConfigurationStoreError::UnsupportedConfiguration)
+        );
+        assert_eq!(
+            block_on(store.clear()),
+            SubGConfigurationCommitOutcome::Committed
+        );
+        assert_eq!(
+            block_on(store.load_radio()).unwrap().state,
+            LoRaConfigurationState::Unconfigured
+        );
+    }
+
+    struct ScriptedRadio {
+        operations: Vec<personal_rns::interfaces::lora::configuration::RadioConfigurationOperation>,
+        failures: Vec<usize>,
+    }
+    impl personal_rns::interfaces::lora::configuration::ConfigurationRadio for ScriptedRadio {
+        async fn perform(
+            &mut self,
+            operation: personal_rns::interfaces::lora::configuration::RadioConfigurationOperation,
+        ) -> personal_rns::interfaces::lora::configuration::ConfigurationCompletion {
+            use personal_rns::interfaces::lora::configuration::ConfigurationCompletion;
+            let index = self.operations.len();
+            self.operations.push(operation);
+            if self.failures.contains(&index) {
+                ConfigurationCompletion::Failed
+            } else {
+                ConfigurationCompletion::Succeeded
+            }
+        }
+    }
+
+    #[test]
+    fn configuration_service_settles_every_radio_fault_and_recovers_storage() {
+        use crate::{LoRaConfigurationResult, LoRaConfigurationService};
+        use personal_rns::interfaces::lora::configuration::*;
+        let previous = LoRaConfigurationState::Unconfigured;
+        let requested =
+            LoRaConfigurationState::Configured(LoRaConfiguration::SubG(Us915::auto_lora()));
+        for failures in [
+            Vec::new(),
+            std::vec![0],
+            std::vec![1],
+            std::vec![2],
+            std::vec![1, 2],
+            std::vec![2, 3],
+            std::vec![2, 4],
+        ] {
+            let mut store = SubGConfigurationStore::new(ByteFlash::erased(), PAGES);
+            let mut radio = ScriptedRadio {
+                operations: Vec::new(),
+                failures,
+            };
+            let mut service = LoRaConfigurationService::new(previous);
+            let result = block_on(service.apply(requested, &mut radio, &mut store));
+            if result == LoRaConfigurationResult::Saved {
+                assert_eq!(
+                    radio.operations,
+                    [
+                        RadioConfigurationOperation::Quiesce,
+                        RadioConfigurationOperation::Stage(requested),
+                        RadioConfigurationOperation::Publish
+                    ]
+                );
+                assert_eq!(
+                    service.hardware(),
+                    HardwareConfiguration::Confirmed(requested)
+                );
+                assert_eq!(
+                    service.durable(),
+                    DurableConfiguration::Confirmed(requested)
+                );
+                assert_eq!(block_on(store.load_radio()).unwrap().state, requested);
+                let count = radio.operations.len();
+                assert_eq!(
+                    block_on(service.apply(requested, &mut radio, &mut store)),
+                    LoRaConfigurationResult::Saved
+                );
+                assert_eq!(radio.operations.len(), count);
+            } else {
+                assert_eq!(service.durable(), DurableConfiguration::Confirmed(previous));
+                assert_eq!(block_on(store.load_radio()).unwrap().state, previous);
+                if service.hardware() == HardwareConfiguration::Unknown {
+                    assert_eq!(
+                        radio.operations.last(),
+                        Some(&RadioConfigurationOperation::Hold)
+                    );
+                    assert_eq!(
+                        block_on(service.apply(requested, &mut radio, &mut store)),
+                        LoRaConfigurationResult::Refused(ConfigurationRefusal::RecoveryRequired)
+                    );
+                } else {
+                    assert_eq!(
+                        radio.operations.last(),
+                        Some(&RadioConfigurationOperation::Resume)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn configuration_service_reconciles_indeterminate_flash_before_resuming() {
+        use crate::{LoRaConfigurationResult, LoRaConfigurationService};
+        use personal_rns::interfaces::lora::configuration::*;
+        let previous = LoRaConfigurationState::Unconfigured;
+        let requested =
+            LoRaConfigurationState::Configured(LoRaConfiguration::SubG(Us915::auto_lora()));
+        for flash in [
+            ByteFlash::erased().with_fault(Fault::WriteBefore(0)),
+            ByteFlash::erased()
+                .with_fault(Fault::WriteAfter(2))
+                .with_fault(Fault::ReadBefore(2)),
+            ByteFlash::erased()
+                .with_fault(Fault::WriteAfter(2))
+                .with_fault(Fault::ReadBefore(2))
+                .with_fault(Fault::EraseBefore(1)),
+        ] {
+            let mut store = SubGConfigurationStore::new(flash, PAGES);
+            let mut radio = ScriptedRadio {
+                operations: Vec::new(),
+                failures: Vec::new(),
+            };
+            let mut service = LoRaConfigurationService::new(previous);
+            let result = block_on(service.apply(requested, &mut radio, &mut store));
+            assert_ne!(result, LoRaConfigurationResult::Saved);
+            assert!(!radio
+                .operations
+                .contains(&RadioConfigurationOperation::Publish));
+            if service.durable() == DurableConfiguration::Unknown {
+                assert_eq!(
+                    radio.operations.last(),
+                    Some(&RadioConfigurationOperation::Hold)
+                );
+            } else {
+                assert_eq!(block_on(store.load_radio()).unwrap().state, previous);
+                assert_eq!(
+                    radio.operations.last(),
+                    Some(&RadioConfigurationOperation::Resume)
+                );
+            }
+        }
+    }
+    #[cfg(feature = "embedded")]
+    #[test]
+    fn admitted_radio_configuration_survives_requester_disconnect_and_releases_its_slot() {
+        use crate::{HopspotCommandMailbox, LoRaConfigurationResult, LoRaConfigurationService};
+        use personal_rns::interfaces::InterfaceId;
+        use personal_rns::remote_control::{
+            RemoteControlLoRaProfile, RemoteControlRadioConfiguration, RemoteControlRadioOutcome,
+        };
+        use personal_rns::runtime::{
+            RemoteControlHostCommand, RemoteControlHostCommandError, RemoteControlHostResponse,
+        };
+        let mailbox = Box::leak(Box::new(HopspotCommandMailbox::<1>::new()));
+        let id = InterfaceId::new([0x42; 8]);
+        let profile = LoRaConfiguration::manual(US915_AUTO_LORA_PROFILE.into());
+        let configuration = RemoteControlRadioConfiguration::Profile(
+            RemoteControlLoRaProfile::from_band_profile(profile.profile()).unwrap(),
+        );
+        let mut caller = Box::pin(
+            mailbox
+                .handle()
+                .execute(RemoteControlHostCommand::ConfigureRadio { id, configuration }),
+        );
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(caller.as_mut().poll(&mut context).is_pending());
+        let admitted = block_on(mailbox.receive());
+        let (token, command) = admitted.into_parts();
+        drop(caller);
+        assert_eq!(
+            block_on(
+                mailbox
+                    .handle()
+                    .execute(RemoteControlHostCommand::InspectRadio { id })
+            ),
+            Err(RemoteControlHostCommandError::Busy)
+        );
+        let RemoteControlHostCommand::ConfigureRadio {
+            id: admitted_id,
+            configuration: admitted_configuration,
+        } = command
+        else {
+            panic!("wrong admitted command");
+        };
+        assert_eq!(admitted_id, id);
+        assert_eq!(admitted_configuration, configuration);
+        let mut service = LoRaConfigurationService::new(LoRaConfigurationState::Unconfigured);
+        let mut store = SubGConfigurationStore::new(ByteFlash::erased(), PAGES);
+        let mut radio = ScriptedRadio {
+            operations: Vec::new(),
+            failures: Vec::new(),
+        };
+        let requested = LoRaConfigurationState::Configured(profile);
+        assert_eq!(
+            block_on(service.apply(requested, &mut radio, &mut store)),
+            LoRaConfigurationResult::Saved
+        );
+        mailbox.complete(
+            token,
+            Ok(RemoteControlHostResponse::ConfigureRadio(
+                RemoteControlRadioOutcome::Saved,
+            )),
+        );
+        assert_eq!(block_on(store.load_radio()).unwrap().state, requested);
+        let mut next = Box::pin(
+            mailbox
+                .handle()
+                .execute(RemoteControlHostCommand::InspectRadio { id }),
+        );
+        assert!(next.as_mut().poll(&mut context).is_pending());
+        let (token, _) = block_on(mailbox.receive()).into_parts();
+        mailbox.complete(token, Err(RemoteControlHostCommandError::ApplyFailed));
+        assert_eq!(
+            block_on(next),
+            Err(RemoteControlHostCommandError::ApplyFailed)
         );
     }
 }

@@ -107,21 +107,32 @@ def free_port():
     return port
 
 
+def use_backbone(fixed_mtu=None, tcp_bitrate_bps=None):
+    return (
+        sys.platform.startswith("linux")
+        and fixed_mtu is None
+        and tcp_bitrate_bps is None
+    )
+
+
 def relay_blocks(profile):
     port_a, port_b = free_port(), free_port()
     while port_b == port_a:
         port_b = free_port()
     bitrate = profile.get("tcp_bitrate_bps")
     bitrate_line = f"    bitrate = {bitrate}\n" if bitrate else ""
+    interface_type = (
+        "BackboneInterface" if use_backbone(None, bitrate) else "TCPServerInterface"
+    )
     block = (
         "  [[Relay Side A]]\n"
-        "    type = TCPServerInterface\n"
+        f"    type = {interface_type}\n"
         "    enabled = True\n"
         "    listen_ip = 127.0.0.1\n"
         f"    listen_port = {port_a}\n"
         + bitrate_line
         + "  [[Relay Side B]]\n"
-        + "    type = TCPServerInterface\n"
+        + f"    type = {interface_type}\n"
         + "    enabled = True\n"
         + "    listen_ip = 127.0.0.1\n"
         + f"    listen_port = {port_b}\n"
@@ -156,11 +167,12 @@ def run_relay(profile):
     }
     if len(relay_interfaces) != 2 or len(policies) != 1:
         sys.exit(
-            "reference relay TCP policy did not resolve identically on both benchmark sides"
+            "reference relay interface policy did not resolve identically on both benchmark sides"
         )
     bitrate_bps, mtu_bytes = policies.pop()
     print(
         f"READY role=relay addr={ready_addr} "
+        f"interface={'backbone' if use_backbone(None, profile.get('tcp_bitrate_bps')) else 'tcp'} "
         f"bitrate_bps={bitrate_bps} mtu_bytes={mtu_bytes}",
         flush=True,
     )
@@ -187,6 +199,7 @@ def interface_block(wire, role, addr, fixed_mtu=None, tcp_bitrate_bps=None):
             f"    forward_ip = {peer_host}\n"
             f"    forward_port = {peer_port}\n"
         ), addr
+    backbone = use_backbone(fixed_mtu, tcp_bitrate_bps)
     if role == "responder":
         port = free_port()
         mtu_line = f"    fixed_mtu = {fixed_mtu}\n" if fixed_mtu else ""
@@ -194,8 +207,8 @@ def interface_block(wire, role, addr, fixed_mtu=None, tcp_bitrate_bps=None):
             f"    bitrate = {tcp_bitrate_bps}\n" if tcp_bitrate_bps else ""
         )
         return (
-            "  [[Bench TCP Server]]\n"
-            "    type = TCPServerInterface\n"
+            f"  [[Bench {'Backbone' if backbone else 'TCP Server'}]]\n"
+            f"    type = {'BackboneInterface' if backbone else 'TCPServerInterface'}\n"
             "    enabled = True\n"
             "    listen_ip = 127.0.0.1\n"
             f"    listen_port = {port}\n"
@@ -206,8 +219,8 @@ def interface_block(wire, role, addr, fixed_mtu=None, tcp_bitrate_bps=None):
     mtu_line = f"    fixed_mtu = {fixed_mtu}\n" if fixed_mtu else ""
     bitrate_line = f"    bitrate = {tcp_bitrate_bps}\n" if tcp_bitrate_bps else ""
     return (
-        "  [[Bench TCP Client]]\n"
-        "    type = TCPClientInterface\n"
+        f"  [[Bench {'Backbone' if backbone else 'TCP Client'}]]\n"
+        f"    type = {'BackboneInterface' if backbone else 'TCPClientInterface'}\n"
         "    enabled = True\n"
         f"    target_host = {host}\n"
         f"    target_port = {port}\n"

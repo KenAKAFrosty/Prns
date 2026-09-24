@@ -122,7 +122,7 @@ pub fn Landing() -> Element {
                                 key: "{p.name}",
                                 name: p.name.to_string(),
                                 icon: p.icon.map(str::to_string),
-                                badge: None,
+                                badge: p.chip_badge().map(str::to_string),
                                 muted: false,
                                 decorative: false,
                             }
@@ -132,7 +132,7 @@ pub fn Landing() -> Element {
                                 key: "{p.name}-dup",
                                 name: p.name.to_string(),
                                 icon: p.icon.map(str::to_string),
-                                badge: None,
+                                badge: p.chip_badge().map(str::to_string),
                                 muted: false,
                                 decorative: true,
                             }

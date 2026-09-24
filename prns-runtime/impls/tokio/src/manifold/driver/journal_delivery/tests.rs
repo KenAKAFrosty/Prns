@@ -54,6 +54,54 @@ fn settle_forwards_a_settlement_nobody_awaits() {
 }
 
 #[test]
+fn failed_split_response_discards_buffered_chunks_and_releases_the_request() {
+    let mut delivery = JournalDelivery::default();
+    let failure = SendRequestFailure::ResponseTransferFailed(
+        crate::routing::links::resources::ResourceFailureCause::TransferCorrupt,
+    );
+    for (id, result) in [
+        (CommandId(7), Err(failure)),
+        (CommandId(8), Ok(delivered(17))),
+    ] {
+        let (completion, mut settled) = oneshot::channel();
+        delivery.register_request(id, completion);
+        assert!(delivery
+            .route(Journaled::ResponseSegmentReceived {
+                command_id: id,
+                link_id: RES_LINK,
+                request_id: crate::routing::links::request::RequestId([0x54; 16]),
+                segment_index: 1,
+                total_segments: 2,
+                data: b"prefix",
+            })
+            .is_none());
+        if result.is_ok() {
+            assert!(delivery
+                .route(Journaled::ResponseSegmentReceived {
+                    command_id: id,
+                    link_id: RES_LINK,
+                    request_id: crate::routing::links::request::RequestId([0x54; 16]),
+                    segment_index: 2,
+                    total_segments: 2,
+                    data: b"!",
+                })
+                .is_none());
+        }
+        assert!(delivery
+            .route(Journaled::CommandSettled {
+                id,
+                settlement: Settlement::SendRequest(result),
+            })
+            .is_none());
+        assert_eq!(
+            settled.try_recv(),
+            Ok(result.map(|receipt| (b"prefix!".to_vec(), receipt.rtt)))
+        );
+        assert!(delivery.requests.is_empty());
+    }
+}
+
+#[test]
 fn request_resource_failure_settles_the_request_waiter() {
     for (failure, expected) in [
         (

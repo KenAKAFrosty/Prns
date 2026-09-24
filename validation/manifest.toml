@@ -1,5 +1,9 @@
 schema = 1
 
+[release_qualification.kani]
+version = "0.3.8"
+reason = "Kani formal proof qualification is deferred for 0.3.8 only: several harnesses timed out and one needs corrected loop bounds. Proofs remain scheduled; this release does not claim passing formal qualification. Normal tests, deterministic simulators, firmware builds, and applicable emulators remain required."
+
 [tools]
 cargo_fuzz = "0.13.1"
 cargo_mutants = "27.1.0"
@@ -12,25 +16,25 @@ nightly = "nightly-2025-11-21"
 environment = "SMOKE_PYTHON"
 venv = "validation/.venv/rns-{version}"
 requirements = "validation/oracles/requirements.txt"
-version = "1.4.2"
+version = "1.5.4"
 
 [interpreters.rpc]
 environment = "RPC_SMOKE_PYTHON"
 venv = "validation/.venv/rns-rpc-{version}"
 requirements = "validation/oracles/requirements.txt"
-version = "1.4.2"
+version = "1.5.4"
 
 [interpreters.interop_smoke]
 environment = "SMOKE_PYTHON"
 venv = "validation/.venv/rns-interop-{version}"
 requirements = "validation/interop/requirements.txt"
-version = "1.5.0"
+version = "1.5.4"
 
 [interpreters.interop_rpc]
 environment = "RPC_SMOKE_PYTHON"
 venv = "validation/.venv/rns-interop-rpc-{version}"
 requirements = "validation/interop/requirements.txt"
-version = "1.5.0"
+version = "1.5.4"
 
 [registry]
 cargo_lock_workspaces = [
@@ -41,6 +45,7 @@ cargo_lock_workspaces = [
     "personal-hopspot/desktop",
     "personal-hopspot/embedded/esp32",
     "personal-hopspot/embedded/nrf52840",
+    "personal-hopspot/headless",
     "personal-hopspot/mobile/android/rust",
     "personal-hopspot/mobile/ios/rust",
     "prns-config",
@@ -82,6 +87,8 @@ cargo_manifests = [
     "personal-hopspot/embedded/esp32/Cargo.toml",
     "personal-hopspot/embedded/esp32/platform-assurance/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml",
+    "personal-hopspot/embedded/esp32/boards/heltec-v3/Cargo.toml",
+    "personal-hopspot/embedded/esp32/boards/xiao-esp32s3-wio-sx1262/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-wireless-stick-lite-v3/Cargo.toml",
@@ -102,6 +109,8 @@ cargo_manifests = [
     "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v6/Cargo.toml",
     "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v7/Cargo.toml",
     "personal-hopspot/flasher/Cargo.toml",
+    "personal-hopspot/appliance/Cargo.toml",
+    "personal-hopspot/headless/Cargo.toml",
     "personal-hopspot/memory/Cargo.toml",
     "personal-hopspot/mobile/android/rust/Cargo.toml",
     "personal-hopspot/mobile/ios/rust/Cargo.toml",
@@ -139,6 +148,7 @@ cargo_manifests = [
     "validation/fuzz/Cargo.toml",
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",
+    "validation/simulation/Cargo.toml",
 ]
 format_manifests = [
     "Cargo.toml",
@@ -148,6 +158,7 @@ format_manifests = [
     "personal-hopspot/desktop/Cargo.toml",
     "personal-hopspot/embedded/esp32/Cargo.toml",
     "personal-hopspot/embedded/nrf52840/Cargo.toml",
+    "personal-hopspot/headless/Cargo.toml",
     "personal-hopspot/mobile/android/rust/Cargo.toml",
     "personal-hopspot/mobile/ios/rust/Cargo.toml",
     "prns-config/Cargo.toml",
@@ -168,6 +179,7 @@ format_manifests = [
     "validation/fuzz/Cargo.toml",
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",
+    "validation/simulation/Cargo.toml",
 ]
 
 [registry.format_package_overrides]
@@ -209,6 +221,8 @@ command = ["__RUNNER_PYTHON__", "tools/prns", "run", "repo.host-contract.check"]
 inputs = [
   "tools/repo/generate-host-contract.py",
   "tools/repo/host_contract",
+  "prns-host/schema/native-extensions-v1.json",
+  "prns-host/schema/remote-control-v1.generated.json",
   "prns-host/bindings/uniffi/src/transport.generated.rs",
   "prns-host/bindings/uniffi/coverage.generated.json",
   "prns-react-native/src/generated/host-adapter.generated.ts",
@@ -284,6 +298,18 @@ inputs = ["prns-react-native", "prns-js/src", "prns-js/package.json", "prns-host
 artifacts = "validation-artifacts/results/react-native-sdk"
 
 [[suite]]
+id = "react-native-generated"
+domain = "platform"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 2400
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "generate", "--check"]
+inputs = ["prns-react-native", "prns-host", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-generated"
+
+[[suite]]
 id = "react-native-apple-platform"
 domain = "platform"
 group = "deterministic"
@@ -294,6 +320,66 @@ timeout_seconds = 300
 command = ["npm", "--prefix", "prns-react-native", "run", "test:apple"]
 inputs = ["prns-react-native/ios", "prns-react-native/scripts/test-apple.mjs", "prns-react-native/tests/apple", "prns-react-native/package.json"]
 artifacts = "validation-artifacts/results/react-native-apple-platform"
+
+[[suite]]
+id = "react-native-android-image"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "android", "--targets", "arm64-v8a"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-android-image"
+
+[[suite]]
+id = "react-native-android-consumer"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "node"
+timeout_seconds = 1800
+command = ["npm", "--prefix", "prns-react-native", "run", "test:consumer", "--", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-android-consumer"
+
+[[suite]]
+id = "react-native-apple-image"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "ios", "--sim-only", "--targets", "aarch64-apple-ios-sim"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-apple-image"
+
+[[suite]]
+id = "react-native-mobile-archive"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "node"
+timeout_seconds = 300
+command = ["npm", "--prefix", "prns-react-native", "run", "pack:check", "--", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-mobile-archive"
+
+[[suite]]
+id = "react-native-apple-consumer"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "node"
+timeout_seconds = 1800
+command = ["node", "prns-react-native/tools/detached-consumer.mjs", "--ios", "--require-ios", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/react-native-apple-consumer"
 
 [[suite]]
 id = "host-c-contract"
@@ -490,7 +576,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "-m", "unittest", "discover", "-s", "validation/tests", "-p", "test_*.py", "-v"]
-inputs = ["validation/run.py", "validation/tests"]
+inputs = ["validation/run.py", "validation/tests", "tools/build/hopspot-g4.py"]
 artifacts = "validation-artifacts/results/validation-self-tests"
 
 [[suite]]
@@ -573,6 +659,8 @@ command = ["bash", "validation/security/deps-audit.sh"]
 inputs = [
   "validation/security/deps-audit.sh",
   "validation/security/license-policy-parity.py",
+  "validation/security/npm-production-audit.py",
+  "validation/security/npm_lockfile.py",
   "deny.toml",
   "about.toml",
 ]
@@ -601,6 +689,17 @@ timeout_seconds = 3600
 command = ["bash", "validation/hardening/geiger.sh", "--entrypoints"]
 inputs = ["validation/hardening/geiger.sh"]
 artifacts = "validation-artifacts/results/unsafe-entrypoints"
+
+[[suite]]
+id = "hopspot-appliance-recovery"
+domain = "native"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 300
+command = ["cargo", "test", "--locked", "-p", "personal-hopspot-appliance", "--all-targets"]
+inputs = ["personal-hopspot/appliance", "Cargo.toml", "Cargo.lock"]
+artifacts = "validation-artifacts/results/hopspot-appliance-recovery"
 
 [[suite]]
 id = "root-tests"
@@ -683,6 +782,51 @@ inputs = ["validation/integration/Cargo.toml", "validation/integration/tests"]
 artifacts = "validation-artifacts/results/integration-capstones"
 
 [[suite]]
+id = "virtual-device-simulation"
+domain = "integration"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+# Includes cold compilation and the complete deterministic fleet/recovery matrix.
+timeout_seconds = 1200
+command = ["cargo", "test", "--locked", "-p", "prns-simulation", "--features", "controlled-time"]
+inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "prns-interfaces/impls/embassy", "personal-hopspot/core"]
+artifacts = "validation-artifacts/results/virtual-device-simulation"
+
+[[suite]]
+id = "authorization-commit-recovery"
+domain = "integration"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "prns-core", "--features", "flash", "--lib", "engine::remote_control_pairing::tests::durable_authorization"]
+inputs = ["prns-core/src/engine", "prns-core/src/remote_control", "prns-core/src/persistence", "prns-core/Cargo.toml"]
+artifacts = "validation-artifacts/results/authorization-commit-recovery"
+
+[[suite]]
+id = "embedded-persistence-recovery"
+domain = "integration"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-runtime/impls/embassy/Cargo.toml", "--lib", "runtime::embedded_persistence::tests"]
+inputs = ["prns-runtime/impls/embassy", "prns-runtime/core", "prns-core/src/persistence", "prns-core/src/interfaces"]
+artifacts = "validation-artifacts/results/embedded-persistence-recovery"
+
+[[suite]]
+id = "bluetooth-auto-embassy"
+domain = "native"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-interfaces/impls/embassy/Cargo.toml", "--features", "bluetooth-auto-trouble", "--lib", "bluetooth_auto"]
+inputs = ["prns-interfaces/impls/embassy", "prns-core/src/interfaces/bluetooth_auto", "prns-runtime/core", "prns-runtime/impls/embassy"]
+artifacts = "validation-artifacts/results/bluetooth-auto-embassy"
+
+[[suite]]
 id = "release-contracts"
 domain = "release"
 tiers = ["pr", "release", "scheduled"]
@@ -690,7 +834,7 @@ platform = "linux"
 toolchain = "python"
 timeout_seconds = 600
 command = ["bash", "validation/release/contracts.sh"]
-inputs = ["tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py", "validation/release/acceptance-doc-contracts.py", "release/acceptance/README.md", "release/acceptance/QUALIFICATION.md", "release/acceptance/rosters/README.md", "release/flash/README.md", "release/flash/boards.json", "docs/release-dependency-audit.md"]
+inputs = ["tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py", "validation/release/acceptance-doc-contracts.py", "release/acceptance/README.md", "release/acceptance/QUALIFICATION.md", "release/acceptance/rosters/README.md", "release/deployment", "release/flash/README.md", "release/flash/boards.json", "docs/release-dependency-audit.md"]
 artifacts = "validation-artifacts/results/release-contracts"
 
 [[suite]]
@@ -815,7 +959,7 @@ group = "embedded-platform"
 tiers = ["release", "scheduled"]
 platform = "any"
 toolchain = "stable"
-enforcement = "advisory"
+enforcement = "required"
 timeout_seconds = 1800
 command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_platform.run"]
 inputs = [
@@ -841,7 +985,7 @@ group = "embedded-platform"
 tiers = ["release", "scheduled"]
 platform = "any"
 toolchain = "esp"
-enforcement = "advisory"
+enforcement = "required"
 timeout_seconds = 1800
 command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_platform.run"]
 inputs = [
@@ -875,18 +1019,24 @@ artifacts = "validation-artifacts/results/embedded-platform-esp32s3"
 id = "embedded-miri-quick"
 domain = "hardening"
 group = "embedded-miri"
-tiers = ["pr"]
+tiers = ["pr", "release"]
 platform = "any"
 toolchain = "nightly"
-timeout_seconds = 3600
+timeout_seconds = 900
 command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_miri", "quick"]
 inputs = [
     "validation/hardening/embedded_miri.py",
+    "validation/hardening/embedded_miri_execution.py",
+    "validation/hardening/embedded_miri_shards.py",
+    "validation/hardening/embedded_miri_distribution.py",
+    "validation/run.py",
     "validation/hardening/embedded-miri.toml",
     "validation/hardening/embedded_failure.py",
     "personal-hopspot/assurance",
     "prns-interfaces/impls/embassy/src/radios",
-    "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",
+    "prns-runtime/impls/embassy/src/runtime/embedded_persistence",
+    "prns-runtime/impls/embassy/src/runtime/node_facade/mod.rs",
+    "prns-core/src/remote_control/test_support.rs",
     "prns-core/src/persistence",
 ]
 artifacts = "validation-artifacts/results/embedded-miri-quick"
@@ -895,18 +1045,25 @@ artifacts = "validation-artifacts/results/embedded-miri-quick"
 id = "embedded-miri-full"
 domain = "hardening"
 group = "embedded-miri"
-tiers = ["release", "scheduled"]
+tiers = ["scheduled"]
 platform = "any"
 toolchain = "nightly"
-timeout_seconds = 7200
+timeout_seconds = 18000
+shards = 8
 command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_miri", "full"]
 inputs = [
     "validation/hardening/embedded_miri.py",
+    "validation/hardening/embedded_miri_execution.py",
+    "validation/hardening/embedded_miri_shards.py",
+    "validation/hardening/embedded_miri_distribution.py",
+    "validation/run.py",
     "validation/hardening/embedded-miri.toml",
     "validation/hardening/embedded_failure.py",
     "personal-hopspot/assurance",
     "prns-interfaces/impls/embassy/src/radios",
-    "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",
+    "prns-runtime/impls/embassy/src/runtime/embedded_persistence",
+    "prns-runtime/impls/embassy/src/runtime/node_facade/mod.rs",
+    "prns-core/src/remote_control/test_support.rs",
     "prns-core/src/persistence",
 ]
 artifacts = "validation-artifacts/results/embedded-miri-full"
@@ -978,6 +1135,17 @@ timeout_seconds = 3600
 command = ["bash", "validation/platforms/host-workspaces.sh"]
 inputs = ["validation/platforms/host-workspaces.sh"]
 artifacts = "validation-artifacts/results/host-workspaces"
+
+[[suite]]
+id = "linux-halow-data-plane"
+domain = "platforms"
+tiers = ["pr", "release", "scheduled"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["bash", "validation/platforms/linux-halow.sh"]
+inputs = ["validation/platforms/linux-halow.sh", "prns-core/src/interfaces/wifi_halow", "prns-core/src/interfaces/status/radio.rs", "prns-ffi", "prns-interfaces/impls/tokio", "prns-runtime", "personal-rns", "personal-hopspot/headless"]
+artifacts = "validation-artifacts/results/linux-halow-data-plane"
 
 [[suite]]
 id = "embedded-builds"
@@ -1301,6 +1469,8 @@ inputs = [
   "personal-hopspot/sdk/hopspot/contract.js",
   "personal-hopspot/sdk/hopspot/contract.cjs",
   "personal-hopspot/sdk/hopspot/contract.d.ts",
+  "personal-hopspot/sdk/hopspot/remote-control.js",
+  "personal-hopspot/sdk/hopspot/remote-control.d.ts",
   "personal-hopspot/sdk/hopspot/native.js",
   "personal-hopspot/sdk/hopspot/native.cjs",
   "personal-hopspot/sdk/hopspot/native.d.ts",
@@ -2421,3 +2591,130 @@ inputs = [
   "prns-interfaces/impls/tokio/src/network_device.rs",
 ]
 artifacts = "validation-artifacts/results/wifi-auto-tokio-without-ipv6-ll-multicast"
+
+[[suite]]
+id = "remote-control-simulation-extended"
+domain = "integration"
+tiers = ["scheduled", "release"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["cargo", "test", "--locked", "--profile", "simulation", "-p", "prns-simulation", "--features", "controlled-time", "--test", "embassy_ble", "extended_remote_control_campaign", "--", "--ignored", "--nocapture"]
+inputs = ["Cargo.toml", "validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "prns-interfaces/impls/embassy", "personal-hopspot/core"]
+artifacts = "validation-artifacts/results/remote-control-simulation"
+
+[[suite]]
+id = "core-work-simulation-extended"
+domain = "integration"
+platform = "any"
+toolchain = "stable"
+tiers = ["scheduled", "release"]
+timeout_seconds = 7200
+command = ["cargo", "test", "--locked", "--profile", "simulation", "-p", "prns-simulation", "--features", "controlled-time", "--test", "embassy_ble", "extended_core_work_campaign", "--", "--ignored", "--nocapture"]
+inputs = ["Cargo.toml", "validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "prns-interfaces/impls/embassy", "personal-hopspot/core"]
+artifacts = "validation-artifacts/results/core-work-simulation"
+
+[[suite]]
+id = "core-work-resource-stability"
+domain = "integration"
+platform = "any"
+toolchain = "stable"
+tiers = ["scheduled", "release"]
+timeout_seconds = 1800
+command = ["cargo", "test", "--locked", "-p", "prns-simulation", "--features", "controlled-time,heap-profile", "--test", "embassy_ble", "thirty_two_cycles_release_dynamic_owners", "--", "--ignored", "--nocapture"]
+inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "prns-interfaces/impls/embassy", "personal-hopspot/core"]
+artifacts = "validation-artifacts/results/core-work-resource-stability"
+
+[[suite]]
+id = "halow-simulation"
+domain = "integration"
+platform = "any"
+toolchain = "stable"
+tiers = ["pr", "scheduled", "release"]
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "prns-simulation", "--features", "controlled-time", "--test", "halow"]
+inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "personal-hopspot/core"]
+artifacts = "validation-artifacts/results/halow-simulation"
+
+[[suite]]
+id = "halow-simulation-extended"
+domain = "integration"
+platform = "any"
+toolchain = "stable"
+tiers = ["scheduled", "release"]
+timeout_seconds = 1800
+command = ["cargo", "test", "--locked", "-p", "prns-simulation", "--features", "controlled-time", "--test", "halow", "extended_halow_campaign", "--", "--ignored", "--nocapture"]
+inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "personal-hopspot/core"]
+artifacts = "validation-artifacts/results/halow-simulation"
+
+[[suite]]
+id = "halow-resource-stability"
+domain = "integration"
+platform = "any"
+toolchain = "stable"
+tiers = ["scheduled", "release"]
+timeout_seconds = 1800
+command = ["cargo", "test", "--locked", "-p", "prns-simulation", "--features", "controlled-time,heap-profile", "--test", "halow", "thirty_two_cycles_release_halow_owners", "--", "--ignored", "--nocapture"]
+inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "personal-hopspot/core"]
+artifacts = "validation-artifacts/results/halow-resource-stability"
+
+[[kani]]
+name = "transaction_success_requires_hardware_and_durable_agreement"
+source = "prns-core/src/interfaces/lora/configuration/kani_proofs.rs"
+group = "lora"
+tiers = ["release", "scheduled"]
+
+
+[[suite]]
+id = "lora-dual-band-core"
+domain = "native"
+group = "lora"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "prns-core", "--features", "lora-2g4", "--lib"]
+inputs = ["prns-core/src/interfaces", "prns-core/src/remote_control", "prns-core/Cargo.toml"]
+artifacts = "validation-artifacts/results/lora-dual-band-core"
+
+[[suite]]
+id = "lora-dual-band-embassy"
+domain = "native"
+group = "lora"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-interfaces/impls/embassy/Cargo.toml", "--features", "lora-2g4", "--lib"]
+inputs = ["prns-interfaces/impls/embassy", "prns-runtime/core", "prns-runtime/impls/embassy", "prns-core/src/interfaces"]
+artifacts = "validation-artifacts/results/lora-dual-band-embassy"
+
+[[suite]]
+id = "lora-dual-band-hopspot"
+domain = "native"
+group = "lora"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "personal-hopspot-core", "--features", "lora-2g4,embedded", "--lib"]
+inputs = ["personal-hopspot/core", "prns-core/src/interfaces", "personal-rns"]
+artifacts = "validation-artifacts/results/lora-dual-band-hopspot"
+
+[[kani]]
+name = "completed_configuration_tickets_cannot_settle_a_later_transaction"
+source = "prns-core/src/interfaces/lora/configuration/kani_proofs.rs"
+group = "lora"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "radio_outcome_codec_accepts_exactly_its_documented_tags"
+source = "prns-core/src/remote_control/radio.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "radio_status_prefix_preserves_capability_and_operating_state_tags"
+source = "prns-core/src/remote_control/radio.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]

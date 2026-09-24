@@ -10,6 +10,8 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
+from validation.hardening import embedded_miri_execution as execution
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "validation" / "hardening" / "embedded_miri.py"
@@ -33,7 +35,7 @@ class EmbeddedMiriTests(unittest.TestCase):
                 ("embedded-persistence", "flash-journal-state-machine"),
             ],
         )
-        self.assertEqual(len(scenarios[2].quick_filters), 3)
+        self.assertEqual(len(scenarios[2].quick_filters), 15)
 
     def test_validation_registry_launches_miri_as_a_repository_module(self) -> None:
         manifest = embedded_miri.tomllib.loads(
@@ -167,6 +169,23 @@ class EmbeddedMiriTests(unittest.TestCase):
         self.assertEqual(embedded_miri.parse_completed_tests(output), 16)
         with self.assertRaises(embedded_miri.EmbeddedMiriError):
             embedded_miri.parse_completed_tests(b"test result: FAILED")
+
+    def test_focused_filters_cannot_pass_with_missing_or_ignored_tests(self) -> None:
+        for output in (
+            b"test result: ok. 0 passed; 0 failed; 0 ignored;",
+            b"test result: ok. 1 passed; 0 failed; 1 ignored;",
+        ):
+            with self.subTest(output=output), self.assertRaises(embedded_miri.EmbeddedMiriError):
+                embedded_miri.parse_completed_tests(output)
+
+    def test_release_requires_bounded_focused_miri_and_schedules_exhaustive_miri(self) -> None:
+        manifest = embedded_miri.tomllib.loads((ROOT / "validation/manifest.toml").read_text())
+        suites = {suite["id"]: suite for suite in manifest["suite"]}
+        self.assertEqual(suites["embedded-miri-quick"]["timeout_seconds"], 900)
+        self.assertEqual(suites["embedded-miri-quick"]["tiers"], ["pr", "release"])
+        self.assertEqual(suites["embedded-miri-full"]["tiers"], ["scheduled"])
+        self.assertEqual(embedded_miri.mode_configuration(embedded_miri.Mode.QUICK).scope, "focused")
+        self.assertEqual(embedded_miri.mode_configuration(embedded_miri.Mode.FULL).scope, "exhaustive")
 
     def test_runner_clears_only_owned_component_evidence(self) -> None:
         scenarios = embedded_miri.load_inventory()
@@ -382,6 +401,138 @@ sources = ["prns-interfaces/impls/embassy/src/radios/sx126x.rs"]
         diagnostic = str(raised.exception)
         self.assertIn("original Miri rejection", diagnostic)
         self.assertIn("failure evidence could not be recorded", diagnostic)
+
+    def test_full_discovery_unions_overlapping_filters_without_losing_tests(self) -> None:
+        outputs = [
+            subprocess.CompletedProcess([], 0, b"z: test\ny: test\n", b""),
+            subprocess.CompletedProcess([], 0, b"y: test\na: test\n", b""),
+        ]
+        with mock.patch.object(execution.subprocess, "run", side_effect=outputs) as run:
+            names = execution.discover_tests(("cargo", "miri", "test"), ("one", "two"), ROOT, {})
+        self.assertEqual(names, ("y", "z", "a"))
+        self.assertEqual(run.call_count, 2)
+        with mock.patch.object(
+            execution.subprocess, "run",
+            return_value=subprocess.CompletedProcess([], 0, b"", b""),
+        ):
+            with self.assertRaises(execution.MiriExecutionError):
+                execution.discover_tests(("cargo",), ("empty",), ROOT, {})
+
+    def test_parallel_execution_keeps_every_result_and_failed_test_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "runner.py"
+            script.write_text(
+                "import sys\n"
+                "name = sys.argv[sys.argv.index('--') + 1]\n"
+                "print(name, flush=True)\n"
+                "sys.exit(1 if name == 'bad' else 0)\n"
+            )
+            results = list(execution.run_tests(
+                (sys.executable, str(script)), ("good", "bad", "also-good"), root,
+                os.environ.copy(), root / "logs",
+            ))
+            self.assertEqual(
+                {item.name: item.returncode for item in results},
+                {"good": 0, "bad": 1, "also-good": 0},
+            )
+            self.assertEqual(len(list((root / "logs").glob("*.log"))), 3)
+            self.assertTrue(all(item.name.encode() in item.output for item in results))
+            for names in [(), ("duplicate", "duplicate")]:
+                with self.assertRaises(execution.MiriExecutionError):
+                    list(execution.run_tests((sys.executable,), names, root, {}, root / "invalid"))
+            for workers in (0, 5, True, "2"):
+                with self.assertRaises(execution.MiriExecutionError):
+                    list(execution.run_tests(
+                        (sys.executable,), ("case",), root, {}, root / "invalid", workers=workers,
+                    ))
+
+    def test_full_shard_executes_only_its_assignment_but_retains_full_inventory(self) -> None:
+        from validation.hardening.embedded_miri_shards import Shard
+        from validation.tests.test_embedded_miri_shards import output_for
+
+        scenario = embedded_miri.load_inventory()[0]
+        identity = embedded_miri.ToolchainIdentity("nightly-test", "rustc test", "miri test")
+        inventory = ("one", "two", "three", "four")
+        results = tuple(execution.TestExecution(name, 0, output_for(name)) for name in ("four", "two"))
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(embedded_miri, "discover_tests", return_value=inventory),
+            mock.patch.object(embedded_miri, "run_tests", return_value=iter(results)) as run,
+        ):
+            observed = embedded_miri.execute_full_scenario(
+                scenario, embedded_miri.BorrowModel.TREE, identity, Path(directory),
+                Shard(1, 2), workers=2,
+            )
+            self.assertEqual(observed.inventory, inventory)
+            self.assertEqual(observed.results, results)
+            self.assertEqual(observed.observation.completed_tests, 2)
+            self.assertEqual(run.call_args.args[1], ("two", "four"))
+            self.assertEqual(run.call_args.kwargs, {"workers": 2})
+            self.assertIn(b'assigned-tests=["two", "four"]', observed.observation.log.read_bytes())
+
+    def test_full_evidence_requires_each_discovered_test_to_execute(self) -> None:
+        scenario = embedded_miri.load_inventory()[0]
+        identity = embedded_miri.ToolchainIdentity("nightly-test", "rustc test", "miri test")
+        for output in [
+            b"test result: ok. 0 passed; 0 failed; 1 ignored;",
+            b"test result: ok. 2 passed; 0 failed; 0 ignored;",
+        ]:
+            with (
+                tempfile.TemporaryDirectory() as directory,
+                mock.patch.object(embedded_miri, "discover_tests", return_value=("case",)),
+                mock.patch.object(
+                    embedded_miri, "run_tests",
+                    return_value=iter([execution.TestExecution("case", 0, output)]),
+                ),
+            ):
+                with self.assertRaises(embedded_miri.EmbeddedMiriError):
+                    embedded_miri.run_full_scenario(
+                        scenario, embedded_miri.BorrowModel.STACKED, identity, Path(directory),
+                    )
+
+    def test_full_failure_preserves_successful_and_failed_cases(self) -> None:
+        scenario = embedded_miri.load_inventory()[0]
+        identity = embedded_miri.ToolchainIdentity("nightly-test", "rustc test", "miri test")
+        results = [
+            execution.TestExecution(
+                "good", 0, b"test good ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;",
+            ),
+            execution.TestExecution("bad", 1, b"Miri rejected the bad case"),
+        ]
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(embedded_miri, "discover_tests", return_value=("good", "bad")),
+            mock.patch.object(embedded_miri, "run_tests", return_value=iter(results)),
+        ):
+            with self.assertRaises(embedded_miri.ProofExecutionError):
+                embedded_miri.run_full_scenario(
+                    scenario, embedded_miri.BorrowModel.TREE, identity, Path(directory),
+                )
+            log = (Path(directory) / "sx126x-tree.log").read_bytes()
+            self.assertIn(results[0].output, log)
+            self.assertIn(results[1].output, log)
+
+    def test_full_inventory_rejects_duplicate_or_missing_results(self) -> None:
+        scenario = embedded_miri.load_inventory()[0]
+        identity = embedded_miri.ToolchainIdentity("nightly-test", "rustc test", "miri test")
+        passed = b"test result: ok. 1 passed; 0 failed; 0 ignored;"
+        for names in [("one",), ("one", "one"), ("one", "unknown")]:
+            with (
+                tempfile.TemporaryDirectory() as directory,
+                mock.patch.object(embedded_miri, "discover_tests", return_value=("one", "two")),
+                mock.patch.object(
+                    embedded_miri, "run_tests",
+                    return_value=iter(
+                        execution.TestExecution(name, 0, f"test {name} ... ok\n".encode() + passed)
+                        for name in names
+                    ),
+                ),
+            ):
+                with self.assertRaises(embedded_miri.EmbeddedMiriError):
+                    embedded_miri.run_full_scenario(
+                        scenario, embedded_miri.BorrowModel.STACKED, identity, Path(directory),
+                    )
 
     @staticmethod
     def write_executable(path: Path, body: str) -> None:

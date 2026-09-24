@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "seed": 42,
+  "topology": "Shared",
+  "scenario": {
+    "Recovery": "RetiredPageRoute"
+  }
+}

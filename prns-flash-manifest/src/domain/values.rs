@@ -91,13 +91,14 @@ impl Uf2MountLabel {
     pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
         let value = value.into();
         let valid = (1..=UF2_MOUNT_LABEL_MAX_BYTES).contains(&value.len())
+            && value == value.trim()
             && value
                 .bytes()
                 .next()
                 .is_some_and(|byte| byte.is_ascii_alphanumeric())
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+            && value.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b' ')
+            });
         valid
             .then_some(Self(value.clone()))
             .ok_or(DomainValueError::Uf2MountLabel(value))
@@ -139,7 +140,9 @@ impl Uf2BoardIdMatch {
                 .next()
                 .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
             && value.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-')
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'.' | b'-' | b' ')
             });
         let valid = canonical
             && match kind {
@@ -338,6 +341,12 @@ pub enum PreparationProfile {
     T096Uf2,
     T114Uf2,
     MeshPocketUf2,
+    MuziBaseDuoUf2,
+    MeshTowerV2Uf2,
+    WioTrackerL1Uf2,
+    Rak4631Uf2,
+    Rak10724Uf2,
+    SensecapSolarNodeUf2,
     T1000eNrfDfu,
 }
 
@@ -349,6 +358,12 @@ impl PreparationProfile {
             "t096-uf2" => Ok(Self::T096Uf2),
             "t114-uf2" => Ok(Self::T114Uf2),
             "mesh-pocket-uf2" => Ok(Self::MeshPocketUf2),
+            "wio-tracker-l1-uf2" => Ok(Self::WioTrackerL1Uf2),
+            "mesh-tower-v2-uf2" => Ok(Self::MeshTowerV2Uf2),
+            "muzi-base-duo-uf2" => Ok(Self::MuziBaseDuoUf2),
+            "rak4631-uf2" => Ok(Self::Rak4631Uf2),
+            "rak10724-uf2" => Ok(Self::Rak10724Uf2),
+            "sensecap-solar-node-uf2" => Ok(Self::SensecapSolarNodeUf2),
             "t1000e-nrf-dfu" => Ok(Self::T1000eNrfDfu),
             _ => Err(DomainValueError::PreparationProfile(value.to_string())),
         }
@@ -361,6 +376,12 @@ impl PreparationProfile {
             Self::T096Uf2 => "t096-uf2",
             Self::T114Uf2 => "t114-uf2",
             Self::MeshPocketUf2 => "mesh-pocket-uf2",
+            Self::WioTrackerL1Uf2 => "wio-tracker-l1-uf2",
+            Self::MeshTowerV2Uf2 => "mesh-tower-v2-uf2",
+            Self::MuziBaseDuoUf2 => "muzi-base-duo-uf2",
+            Self::Rak4631Uf2 => "rak4631-uf2",
+            Self::Rak10724Uf2 => "rak10724-uf2",
+            Self::SensecapSolarNodeUf2 => "sensecap-solar-node-uf2",
             Self::T1000eNrfDfu => "t1000e-nrf-dfu",
         }
     }
@@ -542,14 +563,26 @@ mod tests {
 
     #[test]
     fn uf2_bootloader_identity_values_are_strict() {
-        for valid in ["TECHOBOOT", "T114_BOOT", "UF2.1"] {
+        for valid in ["TECHOBOOT", "T114_BOOT", "UF2.1", "TRACKER L1"] {
             assert!(Uf2MountLabel::parse(valid).is_ok(), "{valid}");
         }
-        for invalid in ["", ".UF2", "BAD LABEL", "../UF2", "UF2/BOOT"] {
+        for invalid in [
+            "",
+            ".UF2",
+            " BAD LABEL",
+            "BAD LABEL ",
+            "BAD\tLABEL",
+            "../UF2",
+            "UF2/BOOT",
+        ] {
             assert!(Uf2MountLabel::parse(invalid).is_err(), "{invalid}");
         }
         assert!(Uf2MountLabel::parse("A".repeat(UF2_MOUNT_LABEL_MAX_BYTES + 1)).is_err());
 
+        let tracker =
+            Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::ExactShared, "tracker l1").unwrap();
+        assert_eq!(tracker.as_str(), Uf2BoardIdMatch::normalize("TRACKER L1"));
+        assert!(Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::ExactShared, "tracker\tl1").is_err());
         assert_eq!(
             Uf2BoardIdMatch::normalize(" nRF52840_TEcho_v2.1 "),
             "nrf52840-techo-v2.1"
@@ -573,7 +606,7 @@ mod tests {
             "",
             "nRF52840_TEcho_v",
             "-nrf52840-techo-v",
-            "nrf52840 techo v",
+            "nrf52840\ttecho-v",
             "nrf52840/techo/v",
             "nrf52840-téchō-v",
         ] {

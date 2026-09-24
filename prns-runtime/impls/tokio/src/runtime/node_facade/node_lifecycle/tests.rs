@@ -1,7 +1,8 @@
+use portable_atomic::AtomicU64;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 
@@ -380,7 +381,7 @@ fn restore_diagnostics_report_seeded_refused_and_dropped_totals() {
 async fn run_until_returns_when_a_non_persistent_node_is_asked_to_stop() {
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
@@ -412,7 +413,7 @@ fn controller_and_target_identities_coexist_without_a_transport_identity() {
     );
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control,
+        remote_control: remote_control.into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
@@ -450,7 +451,7 @@ async fn run_until_with_proof_decider_reaches_a_prove_if_recipe_destination() {
     );
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [PreConfiguredDestination::Single {
             app_name: "personal",
             aspects: &["node"],
@@ -523,7 +524,7 @@ async fn graceful_shutdown_is_observed_after_state_and_ratchet_flushes() {
     let event_sink = Arc::clone(&events);
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
@@ -571,7 +572,7 @@ async fn a_recipe_managed_write_failure_is_observed_before_run_returns() {
     let event_sink = Arc::clone(&events);
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
@@ -602,7 +603,7 @@ async fn a_restore_callback_panic_reports_the_manifold_boundary() {
     let persistence = crate::runtime::NodePersistence::custom_dir(&directory).unwrap();
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
@@ -680,7 +681,7 @@ fn accepted_announce_observers_receive_the_complete_observation() {
 fn new_with_handle_builds_state_from_the_nodes_handle() {
     let prns = PrnsNode::new_with_handle(|handle| PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: handle,
         storage: crate::storage::GrowableHeap,
@@ -701,7 +702,7 @@ fn host_resource_memory_limits_reach_the_engine_before_run() {
     };
     let prns = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
@@ -713,6 +714,57 @@ fn host_resource_memory_limits_reach_the_engine_before_run() {
     .with_resource_memory_limits(limits);
 
     assert_eq!(prns.node.engine.resource_memory_limits(), limits);
+}
+
+#[tokio::test(start_paused = true)]
+async fn explicit_host_preserves_entropy_position_handle_identity_and_timeline() {
+    use crate::manifold::{driver::TokioHost, Host};
+    use prns_core::entropy::RuntimeEntropy;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&calls);
+    let source = move |output: &mut [u8]| {
+        observed.fetch_add(1, Ordering::Relaxed);
+        output.fill(0x57);
+        Ok::<(), core::convert::Infallible>(())
+    };
+    let mut entropy = RuntimeEntropy::try_new(source).unwrap();
+    let mut reference = RuntimeEntropy::try_new(|output: &mut [u8]| {
+        output.fill(0x57);
+        Ok::<(), core::convert::Infallible>(())
+    })
+    .unwrap();
+    entropy.fill_random(&mut [0; 73]);
+    reference.fill_random(&mut [0; 73]);
+    let host = TokioHost::with_runtime_entropy(InstantMillis(900), entropy);
+    let mut node = PrnsNode::new_with_handle_and_host(
+        |handle| PrnsNodeRecipe {
+            transport_identity: None,
+            remote_control: test_remote_control_service().into(),
+            pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+            app_state: handle,
+            storage: crate::storage::GrowableHeap,
+            request_endpoints: crate::request_endpoints![],
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
+            on_event: |_event, _state: &PrnsNodeHandle| {},
+        },
+        host,
+    )
+    .with_crypto_pool(crate::runtime::CryptoPoolConfig::Inline);
+    assert!(Arc::ptr_eq(&node.handle.ids, &node.node.state.ids));
+    let mut actual = [0; 128];
+    let mut expected = [0; 128];
+    node.host.fill_random(&mut actual);
+    reference.fill_random(&mut expected);
+    assert_eq!(
+        (actual, calls.load(Ordering::Relaxed), node.clock().now()),
+        (expected, 1, InstantMillis(900))
+    );
+    tokio::time::advance(std::time::Duration::from_millis(7)).await;
+    assert_eq!(node.clock().now(), InstantMillis(907));
+    drop(node);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
 }
 
 #[test]
@@ -745,7 +797,7 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
 
     let mut prns = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: test_remote_control_service(),
+        remote_control: test_remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,

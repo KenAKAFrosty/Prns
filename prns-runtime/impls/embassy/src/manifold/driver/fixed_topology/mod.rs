@@ -257,7 +257,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                         }
                         lane.release();
                         let mut step_delta = report.wake_schedules;
-                        step_delta.merge(completion_delta);
+                        step_delta.compose(completion_delta);
                         merge_wake_schedules_delta(
                             &mut wake_schedules,
                             step_delta,

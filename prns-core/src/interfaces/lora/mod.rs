@@ -1,3 +1,8 @@
+mod band;
+pub mod configuration;
+#[cfg(feature = "lora-2g4")]
+pub use band::{Ghz24Profile, Ghz24ProfileError, GHZ24_BALANCED_PROFILE};
+pub use band::{LoRaConfiguration, LoRaConfigurationState, LoRaProfile, LoRaProfileError};
 mod framing;
 mod modulation;
 mod network;
@@ -7,8 +12,9 @@ mod profile;
 pub use super::subghz::{Frequency, RegulatoryRegion, SubGRegion, TxPower};
 pub use framing::{
     air_frame_count, decode_air_frame, encode_air_frame_part, AirFrame, AirFrameError,
-    LoRaReassembler, LoRaReassemblyError, LoRaReassemblyOutcome, ReassembledPacket,
-    LORA_HEADER_LEN, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX, LORA_SINGLE_FRAME_PAYLOAD_MAX,
+    LoRaReassembler, LoRaReassemblyError, LoRaReassemblyOutcome, LoRaReassemblyReset,
+    ReassembledPacket, LORA_HEADER_LEN, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
+    LORA_SINGLE_FRAME_PAYLOAD_MAX,
 };
 pub use modulation::{
     nominal_lora_bitrate_bps, CodingRate, LoraBandwidth, Modulation, SpreadingFactor,

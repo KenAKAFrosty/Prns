@@ -31,6 +31,7 @@ pub mod websocket;
 pub mod wifi_auto;
 pub mod wifi_aware;
 pub mod wifi_direct;
+pub mod wifi_halow;
 
 #[cfg(feature = "alloc")]
 pub use descriptor::IndexedAttachedInterfaces;

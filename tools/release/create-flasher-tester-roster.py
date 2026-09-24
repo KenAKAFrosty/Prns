@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 
 from flasher_board_catalog import boards_from_catalog
+from flasher_acceptance_contract import SOFTWARE_ROSTER_SCHEMA, software_qualification
 
 
 TEMPLATE_SCHEMA = 4
@@ -20,31 +21,39 @@ def create(template: Path, catalog_path: Path, version: str, output: Path) -> No
     document = json.loads(template.read_text(encoding="utf-8"))
     if not isinstance(document, dict) or document.get("schema") != TEMPLATE_SCHEMA:
         raise ValueError(f"tester roster template schema must be {TEMPLATE_SCHEMA}")
-    assignments = document.get("physical_assignments")
-    if not isinstance(assignments, list):
-        raise ValueError("tester roster template physical_assignments must be an array")
-    boards = boards_from_catalog(catalog_path)
-    expected = {(board, surface) for board in boards.catalog for surface in SURFACES}
-    observed: set[tuple[str, str]] = set()
-    for index, assignment in enumerate(assignments):
-        if not isinstance(assignment, dict):
-            raise ValueError(f"tester roster template physical assignment {index} must be an object")
-        board = assignment.get("board")
-        surface = assignment.get("surface")
-        if not isinstance(board, str) or surface not in SURFACES:
-            raise ValueError(f"tester roster template physical assignment {index} is malformed")
-        key = (board, surface)
-        if key in observed:
-            raise ValueError(f"tester roster template duplicates {board}/{surface}")
-        observed.add(key)
-    if observed != expected:
-        raise ValueError("tester roster template does not cover exactly every catalog board and surface")
-    shipping = set(boards.shipping)
-    document["schema"] = ROSTER_SCHEMA
-    document["release"] = {"version": version}
-    document["physical_assignments"] = [
-        assignment for assignment in assignments if assignment["board"] in shipping
-    ]
+    if software_qualification(version):
+        document = {
+            "schema": SOFTWARE_ROSTER_SCHEMA,
+            "release": {"version": version},
+            "release_owner": document.get("release_owner"),
+            "confirmed_on": document.get("confirmed_on"),
+        }
+    else:
+        assignments = document.get("physical_assignments")
+        if not isinstance(assignments, list):
+            raise ValueError("tester roster template physical_assignments must be an array")
+        boards = boards_from_catalog(catalog_path)
+        expected = {(board, surface) for board in boards.catalog for surface in SURFACES}
+        observed: set[tuple[str, str]] = set()
+        for index, assignment in enumerate(assignments):
+            if not isinstance(assignment, dict):
+                raise ValueError(f"tester roster template physical assignment {index} must be an object")
+            board = assignment.get("board")
+            surface = assignment.get("surface")
+            if not isinstance(board, str) or surface not in SURFACES:
+                raise ValueError(f"tester roster template physical assignment {index} is malformed")
+            key = (board, surface)
+            if key in observed:
+                raise ValueError(f"tester roster template duplicates {board}/{surface}")
+            observed.add(key)
+        if observed != expected:
+            raise ValueError("tester roster template does not cover exactly every catalog board and surface")
+        shipping = set(boards.shipping)
+        document["schema"] = ROSTER_SCHEMA
+        document["release"] = {"version": version}
+        document["physical_assignments"] = [
+            assignment for assignment in assignments if assignment["board"] in shipping
+        ]
     output.parent.mkdir(parents=True, exist_ok=True)
     try:
         descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)

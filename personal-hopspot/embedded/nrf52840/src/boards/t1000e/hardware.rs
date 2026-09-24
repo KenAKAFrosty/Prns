@@ -9,7 +9,7 @@ use embassy_nrf::uarte::{self, Uarte};
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::Driver;
 use embassy_nrf::{bind_interrupts, config, peripherals, usb};
-use embassy_time::{Delay, Timer};
+use embassy_time::{with_timeout, Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
 use personal_rns::radios::lr1110::Lr1110;
@@ -29,7 +29,7 @@ type T1000eSpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
 
 type T1000eRadio = Lr1110<T1000eSpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type T1000eLoraInterface = LoRaInterface<'static, T1000eRadio>;
+pub(crate) type T1000eLoraInterface = LoRaInterface<'static, 'static, T1000eRadio>;
 
 type T1000eUsbDriver = Driver<'static, HardwareVbusDetect>;
 
@@ -52,6 +52,18 @@ impl T1000eBoard {
         nrf_config.gpiote_interrupt_priority = Priority::P2;
         nrf_config.time_interrupt_priority = Priority::P2;
         let peripherals = embassy_nrf::init(nrf_config);
+
+        let mut recovery_button = Input::new(peripherals.P0_06, Pull::Down);
+        if embassy_nrf::pac::POWER.usbregstatus().read().vbusdetect()
+            && recovery_button.is_high()
+            && with_timeout(Duration::from_secs(2), recovery_button.wait_for_low())
+                .await
+                .is_err()
+        {
+            crate::runtime::bootloader_entry::enter_bare_metal_bootloader(
+                personal_rns::usb_auto::WebUsbBootloaderMode::Uf2HandOff,
+            );
+        }
 
         let (identity, flash) = {
             let mut nvmc = Nvmc::new(peripherals.NVMC);

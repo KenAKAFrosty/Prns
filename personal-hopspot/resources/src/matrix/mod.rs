@@ -1,12 +1,12 @@
 mod build;
-mod mesh_tower_v2;
+mod build_only;
 mod recipe;
 #[cfg(test)]
 mod tests;
 
 use std::collections::BTreeSet;
 
-use personal_hopspot_builder::architecture::{adapter_for, Adapter};
+use personal_hopspot_builder::architecture::{adapter_for, nrf52840_serial_dfu_adapter, Adapter};
 use personal_hopspot_builder::BuildError;
 use personal_hopspot_memory::{MemoryProfile, ValidationError};
 use prns_flash_manifest::{
@@ -87,7 +87,7 @@ enum TargetRecipe<'a> {
         board: &'a BoardCatalogEntry,
         recipe: &'a NrfSerialDfuBuild,
     },
-    MeshTowerV2,
+    BuildOnly(&'static build_only::BuildOnlyTarget),
 }
 
 #[derive(Debug, Error)]
@@ -102,6 +102,12 @@ pub enum MatrixError {
     BuildOnlyProfile {
         target: &'static str,
         error: ValidationError,
+    },
+    #[error("resource target {target:?} has an unsupported compiler adapter: {source}")]
+    Adapter {
+        target: String,
+        #[source]
+        source: BuildError,
     },
     #[error("resource target ID {0:?} is duplicated")]
     DuplicateTarget(String),
@@ -167,6 +173,9 @@ impl<'a> Matrix<'a> {
                                 source,
                             }
                         })?;
+                        if build_only::is_build_only(memory.id().0) {
+                            continue;
+                        }
                         targets.push(Target {
                             id: memory.id().0.to_string(),
                             display_name: format!(
@@ -195,27 +204,34 @@ impl<'a> Matrix<'a> {
                         id: memory.id().0.to_string(),
                         display_name: board.display_name.clone(),
                         profile: memory.profile(),
-                        adapter: adapter_for(memory.architecture()),
+                        adapter: nrf52840_serial_dfu_adapter(&recipe.rust_target).map_err(
+                            |source| MatrixError::Adapter {
+                                target: board.slug.clone(),
+                                source,
+                            },
+                        )?,
                         recipe: TargetRecipe::SerialDfu { board, recipe },
                     });
                 }
             }
         }
 
-        let profile = mesh_tower_v2::profile();
-        profile
-            .validate()
-            .map_err(|error| MatrixError::BuildOnlyProfile {
-                target: mesh_tower_v2::ID,
-                error,
-            })?;
-        targets.push(Target {
-            id: mesh_tower_v2::ID.to_string(),
-            display_name: mesh_tower_v2::DISPLAY_NAME.to_string(),
-            profile,
-            adapter: adapter_for(profile.architecture),
-            recipe: TargetRecipe::MeshTowerV2,
-        });
+        for target in &build_only::TARGETS {
+            target
+                .profile
+                .validate()
+                .map_err(|error| MatrixError::BuildOnlyProfile {
+                    target: target.id,
+                    error,
+                })?;
+            targets.push(Target {
+                id: target.id.to_string(),
+                display_name: target.display_name.to_string(),
+                profile: target.profile,
+                adapter: adapter_for(target.profile.architecture),
+                recipe: TargetRecipe::BuildOnly(target),
+            });
+        }
 
         let mut ids = BTreeSet::new();
         for target in &targets {
@@ -260,7 +276,7 @@ impl Target<'_> {
             TargetRecipe::Esp { .. } => TargetPlatform::Esp,
             TargetRecipe::Uf2 { .. }
             | TargetRecipe::SerialDfu { .. }
-            | TargetRecipe::MeshTowerV2 => TargetPlatform::Nrf52840,
+            | TargetRecipe::BuildOnly(_) => TargetPlatform::Nrf52840,
         }
     }
 

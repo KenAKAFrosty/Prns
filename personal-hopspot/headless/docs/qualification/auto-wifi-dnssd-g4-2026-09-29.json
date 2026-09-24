@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "qualification": "G4 DNS-SD browse, resolve, scoped IPv6 and IPv4 exact-page transfer",
+  "build": {
+    "schema": 1,
+    "artifact_kind": "linux-application-development-bundle",
+    "qualification": "TCP plus experimental HaLoW; not a firmware image or a signed public release",
+    "cargo_features": [
+      "wifi-halow",
+      "websocket",
+      "wifi-auto"
+    ],
+    "target": "mipsel-unknown-linux-musl",
+    "source_commit": "e31518647c6ad0aea89c57b6c1d8e499efe82f31",
+    "working_tree_dirty": true,
+    "rustc": "rustc 1.98.0-nightly (6bdf43094 2026-06-01)\nbinary: rustc\ncommit-hash: 6bdf43094fae65d298bc430362f116176cd25a3c\ncommit-date: 2026-06-01\nhost: aarch64-apple-darwin\nrelease: 1.98.0-nightly\nLLVM version: 22.1.6",
+    "cargo": "cargo 1.98.0-nightly (fbb61be30 2026-05-26)",
+    "zig_version": "0.15.2",
+    "zig_executable_sha256": "c65cd34917923f575448cc0603dd7c2326da0af0e5c323043d090662dcdf351c",
+    "cargo_lock_sha256": "7a653233d7eafe9ed71e5efa145d99a8acbe541a880a838164bf9144612f37b1",
+    "rustflags": "-C link-self-contained=no -C target-feature=+crt-static",
+    "c_target": "mipsel-linux-musleabi -mcpu=mips32r2 -msoft-float",
+    "binary": {
+      "path": "personal-hopspot-headless",
+      "bytes": 5334876,
+      "sha256": "a11baef5eaec55c06bd4d6f0bcab50f5049cf94ed84d92f1172142036ac790ee"
+    },
+    "probe": {
+      "path": "fetch_page",
+      "bytes": 3432116,
+      "sha256": "676c8420505dfe3cee469080a08b467479f5b2056fa331d91df47d877c4ccf7c"
+    }
+  },
+  "baseline_prns_capture": [
+    "01:05:12.552196 br-ahwlan Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:12.552257 wlan0 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:12.552291 eth0.1 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:12.565304 br-ahwlan Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:12.565361 wlan0 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:12.565396 eth0.1 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:12.566654 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:12.567049 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:12.568422 br-ahwlan Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:12.568481 wlan0 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:12.568517 eth0.1 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:12.571406 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:12.571951 br-ahwlan Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:12.572011 wlan0 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:12.572045 eth0.1 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:12.574424 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:12.669376 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0 [4q] [6n] ANY (QM)? prns-8a4b6e7d4b1f25b5._reticulum._udp.local. ANY (QM)? prns-7d8ba3cb10e275b6.local. ANY (QM)? prns-7d8ba3cb10e275b6._reticulum._tcp.local. ANY (QM)? prns-8a4b6e7d4b1f25b5.local. (289)",
+    "01:05:12.920295 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0 [4q] [6n] ANY (QM)? prns-8a4b6e7d4b1f25b5._reticulum._udp.local. ANY (QM)? prns-7d8ba3cb10e275b6.local. ANY (QM)? prns-7d8ba3cb10e275b6._reticulum._tcp.local. ANY (QM)? prns-8a4b6e7d4b1f25b5.local. (289)",
+    "01:05:13.170291 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0 [4q] [6n] ANY (QM)? prns-8a4b6e7d4b1f25b5._reticulum._udp.local. ANY (QM)? prns-7d8ba3cb10e275b6.local. ANY (QM)? prns-7d8ba3cb10e275b6._reticulum._tcp.local. ANY (QM)? prns-8a4b6e7d4b1f25b5.local. (289)",
+    "01:05:13.421026 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0*- [0q] 4/0/0 PTR prns-8a4b6e7d4b1f25b5._reticulum._udp.local., (Cache flush) SRV prns-8a4b6e7d4b1f25b5.local.:29717 0 0, (Cache flush) TXT \"v=1\", (Cache flush) AAAA fe80::e638:19ff:fe1f:5248 (155)",
+    "01:05:13.421934 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0*- [0q] 4/0/0 PTR prns-7d8ba3cb10e275b6._reticulum._tcp.local., (Cache flush) SRV prns-7d8ba3cb10e275b6.local.:42699 0 0, (Cache flush) TXT \"v=1\", (Cache flush) AAAA fe80::e638:19ff:fe1f:5248 (155)",
+    "01:05:13.568757 br-ahwlan Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:13.568818 wlan0 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:13.568853 eth0.1 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:13.569291 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)",
+    "01:05:13.572205 br-ahwlan Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:13.572266 wlan0 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:13.572300 eth0.1 Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:13.572639 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0 PTR (QM)? _reticulum._udp.local. (39)",
+    "01:05:14.532708 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0*- [0q] 4/0/0 PTR prns-7d8ba3cb10e275b6._reticulum._tcp.local., (Cache flush) SRV prns-7d8ba3cb10e275b6.local.:42699 0 0, (Cache flush) TXT \"v=1\", (Cache flush) AAAA fe80::e638:19ff:fe1f:5248 (155)",
+    "01:05:14.539928 eth0  Out IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0*- [0q] 4/0/0 PTR prns-8a4b6e7d4b1f25b5._reticulum._udp.local., (Cache flush) SRV prns-8a4b6e7d4b1f25b5.local.:29717 0 0, (Cache flush) TXT \"v=1\", (Cache flush) AAAA fe80::e638:19ff:fe1f:5248 (155)",
+    "01:05:15.569709 br-ahwlan Out IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 PTR (QM)? _reticulum._tcp.local. (39)"
+  ],
+  "final_prns_capture": [
+    "01:22:14.741944 IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0*- [0q] 4/0/0 PTR prns-a6fd44d4339a69b1._reticulum._tcp.local., (Cache flush) SRV prns-a6fd44d4339a69b1.local.:42699 0 0, (Cache flush) TXT \"v=1\", (Cache flush) AAAA fe80::e638:19ff:fe1f:5248 (155)",
+    "01:22:14.856744 IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0*- [0q] 4/0/0 PTR prns-3af21439562322f7._reticulum._udp.local., (Cache flush) SRV prns-3af21439562322f7.local.:29717 0 0, (Cache flush) TXT \"v=1\", (Cache flush) AAAA fe80::e638:19ff:fe1f:5248 (155)",
+    "01:22:15.737777 IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 [1a] PTR (QM)? _reticulum._udp.local. (75)",
+    "01:22:15.738358 IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0 [1a] PTR (QM)? _reticulum._udp.local. (75)",
+    "01:22:15.814656 IP 192.168.12.1.5353 > 224.0.0.251.5353: 0 [1a] PTR (QM)? _reticulum._tcp.local. (75)",
+    "01:22:15.815684 IP6 fe80::e638:19ff:fe1f:5248.5353 > ff02::fb.5353: 0 [1a] PTR (QM)? _reticulum._tcp.local. (75)"
+  ],
+  "browse": "Browsing for _reticulum._tcp.local.\nDATE: ---Tue 29 Sep 2026---\n21:33:42.354  ...STARTING...\nTimestamp     A/R    Flags  if Domain               Service Type         Instance Name\n21:33:42.355  Add        2   7 local.               _reticulum._tcp.     prns-a6fd44d4339a69b1\n",
+  "resolve": "Lookup prns-a6fd44d4339a69b1._reticulum._tcp.local.\nDATE: ---Tue 29 Sep 2026---\n21:33:47.363  ...STARTING...\n21:33:47.365  prns-a6fd44d4339a69b1._reticulum._tcp.local. can be reached at prns-a6fd44d4339a69b1.local.:42699 (interface 7)\n v=1\n",
+  "addresses": "DATE: ---Tue 29 Sep 2026---\n21:33:52.375  ...STARTING...\nTimestamp     A/R  Flags         IF  Hostname                               Address                                      TTL\n21:33:52.377  Add  40000002       7  prns-a6fd44d4339a69b1.local.           FE80:0000:0000:0000:E638:19FF:FE1F:5248%en0  120\n",
+  "probes": [
+    {
+      "target": "[FE80:0000:0000:0000:E638:19FF:FE1F:5248%7]:42699",
+      "code": 0,
+      "stdout": "hopspot_page_verified bytes=3542 rtt=RttMillis(107)\n",
+      "stderr": ""
+    },
+    {
+      "target": "192.168.12.1:42699",
+      "code": 0,
+      "stdout": "hopspot_page_verified bytes=3542 rtt=RttMillis(120)\n",
+      "stderr": ""
+    }
+  ],
+  "cleanup": {
+    "shutdown_flushed": true,
+    "stopped": true,
+    "test_ports_absent": true
+  },
+  "limitations": [
+    "Shared vendor bridge; no separate 2.4GHz AP/client test",
+    "Native OS DNS-SD client plus explicit probe to resolved endpoint; no browser mDNS claim",
+    "Not a throughput or latency benchmark",
+    "No Windows, Android, IPv6-disabled-kernel, or sustained-load qualification"
+  ],
+  "earlier_two_listener_probes": [
+    {
+      "target": "[FE80:0000:0000:0000:E638:19FF:FE1F:5248%7]:42699",
+      "code": 0,
+      "stdout": "hopspot_page_verified bytes=3542 rtt=RttMillis(571)\n",
+      "stderr": ""
+    },
+    {
+      "target": "192.168.12.1:42699",
+      "code": 0,
+      "stdout": "hopspot_page_verified bytes=3542 rtt=RttMillis(1514)\n",
+      "stderr": ""
+    }
+  ],
+  "storage_cleanup": "Filesystem           1K-blocks      Used Available Use% Mounted on\ntmpfs                    60076     36288     23788  60% /tmp\n              total        used        free      shared  buff/cache   available\nMem:         120152       37480       26888       36288       55784       12060\nSwap:             0           0           0\n",
+  "original_service_probe": {
+    "bytes": 3542,
+    "request_rtt_ms": 81
+  }
+}

@@ -6,7 +6,7 @@ use personal_rns::interfaces::bluetooth_auto::BLE_HW_MTU;
 use personal_rns::interfaces::lora::LORA_MAX_PAYLOAD;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::manifold::embassy::{EmbassyHost, InterfaceLifecycle};
-use personal_rns::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
+
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
     EmbassyInterfaceStore, ManifoldLaneSet, PrnsEvent, PrnsNode, StaticManifoldLane,
@@ -64,6 +64,14 @@ pub(super) type Node = PrnsNode<
     COMMANDS_CAP,
     LIFECYCLE_CAP,
     COMPLETIONS_CAP,
+    4,
+    { personal_rns::engine::MAX_SEND_REQUEST_DATA_LEN },
+    0,
+    0,
+    personal_rns::runtime::RemoteControlNodeControls<
+        personal_rns::runtime::RemoteControlSupportedHost<RemoteControlHandle>,
+        personal_rns::runtime::NoRemoteControlHostControls,
+    >,
 >;
 pub(super) type ManifoldLanes = ManifoldLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
 
@@ -89,8 +97,9 @@ pub(super) static BLE_MANIFOLD_LANE: StaticManifoldLane<
 > = StaticManifoldLane::new();
 pub(super) static USB_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
-    EMBEDDED_MAX_WIRE_FRAME_LEN,
+    { personal_rns::interfaces::usb_auto::MAX_DATA_BYTES },
     LANE_DEPTH,
+    { personal_rns::interfaces::usb_auto::DEVICE_MIN_OUTBOUND_FRAMES },
 > = StaticManifoldLane::new();
 
 pub(super) fn ignore_events(_event: PrnsEvent<'_>, _state: &RemoteControlHandle) {}

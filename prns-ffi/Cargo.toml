@@ -1,6 +1,6 @@
 [package]
 name = "prns-ffi"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -25,14 +25,16 @@ path = "src/lib.rs"
 [features]
 default = []
 log = ["dep:log"]
+linux-packet = ["dep:libc"]
 
 [dependencies]
 cfg-if = "1.0"
+portable-atomic = { version = "1", default-features = false, features = ["fallback", "std"] }
 
 # The pure engine. We implement its public interface seams (`BleBackend`, …) here and
 # feed them to its generic supervisors (`BluetoothAuto<B>`). tokio-host pulls the std
 # runtime seam the host backends bridge into.
-prns-core = { version = "=0.3.7", path = "../prns-core", default-features = false, features = ["tokio-host"] }
+prns-core = { version = "=0.3.8", path = "../prns-core", default-features = false, features = ["tokio-host"] }
 # The async runtime the host backends bridge into: channels carry events from the
 # platform's callback world (a GCD queue, a JNI thread) to the manifold; the deadline
 # timer bounds power-on/connect waits.
@@ -81,6 +83,9 @@ windows = { version = "0.58", features = [
     "Win32_Devices_Communication",
     "Win32_Devices_Properties",
 ] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync"] }

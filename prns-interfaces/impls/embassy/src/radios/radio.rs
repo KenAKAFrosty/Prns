@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 
-use prns_core::interfaces::lora::{RadioProfile, RadioProfileCompatibilityError};
+use prns_core::interfaces::lora::{LoRaProfile, RadioProfile, RadioProfileCompatibilityError};
 use prns_core::interfaces::PacketPhyStats;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,9 +26,40 @@ pub enum RadioRecovery {
     Reinitialize,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum BandRadioError<E> {
+    UnsupportedBand,
+    Radio(E),
+}
+
 #[allow(async_fn_in_trait)]
 pub trait LoRaRadio {
     type Error: Debug;
+
+    fn validate_band_profile(
+        &self,
+        profile: LoRaProfile,
+    ) -> Result<(), RadioProfileCompatibilityError> {
+        match profile {
+            LoRaProfile::SubG(profile) => self.validate_profile(profile),
+            #[cfg(feature = "lora-2g4")]
+            LoRaProfile::Ghz24(_) => Err(RadioProfileCompatibilityError::UnsupportedBand),
+        }
+    }
+
+    async fn initialize_band(
+        &mut self,
+        profile: LoRaProfile,
+    ) -> Result<(), BandRadioError<Self::Error>> {
+        match profile {
+            LoRaProfile::SubG(profile) => self
+                .initialize(profile)
+                .await
+                .map_err(BandRadioError::Radio),
+            #[cfg(feature = "lora-2g4")]
+            LoRaProfile::Ghz24(_) => Err(BandRadioError::UnsupportedBand),
+        }
+    }
 
     fn validate_profile(&self, profile: RadioProfile)
         -> Result<(), RadioProfileCompatibilityError>;

@@ -54,7 +54,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let daemon = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xD1))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -78,7 +78,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
     let _server = daemon_commands.supervise(SharedInstanceServer::with_port(port));
 
     let app = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [app_single],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -152,7 +152,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         .to_string();
 
     let daemon = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -176,7 +176,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
     let network_client =
         TcpClientInterface::new_with_bitrate(network_addr, BITRATE, ReconnectPolicy::STANDARD);
     let network_node = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [network_single],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -205,7 +205,7 @@ async fn a_leaf_shared_instance_carries_announces_across_its_local_boundary() {
         ReconnectPolicy::STANDARD,
     );
     let local_node = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [local_single],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,

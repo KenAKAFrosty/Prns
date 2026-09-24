@@ -105,6 +105,58 @@ requires = ["bash", "cmake", "git", "make", "python3", "xtensa-esp-elf-gcc"]
 setup = "Set IDF_PATH to the exact ESP-IDF checkout named by the committed recipe, source its export.sh, and install that ESP-IDF release's pinned esp32s3 tools."
 
 [[task]]
+id = "build.hopspot.g4"
+summary = "Cross-build and package the headless G4 Linux application with hashes and build metadata."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/build/hopspot-g4.py"]
+requires = ["cargo", "git", "python3", "rustc", "rustup"]
+setup = "Install nightly-2026-06-02 with rust-src and separately verify Zig 0.15.2. Pass --zig and a new --output directory. This produces a development application, not firmware."
+
+[[task]]
+id = "build.hopspot.appliance"
+summary = "Build the signed OpenWrt application slot manager and supervised service assets."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/build/hopspot-appliance.py"]
+requires = ["cargo", "git", "python3", "rustc", "rustup"]
+setup = "Use the G4 task's pinned Rust/Zig toolchain. Pass --zig and a new --output. Optional --qualification-output is separate from the shipping bundle."
+
+[[task]]
+id = "build.hopspot.browser"
+summary = "Build a self-contained Hopspot browser asset bundle for a local static HTTP server."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/build/hopspot-browser.py"]
+requires = ["bash", "cargo", "git", "node", "npm", "python3", "wasm-bindgen"]
+setup = "Install the prns-js and prns-wasm locked npm dependencies and wasm-bindgen 0.2.126. Supply a new --output directory and the board listener's --websocket-port."
+
+[[task]]
+id = "device.network.lab.prepare"
+summary = "Prepare private, temporary OpenWrt 2.4 GHz network-lab assets without contacting a device."
+domain = "device"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/device/network_lab/prepare.py"]
+requires = ["python3"]
+setup = "Read personal-hopspot/headless/docs/network-lab.md. Pass a fresh --output, explicit role/MAC and private --psk-file; staged radio operations are lab-only."
+
+[[internal]]
+path = "tools/device/network_lab/radio.sh"
+reason = "OpenWrt network-lab runtime asset copied by the preparation task; never executed on the host."
+
+[[internal]]
+path = "tools/device/network_lab/lease.sh"
+reason = "Private network-lab DHCP hook staged by the preparation task for the device."
+
+[[task]]
 id = "build.hopspot.t096"
 summary = "Build the Heltec T096 firmware and package its recovery-compatible developer UF2."
 domain = "build"
@@ -160,13 +212,68 @@ requires = ["bash", "cargo", "python3", "rustc"]
 setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
 
 [[task]]
+id = "build.hopspot.rak4631"
+summary = "Build the headless RAK WisBlock 4631 firmware with S140 6.1.1 Bluetooth Auto and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "rak4631"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.wio-tracker-l1"
+summary = "Build the Seeed Wio Tracker L1 firmware with its OLED face, L76K GNSS, S140 7.3.0 Bluetooth Auto, and package its developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "wio-tracker-l1"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.wio-tracker-l1-pro-1w"
+summary = "Build the Seeed Wio Tracker L1 Pro 1W firmware, with its switched 1 W PA supply and gain curve, and package its developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "wio-tracker-l1-pro-1w"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.sensecap-solar-node"
+summary = "Build the headless Seeed SenseCAP Solar Node firmware and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "sensecap-solar-node"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
 id = "build.hopspot.mesh-tower-v2"
 summary = "Build the headless Heltec MeshTower V2 firmware with S140 6.1.1 Bluetooth Auto and package its recovery-compatible developer UF2."
 domain = "build"
 effect = "workspace-write"
 platforms = ["linux", "macos"]
 audience = ["developer", "ci"]
-entrypoint = ["bash", "tools/build/hopspot-mesh-tower-v2.sh"]
+entrypoint = ["bash", "tools/build/hopspot-build-only-uf2.sh", "mesh-tower-v2", "heltec-mesh-tower-v2", "MeshTower V2"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.muzi-base-duo"
+summary = "Build the headless muzi Base Duo (nRF52840 + LR1121) firmware with S140 6.1.1 Bluetooth Auto and package its developer UF2 for the muzi-Base bootloader volume."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-build-only-uf2.sh", "muzi-base-duo", "muzi-base-duo", "muzi Base Duo"]
 requires = ["bash", "cargo", "python3", "rustc"]
 setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
 
@@ -355,7 +462,7 @@ requires = ["cargo", "python"]
 
 [[task]]
 id = "repo.cargo-check"
-summary = "Compile-check every host-compatible first-party Cargo workspace in parallel."
+summary = "Compile-check every host-compatible first-party Cargo workspace with shared dependencies and parallel compilation."
 domain = "repo"
 effect = "workspace-write"
 platforms = ["any"]
@@ -845,7 +952,7 @@ requires = ["bash"]
 
 [[task]]
 id = "release.acceptance.validate"
-summary = "Validate signed physical qualification and its complete evidence set."
+summary = "Validate exact-candidate automated or historical physical acceptance."
 domain = "release"
 effect = "read-only"
 platforms = ["any"]
@@ -885,7 +992,7 @@ requires = ["python3"]
 
 [[task]]
 id = "release.tester-roster.create"
-summary = "Create a versioned tester-roster scaffold from the catalog-aware template."
+summary = "Create a release-owner record or historical physical roster for a version."
 domain = "release"
 effect = "workspace-write"
 platforms = ["any"]
@@ -895,7 +1002,7 @@ requires = ["python3"]
 
 [[task]]
 id = "release.tester-roster.validate"
-summary = "Validate that a version's tester roster covers every shipping target."
+summary = "Validate the versioned release owner or historical physical tester roster."
 domain = "release"
 effect = "read-only"
 platforms = ["any"]
@@ -925,7 +1032,7 @@ requires = ["python3"]
 
 [[task]]
 id = "release.candidate.verify"
-summary = "Verify a signed candidate and optional physical qualification evidence."
+summary = "Verify a signed candidate and optional release acceptance evidence."
 domain = "release"
 effect = "read-only"
 platforms = ["any"]
@@ -1008,8 +1115,16 @@ path = "tools/device/developer_flasher_candidate.py"
 reason = "Validated local developer candidate boundary shared by the developer flasher workflow and its focused tests."
 
 [[internal]]
+path = "tools/release/flasher_software_acceptance.py"
+reason = "Exact-source automated acceptance validation shared by candidate generation and signed release qualification."
+
+[[internal]]
 path = "tools/release/flasher_acceptance_contract.py"
 reason = "Shared acceptance schema and scaffold implementation used by release commands and bundled qualification tools."
+
+[[internal]]
+path = "tools/release/deployment_qualification_policy.py"
+reason = "Version-bound deployment qualification policy shared by signed suite records and promotion."
 
 [[internal]]
 path = "tools/release/flasher_board_catalog.py"
@@ -1090,6 +1205,67 @@ reason = "Cargo package metadata for the post-bootstrap cargo-tools forwarding a
 [[internal]]
 path = "tools/repo/cargo-tools-command/src/main.rs"
 reason = "Thin Cargo adapter that forwards arguments to the canonical tools/prns task registry."
+
+[[task]]
+id = "repo.simulation.remote-control.replay"
+summary = "Replay one versioned Remote Control simulator case twice in a fresh process."
+domain = "repo"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python", "tools/repo/remote-control-simulation.py", "--mode", "replay"]
+requires = ["cargo", "python"]
+
+[[task]]
+id = "repo.simulation.remote-control.reduce"
+summary = "Reduce a Remote Control failure artifact while preserving its failure class."
+domain = "repo"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python", "tools/repo/remote-control-simulation.py", "--mode", "reduce"]
+requires = ["cargo", "python"]
+
+[[task]]
+id = "repo.simulation.core-work.replay"
+summary = "Replay a versioned asynchronous core simulator case twice in a fresh process."
+domain = "repo"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python", "tools/repo/core-work-simulation.py", "--mode", "replay"]
+requires = ["cargo", "python"]
+
+[[task]]
+id = "repo.simulation.core-work.reduce"
+summary = "Reduce an asynchronous core failure while preserving its diagnostic cause."
+domain = "repo"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python", "tools/repo/core-work-simulation.py", "--mode", "reduce"]
+requires = ["cargo", "python"]
+
+[[task]]
+id = "repo.simulation.halow.replay"
+summary = "Replay one versioned HaLoW transport case twice with complete wire traces."
+domain = "repo"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python", "tools/repo/halow-simulation.py"]
+requires = ["cargo", "python"]
+
+[[task]]
+id = "build.hopspot.rak10724"
+summary = "Build the headless RAK WisMesh 1W 4631 firmware with S140 6.1.1 Bluetooth Auto and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "rak10724"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
 
 [[internal]]
 path = "tools/repo/host_contract/uniffi.py"

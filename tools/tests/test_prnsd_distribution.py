@@ -36,6 +36,41 @@ def load_module() -> types.ModuleType:
 distribution = load_module()
 
 
+class DeploymentQualificationPolicyTests(unittest.TestCase):
+    def test_deferral_is_limited_to_the_owner_approved_version(self) -> None:
+        policy = distribution.qualification_policy(ROOT, "0.3.8")
+        self.assertEqual(policy["status"], "deferred")
+        self.assertEqual(policy["release_owner"], "github:KenAKAFrosty")
+        for version in ("0.3.7", "0.3.8-hotfix.1", "0.3.9", "1.0.0"):
+            with self.subTest(version=version):
+                self.assertEqual(
+                    distribution.qualification_policy(ROOT, version),
+                    {"status": "required"},
+                )
+
+    def test_missing_or_malformed_policy_cannot_waive_qualification(self) -> None:
+        valid = distribution.qualification_policy(ROOT, "0.3.8")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            policy = root / "release/deployment/0.3.8.json"
+            with self.assertRaises(FileNotFoundError):
+                distribution.qualification_policy(root, "0.3.8")
+            policy.parent.mkdir(parents=True)
+            changes = (
+                {"version": "0.3.9"},
+                {"schema": True},
+                {"status": "passed"},
+                {"release_owner": "unknown"},
+                {"reason": " "},
+                {"checks": {"rollback": "passed"}},
+            )
+            for change in changes:
+                with self.subTest(change=change):
+                    policy.write_text(json.dumps(valid | change), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "deferral"):
+                        distribution.qualification_policy(root, "0.3.8")
+
+
 def gzip_layer(members: list[tuple[str, bytes]]) -> bytes:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w") as layer:
@@ -843,6 +878,19 @@ class PrnsdDistributionTests(unittest.TestCase):
                 image_digest=manifest_digest,
             )
             distribution.verify_suite_release(verify)
+            if VERSION == "0.3.8":
+                published_record = release / record.name
+                original_record = published_record.read_bytes()
+                altered = json.loads(original_record)
+                self.assertEqual(
+                    altered["railway"]["qualification"],
+                    distribution.qualification_policy(ROOT, VERSION),
+                )
+                altered["railway"]["qualification"]["status"] = "passed"
+                published_record.write_bytes(distribution.canonical_json(altered))
+                with self.assertRaisesRegex(ValueError, "record differs"):
+                    distribution.verify_suite_release(verify)
+                published_record.write_bytes(original_record)
             (release / f"public-review-v{VERSION}-run-71-attempt-2.json").write_text(
                 "{}\n", encoding="utf-8"
             )

@@ -53,14 +53,25 @@ use super::host_protocol::{
 };
 use super::scheduling_policy::{SchedulerPolicy, MAX_INTERACTIVE_CRYPTO_BATCH};
 
+#[cfg(feature = "simulation-control")]
+mod controlled;
 mod worker_placement;
+#[cfg(feature = "simulation-control")]
+pub use controlled::{
+    ControlledCrypto, ControlledCryptoError, ControlledCryptoEvent, ControlledCryptoSnapshot,
+    ControlledCryptoStep, ControlledJobId, ControlledWorkKind, ControlledWorkerId,
+    CryptoWorkBoundary,
+};
 
 use worker_placement::{performance_core_count, CryptoWorkerLayout, CryptoWorkerRole};
 
 /// How the host runtime runs the engine's asymmetric crypto. `Pooled` offloads verify/seal/sign/decrypt to worker threads and keeps the manifold hot; `Inline` runs them on the manifold thread (the embedded shape, and the mobile default).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "simulation-control"), derive(Copy, PartialEq, Eq))]
 pub enum CryptoPoolConfig {
     Inline,
+    #[cfg(feature = "simulation-control")]
+    Controlled(ControlledCrypto),
     Pooled {
         workers: PoolWorkers,
         placement: CryptoWorkerPlacement,
@@ -101,6 +112,10 @@ impl CryptoPoolConfig {
     }
 
     fn with_env_override(self) -> Self {
+        #[cfg(feature = "simulation-control")]
+        if matches!(self, Self::Controlled(_)) {
+            return self;
+        }
         let workers_env = std::env::var("PRNS_CRYPTO_WORKERS")
             .ok()
             .and_then(|raw| raw.trim().parse::<usize>().ok())
@@ -114,6 +129,8 @@ impl CryptoPoolConfig {
             Some("0" | "off" | "false" | "no") => Self::Inline,
             Some("") | None => match self {
                 Self::Inline => Self::Inline,
+                #[cfg(feature = "simulation-control")]
+                Self::Controlled(control) => Self::Controlled(control),
                 Self::Pooled { workers, placement } => Self::Pooled {
                     workers: workers_env.unwrap_or(workers),
                     placement,
@@ -129,6 +146,8 @@ impl CryptoPoolConfig {
     pub(crate) fn resolved(self) -> Option<ResolvedCryptoPoolConfig> {
         match self.with_env_override() {
             Self::Inline => None,
+            #[cfg(feature = "simulation-control")]
+            Self::Controlled(_) => None,
             Self::Pooled { workers, placement } => Some(ResolvedCryptoPoolConfig {
                 workers: workers.resolve(),
                 placement,
@@ -136,8 +155,12 @@ impl CryptoPoolConfig {
         }
     }
 
-    pub(crate) fn resolved_worker_count(self) -> Option<NonZeroUsize> {
-        self.resolved().map(|resolved| resolved.workers)
+    pub(crate) fn resolved_worker_count(&self) -> Option<NonZeroUsize> {
+        #[cfg(feature = "simulation-control")]
+        let config = self.clone();
+        #[cfg(not(feature = "simulation-control"))]
+        let config = *self;
+        config.resolved().map(|resolved| resolved.workers)
     }
 }
 
@@ -826,6 +849,8 @@ enum CryptoWorkerStart {
 }
 
 pub(super) struct CryptoPool {
+    #[cfg(feature = "simulation-control")]
+    control: Option<ControlledCrypto>,
     state: Arc<CryptoPoolState>,
     workers: Vec<CryptoWorker>,
     verify_batch_target: usize,
@@ -1027,6 +1052,8 @@ impl CryptoPool {
                 performance_cores.min(verification_workers)
             });
         Some(Self {
+            #[cfg(feature = "simulation-control")]
+            control: None,
             state,
             workers: worker_slots,
             verify_batch_target: verify_batch_target(worker_count, verification_parallelism),
@@ -1182,12 +1209,20 @@ impl CryptoPool {
                 } else {
                     &self.workers[worker].interactive_job_producer
                 };
+                #[cfg(feature = "simulation-control")]
+                let kind = (controlled::work_kind(&pending.job), pending.class);
                 let pushed = match producer.borrow_mut().as_mut() {
                     Some(producer) => producer.push(pending),
                     None => Err(PushError::Full(pending)),
                 };
                 match pushed {
-                    Ok(()) => return worker,
+                    Ok(()) => {
+                        #[cfg(feature = "simulation-control")]
+                        if let Some(control) = &self.control {
+                            control.queued(worker, kind.0, kind.1);
+                        }
+                        return worker;
+                    }
                     Err(PushError::Full(returned)) => pending = returned,
                 }
                 worker += 1;
@@ -1336,6 +1371,10 @@ impl CryptoPool {
                 .as_mut()
                 .and_then(|consumer| consumer.pop().ok());
             if let Some(scheduled) = result {
+                #[cfg(feature = "simulation-control")]
+                if let Some(control) = &self.control {
+                    control.consumed(worker);
+                }
                 self.state.completion_readiness.release(1);
                 self.next_completion
                     .set(if worker + 1 == self.workers.len() {
@@ -1449,6 +1488,10 @@ fn elapsed_micros(started_at: std::time::Instant) -> u64 {
 impl Drop for CryptoPool {
     fn drop(&mut self) {
         self.state.shutdown.store(true, Ordering::Release);
+        #[cfg(feature = "simulation-control")]
+        if let Some(control) = &self.control {
+            control.retire();
+        }
         for worker in &self.workers {
             if let Some(handle) = &worker.handle {
                 handle.thread().unpark();

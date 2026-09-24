@@ -5,7 +5,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::mpsc::{self, Receiver};
 use tokio::sync::oneshot;
 
 use crate::engine::{
@@ -13,7 +13,7 @@ use crate::engine::{
     MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
 use crate::manifold::compression;
-use crate::manifold::driver::{HostCommand, StreamInbound};
+use crate::manifold::driver::{HostCommand, StreamInbound, StreamReceiveFailure};
 use crate::routing::links::channel::byte_stream::{
     StreamDataHeader, HEADER_LEN, MAX_STREAM_CHUNK_LEN, STREAM_DATA_TYPE,
 };
@@ -21,6 +21,7 @@ use crate::routing::links::LinkId;
 
 use super::PrnsNodeHandle;
 
+pub use crate::manifold::driver::StreamReaderRegistrationError;
 pub use crate::routing::links::channel::byte_stream::StreamId;
 
 /// RNS `StreamDataMessage.MAX_DATA_LEN`.
@@ -31,23 +32,48 @@ const COMPRESSION_MIN_CHUNK: usize = 32;
 const MAX_COMPRESSION_TRIES: usize = 4;
 
 const WINDOW_BACKOFF: Duration = Duration::from_millis(5);
+/// A slow reader must fail explicitly before queued stream chunks grow without bound.
+pub const BYTE_STREAM_RECEIVE_QUEUE_DEPTH: usize = 32;
+
+enum StreamReadPhase {
+    Receiving,
+    Complete,
+    Failed(StreamReceiveFailure),
+}
 
 pub struct ByteStreamReader {
-    inbound: UnboundedReceiver<StreamInbound>,
+    inbound: Receiver<StreamInbound>,
+    failure: oneshot::Receiver<StreamReceiveFailure>,
     current: Option<std::vec::Vec<u8>>,
     cursor: usize,
-    eof: bool,
+    phase: StreamReadPhase,
 }
 
 impl ByteStreamReader {
-    pub(crate) fn new(inbound: UnboundedReceiver<StreamInbound>) -> Self {
+    pub(crate) fn new(
+        inbound: Receiver<StreamInbound>,
+        failure: oneshot::Receiver<StreamReceiveFailure>,
+    ) -> Self {
         Self {
             inbound,
+            failure,
             current: None,
             cursor: 0,
-            eof: false,
+            phase: StreamReadPhase::Receiving,
         }
     }
+}
+
+fn receive_error(failure: StreamReceiveFailure) -> io::Error {
+    let kind = match failure {
+        StreamReceiveFailure::AlreadyRegistered => io::ErrorKind::AlreadyExists,
+        StreamReceiveFailure::Overflowed | StreamReceiveFailure::MalformedCompressedChunk => {
+            io::ErrorKind::InvalidData
+        }
+        StreamReceiveFailure::LinkClosed => io::ErrorKind::UnexpectedEof,
+        StreamReceiveFailure::SourceStopped => io::ErrorKind::BrokenPipe,
+    };
+    io::Error::new(kind, failure)
 }
 
 impl AsyncRead for ByteStreamReader {
@@ -57,6 +83,20 @@ impl AsyncRead for ByteStreamReader {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
+        if let StreamReadPhase::Failed(failure) = &this.phase {
+            return Poll::Ready(Err(receive_error(*failure)));
+        }
+        if matches!(&this.phase, StreamReadPhase::Receiving) {
+            let failure = match Pin::new(&mut this.failure).poll(cx) {
+                Poll::Ready(Ok(failure)) => Some(failure),
+                Poll::Ready(Err(_)) => Some(StreamReceiveFailure::SourceStopped),
+                Poll::Pending => None,
+            };
+            if let Some(failure) = failure {
+                this.phase = StreamReadPhase::Failed(failure);
+                return Poll::Ready(Err(receive_error(failure)));
+            }
+        }
         loop {
             if let Some(chunk) = this.current.as_ref() {
                 if this.cursor < chunk.len() {
@@ -68,14 +108,11 @@ impl AsyncRead for ByteStreamReader {
             }
             this.current = None;
             this.cursor = 0;
-            if this.eof {
+            if matches!(&this.phase, StreamReadPhase::Complete) {
                 return Poll::Ready(Ok(()));
             }
             match this.inbound.poll_recv(cx) {
                 Poll::Ready(Some(inbound)) => {
-                    if inbound.eof {
-                        this.eof = true;
-                    }
                     let payload = if inbound.compressed {
                         match compression::decompress_bounded(
                             &inbound.payload,
@@ -83,21 +120,23 @@ impl AsyncRead for ByteStreamReader {
                         ) {
                             Ok(bytes) => bytes,
                             Err(_) => {
-                                return Poll::Ready(Err(io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    "malformed compressed stream chunk",
-                                )))
+                                let failure = StreamReceiveFailure::MalformedCompressedChunk;
+                                this.phase = StreamReadPhase::Failed(failure);
+                                return Poll::Ready(Err(receive_error(failure)));
                             }
                         }
                     } else {
                         inbound.payload
                     };
+                    if inbound.eof {
+                        this.phase = StreamReadPhase::Complete;
+                    }
                     this.current = Some(payload);
                     this.cursor = 0;
                 }
                 Poll::Ready(None) => {
-                    this.eof = true;
-                    return Poll::Ready(Ok(()));
+                    this.phase = StreamReadPhase::Failed(StreamReceiveFailure::SourceStopped);
+                    return Poll::Ready(Err(receive_error(StreamReceiveFailure::SourceStopped)));
                 }
                 Poll::Pending => return Poll::Pending,
             }
@@ -147,21 +186,40 @@ async fn send_chunk(
     }
 }
 
+enum StreamChunkEncoding {
+    Plain,
+    Compressed,
+}
+
+struct PreparedStreamChunk {
+    payload: std::vec::Vec<u8>,
+    encoding: StreamChunkEncoding,
+    consumed: usize,
+}
+
 /// RNS `RawChannelWriter.write`'s compression choice
-fn compress_stream_chunk(input: std::vec::Vec<u8>) -> (std::vec::Vec<u8>, bool, usize) {
+fn compress_stream_chunk(input: std::vec::Vec<u8>) -> PreparedStreamChunk {
     let chunk_len = input.len();
     let mut comp_try = 1;
     while chunk_len > COMPRESSION_MIN_CHUNK && comp_try < MAX_COMPRESSION_TRIES {
         let segment_len = chunk_len / comp_try;
         if let Some(compressed) = compression::compress_if_smaller(&input[..segment_len]) {
             if compressed.len() < CHUNK_CEILING {
-                return (compressed, true, segment_len);
+                return PreparedStreamChunk {
+                    payload: compressed,
+                    encoding: StreamChunkEncoding::Compressed,
+                    consumed: segment_len,
+                };
             }
         }
         comp_try += 1;
     }
     let take = chunk_len.min(CHUNK_CEILING);
-    (input[..take].to_vec(), false, take)
+    PreparedStreamChunk {
+        payload: input[..take].to_vec(),
+        encoding: StreamChunkEncoding::Plain,
+        consumed: take,
+    }
 }
 
 type SendFuture<T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send>>;
@@ -193,16 +251,38 @@ impl PrnsNodeHandle {
         link_id: LinkId,
         stream_id: StreamId,
     ) -> ByteStreamReader {
-        let (sink, inbound) = mpsc::unbounded_channel();
+        self.register_byte_stream_reader(link_id, stream_id).await.0
+    }
+
+    /// Register exclusively; an existing reader and stream remain untouched on failure.
+    pub async fn try_byte_stream_reader(
+        &self,
+        link_id: LinkId,
+        stream_id: StreamId,
+    ) -> Result<ByteStreamReader, StreamReaderRegistrationError> {
+        let (reader, registered) = self.register_byte_stream_reader(link_id, stream_id).await;
+        registered.map(|()| reader)
+    }
+
+    async fn register_byte_stream_reader(
+        &self,
+        link_id: LinkId,
+        stream_id: StreamId,
+    ) -> (ByteStreamReader, Result<(), StreamReaderRegistrationError>) {
+        let (sink, inbound) = mpsc::channel(BYTE_STREAM_RECEIVE_QUEUE_DEPTH);
+        let (failure, failure_rx) = oneshot::channel();
         let (ready, registered) = oneshot::channel();
         let _ = self.commands.send(HostCommand::RegisterStreamReader {
             link_id,
             stream_id,
             sink,
+            failure,
             ready,
         });
-        let _ = registered.await;
-        ByteStreamReader::new(inbound)
+        let registration = registered
+            .await
+            .unwrap_or(Err(StreamReaderRegistrationError::NodeStopped));
+        (ByteStreamReader::new(inbound, failure_rx), registration)
     }
 
     /// Open a byte-stream writer on this link and stream id: an `AsyncWrite` framing each write as a stream-data channel send.
@@ -242,7 +322,7 @@ impl AsyncWrite for ByteStreamWriter {
                 let link_id = this.link_id;
                 let stream_id = this.stream_id;
                 let mut fut: SendFuture<usize> = Box::pin(async move {
-                    let (payload, compressed, consumed) = if chunk_len > COMPRESSION_MIN_CHUNK {
+                    let prepared = if chunk_len > COMPRESSION_MIN_CHUNK {
                         tokio::task::spawn_blocking(move || compress_stream_chunk(input))
                             .await
                             .map_err(|_| {
@@ -254,9 +334,9 @@ impl AsyncWrite for ByteStreamWriter {
                     let header = StreamDataHeader {
                         stream_id,
                         eof: false,
-                        compressed,
+                        compressed: matches!(prepared.encoding, StreamChunkEncoding::Compressed),
                     };
-                    send_chunk(handle, link_id, header, payload, consumed).await
+                    send_chunk(handle, link_id, header, prepared.payload, prepared.consumed).await
                 });
                 match fut.as_mut().poll(cx) {
                     Poll::Ready(result) => Poll::Ready(result),

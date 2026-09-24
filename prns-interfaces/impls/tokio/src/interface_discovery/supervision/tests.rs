@@ -199,7 +199,7 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
         app_state: prns_runtime::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: prns_runtime::request_endpoints![],
-        remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable,
+        remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable.into(),
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
         on_event: |_event, _state: &prns_runtime::runtime::NoRemoteControlHostControls| {},

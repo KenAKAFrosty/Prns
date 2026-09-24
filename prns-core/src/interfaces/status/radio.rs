@@ -16,6 +16,9 @@ const TAG_WIFI_PENDING: u8 = 4;
 const TAG_WIFI_RSSI: u8 = 5;
 const TAG_LORA_PENDING: u8 = 6;
 const TAG_LORA_SAMPLE: u8 = 7;
+const TAG_HALOW_UNAVAILABLE: u8 = 8;
+const TAG_HALOW_PENDING: u8 = 9;
+const TAG_HALOW_RSSI: u8 = 10;
 const LORA_FLAG_SNR: u8 = 0x01;
 const LORA_FLAG_QUALITY: u8 = 0x02;
 
@@ -24,6 +27,7 @@ pub enum RadioFamily {
     NotRadio,
     Bluetooth,
     Wifi,
+    HaLow,
     LoRa,
 }
 
@@ -33,6 +37,7 @@ impl InterfaceKind {
         match self {
             Self::BluetoothAuto | Self::BluetoothPeer => RadioFamily::Bluetooth,
             Self::LoRa | Self::Rnode => RadioFamily::LoRa,
+            Self::WifiHaLow | Self::WifiHaLowPeer | Self::WifiHaLowBroadcast => RadioFamily::HaLow,
             Self::AutoWifi
             | Self::WifiPeer
             | Self::WifiDirect
@@ -72,6 +77,7 @@ pub enum RadioIndication {
     NotRadio,
     Bluetooth(BluetoothIndication),
     Wifi(WifiIndication),
+    HaLow(WifiIndication),
     LoRa(LoRaIndication),
 }
 
@@ -83,7 +89,7 @@ pub enum BluetoothIndication {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WifiIndication {
-    /// The medium is RF, but this node has no per-peer measurement (UDP Auto Wi-Fi).
+    /// The medium is RF, but this backend exposes no per-peer measurement.
     Unavailable,
     Pending,
     Rssi(RssiDbm),
@@ -109,6 +115,7 @@ impl RadioIndication {
                 RadioFamily::NotRadio => Self::NotRadio,
                 RadioFamily::Bluetooth => Self::Bluetooth(BluetoothIndication::Pending),
                 RadioFamily::Wifi => Self::Wifi(WifiIndication::Unavailable),
+                RadioFamily::HaLow => Self::HaLow(WifiIndication::Unavailable),
                 RadioFamily::LoRa => Self::LoRa(LoRaIndication::Pending),
             },
             None => Self::NotRadio,
@@ -142,10 +149,12 @@ impl RadioIndication {
             | Self::Bluetooth(BluetoothIndication::Pending)
             | Self::Wifi(WifiIndication::Unavailable)
             | Self::Wifi(WifiIndication::Pending)
+            | Self::HaLow(WifiIndication::Unavailable)
+            | Self::HaLow(WifiIndication::Pending)
             | Self::LoRa(LoRaIndication::Pending) => 1,
-            Self::Bluetooth(BluetoothIndication::Rssi(_)) | Self::Wifi(WifiIndication::Rssi(_)) => {
-                3
-            }
+            Self::Bluetooth(BluetoothIndication::Rssi(_))
+            | Self::Wifi(WifiIndication::Rssi(_))
+            | Self::HaLow(WifiIndication::Rssi(_)) => 3,
             Self::LoRa(LoRaIndication::Sample { snr, quality, .. }) => {
                 let mut len = 4usize;
                 if snr.is_some() {
@@ -190,6 +199,18 @@ impl RadioIndication {
                 *tag_out = TAG_LORA_PENDING;
                 Some(rest)
             }
+            Self::HaLow(WifiIndication::Unavailable) => {
+                *tag_out = TAG_HALOW_UNAVAILABLE;
+                Some(rest)
+            }
+            Self::HaLow(WifiIndication::Pending) => {
+                *tag_out = TAG_HALOW_PENDING;
+                Some(rest)
+            }
+            Self::HaLow(WifiIndication::Rssi(rssi)) => {
+                *tag_out = TAG_HALOW_RSSI;
+                write_i16(rest, rssi.get())
+            }
             Self::LoRa(LoRaIndication::Sample { rssi, snr, quality }) => {
                 *tag_out = TAG_LORA_SAMPLE;
                 let rest = write_i16(rest, rssi.get())?;
@@ -233,6 +254,12 @@ impl RadioIndication {
                 Some((Self::Wifi(WifiIndication::Rssi(RssiDbm::new(rssi))), rest))
             }
             TAG_LORA_PENDING => Some((Self::LoRa(LoRaIndication::Pending), rest)),
+            TAG_HALOW_UNAVAILABLE => Some((Self::HaLow(WifiIndication::Unavailable), rest)),
+            TAG_HALOW_PENDING => Some((Self::HaLow(WifiIndication::Pending), rest)),
+            TAG_HALOW_RSSI => {
+                let (rssi, rest) = parse_i16(rest)?;
+                Some((Self::HaLow(WifiIndication::Rssi(RssiDbm::new(rssi))), rest))
+            }
             TAG_LORA_SAMPLE => {
                 let (rssi, rest) = parse_i16(rest)?;
                 let (flags, rest) = rest.split_first()?;
@@ -325,6 +352,9 @@ mod tests {
             RadioIndication::from_bluetooth_rssi(Some(-67)),
             RadioIndication::Wifi(WifiIndication::Unavailable),
             RadioIndication::Wifi(WifiIndication::Rssi(RssiDbm::new(-51))),
+            RadioIndication::HaLow(WifiIndication::Unavailable),
+            RadioIndication::HaLow(WifiIndication::Pending),
+            RadioIndication::HaLow(WifiIndication::Rssi(RssiDbm::new(-91))),
             RadioIndication::from_lora_phy(PacketPhyStats {
                 rssi: Some(RssiDbm::new(-103)),
                 snr: Some(SnrQuarterDb::new(-11)),

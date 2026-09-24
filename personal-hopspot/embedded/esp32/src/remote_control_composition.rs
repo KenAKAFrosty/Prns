@@ -1,6 +1,6 @@
 use personal_hopspot_core::{
-    RemoteControlEventHandoff, RemoteControlTargetPairingState, RemoteControlTargetPairingUpdate,
-    StableTargetAnnouncementAction, StableTargetAnnouncer,
+    RemoteControlEventHandoff, RemoteControlTargetPairingFailure, RemoteControlTargetPairingState,
+    RemoteControlTargetPairingUpdate, StableTargetAnnouncementAction, StableTargetAnnouncer,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -116,28 +116,27 @@ where
         &mut self,
         attempt_id: Attempt,
     ) -> RemoteControlCompositionOutput<RemoteControlTargetPairingUpdate> {
-        let mut output = self.update_pairing(|state| state.persisted(attempt_id));
-        if output.value == RemoteControlTargetPairingUpdate::Changed {
-            self.announcer.trigger_automatic();
-            output.effects = output.effects.with_announcer_wake();
-        }
-        output
+        self.update_pairing(|state| state.persisted(attempt_id))
+    }
+
+    pub(crate) fn target_persistence_failed(
+        &mut self,
+        attempt_id: Attempt,
+    ) -> RemoteControlCompositionOutput<RemoteControlTargetPairingUpdate> {
+        self.update_pairing(|state| {
+            if state.attempt_id().is_none() {
+                return RemoteControlTargetPairingUpdate::StaleAttempt;
+            }
+            state.operation_failed(
+                Some(attempt_id),
+                RemoteControlTargetPairingFailure::Persistence,
+            )
+        })
     }
 
     #[must_use]
     pub(crate) fn take_current_pairing(&mut self) -> RemoteControlTargetPairingState<Attempt> {
         self.events.take_current()
-    }
-
-    pub(crate) fn observe_restored_controller_grants(
-        &mut self,
-        restored_count: u32,
-    ) -> RemoteControlCompositionEffects {
-        if restored_count == 0 {
-            return RemoteControlCompositionEffects::default();
-        }
-        self.announcer.trigger_automatic();
-        RemoteControlCompositionEffects::default().with_announcer_wake()
     }
 
     pub(crate) fn set_transmit_ready(&mut self, ready: bool) -> RemoteControlCompositionEffects {
@@ -244,7 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn embedded_fake_clock_composes_persistence_wakes_retries_and_readiness() {
+    fn persistence_and_readiness_never_schedule_announcements() {
         let attempt_id = 0xA5_u8;
         let mut composition = RemoteControlComposition::new();
 
@@ -258,7 +257,7 @@ mod tests {
         let (persisted, effects) = composition.authorization_persisted(attempt_id).into_parts();
         assert_eq!(persisted, RemoteControlTargetPairingUpdate::Changed);
         assert!(effects.wake_ui());
-        assert!(effects.wake_announcer());
+        assert!(!effects.wake_announcer());
         assert!(!effects.close_pairing());
         assert!(composition.pairing_wake_pending());
 
@@ -267,157 +266,24 @@ mod tests {
         assert_eq!(pairing.attempt_id(), Some(attempt_id));
         assert!(!composition.pairing_wake_pending());
 
-        // Boot/persistence triggers share one capacity-one owner and coalesce before polling.
-        assert!(composition
-            .observe_restored_controller_grants(1)
-            .wake_announcer());
-        assert!(composition
-            .observe_restored_controller_grants(2)
-            .wake_announcer());
-        assert_eq!(
-            composition.observe_restored_controller_grants(0),
-            Default::default()
-        );
-
-        let mut clock = FakeClock::new(10_000);
-        assert_eq!(clock.poll(&mut composition).into_parts().0, None);
-        assert!(composition.set_transmit_ready(true).wake_announcer());
-
-        let (first, effects) = clock.poll(&mut composition).into_parts();
-        let first = first.expect("the persistence burst starts immediately when egress is ready");
-        assert_eq!(
-            first,
-            StableTargetAnnouncementAction::AutomaticStableTarget { attempt: 1 }
-        );
-        assert!(effects.wake_ui());
-        let (accepted, effects) = composition
-            .settle_announcement(first, StableTargetAnnouncementSettlement::Failed)
-            .into_parts();
-        assert!(accepted);
-        assert!(effects.wake_ui());
-        assert_eq!(
-            composition.take_current_pairing().stable_announcement(),
-            StableTargetAnnouncementStatus::Failed
-        );
-        assert_eq!(
-            composition.next_announcement_deadline_millis(),
-            Some(12_000)
-        );
-
-        clock.set(11_999);
-        assert_eq!(clock.poll(&mut composition).into_parts().0, None);
-        clock.set(12_000);
-        let second = clock
-            .poll(&mut composition)
-            .into_parts()
-            .0
-            .expect("the second attempt uses the exact two-second offset");
-        assert_eq!(
-            second,
-            StableTargetAnnouncementAction::AutomaticStableTarget { attempt: 2 }
-        );
-        assert!(
-            composition
-                .settle_announcement(second, StableTargetAnnouncementSettlement::Succeeded)
-                .into_parts()
-                .0
-        );
-        assert_eq!(
-            composition.take_current_pairing().stable_announcement(),
-            StableTargetAnnouncementStatus::Failed,
-            "a later success must not hide an earlier settlement failure"
-        );
-        assert_eq!(
-            composition.next_announcement_deadline_millis(),
-            Some(18_000)
-        );
-
-        assert!(composition.set_transmit_ready(false).wake_announcer());
-        clock.set(20_000);
-        assert_eq!(clock.poll(&mut composition).into_parts().0, None);
-        assert_eq!(composition.next_announcement_deadline_millis(), None);
-
-        assert!(composition.set_transmit_ready(true).wake_announcer());
-        clock.set(25_000);
-        let restarted = clock
-            .poll(&mut composition)
-            .into_parts()
-            .0
-            .expect("readiness re-arms a fresh burst immediately");
-        assert_eq!(
-            restarted,
-            StableTargetAnnouncementAction::AutomaticStableTarget { attempt: 1 }
-        );
-        assert!(
-            composition
-                .settle_announcement(restarted, StableTargetAnnouncementSettlement::Succeeded)
-                .into_parts()
-                .0
-        );
-
-        clock.set(26_999);
-        assert_eq!(clock.poll(&mut composition).into_parts().0, None);
-        clock.set(27_000);
-        let retry = clock
-            .poll(&mut composition)
-            .into_parts()
-            .0
-            .expect("the re-armed second attempt uses the two-second offset");
-        assert_eq!(
-            retry,
-            StableTargetAnnouncementAction::AutomaticStableTarget { attempt: 2 }
-        );
-        assert!(
-            composition
-                .settle_announcement(retry, StableTargetAnnouncementSettlement::Succeeded)
-                .into_parts()
-                .0
-        );
-
-        clock.set(32_999);
-        assert_eq!(clock.poll(&mut composition).into_parts().0, None);
-        clock.set(33_000);
-        let final_attempt = clock
-            .poll(&mut composition)
-            .into_parts()
-            .0
-            .expect("the re-armed third attempt uses the eight-second offset");
-        assert_eq!(
-            final_attempt,
-            StableTargetAnnouncementAction::AutomaticStableTarget { attempt: 3 }
-        );
-        assert!(
-            composition
-                .settle_announcement(final_attempt, StableTargetAnnouncementSettlement::Succeeded,)
-                .into_parts()
-                .0
-        );
-        assert_eq!(composition.next_announcement_deadline_millis(), None);
-        clock.set(u64::MAX);
-        assert_eq!(clock.poll(&mut composition).into_parts().0, None);
-        assert!(composition.announcer_is_idle());
+        let mut clock = FakeClock::new(0);
+        for now in [0, 2_000, 8_000, 60_000, u64::MAX] {
+            clock.set(now);
+            for ready in [true, false, true] {
+                composition.set_transmit_ready(ready);
+                assert_eq!(clock.poll(&mut composition).into_parts().0, None);
+                assert_eq!(composition.next_announcement_deadline_millis(), None);
+                assert!(composition.announcer_is_idle());
+            }
+        }
     }
 
     #[test]
     fn deliberate_dual_announcement_shares_the_serial_composition_owner() {
         let mut composition = RemoteControlComposition::<u8>::new();
         composition.set_transmit_ready(true);
-        composition.observe_restored_controller_grants(1);
         let clock = FakeClock::new(1_000);
-        let automatic = clock
-            .poll(&mut composition)
-            .into_parts()
-            .0
-            .expect("the automatic announcement is in flight");
-
         assert!(composition.request_manual_announcements().wake_announcer());
-        assert_eq!(clock.poll(&mut composition).into_parts().0, None);
-        assert!(
-            composition
-                .settle_announcement(automatic, StableTargetAnnouncementSettlement::Succeeded)
-                .into_parts()
-                .0
-        );
 
         let node = clock
             .poll(&mut composition)
@@ -452,20 +318,53 @@ mod tests {
     }
 
     #[test]
+    fn explicit_success_does_not_schedule_a_followup() {
+        let mut composition = RemoteControlComposition::<u8>::new();
+        composition.set_transmit_ready(true);
+        composition.request_manual_announcements();
+        for expected in [
+            StableTargetAnnouncementAction::ManualNodePage,
+            StableTargetAnnouncementAction::ManualStableTarget,
+        ] {
+            let action = composition.poll_announcement(0).into_parts().0.unwrap();
+            assert_eq!(action, expected);
+            assert!(
+                composition
+                    .settle_announcement(action, StableTargetAnnouncementSettlement::Succeeded)
+                    .into_parts()
+                    .0
+            );
+        }
+        assert!(composition.announcer_is_idle());
+        assert_eq!(composition.poll_announcement(u64::MAX).into_parts().0, None);
+        assert_eq!(composition.next_announcement_deadline_millis(), None);
+    }
+
+    #[test]
     fn persistence_failure_is_owned_by_the_same_visible_state_slot() {
         let attempt_id = 7_u8;
         let mut composition = RemoteControlComposition::new();
+
+        let (unrelated, effects) = composition
+            .target_persistence_failed(attempt_id)
+            .into_parts();
+        assert_eq!(unrelated, RemoteControlTargetPairingUpdate::StaleAttempt);
+        assert_eq!(effects, Default::default());
+        assert_eq!(
+            composition.take_current_pairing().phase(),
+            RemoteControlTargetPairingPhase::Idle
+        );
+
         composition.update_pairing(|state| {
             state.confirmation_required(attempt_id, 654_321, InstantMillis(30_000))
         });
 
+        let (unrelated, effects) = composition.target_persistence_failed(8_u8).into_parts();
+        assert_eq!(unrelated, RemoteControlTargetPairingUpdate::StaleAttempt);
+        assert_eq!(effects, Default::default());
+
         let (update, effects) = composition
-            .update_pairing(|state| {
-                state.operation_failed(
-                    Some(attempt_id),
-                    RemoteControlTargetPairingFailure::Persistence,
-                )
-            })
+            .target_persistence_failed(attempt_id)
             .into_parts();
         assert_eq!(update, RemoteControlTargetPairingUpdate::Changed);
         assert!(effects.wake_ui());

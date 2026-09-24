@@ -2,7 +2,9 @@
 
 `F6eb•`f `F6eb`!Efficiency`!`f
 >>>
-Faster in every measured scenario, in benchmarks that you can easily rerun yourself. The published benchmarks show up to 89× the throughput, 48× smaller peak-memory footprint, and 33× the energy efficiency of stock RNS 1.4.2. 
+Benchmarks you can rerun yourself compare Prns with stock interpreted RNS 1.5.4. Single-packet throughput on an Apple M4 reaches 110.22×. Across 30 published host/scenario comparisons, the middle half is roughly 5×–25× (median 9.62×), with a full range of 1.02×–110.22×.
+
+In separate Linux workloads, Prns uses about 97% less peak memory than stock RNS for the sender of a matched-policy 64-segment stream, and about 98% less processor energy per request for request/response. These are loopback results, not guaranteed radio speedups or battery-life gains. See benchmarks/README.md and benchmarks/RESULTS.md in the source for the measurement scope and full tables.
 
 >>
 `F6eb•`f `F6eb`!Drop-in`!`f

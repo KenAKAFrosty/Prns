@@ -137,7 +137,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
             .expect("server binds");
         let addr = server.local_addr().expect("bound addr").to_string();
         let node_a = PrnsNode::new(PrnsNodeRecipe {
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
             transport_identity: None,
             pre_configured_destinations: [single(secret(0xA1))],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -154,7 +154,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
             TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
         let node_b = PrnsNode::new(PrnsNodeRecipe {
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
             transport_identity: None,
             pre_configured_destinations: [single(secret(0xB2))],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -216,7 +216,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xA1))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -231,7 +231,7 @@ async fn a_rebooted_node_reaches_a_peer_from_its_seeded_snapshot_alone() {
 
     let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
     let mut node_b = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -322,7 +322,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         let addr = server.local_addr().expect("bound addr").to_string();
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
         let relay = PrnsNode::new(PrnsNodeRecipe {
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
             transport_identity: None,
             pre_configured_destinations: [single(secret(0xB2))],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -344,7 +344,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         let client =
             TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
         let node_c = PrnsNode::new(PrnsNodeRecipe {
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
             transport_identity: Some(secret(0x77)),
             pre_configured_destinations: [single(secret(0xC5))],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -421,7 +421,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let mut relay = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -448,7 +448,7 @@ async fn a_reconnecting_peer_reclaims_a_rebooted_relays_routes_through_its_tunne
 
     let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
     let node_c = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: Some(secret(0x77)),
         pre_configured_destinations: [single(secret(0xC5))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -501,7 +501,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
     let addr = server.local_addr().expect("bound addr").to_string();
     let (settled_tx, mut settled_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xA1)), single(secret(0xA3))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -521,7 +521,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
     let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -656,7 +656,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
             .expect("server binds");
         let addr = server.local_addr().expect("bound addr").to_string();
         let node_r = PrnsNode::new(PrnsNodeRecipe {
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
             transport_identity: None,
             pre_configured_destinations: [ratcheted(secret(0xD1))],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -674,7 +674,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
             TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
         let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
         let node_p = PrnsNode::new(PrnsNodeRecipe {
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
             transport_identity: None,
             pre_configured_destinations: [single(secret(0xB2))],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -744,7 +744,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
         .expect("server rebinds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let mut node_r = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [ratcheted(secret(0xD1))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -764,7 +764,7 @@ async fn a_rebooted_destination_decrypts_singles_sealed_to_its_pre_reboot_ratche
 
     let client = TcpClientInterface::new_with_id(pinned, addr, BITRATE, ReconnectPolicy::STANDARD);
     let mut node_p = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,

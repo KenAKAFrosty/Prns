@@ -454,25 +454,39 @@ mod tests {
     fn build_artifacts_are_checked_against_the_catalog_memory_contract(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let catalog = crate::board_catalog()?;
-        let board = catalog.board("t-echo").ok_or("missing T-Echo")?;
-        let crate::BoardBuild::Uf2(build) = &board.build else {
-            return Err("T-Echo does not use UF2".into());
-        };
-        let variant = build.variants.first().ok_or("missing UF2 variant")?;
-        let memory = variant.memory_layout()?;
-        let transport = memory.transport_envelope();
-        let firmware = memory.firmware_owned();
-        let valid = artifact(transport.start(), 0xada5_2840, 1);
-        assert_eq!(validate_uf2_build_artifact(variant, &valid), Ok(()));
+        for board in catalog.shipping_boards() {
+            let crate::BoardBuild::Uf2(build) = &board.build else {
+                continue;
+            };
+            for variant in &build.variants {
+                let memory = variant.memory_layout()?;
+                let transport = memory.transport_envelope();
+                let firmware = memory.firmware_owned();
+                let family = u32::from_str_radix(variant.family_id.trim_start_matches("0x"), 16)?;
+                let blocks = (firmware.end_exclusive() - transport.start()) / UF2_PAYLOAD_BYTES;
+                let last_owned_block = artifact(transport.start(), family, blocks);
+                assert_eq!(
+                    validate_uf2_build_artifact(variant, &last_owned_block),
+                    Ok(()),
+                    "{} S140 {} must accept the complete firmware-owned range",
+                    board.slug,
+                    variant.softdevice_version
+                );
 
-        let blocks = (firmware.end_exclusive() - transport.start()) / UF2_PAYLOAD_BYTES + 1;
-        let overflow = artifact(transport.start(), 0xada5_2840, blocks);
-        assert!(matches!(
-            validate_uf2_build_artifact(variant, &overflow),
-            Err(Uf2BuildArtifactError::Artifact(
-                Uf2ArtifactError::FirmwareOwnership(_)
-            ))
-        ));
+                let overflow = artifact(transport.start(), family, blocks + 1);
+                assert!(
+                    matches!(
+                        validate_uf2_build_artifact(variant, &overflow),
+                        Err(Uf2BuildArtifactError::Artifact(
+                            Uf2ArtifactError::FirmwareOwnership(index) | Uf2ArtifactError::Bounds(index)
+                        )) if index == blocks
+                    ),
+                    "{} S140 {} must reject the first block beyond firmware ownership",
+                    board.slug,
+                    variant.softdevice_version
+                );
+            }
+        }
         Ok(())
     }
 

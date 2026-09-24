@@ -94,12 +94,28 @@ pub enum LoRaReassemblyOutcome<'a> {
     Rejected(LoRaReassemblyError),
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum LoRaReassemblyReset {
+    NoPartial,
+    DiscardedPartial,
+}
+
 impl<const CAP: usize> LoRaReassembler<CAP> {
     pub const fn new() -> Self {
         Self {
             state: ReassemblyState::Idle,
             buffer: HeaplessVec::new(),
         }
+    }
+
+    pub fn reset(&mut self) -> LoRaReassemblyReset {
+        let outcome = match self.state {
+            ReassemblyState::Idle => LoRaReassemblyReset::NoPartial,
+            ReassemblyState::AwaitingSecond { .. } => LoRaReassemblyReset::DiscardedPartial,
+        };
+        self.state = ReassemblyState::Idle;
+        self.buffer.clear();
+        outcome
     }
 
     pub fn feed(&mut self, frame: &[u8]) -> LoRaReassemblyOutcome<'_> {
@@ -486,6 +502,53 @@ mod tests {
                 payload.len() > LORA_SINGLE_FRAME_PAYLOAD_MAX
             );
             prop_assert!(parsed.payload.is_empty());
+        }
+    }
+    #[test]
+    fn reset_discards_partial_state_once_and_never_joins_across_the_reset() {
+        let mut reassembler = LoRaReassembler::<16>::new();
+        assert_eq!(reassembler.reset(), LoRaReassemblyReset::NoPartial);
+        assert_eq!(
+            reassembler.feed(&[0x11, 1, 2]),
+            LoRaReassemblyOutcome::AwaitingSecond
+        );
+        assert_eq!(reassembler.reset(), LoRaReassemblyReset::DiscardedPartial);
+        assert_eq!(reassembler.reset(), LoRaReassemblyReset::NoPartial);
+        assert_eq!(
+            reassembler.feed(&[0x11, 3, 4]),
+            LoRaReassemblyOutcome::AwaitingSecond
+        );
+        assert!(
+            matches!(reassembler.feed(&[0x11, 5]), LoRaReassemblyOutcome::Delivered(packet) if packet.bytes == [3, 4, 5])
+        );
+        assert_eq!(reassembler.reset(), LoRaReassemblyReset::NoPartial);
+    }
+    #[test]
+    fn partial_capacity_failures_reset_the_reassembly_and_single_sided_phy_survives() {
+        let rejected = LoRaReassemblyOutcome::Rejected(LoRaReassemblyError::CapacityExceeded);
+        let mut reassembler = LoRaReassembler::<2>::default();
+        assert_eq!(reassembler.feed(&[0x11, 1, 2, 3]), rejected);
+        assert_eq!(
+            reassembler.feed(&[0x11, 1, 2]),
+            LoRaReassemblyOutcome::AwaitingSecond
+        );
+        assert_eq!(reassembler.feed(&[0x21, 1, 2, 3]), rejected);
+        assert_eq!(
+            reassembler.feed(&[0x11, 1, 2]),
+            LoRaReassemblyOutcome::AwaitingSecond
+        );
+        assert_eq!(reassembler.feed(&[0x11, 3]), rejected);
+        assert_eq!(reassembler.reset(), LoRaReassemblyReset::NoPartial);
+        let known = PacketPhyStats {
+            rssi: Some(RssiDbm::new(-90)),
+            snr: Some(SnrQuarterDb::new(8)),
+            quality: SignalQualityTenthsPercent::new(700),
+        };
+        for (first, second) in [
+            (known, PacketPhyStats::default()),
+            (PacketPhyStats::default(), known),
+        ] {
+            assert_eq!(average_phy(first, second), known);
         }
     }
 }

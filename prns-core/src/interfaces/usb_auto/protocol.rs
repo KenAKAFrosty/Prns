@@ -1,12 +1,12 @@
 use crate::interfaces::framing::rns_serial_framing;
 use crate::interfaces::framing::rns_serial_framing::RnsSerialDecoder;
 use crate::interfaces::InterfaceId;
-use crate::wire::BROADCAST_MTU;
 
 const PROTOCOL_VERSION_LEN: usize = 1;
 const MESSAGE_KIND_LEN: usize = 1;
 pub const NODE_TAG_LEN: usize = 8;
-pub const MAX_DATA_BYTES: usize = crate::interfaces::IFAC_MAX_SIZE + BROADCAST_MTU;
+pub const MAX_DATA_BYTES: usize =
+    crate::interfaces::IFAC_MAX_SIZE + super::policy::DEVICE_USB_HW_MTU;
 pub const MAX_MESSAGE_BYTES: usize = MESSAGE_KIND_LEN + MAX_DATA_BYTES;
 pub const MAX_FRAMED_BYTES: usize = rns_serial_framing::max_encoded_len(MAX_MESSAGE_BYTES);
 pub const READ_CHUNK_BYTES: usize = MAX_FRAMED_BYTES;
@@ -21,6 +21,7 @@ pub const WEBUSB_PRODUCT_ID: u16 = 0x0001;
 pub const BOOTLOADER_ENTRY_CONTROL_REQUEST: u8 = 0x50;
 pub const BOOTLOADER_ENTRY_CONTROL_VALUE: u16 = 0x5052;
 pub const BOOTLOADER_ENTRY_CONTROL_INDEX: u16 = 0x4e53;
+pub const UF2_HAND_OFF_CONTROL_REQUEST: u8 = 0x55;
 pub const ANDROID_ACCESSORY_MANUFACTURER: &str = "Personal";
 pub const ANDROID_ACCESSORY_MODEL: &str = "Hopspot";
 pub const ANDROID_ACCESSORY_DESCRIPTION: &str = "Prns USB Auto";

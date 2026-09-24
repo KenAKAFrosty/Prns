@@ -1,5 +1,12 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+pub enum Lr11xxPart {
+    Lr1110 = 0x01,
+    Lr1121 = 0x03,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum TcxoVoltage {
     V1_6 = 0x00,
     V1_7 = 0x01,
@@ -200,8 +207,18 @@ impl PowerAmplifierTable {
     }
 }
 
+#[cfg(feature = "lora-2g4")]
+#[derive(Debug, PartialEq, Eq)]
+pub enum HighFrequencyPath {
+    Unavailable,
+    Regulated { maximum_power_dbm: i8 },
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct BoardConfig {
+    pub part: Lr11xxPart,
+    #[cfg(feature = "lora-2g4")]
+    pub high_frequency: HighFrequencyPath,
     pub reference_clock: ReferenceClock,
     pub regulator: RegulatorMode,
     pub receive_gain: ReceiveGain,

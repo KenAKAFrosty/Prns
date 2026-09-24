@@ -93,7 +93,6 @@ struct EgressLane {
     pending: PendingEgressQueue,
     was_available: bool,
 
-    #[cfg(feature = "runtime-metrics")]
     logical_interface: InterfaceId,
 }
 
@@ -159,7 +158,6 @@ impl Egress {
                 connection: None,
                 pending: PendingEgressQueue::new(),
                 was_available: true,
-                #[cfg(feature = "runtime-metrics")]
                 logical_interface: id,
             })
             .collect::<std::vec::Vec<_>>();
@@ -511,15 +509,67 @@ impl Egress {
         supervisor: InterfaceKind,
         fan: FanTarget,
     ) -> std::vec::Vec<InterfaceId> {
-        let member = supervisor.member_kind();
         self.lanes
             .iter()
             .map(|lane| lane.id)
-            .filter(|id| id.kind() == member)
+            .filter(|id| id.kind().and_then(InterfaceKind::fanout_kind) == Some(supervisor))
+            .filter(|id| !id.kind().is_some_and(InterfaceKind::is_shared_broadcast))
             .filter(|id| match fan {
                 FanTarget::All => true,
                 FanTarget::Only(only) => *id == only,
                 FanTarget::AllExcept(except) => *id != except,
+            })
+            .collect()
+    }
+
+    fn announce_targets(&self, supervisor: InterfaceKind, fan: FanTarget) -> Vec<InterfaceId> {
+        let selected = |id| match fan {
+            FanTarget::All => true,
+            FanTarget::Only(only) => id == only,
+            FanTarget::AllExcept(except) => id != except,
+        };
+        let family: Vec<_> = self
+            .lanes
+            .iter()
+            .filter(|lane| lane.id.kind().and_then(InterfaceKind::fanout_kind) == Some(supervisor))
+            .collect();
+        let broadcasts: Vec<_> = family
+            .iter()
+            .copied()
+            .filter(|lane| {
+                lane.id
+                    .kind()
+                    .is_some_and(InterfaceKind::is_shared_broadcast)
+            })
+            .filter(|lane| selected(lane.id))
+            .filter(|lane| match fan {
+                FanTarget::All => true,
+                FanTarget::Only(only) => lane.id == only,
+                FanTarget::AllExcept(except) => !family.iter().any(|peer| {
+                    peer.logical_interface == lane.logical_interface && peer.id == except
+                }),
+            })
+            .collect();
+        family
+            .iter()
+            .filter_map(|lane| {
+                if !selected(lane.id) {
+                    return None;
+                }
+                if lane
+                    .id
+                    .kind()
+                    .is_some_and(InterfaceKind::is_shared_broadcast)
+                {
+                    return broadcasts
+                        .iter()
+                        .any(|broadcast| broadcast.id == lane.id)
+                        .then_some(lane.id);
+                }
+                (!broadcasts
+                    .iter()
+                    .any(|broadcast| broadcast.logical_interface == lane.logical_interface))
+                .then_some(lane.id)
             })
             .collect()
     }
@@ -584,9 +634,6 @@ impl Egress {
         producer: TokioGrantProducer,
         connection: Option<ConnectionView>,
     ) {
-        #[cfg(not(feature = "runtime-metrics"))]
-        let _ = logical_interface;
-
         let was_available = connection
             .as_ref()
             .is_none_or(|view| view.connection().is_online());
@@ -596,7 +643,6 @@ impl Egress {
             connection,
             pending: PendingEgressQueue::new(),
             was_available,
-            #[cfg(feature = "runtime-metrics")]
             logical_interface,
         });
         debug_assert!(inserted, "egress lanes require unique live interface ids");
@@ -838,7 +884,7 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
         let hops = announce.hops();
         #[cfg(feature = "runtime-metrics")]
         let origin = announce.origin();
-        for target in self.egress.broadcast_targets(supervisor, fan) {
+        for target in self.egress.announce_targets(supervisor, fan) {
             offer_to_pacer(
                 self.pacers,
                 target,
@@ -901,7 +947,7 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
         fan: FanTarget,
         bytes: &[u8],
     ) {
-        for target in self.egress.broadcast_targets(supervisor, fan) {
+        for target in self.egress.announce_targets(supervisor, fan) {
             enqueue_pacerless_announce_for_wire(
                 self.egress,
                 self.ifacs,

@@ -484,7 +484,7 @@ pub(crate) fn fulfill_ready_work(
                 });
             }
             InlineReadyWork::ResourceOpen(completed) => {
-                engine.resume_resource_open(completed, now, &mut |reaction| {
+                engine.resume_resource_open(completed, now, fill_random, &mut |reaction| {
                     route_or_capture(reaction, ready, sink)
                 });
             }
@@ -495,6 +495,7 @@ pub(crate) fn fulfill_ready_work(
                         outcome: WholeResourceOpenOutcome::Unavailable,
                     },
                     now,
+                    fill_random,
                     &mut |reaction| route_or_capture(reaction, ready, sink),
                 );
             }
@@ -517,6 +518,7 @@ pub(crate) fn fulfill_ready_work(
                         plaintext: &plaintext,
                     },
                     now,
+                    fill_random,
                     sink,
                 );
             }

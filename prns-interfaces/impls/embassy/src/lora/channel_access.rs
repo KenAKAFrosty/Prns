@@ -1,4 +1,4 @@
-use prns_core::interfaces::lora::{Modulation, RadioProfile};
+use prns_core::interfaces::lora::{LoRaProfile as RadioProfile, Modulation};
 
 use super::airtime_quantum::BackoffRate;
 
@@ -580,7 +580,8 @@ mod tests {
         CodingRate, Frequency, LoraBandwidth, ModemPreset, PreambleSymbols, SpreadingFactor,
         TxPower,
     };
-    use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
+    const US915_AUTO_LORA_PROFILE: RadioProfile =
+        RadioProfile::SubG(prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE);
     use prns_core::interfaces::subghz::{RegulatoryRegion, SubGRegion};
 
     fn begin(access: &mut ChannelAccess, entropy: u16) {
@@ -593,12 +594,20 @@ mod tests {
     }
 
     #[test]
+    fn an_uncalibrated_noise_floor_cannot_classify_a_sample_as_clear() {
+        assert_eq!(
+            NoiseFloor::new().classify(-120),
+            ChannelObservation::Unknown
+        );
+    }
+
+    #[test]
     fn timing_tracks_symbols_and_preserves_profile_bounds() {
         let normal = ChannelTiming::for_profile(US915_AUTO_LORA_PROFILE);
         assert_eq!(normal.slot_ms(), 24);
         assert_eq!(normal.sample_ms(), 6);
 
-        let fastest = RadioProfile::new(
+        let fastest = prns_core::interfaces::lora::RadioProfile::new(
             SubGRegion::Regulated(RegulatoryRegion::Us915),
             Frequency::new(915_000_000),
             Modulation::Lora {
@@ -610,7 +619,7 @@ mod tests {
             PreambleSymbols::new(18),
         )
         .unwrap();
-        assert_eq!(ChannelTiming::for_profile(fastest).slot_ms(), 6);
+        assert_eq!(ChannelTiming::for_profile(fastest.into()).slot_ms(), 6);
 
         let slowest = US915_AUTO_LORA_PROFILE
             .with_modulation(ModemPreset::LongSlow.modulation())
@@ -964,5 +973,95 @@ mod tests {
         clear_ms += timing.sample_ms();
         assert!(clear_ms < timing.difs_ms, "busy does restart DIFS");
         assert_eq!(remaining_ms, frozen);
+    }
+    #[test]
+    fn restarted_contention_preserves_wait_debt_and_never_reopens_completed_access() {
+        let profile = US915_AUTO_LORA_PROFILE;
+        for stage in 0..5 {
+            let mut access = ChannelAccess::new(profile, 0, 100_000);
+            let timing = ChannelTiming::for_profile(profile);
+            assert_eq!(
+                access.after_entropy(),
+                ChannelAccessAction::NeedBackoffEntropy
+            );
+            assert_eq!(
+                access.final_check(0, ChannelObservation::Clear),
+                ChannelAccessAction::Wait
+            );
+            if stage > 0 {
+                assert!(access.choose_backoff(u16::MAX));
+                assert!(!access.choose_backoff(0));
+            }
+            if stage > 1 {
+                assert_eq!(
+                    access.observe(timing.difs_ms, ChannelObservation::Clear, BackoffRate::ONE),
+                    ChannelAccessAction::Wait
+                );
+            }
+            if stage > 2 {
+                assert_eq!(
+                    access.observe(10_000, ChannelObservation::Clear, BackoffRate::ONE),
+                    ChannelAccessAction::ReadyForFinalCheck
+                );
+                assert_eq!(access.next_poll_ms(BackoffRate::ONE), 1);
+                assert_eq!(
+                    access.observe(10_001, ChannelObservation::Clear, BackoffRate::ONE),
+                    ChannelAccessAction::ReadyForFinalCheck
+                );
+            }
+            if stage > 3 {
+                assert_eq!(
+                    access.final_check(10_001, ChannelObservation::Clear),
+                    ChannelAccessAction::Transmit
+                );
+                assert_eq!(access.after_entropy(), ChannelAccessAction::Expired);
+                assert_eq!(
+                    access.observe(10_002, ChannelObservation::Busy, BackoffRate::ONE),
+                    ChannelAccessAction::Wait
+                );
+                assert_eq!(
+                    access.observe(10_003, ChannelObservation::Clear, BackoffRate::ONE),
+                    ChannelAccessAction::Expired
+                );
+            }
+            let before = access.state;
+            access.restart_contention(10_004);
+            match before {
+                ChannelAccessState::NeedBackoff(_) | ChannelAccessState::Complete => {
+                    assert_eq!(access.state, before)
+                }
+                ChannelAccessState::Backoff { remaining_ms }
+                | ChannelAccessState::WaitingForClear { remaining_ms, .. } => assert_eq!(
+                    access.state,
+                    ChannelAccessState::WaitingForClear {
+                        clear_ms: 0,
+                        remaining_ms
+                    }
+                ),
+                ChannelAccessState::FinalCheck => assert_eq!(
+                    access.state,
+                    ChannelAccessState::WaitingForClear {
+                        clear_ms: 0,
+                        remaining_ms: 0
+                    }
+                ),
+            }
+            assert!((1..=timing.sample_ms).contains(&access.next_poll_ms(BackoffRate::ONE)));
+            assert_eq!(
+                access.final_check(30_000, ChannelObservation::Clear),
+                ChannelAccessAction::Expired
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_preambles_do_not_extend_the_deadline() {
+        let mut activity = DemodulatorActivity::new();
+        activity.preamble_detected(0, US915_AUTO_LORA_PROFILE);
+        let deadline = activity.expires_at_ms;
+        activity.preamble_detected(deadline - 1, US915_AUTO_LORA_PROFILE);
+        assert_eq!(activity.expires_at_ms, deadline);
+        assert_eq!(activity.next_poll_ms(deadline, 100), 1);
+        assert_eq!(activity.observe(deadline), (false, true));
     }
 }

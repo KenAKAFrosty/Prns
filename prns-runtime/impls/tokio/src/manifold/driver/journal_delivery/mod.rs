@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{error::TrySendError, Sender, UnboundedSender};
 use tokio::sync::oneshot;
 
 use crate::engine::{
@@ -15,7 +15,9 @@ use crate::runtime::node_introspection::{AnnounceRateHistory, AnnounceRateSnapsh
 use crate::runtime::ReliabilityMetricsSnapshot;
 use crate::units::RttMillis;
 
-use super::host_protocol::{ResourceInbound, StreamInbound};
+use super::host_protocol::{
+    ResourceInbound, StreamInbound, StreamReaderRegistrationError, StreamReceiveFailure,
+};
 
 struct RequestPending {
     completion: oneshot::Sender<Result<(std::vec::Vec<u8>, RttMillis), SendRequestFailure>>,
@@ -90,10 +92,11 @@ where
         &mut self,
         link_id: LinkId,
         stream_id: StreamId,
-        sink: UnboundedSender<StreamInbound>,
-    ) {
+        sink: Sender<StreamInbound>,
+        failure: oneshot::Sender<StreamReceiveFailure>,
+    ) -> Result<(), StreamReaderRegistrationError> {
         self.delivery
-            .register_stream_reader(link_id, stream_id, sink);
+            .register_stream_reader(link_id, stream_id, sink, failure)
     }
 
     pub(super) fn register_resource_sink(
@@ -118,8 +121,24 @@ where
 struct JournalDelivery {
     completions: HashMap<CommandId, oneshot::Sender<Settlement>>,
     requests: HashMap<CommandId, RequestPending>,
-    stream_readers: HashMap<(LinkId, StreamId), UnboundedSender<StreamInbound>>,
+    stream_readers: HashMap<(LinkId, StreamId), StreamReaderDelivery>,
     resource_sinks: HashMap<LinkId, UnboundedSender<ResourceInbound>>,
+}
+
+enum StreamReaderDelivery {
+    Receiving {
+        sink: Sender<StreamInbound>,
+        failure: oneshot::Sender<StreamReceiveFailure>,
+    },
+    Discarding,
+}
+
+impl StreamReaderDelivery {
+    fn fail(&mut self, reason: StreamReceiveFailure) {
+        if let Self::Receiving { failure, .. } = core::mem::replace(self, Self::Discarding) {
+            let _ = failure.send(reason);
+        }
+    }
 }
 
 impl JournalDelivery {
@@ -152,9 +171,19 @@ impl JournalDelivery {
         &mut self,
         link_id: LinkId,
         stream_id: StreamId,
-        sink: UnboundedSender<StreamInbound>,
-    ) {
-        self.stream_readers.insert((link_id, stream_id), sink);
+        sink: Sender<StreamInbound>,
+        failure: oneshot::Sender<StreamReceiveFailure>,
+    ) -> Result<(), StreamReaderRegistrationError> {
+        match self.stream_readers.entry((link_id, stream_id)) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(StreamReaderDelivery::Receiving { sink, failure });
+                Ok(())
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                let _ = failure.send(StreamReceiveFailure::AlreadyRegistered);
+                Err(StreamReaderRegistrationError::AlreadyRegistered)
+            }
+        }
     }
 
     fn register_resource_sink(&mut self, link_id: LinkId, sink: UnboundedSender<ResourceInbound>) {
@@ -250,6 +279,15 @@ impl JournalDelivery {
     }
 
     fn route_stream_or_forward<'a>(&mut self, journaled: Journaled<'a>) -> Option<Journaled<'a>> {
+        if let Journaled::LinkClosed { link_id, .. } = &journaled {
+            self.stream_readers.retain(|(reader_link, _), reader| {
+                if reader_link != link_id {
+                    return true;
+                }
+                reader.fail(StreamReceiveFailure::LinkClosed);
+                false
+            });
+        }
         if let Journaled::ChannelMessageReceived {
             link_id,
             message_type,
@@ -259,14 +297,22 @@ impl JournalDelivery {
             if *message_type == STREAM_DATA_TYPE {
                 if let Ok(frame) = byte_stream::parse(data) {
                     let key = (*link_id, frame.header.stream_id);
-                    if let Some(sink) = self.stream_readers.get(&key) {
-                        let inbound = StreamInbound {
-                            payload: frame.payload.to_vec(),
-                            eof: frame.header.eof,
-                            compressed: frame.header.compressed,
-                        };
-                        if sink.send(inbound).is_err() {
-                            self.stream_readers.remove(&key);
+                    if let Some(reader) = self.stream_readers.get_mut(&key) {
+                        if let StreamReaderDelivery::Receiving { sink, .. } = reader {
+                            let inbound = StreamInbound {
+                                payload: frame.payload.to_vec(),
+                                eof: frame.header.eof,
+                                compressed: frame.header.compressed,
+                            };
+                            match sink.try_send(inbound) {
+                                Ok(()) => {}
+                                Err(TrySendError::Full(_)) => {
+                                    reader.fail(StreamReceiveFailure::Overflowed);
+                                }
+                                Err(TrySendError::Closed(_)) => {
+                                    *reader = StreamReaderDelivery::Discarding;
+                                }
+                            }
                         }
                         return None;
                     }
@@ -401,6 +447,136 @@ impl JournalDelivery {
             self.resource_sinks.remove(&link);
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+    use crate::engine::LinkClosedReason;
+    use crate::routing::links::channel::byte_stream::StreamDataHeader;
+
+    #[test]
+    fn duplicate_registration_preserves_the_existing_reader() {
+        let mut delivery = JournalDelivery::default();
+        let link_id = LinkId::new([7; 16]);
+        let stream_id = StreamId::new(3).unwrap();
+        let (sink, mut original) = tokio::sync::mpsc::channel(1);
+        let (failure, _original_failure) = oneshot::channel();
+        delivery
+            .register_stream_reader(link_id, stream_id, sink, failure)
+            .unwrap();
+        let (duplicate, _inbound) = tokio::sync::mpsc::channel(1);
+        let (failure, mut duplicate_failure) = oneshot::channel();
+        assert_eq!(
+            delivery.register_stream_reader(link_id, stream_id, duplicate, failure),
+            Err(StreamReaderRegistrationError::AlreadyRegistered)
+        );
+        assert_eq!(
+            duplicate_failure.try_recv(),
+            Ok(StreamReceiveFailure::AlreadyRegistered)
+        );
+        let header = StreamDataHeader {
+            stream_id,
+            eof: false,
+            compressed: false,
+        }
+        .to_bytes();
+        let frame = [header[0], header[1], b'x'];
+        delivery.route_stream_or_forward(Journaled::ChannelMessageReceived {
+            link_id,
+            message_type: STREAM_DATA_TYPE,
+            data: &frame,
+        });
+        assert_eq!(original.try_recv().unwrap().payload, b"x");
+    }
+
+    #[test]
+    fn full_stream_reader_is_marked_failed_without_unbounded_buffering() {
+        let mut delivery = JournalDelivery::default();
+        let link_id = LinkId::new([7; 16]);
+        let stream_id = StreamId::new(3).unwrap();
+        let (sink, mut inbound) = tokio::sync::mpsc::channel(1);
+        let (failure, mut outcome) = oneshot::channel();
+        delivery
+            .register_stream_reader(link_id, stream_id, sink, failure)
+            .unwrap();
+        let header = StreamDataHeader {
+            stream_id,
+            eof: false,
+            compressed: false,
+        }
+        .to_bytes();
+        let frame = [header[0], header[1], b'x'];
+        for _ in 0..2 {
+            assert!(delivery
+                .route_stream_or_forward(Journaled::ChannelMessageReceived {
+                    link_id,
+                    message_type: STREAM_DATA_TYPE,
+                    data: &frame,
+                })
+                .is_none());
+        }
+        assert_eq!(outcome.try_recv(), Ok(StreamReceiveFailure::Overflowed));
+        assert_eq!(inbound.try_recv().unwrap().payload, b"x");
+        assert!(inbound.try_recv().is_err());
+
+        delivery.route_stream_or_forward(Journaled::LinkClosed {
+            link_id,
+            reason: LinkClosedReason::PeerClosed,
+        });
+        assert!(delivery.stream_readers.is_empty());
+    }
+
+    #[test]
+    fn dropped_reader_keeps_later_stream_frames_out_of_app_events() {
+        let mut delivery = JournalDelivery::default();
+        let link_id = LinkId::new([8; 16]);
+        let stream_id = StreamId::new(4).unwrap();
+        let (sink, inbound) = tokio::sync::mpsc::channel(1);
+        let (failure, _outcome) = oneshot::channel();
+        delivery
+            .register_stream_reader(link_id, stream_id, sink, failure)
+            .unwrap();
+        drop(inbound);
+        let header = StreamDataHeader {
+            stream_id,
+            eof: false,
+            compressed: false,
+        }
+        .to_bytes();
+        let frame = [header[0], header[1], b'x'];
+        for _ in 0..2 {
+            assert!(delivery
+                .route_stream_or_forward(Journaled::ChannelMessageReceived {
+                    link_id,
+                    message_type: STREAM_DATA_TYPE,
+                    data: &frame,
+                })
+                .is_none());
+        }
+        assert!(delivery
+            .stream_readers
+            .get(&(link_id, stream_id))
+            .is_some_and(|reader| matches!(reader, StreamReaderDelivery::Discarding)));
+    }
+
+    #[test]
+    fn closing_a_link_reports_failure_to_its_reader() {
+        let mut delivery = JournalDelivery::default();
+        let link_id = LinkId::new([9; 16]);
+        let stream_id = StreamId::new(5).unwrap();
+        let (sink, _inbound) = tokio::sync::mpsc::channel(1);
+        let (failure, mut outcome) = oneshot::channel();
+        delivery
+            .register_stream_reader(link_id, stream_id, sink, failure)
+            .unwrap();
+        delivery.route_stream_or_forward(Journaled::LinkClosed {
+            link_id,
+            reason: LinkClosedReason::PeerClosed,
+        });
+        assert_eq!(outcome.try_recv(), Ok(StreamReceiveFailure::LinkClosed));
+        assert!(delivery.stream_readers.is_empty());
     }
 }
 

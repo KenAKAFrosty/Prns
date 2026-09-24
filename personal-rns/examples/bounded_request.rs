@@ -43,7 +43,7 @@ async fn main() {
 
     let responder = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: common::remote_control_service(0xD0, 0xD1),
+        remote_control: common::remote_control_service(0xD0, 0xD1).into(),
         pre_configured_destinations: [responder_destination],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
@@ -61,7 +61,7 @@ async fn main() {
     let tcp_client = TcpClientInterface::new(server_address);
     let requester = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: common::remote_control_service(0xD2, 0xD3),
+        remote_control: common::remote_control_service(0xD2, 0xD3).into(),
         pre_configured_destinations: [requester_destination()],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,

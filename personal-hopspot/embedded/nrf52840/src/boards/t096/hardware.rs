@@ -39,7 +39,7 @@ type T096SpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
 
 type T096Radio = Sx126x<T096SpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type T096LoraInterface = LoRaInterface<'static, T096Radio>;
+pub(crate) type T096LoraInterface = LoRaInterface<'static, 'static, T096Radio>;
 
 pub(crate) type T096Display = super::DisplayDriver<T096SpiDevice>;
 pub(crate) type T096DisplayBringup = BoardDisplay<T096Display>;

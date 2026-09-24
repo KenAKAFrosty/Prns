@@ -225,7 +225,7 @@ pub(super) fn run(args: SuiteArgs) {
         all_cells.len(),
         args.samples
     );
-    println!("participants: Prns and compiled RNS {REFERENCE_VERSION} reference");
+    println!("participants: Prns and stock interpreted RNS {REFERENCE_VERSION} reference");
     println!(
         "matrix: endpoint scenarios use four pairings; relay scenarios use two relay subjects"
     );
@@ -258,7 +258,7 @@ pub(super) fn run(args: SuiteArgs) {
         fail("publishing-quality release suite requires exactly three samples");
     }
     if let Err(reason) = prepare_reference() {
-        fail(&format!("compiled-reference preparation: {reason}"));
+        fail(&format!("stock-reference preparation: {reason}"));
     }
 
     let suite_id = args
@@ -789,14 +789,18 @@ fn validate_suite(
                         .is_some_and(|value| value == REFERENCE_VERSION)
                         && row
                             .provenance
+                            .get("reference_mode")
+                            .is_some_and(|value| value == "interpreted")
+                        && row
+                            .provenance
                             .get("reference_compiled")
-                            .is_some_and(|value| value == "true")
+                            .is_some_and(|value| value == "false")
                 })
                 .map(|row| row.sample_index)
                 .collect::<BTreeSet<_>>();
             if proved_samples != expected_samples {
                 reasons.push(format!(
-                    "cell {} lacks compiled-reference proof for every sample",
+                    "cell {} lacks stock interpreted reference proof for every sample",
                     index + 1
                 ));
             }
@@ -814,15 +818,21 @@ fn validate_suite(
                 .is_some_and(|value| value == REFERENCE_VERSION)
                 && row
                     .provenance
+                    .get("reference_mode")
+                    .is_some_and(|value| value == "interpreted")
+                && row
+                    .provenance
                     .get("reference_compiled")
-                    .is_some_and(|value| value == "true")
+                    .is_some_and(|value| value == "false")
         });
     }
     if hosts.len() != 1 {
         reasons.push(format!("suite must contain one host, found {hosts:?}"));
     }
     if selected.len() == cells.len() && !reference_verified {
-        reasons.push(format!("compiled RNS {REFERENCE_VERSION} proof is absent"));
+        reasons.push(format!(
+            "stock interpreted RNS {REFERENCE_VERSION} proof is absent"
+        ));
     }
     if reasons.is_empty() {
         Ok(ValidatedSuite {
@@ -843,7 +853,7 @@ fn prepare_reference() -> Result<(), String> {
         reference.join(".venv/bin/python")
     };
     let status = Command::new(python)
-        .arg(reference.join("compiled_reference.py"))
+        .arg(reference.join("stock_reference.py"))
         .arg("--verify-only")
         .status()
         .map_err(|error| error.to_string())?;
@@ -950,7 +960,7 @@ fn tool_versions() -> BTreeMap<String, String> {
 }
 
 fn reference_proof() -> serde_json::Value {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("reference/.object-cache/proof.json");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("reference/.reference-state/proof.json");
     std::fs::read_to_string(path)
         .ok()
         .and_then(|body| serde_json::from_str(&body).ok())
@@ -1003,7 +1013,7 @@ mod tests {
         for scenario in [
             ScenarioId::RawTransportThroughput,
             ScenarioId::TransportResourceThroughput,
-            ScenarioId::TransportResourceThroughputUnleashed,
+            ScenarioId::TransportResourceThroughputMatched,
         ] {
             let raw = cells
                 .iter()

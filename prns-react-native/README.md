@@ -46,6 +46,14 @@ runtime errors remain generated typed errors. Remote control uses
 list is maintained by hand in the SDK. Aborting a command wait does not
 roll back an operation already admitted by Rust.
 
+`SendLinkPacket` preserves the core's delivery-proof behavior. Packets sent to a
+`ProveAll` responder settle with an explicit delivery proof. Raw packets sent
+back to the link initiator can arrive as `LinkDelivery` events while the
+responder's command settles as `Failed(DeliveryTimedOut)`: the initiator does not
+emit an automatic packet proof. A timeout therefore does not establish that the
+peer received no bytes. Applications that need confirmed replies must account
+for this core behavior; the SDK does not add an acknowledgement protocol.
+
 Destination public-key lookup is available on the generated native
 `HostClientHandle.destinationPublicKey` binding. Authenticated announce callbacks
 and prepared native transport objects remain Rust embedding hooks; they are not
@@ -116,6 +124,9 @@ connects a TCP peer, and stops it. Build the SDK image first, install the exampl
 dependencies, then run `npm run android` or `npm run ios` from that directory.
 A custom development build is required; Expo Go cannot load this Rust image.
 The peer address is editable. No PRNS product/service package is used.
+The example enables `expo-build-properties` → `ios.enableSceneSupport` so Expo
+owns scene startup on iOS 27. Consumers built with that SDK must also configure
+scene startup; this is an Expo app setting, not a PRNS runtime service.
 
 The browser entry delegates directly to the existing backend:
 
@@ -139,6 +150,9 @@ backend-selecting root entry point.
 
 ## Qualification
 
+See the [standalone qualification record](docs/qualification.md) for executed
+checks and the remaining device/publication limits.
+
 Strict TypeScript checking covers the generated binding/adapter, SDK native/web
 exports, and example. Iterator tests cover abort before readiness, abort after
 wake before drain, return during a pending wait, concurrent waits, and failure.
@@ -157,8 +171,8 @@ npm --prefix prns-react-native run verify
 ```
 
 This setup uses the core package and pinned runtime archives without an app
-workspace install. The application-scaffold CI job runs the SDK verification;
-the current-source detached qualification runs it in its exported source tree.
+workspace install. Dedicated SDK CI jobs verify the generated default provider,
+contract conformance, package checks, and native builds independently.
 
 `npm run test:consumer`
 installs the packed SDK, core package, and pinned runtime archives outside this
@@ -182,6 +196,14 @@ compile or install a mobile app, and a simulator-only framework only qualifies
 simulator packaging. The full consumer command also validates any included Apple
 framework; add `--require-ios` to reject an absent framework.
 
+On macOS, `node tools/detached-consumer.mjs --ios --keep` builds the packed SDK's
+complete Expo example for an Apple Silicon simulator, including the
+CocoaPod and generated Swift. It requires a matching simulator framework,
+Xcode and CocoaPods. Its receipt reports `iosSdkCompilation` separately from
+archive contents and device qualification. Temporary dependencies, caches and
+build outputs stay inside the detached consumer. Dedicated SDK CI runs both the
+Android consumer compile and this unsigned iOS consumer build.
+
 The Expo module checks the image and supplies a private storage path. Shared
 Android BLE/GATT pumps, bridge ownership, startup admission, radio recovery,
 and foreground-service lifetime live here. Shared iOS authorization, startup
@@ -204,9 +226,9 @@ The delegate supplies native start/stop operations, saved nonsecret startup
 configuration, a foreground notification, and its notification identifier/type.
 It returns opaque codec responses plus a running/stopped acknowledgement. A
 `stopped` acknowledgement must mean native work has completely drained; the SDK
-then releases Bluetooth transport. The PRNS app uses this same service through a
-small product delegate, retaining its own storage policy, reset workflow, and
-notification copy. Apps without Bluetooth set `bluetoothEnabled` to false.
+then releases Bluetooth transport. The consuming app retains its own storage
+policy, reset workflow, and notification copy. Apps without Bluetooth set
+`bluetoothEnabled` to false.
 Declare the concrete service and required foreground-service permissions in the
 consuming app manifest. No product service or notification is auto-registered.
 

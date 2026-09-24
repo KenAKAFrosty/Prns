@@ -19,9 +19,10 @@ These commands prepare an ordinary developer workstation. Release builds use the
 ```console
 cd personal-hopspot/embedded/esp32
 cargo c6 --locked
+cargo heltec-v3 --locked
 ```
 
-That shortcut expands to the `hopspot-xiao-esp32-c6` release build for `riscv32imac-unknown-none-elf`, including `-Zbuild-std=core,alloc`. The workspace has its own lockfile and selects the `esp` toolchain through `personal-hopspot/embedded/esp32/rust-toolchain.toml`.
+Those shortcuts expand to release builds for `hopspot-xiao-esp32-c6` on `riscv32imac-unknown-none-elf` and `hopspot-heltec-v3` on `xtensa-esp32s3-none-elf`, including `-Zbuild-std=core,alloc`. The workspace has its own lockfile and selects the `esp` toolchain through `personal-hopspot/embedded/esp32/rust-toolchain.toml`.
 
 ## Follow the recipe through the board
 
@@ -91,7 +92,7 @@ The Linux `embedded-builds` validation suite adds the Embassy interface
 cross-builds, both S140 6.1.1 and 7.3.0 T-Echo firmware layouts, the
 display-equipped Heltec T096 and T114 with Bluetooth Auto and display auto-off,
 both 5,000 and 10,000 mAh MeshPocket battery profiles with retained e-ink, and
-the headless T1000-E and MeshTower V2 developer UF2s. Every embedded Hopspot
+the headless T1000-E, MeshTower V2, and muzi Base Duo developer UF2s. Every embedded Hopspot
 board target restores learned routes and retained self-ratchet history from its
 board-owned flash journal:
 

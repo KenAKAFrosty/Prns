@@ -38,6 +38,9 @@ def complete_roster() -> dict:
         ("t1000-e", "cli"): ("macos", "x86_64"),
         ("t1000-e", "web"): ("windows", "x86_64"),
     }
+    for board in VALIDATOR.SHIPPING_BOARDS:
+        for surface in ("cli", "web"):
+            hosts.setdefault((board, surface), ("linux", "x86_64"))
     physical_assignments = []
     for (board, surface), (os_name, architecture) in hosts.items():
         if board not in VALIDATOR.SHIPPING_BOARDS:

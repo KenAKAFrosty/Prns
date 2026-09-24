@@ -1049,6 +1049,7 @@ impl PrnsRuntime {
                         outcome: completed_outcome,
                     },
                     InstantMillis(now_ms),
+                    &mut |out| entropy.fill(out),
                     &mut |reaction| capture.route(reaction),
                 );
                 if matches!(
@@ -1643,6 +1644,7 @@ impl PrnsRuntime {
                             outcome: WholeResourceOpenOutcome::Unavailable,
                         },
                         InstantMillis(now_ms),
+                        &mut |out| entropy.fill(out),
                         &mut |reaction| capture.route(reaction),
                     );
                 }

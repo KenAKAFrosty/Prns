@@ -10,8 +10,8 @@ use super::discovery::{ProofDocument, ResourceDocument};
 use crate::capabilities;
 use crate::contract::{
     ArchitectureId, AssuranceMatrix, Capability, CapabilityResult, EvidenceFingerprint, Failure,
-    FailureKind, IdentifierError, MatrixStatus, MiriCoverage, ProofEvidence, ProofFragment,
-    ProofKind, ResourceEvidence, Subject, SupportLevel, TargetEvidence, TargetId,
+    FailureKind, IdentifierError, MatrixStatus, MiriCoverage, MiriScope, ProofEvidence,
+    ProofFragment, ProofKind, ResourceEvidence, Subject, SupportLevel, TargetEvidence, TargetId,
     UnavailableReason, ValueError, Verdict, ASSURANCE_MATRIX_SCHEMA_VERSION,
 };
 
@@ -268,26 +268,33 @@ fn proof_precedence(existing: &ProofFragment, incoming: &ProofFragment) -> Proof
     }
     let (
         Verdict::Passed {
-            evidence: ProofEvidence::Miri {
-                coverage: existing, ..
-            },
+            evidence:
+                ProofEvidence::Miri {
+                    coverage: existing,
+                    scope: existing_scope,
+                    ..
+                },
         },
         Verdict::Passed {
-            evidence: ProofEvidence::Miri {
-                coverage: incoming, ..
-            },
+            evidence:
+                ProofEvidence::Miri {
+                    coverage: incoming,
+                    scope: incoming_scope,
+                    ..
+                },
         },
     ) = (&existing.verdict, &incoming.verdict)
     else {
         return ProofPrecedence::Incompatible;
     };
-    match (existing, incoming) {
-        (MiriCoverage::Stacked, MiriCoverage::StackedAndTree) => ProofPrecedence::Incoming,
-        (MiriCoverage::StackedAndTree, MiriCoverage::Stacked) => ProofPrecedence::Existing,
-        (MiriCoverage::Stacked, MiriCoverage::Stacked)
-        | (MiriCoverage::StackedAndTree, MiriCoverage::StackedAndTree) => {
-            ProofPrecedence::Incompatible
+    match (existing_scope, existing, incoming_scope, incoming) {
+        (MiriScope::Focused, _, MiriScope::Exhaustive, MiriCoverage::StackedAndTree) => {
+            ProofPrecedence::Incoming
         }
+        (MiriScope::Exhaustive, MiriCoverage::StackedAndTree, MiriScope::Focused, _) => {
+            ProofPrecedence::Existing
+        }
+        _ => ProofPrecedence::Incompatible,
     }
 }
 
@@ -367,14 +374,17 @@ fn required_failures(targets: &[TargetEvidence], results: &[CapabilityResult]) -
 mod tests {
     use std::path::PathBuf;
 
+    use personal_hopspot_resources::matrix::canonical_targets;
     use personal_hopspot_resources::report::Document;
 
     use super::{assemble, proof_precedence, AggregateError, ProofPrecedence};
+    use crate::capabilities;
     use crate::contract::{
         ArchitectureId, ComponentId, EvidenceArtifact, EvidenceFingerprint, EvidencePath,
-        MatrixStatus, MiriCoverage, PlatformId, PlatformMilestone, ProofArtifactKind,
+        MatrixStatus, MiriCoverage, MiriScope, PlatformId, PlatformMilestone, ProofArtifactKind,
         ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId, SourceCommit, SourceCustody,
-        SourceIdentity, Subject, ToolIdentity, ToolKind, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
+        SourceIdentity, Subject, SupportLevel, ToolIdentity, ToolKind, Verdict,
+        PROOF_FRAGMENT_SCHEMA_VERSION,
     };
     use crate::evidence::discovery::{ProofDocument, ResourceDocument};
 
@@ -438,6 +448,10 @@ mod tests {
             verdict: Verdict::Passed {
                 evidence: ProofEvidence::Miri {
                     coverage,
+                    scope: match coverage {
+                        MiriCoverage::Stacked => MiriScope::Focused,
+                        MiriCoverage::StackedAndTree => MiriScope::Exhaustive,
+                    },
                     completed_tests: 16,
                 },
             },
@@ -503,11 +517,16 @@ mod tests {
     #[test]
     fn absent_evidence_is_preserved_as_required_failure() -> Result<(), AggregateError> {
         let matrix = assemble(Vec::new(), Vec::new())?;
-        assert_eq!(matrix.targets.len(), 14);
+        let target_count = canonical_targets()?.len();
+        let required_proofs = capabilities::canonical()?
+            .iter()
+            .filter(|capability| matches!(capability.support, SupportLevel::Required))
+            .count();
+        assert_eq!(matrix.targets.len(), target_count);
         assert_eq!(
             matrix.status,
             MatrixStatus::Failed {
-                required_failures: 20,
+                required_failures: target_count + required_proofs,
             }
         );
         Ok(())

@@ -58,7 +58,7 @@ pub fn PlatformsPage() -> Element {
                                 "Choose an SDK and see its exact readiness →"
                             }
                         }
-                        if *group == Group::Microcontroller {
+                        if matches!(*group, Group::Microcontroller | Group::SingleBoardComputer) {
                             Link {
                                 to: Route::FlashPage {},
                                 class: "platform-board-link mt-4 inline-flex text-sm font-medium",

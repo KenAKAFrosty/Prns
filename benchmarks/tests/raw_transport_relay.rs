@@ -71,11 +71,7 @@ fn rust_relay_profiles_forward_both_ways_drain_and_stop_cleanly() {
     for (scenario, expected_bitrate, expected_mtu) in [
         ("raw-transport-throughput", 500_000_000, 131_072),
         ("transport-resource-throughput", 500_000_000, 131_072),
-        (
-            "transport-resource-throughput-unleashed",
-            1_000_000_000,
-            524_288,
-        ),
+        ("transport-resource-throughput-matched", 10_000_000, 16_384),
     ] {
         run_profile(scenario, expected_bitrate, expected_mtu);
     }

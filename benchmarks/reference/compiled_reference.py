@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load RNS 1.4.2 from a controlled, machine-local Cython object cache."""
+"""Load the historical RNS 1.4.2 Cython benchmark reference."""
 
 from __future__ import annotations
 

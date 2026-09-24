@@ -47,11 +47,7 @@ fn fan(
         if !targeted {
             continue;
         }
-        match descriptor
-            .id
-            .kind()
-            .and_then(InterfaceKind::supervisor_kind)
-        {
+        match descriptor.id.kind().and_then(InterfaceKind::fanout_kind) {
             Some(supervisor) => {
                 debug_assert!(
                     (supervisor as u8) < 128,
@@ -115,6 +111,32 @@ mod tests {
 
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 8])
+    }
+
+    #[test]
+    fn a_shared_channel_announces_before_any_peer_exists() {
+        let radio = InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowBroadcast, b"radio");
+        let interfaces = [routable_descriptor(radio)];
+        let mut count = 0;
+        fan_announce(
+            AttachedInterfaces::new(&interfaces),
+            FanTarget::All,
+            b"announce",
+            &mut |reaction| {
+                let EngineReaction::Directive(Directive::SendAnnounceToFleet {
+                    supervisor,
+                    fan,
+                    ..
+                }) = reaction
+                else {
+                    panic!("the shared channel must retain fleet fan-out intent");
+                };
+                assert_eq!(supervisor, InterfaceKind::WifiHaLow);
+                assert_eq!(fan, FanTarget::All);
+                count += 1;
+            },
+        );
+        assert_eq!(count, 1);
     }
 
     #[test]

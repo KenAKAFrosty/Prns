@@ -242,6 +242,18 @@ class HotfixCustodyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "differs from its manifest"):
             verify_candidate(self.repository, self.candidate)
 
+    def test_pre_one_hotfix_requires_automated_acceptance_without_physical_assignments(self) -> None:
+        self.spec["release"].update(version="0.3.8-hotfix.1", base_version="0.3.8")
+        self.spec["qualification"] = {"mode": "automated"}
+        path = self.root / "0.3.8-hotfix.1.json"
+        write_json(path, self.spec)
+        parsed = parse_spec(path)
+        self.assertEqual((parsed.physical_boards, parsed.deferred_hardware), ((), ()))
+        self.spec["qualification"] = {"mode": "skip"}
+        write_json(path, self.spec)
+        with self.assertRaisesRegex(ValueError, "automated mode"):
+            parse_spec(path)
+
     def test_spec_accepts_declaring_every_shipping_board_changed(self) -> None:
         self.spec["changed_boards"] = [
             "heltec-v4",

@@ -4,9 +4,13 @@ use std::path::PathBuf;
 
 pub(crate) fn generate() {
     const BOARD_IMAGES: &[(&str, &str)] = &[
+        ("HELTEC_V3", "heltec-v3.webp"),
+        ("WIO_TRACKER_L1", "wio-tracker-l1.webp"),
         ("HELTEC_V4", "heltec-v4.webp"),
         ("T_BEAM_SUPREME", "t-beam-supreme.webp"),
         ("XIAO_ESP32_C6", "xiao-esp32-c6.webp"),
+        ("XIAO_ESP32S3_WIO_SX1262", "xiao-esp32s3-wio-sx1262.webp"),
+        ("SENSECAP_SOLAR_NODE_P1", "sensecap-solar-node-p1.webp"),
         ("T_ECHO", "t-echo.webp"),
         (
             "SEEED_CARD_TRACKER_T1000_E",
@@ -16,6 +20,18 @@ pub(crate) fn generate() {
         ("MESH_POCKET", "mesh-pocket.webp"),
         ("HELTEC_MESH_NODE_T096", "heltec-mesh-node-t096.webp"),
         ("MESH_TOWER_V2", "mesh-tower-v2.webp"),
+        ("THINKNODE_G4", "thinknode-g4.webp"),
+        ("THINKNODE_M7", "thinknode-m7.webp"),
+        ("HELTEC_HT_HD01", "heltec-ht-hd01.webp"),
+        ("HELTEC_E290", "heltec-e290.webp"),
+        (
+            "HELTEC_WIRELESS_STICK_LITE_V3",
+            "heltec-wireless-stick-lite-v3.webp",
+        ),
+        ("RAK4631", "rak4631.webp"),
+        ("RAK10724", "rak10724.webp"),
+        ("RASPBERRY_PI_ZERO_2_W", "raspberry-pi-zero-2-w.webp"),
+        ("MUZI_BASE_DUO", "muzi-base-duo.webp"),
     ];
 
     let mut generated =

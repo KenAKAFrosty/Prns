@@ -246,7 +246,7 @@ mod tests {
         .value;
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
-            remote_control: crate::test_support::remote_control_service(),
+            remote_control: crate::test_support::remote_control_service().into(),
             pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,

@@ -1,0 +1,178 @@
+{
+  "base_commit": "0966fe6b96dc4fe6cb2c67c39e38c823bed3f5c6",
+  "working_tree_modified": true,
+  "application_sha256": "3d06d2cb74ac7593b99daa25b56354ff18a0a9d7c9cb223388f487d2534efc7a",
+  "core_diff_sha256": "25b3ffb660f8d8aa137b05a0f37277c6cf8d7ac345bd091751d50abd0cd502ca",
+  "captures": {
+    "g4": {
+      "captured_frames": 122,
+      "outgoing_broadcasts": 29,
+      "broadcasts_seen_by_both_neighbors": 26,
+      "unique_broadcast_payloads": 24,
+      "outgoing_unicast_counts": {
+        "ec:b5:0a:ff:85:e9": 13,
+        "ec:b5:0a:ff:86:39": 4
+      }
+    },
+    "heltec": {
+      "captured_frames": 135,
+      "outgoing_broadcasts": 24,
+      "broadcasts_seen_by_both_neighbors": 24,
+      "unique_broadcast_payloads": 20,
+      "outgoing_unicast_counts": {
+        "ec:b5:0a:ff:86:39": 13,
+        "50:37:cd:ad:32:0e": 14
+      }
+    },
+    "heltec3": {
+      "captured_frames": 121,
+      "outgoing_broadcasts": 30,
+      "broadcasts_seen_by_both_neighbors": 28,
+      "unique_broadcast_payloads": 22,
+      "outgoing_unicast_counts": {
+        "ec:b5:0a:ff:85:e9": 13,
+        "50:37:cd:ad:32:0e": 4
+      }
+    }
+  },
+  "packet_types": {
+    "g4": {
+      "broadcast_announce_hops": {
+        "0": 8,
+        "1": 21
+      },
+      "broadcast_nonannounce": 0,
+      "unicast_announce_context_hops": {},
+      "unicast_packet_types": {
+        "2": 2,
+        "0": 12,
+        "3": 3
+      },
+      "capture_seconds": 35.895,
+      "max_broadcast_payload_copies": 2
+    },
+    "heltec": {
+      "broadcast_announce_hops": {
+        "1": 18,
+        "0": 6
+      },
+      "broadcast_nonannounce": 0,
+      "unicast_announce_context_hops": {},
+      "unicast_packet_types": {
+        "2": 3,
+        "3": 6,
+        "0": 18
+      },
+      "capture_seconds": 35.43,
+      "max_broadcast_payload_copies": 2
+    },
+    "heltec3": {
+      "broadcast_announce_hops": {
+        "0": 8,
+        "2": 8,
+        "1": 14
+      },
+      "broadcast_nonannounce": 0,
+      "unicast_announce_context_hops": {},
+      "unicast_packet_types": {
+        "3": 3,
+        "0": 12,
+        "2": 2
+      },
+      "capture_seconds": 35.767,
+      "max_broadcast_payload_copies": 2
+    }
+  },
+  "transfers": [
+    {
+      "source": "g4",
+      "destination": "heltec",
+      "code": 0,
+      "elapsed_seconds": 0.783,
+      "stdout": "hopspot_page_verified bytes=3542 rtt=RttMillis(126)\n",
+      "stderr": ""
+    },
+    {
+      "source": "g4",
+      "destination": "heltec3",
+      "code": 0,
+      "elapsed_seconds": 0.61,
+      "stdout": "hopspot_page_verified bytes=3542 rtt=RttMillis(90)\n",
+      "stderr": ""
+    },
+    {
+      "source": "heltec",
+      "destination": "g4",
+      "code": 0,
+      "elapsed_seconds": 0.67,
+      "stdout": "hopspot_page_verified bytes=3542 rtt=RttMillis(119)\n",
+      "stderr": ""
+    },
+    {
+      "source": "heltec",
+      "destination": "heltec3",
+      "code": 0,
+      "elapsed_seconds": 0.854,
+      "stdout": "hopspot_page_verified bytes=3542 rtt=RttMillis(180)\n",
+      "stderr": ""
+    },
+    {
+      "source": "heltec3",
+      "destination": "g4",
+      "code": 0,
+      "elapsed_seconds": 8.534,
+      "stdout": "hopspot_page_verified bytes=3542 rtt=RttMillis(208)\n",
+      "stderr": ""
+    },
+    {
+      "source": "heltec3",
+      "destination": "heltec",
+      "code": 0,
+      "elapsed_seconds": 0.662,
+      "stdout": "hopspot_page_verified bytes=3542 rtt=RttMillis(84)\n",
+      "stderr": ""
+    }
+  ],
+  "capture_sha256": {
+    "heltec3": "9389b931445d5a5350b2882b2bf2a1b3050466150d6d80fc43aeec700d505839",
+    "heltec": "95c32ad174c41aeb2ab045ac3e0d81ed6ca6ca603aaab71b3a5d23de9bc8faf0",
+    "g4": "39665665703a1811e8b9a3be191e1344752ace788df51c7d1fe6c1c03d989f48"
+  },
+  "build": {
+    "schema": 1,
+    "artifact_kind": "linux-application-development-bundle",
+    "qualification": "TCP plus experimental HaLoW; not a firmware image or a signed public release",
+    "cargo_features": [
+      "wifi-halow"
+    ],
+    "target": "mipsel-unknown-linux-musl",
+    "source_commit": "0966fe6b96dc4fe6cb2c67c39e38c823bed3f5c6",
+    "working_tree_dirty": true,
+    "rustc": "rustc 1.98.0-nightly (6bdf43094 2026-06-01)\nbinary: rustc\ncommit-hash: 6bdf43094fae65d298bc430362f116176cd25a3c\ncommit-date: 2026-06-01\nhost: aarch64-apple-darwin\nrelease: 1.98.0-nightly\nLLVM version: 22.1.6",
+    "cargo": "cargo 1.98.0-nightly (fbb61be30 2026-05-26)",
+    "zig_version": "0.15.2",
+    "zig_executable_sha256": "c65cd34917923f575448cc0603dd7c2326da0af0e5c323043d090662dcdf351c",
+    "cargo_lock_sha256": "0152c8a6dd3dfb763cc61e3ea89fd51401381f603529ba9b2ac23d9c3fe12d0a",
+    "rustflags": "-C link-self-contained=no -C target-feature=+crt-static",
+    "c_target": "mipsel-linux-musleabi -mcpu=mips32r2 -msoft-float",
+    "binary": {
+      "path": "personal-hopspot-headless",
+      "bytes": 3514192,
+      "sha256": "3d06d2cb74ac7593b99daa25b56354ff18a0a9d7c9cb223388f487d2534efc7a"
+    },
+    "probe": {
+      "path": "fetch_page",
+      "bytes": 3428180,
+      "sha256": "ae1414006f2bc2f3cf7c4e69c52a827f4f2ee2cf2bcf57d450e6383c351e034d"
+    }
+  },
+  "recovery": {
+    "g4": "WIRELESS_MATCH\nMESH_CONFIG_MATCH\nPARAM_MATCH:enable_fixed_rate\nPARAM_MATCH:fixed_mcs\nPARAM_MATCH:fixed_bw\nPARAM_MATCH:fixed_guard\nPARAM_MATCH:fixed_ss\nUCI_CLEAN\nInterface wlan0\n\tifindex 35\n\twdev 0x10000001b\n\taddr 50:37:cd:ad:32:0e\n\tssid ThinkNode-G4\n\ttype AP\n\twiphy 1\n\tchannel 161 (5805 MHz), width: 160 MHz, center1: 5815 MHz\n\ttxpower 18.00 dBm\nhealth check: success\nPersistenceFlushed { cause: Shutdown, target: RoutingState }\nPersistenceFlushed { cause: Shutdown, target: Ratchets }\nhopspot_stopped\n",
+    "heltec": "\nWIRELESS_MATCH\nMESH_CONFIG_MATCH\nPARAM_MATCH:enable_fixed_rate\nPARAM_MATCH:fixed_mcs\nPARAM_MATCH:fixed_bw\nPARAM_MATCH:fixed_guard\nPARAM_MATCH:fixed_ss\nPARAM_MATCH:enable_mcast_rate_control\nUCI_CLEAN\nInterface wlan0\n\tifindex 56\n\twdev 0x100000030\n\taddr ec:b5:0a:ff:85:e9\n\tssid ThinkNode-G4\n\ttype managed\n\twiphy 1\n\tchannel 161 (5805 MHz), width: 160 MHz, center1: 5815 MHz\n\ttxpower 27.00 dBm\nhealth check: success\nPersistenceFlushed { cause: Shutdown, target: RoutingState }\nPersistenceFlushed { cause: Shutdown, target: Ratchets }\nhopspot_stopped\n",
+    "heltec3": "\nWIRELESS_MATCH\nMESH_CONFIG_MATCH\nPARAM_MATCH:enable_fixed_rate\nPARAM_MATCH:fixed_mcs\nPARAM_MATCH:fixed_bw\nPARAM_MATCH:fixed_guard\nPARAM_MATCH:fixed_ss\nPARAM_MATCH:enable_mcast_rate_control\nUCI_CLEAN\nInterface wlan0\n\tifindex 28\n\twdev 0x100000015\n\taddr ec:b5:0a:ff:86:39\n\tssid HT-HD01-C8E9\n\ttype AP\n\twiphy 1\n\tchannel 48 (5240 MHz), width: 160 MHz, center1: 5250 MHz\n\ttxpower 21.00 dBm\nhealth check: success\nPersistenceFlushed { cause: Shutdown, target: RoutingState }\nPersistenceFlushed { cause: Shutdown, target: Ratchets }\nhopspot_stopped\n"
+  },
+  "preexisting_g4_tcp_service": {
+    "exact_page_bytes": 3542,
+    "request_rtt_ms": 48
+  }
+}

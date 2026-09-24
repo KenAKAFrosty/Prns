@@ -54,7 +54,7 @@ enum Uf2CopyOutcome {
 struct CatalogedUf2Board<'a> {
     entry: &'a BoardCatalogEntry,
     mount_label: Uf2MountLabel,
-    board_id_match: Uf2BoardIdMatch,
+    board_id_matches: Vec<Uf2BoardIdMatch>,
     application_usb: &'a Uf2ApplicationUsb,
 }
 
@@ -65,9 +65,10 @@ impl<'a> CatalogedUf2Board<'a> {
                 entry,
                 mount_label: Uf2MountLabel::parse(build.mount_label.clone())
                     .map_err(|error| AppError::trust_catalog(error.to_string()))?,
-                board_id_match: build
-                    .board_identity
-                    .validated()
+                board_id_matches: build
+                    .board_identities()
+                    .map(|identity| identity.validated())
+                    .collect::<Result<Vec<_>, _>>()
                     .map_err(|error| AppError::trust_catalog(error.to_string()))?,
                 application_usb: &build.application_usb,
             }),
@@ -92,8 +93,8 @@ impl<'a> CatalogedUf2Board<'a> {
         self.mount_label.as_str()
     }
 
-    fn board_id_match(&self) -> &Uf2BoardIdMatch {
-        &self.board_id_match
+    fn board_id_matches(&self) -> &[Uf2BoardIdMatch] {
+        &self.board_id_matches
     }
 }
 
@@ -163,7 +164,11 @@ pub(crate) fn detect_device(
     let board = CatalogedUf2Board::try_from_entry(entry)?;
     let mount = select_mount(&board, detect_mounts_for(&board), mount_override)?;
     let identity = read_identity(&mount)?;
-    if !identity.matches_board(board.board_id_match()) {
+    if !board
+        .board_id_matches()
+        .iter()
+        .any(|rule| identity.matches_board(rule))
+    {
         return Err(AppError::device_identity(format!(
             "{} reports Board-ID {:?}, not {}",
             mount.display(),
@@ -225,9 +230,18 @@ fn copy_uf2(
             let _ = fs::remove_file(destination);
             return Err(AppError::Cancelled);
         }
-        output
-            .write_all(chunk)
-            .map_err(|error| AppError::uf2_delivery(format!("UF2 copy failed: {error}")))?;
+        if let Err(error) = output.write_all(chunk) {
+            drop(output);
+            return confirm_reboot_after_interruption(
+                mount,
+                board,
+                reporter,
+                "UF2 copy failed",
+                error,
+                REBOOT_TIMEOUT,
+                Duration::from_millis(200),
+            );
+        }
         written += chunk.len();
         reporter.progress(
             Phase::Writing,
@@ -239,7 +253,7 @@ fn copy_uf2(
     let file_sync = output.flush().and_then(|_| output.sync_all());
     drop(output);
     if let Err(error) = file_sync {
-        return confirm_reboot_after_synchronization_interruption(
+        return confirm_reboot_after_interruption(
             mount,
             board,
             reporter,
@@ -250,7 +264,7 @@ fn copy_uf2(
         );
     }
     if let Err(error) = sync_mount_directory(mount) {
-        return confirm_reboot_after_synchronization_interruption(
+        return confirm_reboot_after_interruption(
             mount,
             board,
             reporter,
@@ -263,7 +277,7 @@ fn copy_uf2(
     Ok(Uf2CopyOutcome::Synchronized)
 }
 
-fn confirm_reboot_after_synchronization_interruption(
+fn confirm_reboot_after_interruption(
     mount: &Path,
     board: &CatalogedUf2Board<'_>,
     reporter: Reporter,
@@ -276,7 +290,7 @@ fn confirm_reboot_after_synchronization_interruption(
         Phase::Resetting,
         Some(board.slug()),
         &format!(
-            "UF2 synchronization was interrupted; checking whether {} rebooted…",
+            "UF2 transfer was interrupted; checking whether {} rebooted…",
             board.mount_label()
         ),
     );
@@ -413,20 +427,25 @@ fn sync_mount_directory(_mount: &Path) -> std::io::Result<()> {
 }
 
 fn detect_mounts_for(board: &CatalogedUf2Board<'_>) -> Vec<PathBuf> {
-    scan(
-        std::slice::from_ref(board.board_id_match()),
-        Some(board.mount_label()),
-    )
+    scan(board.board_id_matches(), Some(board.mount_label()))
 }
 
 pub(crate) fn detect_any_uf2_mounts(catalog: &BoardCatalog) -> Vec<PathBuf> {
     let board_id_matches = catalog
         .boards
         .iter()
-        .filter_map(|board| match &board.build {
-            BoardBuild::Uf2(build) => build.board_identity.validated().ok(),
-            BoardBuild::Esp(_) => None,
-            BoardBuild::NrfSerialDfu(build) => build.recovery.board_identity.validated().ok(),
+        .flat_map(|board| match &board.build {
+            BoardBuild::Uf2(build) => build
+                .board_identities()
+                .filter_map(|identity| identity.validated().ok())
+                .collect::<Vec<_>>(),
+            BoardBuild::Esp(_) => Vec::new(),
+            BoardBuild::NrfSerialDfu(build) => build
+                .recovery
+                .board_identity
+                .validated()
+                .into_iter()
+                .collect(),
         })
         .collect::<Vec<_>>();
     scan(&board_id_matches, None)
@@ -550,6 +569,28 @@ mod tests {
 
     fn cataloged_uf2(entry: &BoardCatalogEntry) -> CatalogedUf2Board<'_> {
         CatalogedUf2Board::try_from_entry(entry).expect("cataloged UF2 board")
+    }
+
+    #[test]
+    fn solar_detects_both_bootloader_histories_and_rejects_other_boards() {
+        let catalog = prns_flash_manifest::board_catalog().expect("catalog");
+        let entry = catalog
+            .boards
+            .iter()
+            .find(|board| board.slug == "seeed-sensecap-solar-node-p1")
+            .expect("Solar");
+        let mount = temporary_mount("solar-recovery");
+        fs::create_dir(&mount).expect("mount");
+        for (id, accepted) in [
+            ("nRF52840-SeeedSenseCAPSolarP1-v1", true),
+            ("nRF52840-SeeedXiao-v1", true),
+            ("nRF52840-SeeedXiao-v2", false),
+            ("nRF52840-T1000-E-v1", false),
+        ] {
+            fs::write(mount.join("INFO_UF2.TXT"), info(id, "7.3.0")).expect("descriptor");
+            assert_eq!(detect_device(entry, Some(&mount)).is_ok(), accepted, "{id}");
+        }
+        fs::remove_dir_all(&mount).expect("remove mount");
     }
 
     #[test]
@@ -778,7 +819,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
             fs::remove_dir(remover).expect("remove disappearing mount");
         });
-        let outcome = confirm_reboot_after_synchronization_interruption(
+        let outcome = confirm_reboot_after_interruption(
             &disappearing,
             &board,
             Reporter::json_lines(),
@@ -793,7 +834,7 @@ mod tests {
 
         let stuck = temporary_mount("sync-interrupted-stuck");
         fs::create_dir(&stuck).expect("create stuck mount");
-        let result = confirm_reboot_after_synchronization_interruption(
+        let result = confirm_reboot_after_interruption(
             &stuck,
             &board,
             Reporter::json_lines(),

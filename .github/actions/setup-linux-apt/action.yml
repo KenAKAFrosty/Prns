@@ -1,0 +1,21 @@
+name: Set up Linux package downloads
+description: Prefer the official Ubuntu HTTPS mirror and bound package download retries.
+runs:
+  using: composite
+  steps:
+    - name: Configure Ubuntu mirror and download limits
+      shell: bash
+      run: |
+        set -euo pipefail
+        mirror_list=/etc/apt/apt-mirrors.txt
+        if [[ -f "${mirror_list}" ]]; then
+          sudo sed -i \
+            -e 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+            -e 's|https://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+            "${mirror_list}"
+        fi
+        printf '%s\n' \
+          'Acquire::Retries "2";' \
+          'Acquire::http::Timeout "30";' \
+          'Acquire::https::Timeout "30";' \
+          | sudo tee /etc/apt/apt.conf.d/80prns-ci-downloads > /dev/null

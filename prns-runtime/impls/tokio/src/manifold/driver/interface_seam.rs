@@ -24,7 +24,17 @@ impl TokioInterfaceSeam {
         id: InterfaceId,
         inbound: TokioGrantProducer,
         wake: ManifoldWakeSender,
+        outbound: TokioGrantConsumer,
+    ) -> Self {
+        Self::new_with_entropy(id, inbound, wake, outbound, TokioEntropy::new())
+    }
+
+    pub(crate) fn new_with_entropy(
+        id: InterfaceId,
+        inbound: TokioGrantProducer,
+        wake: ManifoldWakeSender,
         mut outbound: TokioGrantConsumer,
+        entropy: TokioEntropy,
     ) -> Self {
         outbound.notify_releases_to(wake.clone());
         Self {
@@ -34,7 +44,7 @@ impl TokioInterfaceSeam {
             wake,
             outbound,
             commands: None,
-            entropy: TokioEntropy,
+            entropy,
         }
     }
 

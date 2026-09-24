@@ -53,8 +53,15 @@ pub(super) enum NrfSerialDfuEntry {
 pub(super) const WEB_SERIAL_PROBE_SUPPORTED: &str = "supported";
 pub(super) const WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY: &str = "android-bluetooth-only";
 pub(super) const WEB_USB_PROBE_SUPPORTED: &str = "supported";
+const WIO_TRACKER_L1_SHARED_UF2_IDENTITY: &str = "tracker l1";
+const WIO_TRACKER_L1_CONFIRMATION_DETAIL: &str = "INFO_UF2.TXT identifies the TRACKER L1 family, not the radio or display variant. Confirm this is a Wio Tracker L1 or L1 Pro with the standard radio and OLED, not a Pro 1 W or E-Ink model.";
 const HT_N5262_SHARED_UF2_IDENTITY: &str = "ht-n5262";
-const HT_N5262_CONFIRMATION_DETAIL: &str = "INFO_UF2.TXT confirms only the shared HT-n5262 recovery family. It cannot distinguish T114 from MeshPocket or the two MeshPocket capacities; the printed product label and, for MeshPocket, enclosure capacity marking are the final identity check.";
+const HT_N5262_CONFIRMATION_DETAIL: &str = "INFO_UF2.TXT confirms only the shared HT-n5262 recovery family. It cannot distinguish T114, MeshTower V2, or either MeshPocket capacity; the printed product label and, for MeshPocket, enclosure capacity marking are the final identity check.";
+
+const RAK4631_SHARED_UF2_IDENTITY: &str = "wisblock-rak4631-board";
+const RAK4631_CONFIRMATION_DETAIL: &str = "INFO_UF2.TXT identifies the shared RAK4631 recovery family. Check the kit label: RAK WisBlock RAK4631 and RAK WisMesh 1W Booster Kit need different firmware for their radio hardware.";
+const XIAO_NRF52840_SHARED_UF2_IDENTITY: &str = "nrf52840-seeedxiao-v1";
+const SOLAR_NODE_CONFIRMATION_DETAIL: &str = "Solar bootloaders identify either the Solar Node P1 or the shared Seeed XIAO nRF52840 recovery family. Confirm the enclosure is a SenseCAP Solar Node P1 or P1-Pro; this firmware is not for a standalone XIAO board.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum WebSerialCapability {
@@ -218,7 +225,40 @@ pub(super) fn preparation_guide(
             uf2_preparation_guide(target)
         }
         PreparationProfile::MeshPocketUf2 => mesh_pocket_preparation_guide(target),
-        PreparationProfile::T096Uf2 => uf2_preparation_guide(target),
+        PreparationProfile::WioTrackerL1Uf2 => PreparationGuide {
+            lead: "Use this image for the Wio Tracker L1 or L1 Pro with the standard radio and OLED. The Pro 1 W and E-Ink models need different firmware.",
+            steps: vec![
+                "Connect a USB data cable and double-press RESET to open the bootloader drive, usually named TRACKER L1.".to_string(),
+                "Select INFO_UF2.TXT from that drive. The supported foundation is S140 7.3.0; confirm the model on the device label.".to_string(),
+                "Copy the verified Wio Tracker L1 UF2 to that drive and wait for it to disappear as the device reboots.".to_string(),
+            ],
+        },
+        PreparationProfile::MeshTowerV2Uf2 => PreparationGuide {
+            lead: "MeshTower V2 shares its recovery identity with T114 and MeshPocket. Confirm the MeshTower V2 product label before selecting the image.",
+            steps: vec![
+                "Connect a USB data cable, open the case, and double-press RST until the HT-n5262 drive appears. Use RST, not the USER button.".to_string(),
+                "Select INFO_UF2.TXT from that drive. The supported foundation is S140 6.1.1.".to_string(),
+                "Copy the verified MeshTower V2 UF2 to HT-n5262 and wait for the drive to disappear when the device reboots.".to_string(),
+            ],
+        },
+        PreparationProfile::Rak4631Uf2 | PreparationProfile::Rak10724Uf2 => PreparationGuide {
+            lead: "The WisBlock Starter Kit and WisMesh 1W share the same bootloader identity. Match the selected firmware to the kit label before continuing.",
+            steps: vec![
+                "Connect a USB data cable and double-press RESET until the RAK4631 drive appears.".to_string(),
+                "Select INFO_UF2.TXT from that drive. It confirms the shared recovery family and S140 6.1.1, not which kit is connected.".to_string(),
+                "Copy the verified UF2 for your selected kit to RAK4631 and wait for the drive to disappear as the device reboots.".to_string(),
+            ],
+        },
+        PreparationProfile::SensecapSolarNodeUf2 => PreparationGuide {
+            lead: "Use this image for the SenseCAP Solar Node P1 or P1-Pro. Some recovery bootloaders share the XIAO identity with other Seeed boards, so confirm the Solar Node enclosure label.",
+            steps: vec![
+                "Connect a USB data cable and double-press RST to open the SENSECAP drive (XIAO-BOOT with Seeed’s recovery bootloader). Use RST, not the PWR button.".to_string(),
+                "Select INFO_UF2.TXT from that drive. This release supports the S140 7.3.0 foundation.".to_string(),
+                "Copy the verified Solar Node UF2 to that bootloader drive and wait for the drive to disappear as the device reboots.".to_string(),
+            ],
+        },
+        PreparationProfile::MuziBaseDuoUf2
+        | PreparationProfile::T096Uf2 => uf2_preparation_guide(target),
         PreparationProfile::T1000eNrfSerialDfu => {
             t1000e_preparation_guide(target, nrf_recovery)
         }
@@ -230,7 +270,7 @@ fn mesh_pocket_preparation_guide(target: BoardFlashTarget) -> PreparationGuide {
         unreachable!("the MeshPocket profile requires a cataloged UF2 target")
     };
     PreparationGuide {
-        lead: "T114 and both MeshPocket battery capacities share the same bootloader identity. Check the enclosure capacity before selecting the image.",
+        lead: "T114, MeshTower V2, and both MeshPocket battery capacities share the same bootloader identity. Check the enclosure capacity before selecting the image.",
         steps: vec![
             format!(
                 "Connect the MeshPocket with its magnetic USB data cable and double-press RST until the {mount_label} drive appears."
@@ -365,17 +405,18 @@ pub(super) fn parse_uf2_selection(
     bytes: &[u8],
     target: BoardFlashTarget,
 ) -> Result<Uf2BootloaderIdentity, String> {
-    let (board_id_match_kind, board_id) = match target {
+    let (board_id_match_kind, board_id, alternatives) = match target {
         BoardFlashTarget::Uf2MassStorage {
             board_id_match_kind,
             board_id,
+            alternative_board_identities,
             ..
-        } => (board_id_match_kind, board_id),
+        } => (board_id_match_kind, board_id, alternative_board_identities),
         BoardFlashTarget::NrfSerialDfu {
             recovery_board_id_match_kind,
             recovery_board_id,
             ..
-        } => (recovery_board_id_match_kind, recovery_board_id),
+        } => (recovery_board_id_match_kind, recovery_board_id, &[][..]),
         BoardFlashTarget::EspSerial { .. } => {
             return Err("An ESP target cannot use a UF2 bootloader descriptor.".to_string())
         }
@@ -383,7 +424,13 @@ pub(super) fn parse_uf2_selection(
     let identity = Uf2BootloaderIdentity::parse(bytes).map_err(|error| error.to_string())?;
     let board_id_match = Uf2BoardIdMatch::parse(board_id_match_kind, board_id.to_string())
         .map_err(|error| error.to_string())?;
-    if !identity.matches_board(&board_id_match) {
+    let mut matches = identity.matches_board(&board_id_match);
+    for alternative in alternatives {
+        let rule = Uf2BoardIdMatch::parse(alternative.kind, alternative.value.to_string())
+            .map_err(|error| error.to_string())?;
+        matches |= identity.matches_board(&rule);
+    }
+    if !matches {
         return Err(format!(
             "INFO_UF2.TXT reports Board-ID {:?}, which does not match the selected board.",
             identity.board_id()
@@ -441,6 +488,9 @@ pub(super) fn board_identity_confirmation_detail(target: BoardFlashTarget) -> Op
     let shared_identity = target.shared_uf2_identity()?;
     match shared_identity {
         HT_N5262_SHARED_UF2_IDENTITY => Some(HT_N5262_CONFIRMATION_DETAIL),
+        WIO_TRACKER_L1_SHARED_UF2_IDENTITY => Some(WIO_TRACKER_L1_CONFIRMATION_DETAIL),
+        RAK4631_SHARED_UF2_IDENTITY => Some(RAK4631_CONFIRMATION_DETAIL),
+        XIAO_NRF52840_SHARED_UF2_IDENTITY => Some(SOLAR_NODE_CONFIRMATION_DETAIL),
         _ => panic!("shared UF2 identity requires family-specific confirmation detail"),
     }
 }
@@ -449,6 +499,25 @@ pub(super) fn board_identity_confirmation_detail(target: BoardFlashTarget) -> Op
 mod tests {
     use super::*;
     use crate::platforms::board_target_by_slug;
+
+    #[test]
+    fn solar_accepts_recorded_and_vendor_recovery_descriptors_only() {
+        let target = board_target_by_slug("seeed-sensecap-solar-node-p1")
+            .unwrap()
+            .flash_target
+            .unwrap();
+        for (board_id, version) in [
+            ("nRF52840-SeeedSenseCAPSolarP1-v1", "0.9.2-OTAFIX2.2-BP1.3"),
+            ("nRF52840-SeeedXiao-v1", "0.7.0-22-g277a0c8"),
+        ] {
+            let descriptor =
+                format!("UF2 Bootloader {version}\nBoard-ID: {board_id}\nSoftDevice: S140 7.3.0\n");
+            assert!(parse_uf2_selection(descriptor.as_bytes(), target).is_ok());
+        }
+        let wrong =
+            b"UF2 Bootloader 0.9.2\nBoard-ID: nRF52840-SeeedXiao-v2\nSoftDevice: S140 7.3.0\n";
+        assert!(parse_uf2_selection(wrong, target).is_err());
+    }
 
     #[test]
     fn catalog_profiles_select_transport_specific_preparation() {
@@ -478,6 +547,7 @@ mod tests {
             mount_label: "HT-n5262",
             board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::ExactShared,
             board_id: "ht-n5262",
+            alternative_board_identities: &[],
         };
         let mesh_pocket =
             preparation_guide(PreparationProfile::MeshPocketUf2, mesh_pocket_target, false);
@@ -493,6 +563,22 @@ mod tests {
             board_identity_confirmation_detail(t114.flash_target.expect("flash target")),
             Some(HT_N5262_CONFIRMATION_DETAIL)
         );
+        let tower = board_target_by_slug("mesh-tower-v2").expect("shipping MeshTower");
+        let tower_target = tower.flash_target.expect("MeshTower UF2 target");
+        assert_eq!(
+            board_identity_confirmation_detail(tower_target),
+            Some(HT_N5262_CONFIRMATION_DETAIL)
+        );
+        let tower_guide = preparation_guide(
+            tower.preparation_profile.expect("MeshTower preparation"),
+            tower_target,
+            false,
+        );
+        assert!(tower_guide.lead.contains("MeshTower V2 product label"));
+        assert!(tower_guide
+            .steps
+            .iter()
+            .any(|step| step.contains("S140 6.1.1")));
         assert!(mesh_pocket.steps.iter().any(|step| step.contains("RST")));
         assert!(mesh_pocket
             .steps
@@ -510,12 +596,56 @@ mod tests {
     }
 
     #[test]
+    fn every_flashable_board_has_preparation_and_identity_guidance() {
+        for board in SHIPPING_BOARD_TARGETS {
+            let target = board.flash_target.expect("shipping flash target");
+            let guide = preparation_guide(
+                board.preparation_profile.expect("preparation profile"),
+                target,
+                false,
+            );
+            assert!(!guide.steps.is_empty(), "{}", board.slug);
+            if target.shared_uf2_identity().is_some() {
+                assert!(
+                    board_identity_confirmation_detail(target).is_some(),
+                    "{}",
+                    board.slug
+                );
+            }
+        }
+        let wio = board_target_by_slug("seeed-wio-tracker-l1").expect("Wio board");
+        assert_eq!(
+            board_identity_confirmation_detail(wio.flash_target.unwrap()),
+            Some(WIO_TRACKER_L1_CONFIRMATION_DETAIL)
+        );
+    }
+
+    #[test]
+    fn shared_recovery_families_keep_product_specific_confirmation() {
+        for (slug, expected) in [
+            ("rak4631", RAK4631_CONFIRMATION_DETAIL),
+            ("rak10724", RAK4631_CONFIRMATION_DETAIL),
+            (
+                "seeed-sensecap-solar-node-p1",
+                SOLAR_NODE_CONFIRMATION_DETAIL,
+            ),
+        ] {
+            let board = board_target_by_slug(slug).expect("shipping board");
+            assert_eq!(
+                board_identity_confirmation_detail(board.flash_target.unwrap()),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
     #[should_panic(expected = "shared UF2 identity requires family-specific confirmation detail")]
     fn unknown_shared_uf2_identity_requires_its_own_confirmation_detail() {
         let target = BoardFlashTarget::Uf2MassStorage {
             mount_label: "ANOTHER",
             board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::ExactShared,
             board_id: "another-family",
+            alternative_board_identities: &[],
         };
 
         board_identity_confirmation_detail(target);
@@ -524,7 +654,7 @@ mod tests {
     #[test]
     fn generated_catalog_owns_transport_provisioning_and_same_chip_confirmation() {
         let heltec = board_target_by_slug("heltec-v4").expect("shipping board");
-        let e290 = board_target_by_slug("heltec-e290").expect("qualification board");
+        let e290 = board_target_by_slug("heltec-e290").expect("shipping board");
         let t_beam = board_target_by_slug("t-beam-supreme").expect("shipping board");
         let xiao = board_target_by_slug("xiao-esp32-c6").expect("shipping board");
         let t_echo = board_target_by_slug("t-echo").expect("shipping board");
@@ -555,10 +685,7 @@ mod tests {
             BoardFlashTarget::Uf2MassStorage { .. }
         ));
         assert!(shares_serial_chip_identity(heltec));
-        assert_eq!(
-            shares_serial_chip_identity(e290),
-            cfg!(feature = "local-dev-flasher")
-        );
+        assert!(shares_serial_chip_identity(e290));
         assert!(shares_serial_chip_identity(t_beam));
         assert!(!shares_serial_chip_identity(xiao));
         assert!(!shares_serial_chip_identity(t_echo));

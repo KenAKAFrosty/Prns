@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from validation.hardening.embedded_host import HostPlatform
+from validation.hardening.embedded_execution import ExitReason, ProcessObservation
 from validation.hardening.embedded_platform import artifacts, milestone
 from validation.hardening.embedded_platform.build import cargo_command, image_command
 from validation.hardening.embedded_platform.contract import (
@@ -25,6 +26,7 @@ from validation.hardening.embedded_platform.contract import (
 from validation.hardening.embedded_platform.discovery import description_candidates
 from validation.hardening.embedded_platform.error import EmbeddedPlatformError
 from validation.hardening.embedded_platform.emulator import platform_description
+from validation.hardening.embedded_platform.run import renode_identity
 from validation.hardening.embedded_platform.platform import (
     nrf52840,
     qemu_command,
@@ -48,7 +50,10 @@ class EmbeddedPlatformTests(unittest.TestCase):
         self.assertIsInstance(platform.execution, RenodeExecution)
         execution = platform.execution
         assert isinstance(execution, RenodeExecution)
-        self.assertEqual(execution.emulator.identity[0], "Renode v1.17.0")
+        self.assertTrue(all(
+            package.identity[0] == "Renode v1.17.0"
+            for package in execution.emulator.packages
+        ))
         self.assertEqual(
             {package.host for package in execution.emulator.packages},
             {
@@ -66,6 +71,38 @@ class EmbeddedPlatformTests(unittest.TestCase):
         )
         suites = {suite["id"] for suite in manifest["suite"]}
         self.assertIn(platform.suite, suites)
+
+    def test_platform_execution_rejects_another_hosts_renode_identity(self) -> None:
+        execution = load_inventory().platform_for_suite("embedded-platform-nrf52840").execution
+        assert isinstance(execution, RenodeExecution)
+        package = execution.emulator.package_for_host(HostPlatform.LINUX_AMD64)
+        assert package is not None
+        executable = Path("/fixture/renode")
+        observation = ProcessObservation(
+            (str(executable), "--version"), ExitReason.EXITED, 0,
+            "\n".join(package.identity).encode(), b"",
+        )
+        with mock.patch(
+            "validation.hardening.embedded_platform.run.execute", return_value=observation
+        ):
+            self.assertEqual(
+                renode_identity(execution, executable, HostPlatform.LINUX_AMD64),
+                ("; ".join(package.identity), observation),
+            )
+            with self.assertRaisesRegex(EmbeddedPlatformError, "emulator identity is"):
+                renode_identity(execution, executable, HostPlatform.MACOS_ARM64)
+            with self.assertRaisesRegex(EmbeddedPlatformError, "no pinned emulator identity"):
+                renode_identity(execution, executable, HostPlatform.MACOS_AMD64)
+
+    def test_each_emulator_package_requires_its_own_identity(self) -> None:
+        contents = INVENTORY_PATH.read_text(encoding="utf-8")
+        start = contents.index("identity = [")
+        end = contents.index("]", start) + 1
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "inventory.toml"
+            path.write_text(contents[:start] + contents[end:], encoding="utf-8")
+            with self.assertRaisesRegex(InventoryError, "emulator package identity"):
+                load_inventory(path)
 
     def test_inventory_rejects_architecture_target_mismatch(self) -> None:
         contents = INVENTORY_PATH.read_text(encoding="utf-8").replace(

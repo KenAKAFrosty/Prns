@@ -6,7 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 use prns_core::interfaces::wifi_auto::{DiscoveryEndpoint, DiscoveryTransport};
 
 use super::{
-    endpoint_is_eligible, link_local_nics, local_prefixes, HostLanAddress, HostLanInterface,
+    endpoint_is_eligible, host_link_local_nics, local_prefixes, HostLanAddress, HostLanInterface,
     HostLanInventory, LocalPrefix, NetworkDiscoveryOwner,
 };
 use crate::network_device::AutoWifiDevicePolicy;
@@ -67,7 +67,8 @@ fn host_lan_ifindex_fills_link_local_scope_when_sysfs_cannot() {
     )
     .unwrap()]);
     let policy = AutoWifiDevicePolicy::default();
-    let nics = link_local_nics(&policy, &inventory);
+    // Exercise the missing-OS-interface fallback without real NIC index collisions.
+    let nics = host_link_local_nics(&policy, &inventory, Default::default());
     assert!(
         nics.iter().any(|nic| {
             nic.index == 23

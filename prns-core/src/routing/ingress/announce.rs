@@ -1,4 +1,4 @@
-use super::outcome::{AcceptedAnnounceEffect, IngestEffects};
+use super::outcome::{AcceptedAnnounceEffect, DiscoveredPath, IngestEffects};
 use crate::engine::{EngineState, InstantMillis, RememberAnnouncedDestinationIdentityOutcome};
 use crate::identity::IdentityHash;
 use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceKind};
@@ -270,6 +270,10 @@ impl<S: StorageLayout> EngineState<S> {
             AnnounceRouteScope::Network,
         ) {
             DirectAnnounceIngest::Accepted => {
+                effects.discovered_path = Some(DiscoveredPath {
+                    destination: arrival.announce.destination,
+                    hops: arrival.hops,
+                });
                 let rebroadcast = self.schedule_rebroadcast(arrival, interfaces, fill_random);
                 effects.accepted_announce = Some(AcceptedAnnounceEffect {
                     observation: crate::routing::announce::AnnounceObservation::from_arrival(
@@ -284,9 +288,55 @@ impl<S: StorageLayout> EngineState<S> {
                     rebroadcast: rebroadcast.decision,
                 })
             }
-            DirectAnnounceIngest::Ignored => AnnounceIngest::Ignored,
+            DirectAnnounceIngest::Ignored => {
+                // A verified cached answer can finish discovery without becoming new
+                // route evidence. Its retained age and ordinary announce callbacks stand.
+                if self.matches_retained_path_response(arrival, interfaces) {
+                    effects.discovered_path = Some(DiscoveredPath {
+                        destination: arrival.announce.destination,
+                        hops: arrival.hops,
+                    });
+                    self.schedule_rebroadcast(arrival, interfaces, fill_random);
+                }
+                AnnounceIngest::Ignored
+            }
             DirectAnnounceIngest::Blackholed => AnnounceIngest::Blackholed,
         }
+    }
+
+    fn matches_retained_path_response(
+        &self,
+        arrival: &AnnounceArrival<'_>,
+        interfaces: AttachedInterfaces<'_>,
+    ) -> bool {
+        if !arrival.is_path_response {
+            return false;
+        }
+        let destination = &arrival.announce.destination;
+        if !self.pending_path_requests.contains(destination)
+            && !self.recursive_path_requests.contains(destination)
+        {
+            return false;
+        }
+        let Some(route) = self
+            .routing_table
+            .existing_route_for(destination, interfaces)
+        else {
+            return false;
+        };
+        if arrival.arrived_at >= route.expires_at
+            || route.responsiveness == crate::routing::RouteResponsiveness::Unresponsive
+        {
+            return false;
+        }
+        self.routing_table
+            .stored_announce_for(destination)
+            .is_some_and(|stored| {
+                stored.receiving_interface == arrival.receiving_interface
+                    && stored.next_hop == arrival.next_hop
+                    && stored.hops == arrival.hops
+                    && stored.announce == arrival.announce
+            })
     }
 
     pub(crate) fn ingest_direct_announce<'a>(

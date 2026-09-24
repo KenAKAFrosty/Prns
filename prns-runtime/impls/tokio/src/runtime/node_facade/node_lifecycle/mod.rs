@@ -1,15 +1,17 @@
+use portable_atomic::AtomicU64;
 use std::collections::HashMap;
 use std::fmt;
 use std::future::{poll_fn, Future};
 use std::marker::PhantomData;
 use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 
 use futures_util::task::AtomicWaker;
 use futures_util::FutureExt;
+use prns_core::entropy::EntropySource;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -34,8 +36,8 @@ use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 use prns_runtime::runtime::{
-    assemble_node, configure_preconfigured_destination, AssembledNode,
-    ConfigurePreconfiguredDestinationError, Diagnostic,
+    configure_preconfigured_destination, AssembledNode, ConfigurePreconfiguredDestinationError,
+    Diagnostic,
 };
 
 use super::super::remote_control_controller_grants::{
@@ -53,7 +55,9 @@ use super::super::request_runner::{
 use super::super::{
     InterfaceStore, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe, SendError,
 };
-use super::interface_lifecycle::{drive_interfaces, DriverMsg};
+use super::interface_lifecycle::{
+    drive_interfaces_with_arbitration, DriverMsg, InterfaceArbitration,
+};
 use super::{persistence, AttachIntent, PrnsNodeHandle, PrnsNodeLocalHandle};
 
 const LOCAL_COMMAND_DEPTH: usize = 128;
@@ -75,11 +79,18 @@ fn notify_accepted_announce(
 /// (synchronous: it wires the engine and spawns each interface), then driven by
 /// [`run`](Self::run) or [`run_until`](Self::run_until). Hold [`handle`](Self::handle)
 /// clones to drive it from other tasks or threads while either method owns the loop.
-pub struct PrnsNode<St, R, F, S: StorageLayout> {
+pub struct PrnsNode<
+    St,
+    R,
+    F,
+    S: StorageLayout,
+    E = crate::runtime::OsEntropySource,
+    C = prns_runtime::runtime::NoRemoteControlHostControls,
+> {
     handle: PrnsNodeHandle,
     local_commands: Option<manifold_driver::LocalCommandProducer>,
-    pub(super) host: TokioHost,
-    pub(super) node: AssembledNode<St, R, F, S>,
+    pub(super) host: TokioHost<E>,
+    pub(super) node: AssembledNode<St, R, F, S, C>,
     manifold_wake: manifold_driver::ManifoldWakeReceiver,
     command_rx: UnboundedReceiver<HostCommand>,
     local_command_rx: manifold_driver::LocalCommandConsumer,
@@ -89,6 +100,7 @@ pub struct PrnsNode<St, R, F, S: StorageLayout> {
     accepted_announce_observer: Option<AcceptedAnnounceObserver>,
     pub(super) crypto_pool: CryptoPoolConfig,
     scheduler_policy: SchedulerPolicy,
+    interface_arbitration: InterfaceArbitration,
     persistence: Option<persistence::NodePersistence>,
 }
 
@@ -100,7 +112,7 @@ pub enum NonRoutingIdentityError {
 
 pub type SharedInstanceIdentityError = NonRoutingIdentityError;
 
-impl<St, R, F> PrnsNode<St, R, F, GrowableHeap>
+impl<St, R, F, E: EntropySource, C> PrnsNode<St, R, F, GrowableHeap, E, C>
 where
     R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
@@ -412,13 +424,14 @@ async fn run_recipe_persistence(
     }
 }
 
-impl<St, R, F, S: StorageLayout> PrnsNode<St, R, F, S>
+impl<St, R, F, S: StorageLayout, C> PrnsNode<St, R, F, S, crate::runtime::OsEntropySource, C>
 where
     R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
+    C: prns_runtime::runtime::RemoteControlHostControls,
 {
     /// Stand a node up from `recipe` on the storage layout it names: assemble the engine (transport role, destinations, the request endpoints), then let the recipe's `interfaces` intent attach the node's edges through its own handle. Only [`run`](Self::run) awaits.
-    pub fn new<'a, D, I, P>(recipe: PrnsNodeRecipe<'a, D, St, R, F, I, S, P>) -> Self
+    pub fn new<'a, D, I, P>(recipe: PrnsNodeRecipe<'a, D, St, R, F, I, S, P, C>) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
         I: AttachIntent,
@@ -432,7 +445,84 @@ where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
         I: AttachIntent,
         P: persistence::PersistenceIntent,
-        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
+        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P, C>,
+    {
+        Self::assemble_with_host(
+            build_recipe,
+            crate::runtime::TokioHandleEntropy::new(),
+            |persistence| {
+                TokioHost::start_at(
+                    persistence
+                        .map(persistence::NodePersistence::timeline_origin)
+                        .unwrap_or_else(persistence::wall_clock_timeline_origin),
+                )
+            },
+        )
+    }
+}
+
+impl<St, R, F, S: StorageLayout, E: EntropySource, C> PrnsNode<St, R, F, S, E, C>
+where
+    R: RequestEndpointSet<St>,
+    F: FnMut(PrnsEvent<'_>, &St),
+    C: prns_runtime::runtime::RemoteControlHostControls,
+{
+    /// Constructs a node with an explicitly owned host. Its timeline must agree with any
+    /// restored persistence. Handle/interface randomness and path IDs remain OS-backed.
+    pub fn new_with_host<'a, D, I, P>(
+        recipe: PrnsNodeRecipe<'a, D, St, R, F, I, S, P, C>,
+        host: TokioHost<E>,
+    ) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
+        I: AttachIntent,
+        P: persistence::PersistenceIntent,
+    {
+        Self::new_with_handle_and_host(|_| recipe, host)
+    }
+
+    /// Like [`Self::new_with_host`], with access to the handle while constructing the recipe.
+    pub fn new_with_handle_and_host<'a, D, I, P, B>(build_recipe: B, host: TokioHost<E>) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
+        I: AttachIntent,
+        P: persistence::PersistenceIntent,
+        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P, C>,
+    {
+        Self::new_with_entropy_sources(
+            build_recipe,
+            host,
+            crate::runtime::TokioHandleEntropy::new(),
+        )
+    }
+
+    /// Selects every node-owned entropy provider before the recipe or interfaces can use them.
+    /// The host owns the timeline and engine stream; `handle_entropy` owns the shared
+    /// handle/interface stream and fallible path-ID provider. No provider is replaced at runtime.
+    pub fn new_with_entropy_sources<'a, D, I, P, B>(
+        build_recipe: B,
+        host: TokioHost<E>,
+        handle_entropy: crate::runtime::TokioHandleEntropy,
+    ) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
+        I: AttachIntent,
+        P: persistence::PersistenceIntent,
+        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P, C>,
+    {
+        Self::assemble_with_host(build_recipe, handle_entropy, |_| host)
+    }
+
+    fn assemble_with_host<'a, D, I, P, B>(
+        build_recipe: B,
+        handle_entropy: crate::runtime::TokioHandleEntropy,
+        host: impl FnOnce(Option<&persistence::NodePersistence>) -> TokioHost<E>,
+    ) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
+        I: AttachIntent,
+        P: persistence::PersistenceIntent,
+        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P, C>,
     {
         let (manifold_wake_tx, manifold_wake_rx) = manifold_driver::manifold_wake();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
@@ -453,12 +543,16 @@ where
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
             resource_admission: super::resource_admission::ResourceAdmissionRegistry::default(),
-            entropy: crate::manifold::driver::TokioEntropy,
+            entropy: handle_entropy,
             timing_oracle: Arc::new(Mutex::new(None)),
             remote_control_controller_grants,
             remote_control_target_accesses,
         };
-        let (node, interfaces, persistence_intent) = assemble_node(build_recipe(handle.clone()));
+        let (node, interfaces, persistence_intent) =
+            prns_runtime::runtime::placement::assemble_node_with_interface_watch(
+                build_recipe(handle.clone()),
+                crate::remote_control::RemoteControlInterfaceWatchSupport::RuntimeSnapshots,
+            );
         let node_persistence =
             persistence::PersistenceIntent::into_node_persistence(persistence_intent);
         interfaces.attach(&handle);
@@ -466,12 +560,7 @@ where
         PrnsNode {
             local_commands: Some(local_commands),
             handle,
-            host: TokioHost::start_at(
-                node_persistence
-                    .as_ref()
-                    .map(persistence::NodePersistence::timeline_origin)
-                    .unwrap_or_else(persistence::wall_clock_timeline_origin),
-            ),
+            host: host(node_persistence.as_ref()),
             node,
             manifold_wake: manifold_wake_rx,
             command_rx,
@@ -481,6 +570,7 @@ where
             iface_build_rx,
             accepted_announce_observer: None,
             crypto_pool: CryptoPoolConfig::host_default(),
+            interface_arbitration: InterfaceArbitration::TokioFair,
             scheduler_policy: SchedulerPolicy::production(),
             persistence: node_persistence,
         }
@@ -589,6 +679,13 @@ where
         self
     }
 
+    /// Selects this node's interface-driver readiness arbitration before execution.
+    #[must_use]
+    pub fn with_interface_arbitration(mut self, arbitration: InterfaceArbitration) -> Self {
+        self.interface_arbitration = arbitration;
+        self
+    }
+
     #[cfg(feature = "scheduler-tuning")]
     #[must_use]
     pub fn with_scheduler_policy(mut self, scheduler_policy: SchedulerPolicy) -> Self {
@@ -688,7 +785,8 @@ where
     /// state and ratchet flush.
     pub async fn run(self) -> Result<(), NodeRunError>
     where
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         self.run_with_proof_decider(|_| false).await
     }
@@ -703,7 +801,8 @@ where
     pub async fn run_with_proof_decider<P>(self, should_prove: P) -> Result<(), NodeRunError>
     where
         P: FnMut(&ProofRequest) -> bool,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         self.run_until_with_proof_decider(core::future::pending::<()>(), should_prove)
             .await
@@ -718,7 +817,8 @@ where
     /// this method returns.
     pub async fn run_until(self, shutdown: impl Future<Output = ()>) -> Result<(), NodeRunError>
     where
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         self.run_until_with_proof_decider(shutdown, |_| false).await
     }
@@ -731,7 +831,8 @@ where
     ) -> Result<(), NodeRunError>
     where
         P: FnMut(&ProofRequest) -> bool,
-        St: prns_runtime::runtime::RemoteControlHostControls,
+        C: prns_runtime::runtime::RemoteControlHostControls
+            + prns_runtime::runtime::RemoteControlAppMessages<St>,
     {
         let restored = match self.persistence.take() {
             Some(node_persistence) => {
@@ -754,11 +855,13 @@ where
             mut accepted_announce_observer,
             crypto_pool,
             scheduler_policy,
+            interface_arbitration,
             persistence: _,
         } = self;
         let AssembledNode {
             engine,
             mut remote_control,
+            controls,
             state,
             mut on_event,
             request_endpoints: _,
@@ -787,6 +890,7 @@ where
         let egress = Egress::new(std::vec::Vec::new());
         let store = handle.store.clone();
         let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
+        let interface_watches = super::super::interface_watch::InterfaceWatchRegistry::default();
         let admission_decider = handle.resource_admission.clone();
         let admission_cleanup = handle.resource_admission.clone();
         let manifold = async {
@@ -812,6 +916,7 @@ where
                     remote_control_pairing_persistence.observe(&journaled);
                     if let Journaled::LinkClosed { link_id, .. } = &journaled {
                         admission_cleanup.remove(*link_id);
+                        interface_watches.cancel_link(*link_id);
                     }
                     notify_accepted_announce(&mut accepted_announce_observer, &journaled);
                     let event = PrnsEvent::from(journaled);
@@ -858,10 +963,12 @@ where
         let driver_interfaces = handle.interfaces.clone();
         let node_tasks = run_executor_local_node_tasks(
             manifold,
-            run_router::<St, R>(
+            run_router::<St, C, R>(
                 &state,
+                &controls,
                 &mut remote_control,
                 req_rx,
+                &interface_watches,
                 RemoteControlAuthorizationRuntime {
                     controller_grants: &mut remote_control_controller_grants_rx,
                     target_accesses: &mut remote_control_target_accesses_rx,
@@ -870,11 +977,12 @@ where
                 },
                 handle.clone(),
             ),
-            drive_interfaces(
+            drive_interfaces_with_arbitration(
                 std::vec::Vec::new(),
                 iface_build_rx,
                 driver_commands,
                 driver_interfaces,
+                interface_arbitration,
             ),
         );
         match persistence_worker {

@@ -125,6 +125,9 @@ cp "$root/tools/release/verify-flasher-candidate-files.py" \
     "$candidate/qualification/verify-flasher-candidate-files.py"
 cp "$root/tools/release/validate-flasher-tester-roster.py" \
     "$candidate/qualification/validate-flasher-tester-roster.py"
+cp "$root/tools/release/flasher_software_acceptance.py" "$candidate/qualification/flasher_software_acceptance.py"
+cp "$root/validation/run.py" "$candidate/qualification/validation_runner.py"
+cp "$root/validation/manifest.toml" "$candidate/qualification/validation-manifest.toml"
 cp "$roster_source" "$candidate/qualification/tester-roster.json"
 if [[ "$version" != "$suite_version" ]]; then
     hotfix_spec="$root/release/flash/hotfixes/${version}.json"

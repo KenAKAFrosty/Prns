@@ -98,7 +98,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             ResourcePartHashLanding::Assembly { link_id, hash } => {
                 self.emit_resource_open(&link_id, &hash, sink);
-                self.conclude_resource(&link_id, &hash, now, sink);
+                self.conclude_resource(&link_id, &hash, now, fill_random, sink);
                 wake.resource_deadlines = self.resource_deadlines_wake();
                 wake.receipt_timeouts = self.receipt_timeouts_wake();
             }
@@ -220,7 +220,6 @@ impl<S: StorageLayout> EngineState<S> {
         let protocol_violation = ProtocolViolationKind::of_outcome(&outcome);
 
         wake_schedule_changes.held_announce_release = effects.held_announce_release;
-        let accepted_observation = effects.accepted_announce.take();
         let remote_control_pairing_availability =
             effects.remote_control_pairing_availability.take();
         if let Some(expiry) = effects.destination_identity_expiry {
@@ -238,7 +237,7 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::Announce(ingest) => {
                 self.apply_announce_ingest(
                     ingest,
-                    accepted_observation,
+                    &mut effects,
                     source,
                     interfaces,
                     &mut wake_schedule_changes,
@@ -645,6 +644,9 @@ impl<S: StorageLayout> EngineState<S> {
                             self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
                         }
                         AcceptedResourceAdmission::Pending => {}
+                        AcceptedResourceAdmission::SupersededResponse { link_id, hash } => {
+                            self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
+                        }
                         AcceptedResourceAdmission::CapacityRejected {
                             link_id,
                             hash,
@@ -703,6 +705,9 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::ResourceAdmissionPending => {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
+            IngestPacketOutcome::ResourceResponseSuperseded { link_id, hash } => {
+                self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
+            }
             IngestPacketOutcome::ResourceCapacityRejected {
                 link_id,
                 hash,
@@ -723,7 +728,7 @@ impl<S: StorageLayout> EngineState<S> {
                 // Mark the final ready span in flight before conclusion observes the row. That
                 // makes a complete transfer park as AwaitingOpen until its typed completion.
                 self.emit_resource_open(&link_id, &hash, sink);
-                self.conclude_resource(&link_id, &hash, now, sink);
+                self.conclude_resource(&link_id, &hash, now, fill_random, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
@@ -757,16 +762,16 @@ impl<S: StorageLayout> EngineState<S> {
                 link_id,
                 correlation,
             } => {
-                settle(
-                    sink,
+                self.settle_advertised_resource(
                     id,
-                    crate::routing::links::resources::send::resource_settlement(
-                        correlation,
-                        Err(crate::engine::SendResourceFailure::RejectedByPeer),
-                    ),
+                    &link_id,
+                    correlation,
+                    Err(crate::engine::SendResourceFailure::RejectedByPeer),
+                    sink,
                 );
                 self.fail_staged_continuation(&link_id, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
             IngestPacketOutcome::ResourceDelivered {
                 id,
@@ -787,14 +792,7 @@ impl<S: StorageLayout> EngineState<S> {
                         sink,
                     ));
                 } else {
-                    settle(
-                        sink,
-                        id,
-                        crate::routing::links::resources::send::resource_settlement(
-                            correlation,
-                            Ok(()),
-                        ),
-                    );
+                    self.settle_advertised_resource(id, &link_id, correlation, Ok(()), sink);
                     self.promote_staged_resource(&link_id, now, fill_random, sink);
                 }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();

@@ -5,6 +5,7 @@ import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 
@@ -55,12 +57,15 @@ CLI_TARGETS = {
     "x86_64-pc-windows-msvc": ".zip",
 }
 SHIPPING_BOARDS = release_boards(SCRIPTS / "flasher_board_catalog.py").shipping
-CATALOG_INTERFACES = {
-    board["slug"]: board["interfaces"]
+CATALOG = {
+    board["slug"]: board
     for board in json.loads(
         (ROOT / "release" / "flash" / "boards.json").read_text(encoding="utf-8")
     )["boards"]
 }
+
+CATALOG_INTERFACES = {slug: board["interfaces"] for slug, board in CATALOG.items()}
+UF2_BOARDS = {slug for slug, board in CATALOG.items() if board["transport"] == "uf2-mass-storage"}
 
 
 def sha256(path: Path) -> str:
@@ -213,12 +218,8 @@ class CandidateFixture:
         self.firmware_paths = []
         for index, board in enumerate(SHIPPING_BOARDS, start=1):
             filenames = (
-                ("t-echo-s140-6.1.1.uf2", "t-echo-s140-7.3.0.uf2")
-                if board == "t-echo"
-                else ("heltec-t114-s140-6.1.1.uf2",)
-                if board == "t114"
-                else ("t096-s140-6.1.1.uf2",)
-                if board == "t096"
+                tuple(variant["filename"] for variant in CATALOG[board]["build"]["variants"])
+                if board in UF2_BOARDS
                 else ("t1000e.bin", "t1000e.dat", "t1000e.uf2")
                 if board == "t1000-e"
                 else ("application.bin",)
@@ -228,7 +229,7 @@ class CandidateFixture:
                 relative = f"firmware/{board}/{filename}"
                 artifact = root / relative
                 artifact.parent.mkdir(parents=True, exist_ok=True)
-                if board in {"t-echo", "t114", "t096"}:
+                if board in UF2_BOARDS:
                     application_base = 0x26000 if "6.1.1" in filename else 0x27000
                     artifact.write_bytes(uf2_payload(application_base))
                 elif board == "t1000-e" and filename == "t1000e.bin":
@@ -266,15 +267,19 @@ class CandidateFixture:
                         ("0x00026000", "0x00027000"),
                     )
                 ]
-            elif board in {"t114", "t096"}:
+            elif board in UF2_BOARDS:
                 parts = []
                 variants = [
                     {
                         **artifacts[0],
                         "softdevice_family": "s140",
-                        "softdevice_version": "6.1.1",
-                        "fwid": "0x00b6",
-                        "application_base": "0x00026000",
+                        "softdevice_version": CATALOG[board]["build"]["variants"][0]["softdevice_version"],
+                        "fwid": CATALOG[board]["build"]["variants"][0]["fwid"],
+                        "application_base": (
+                            "0x00027000"
+                            if CATALOG[board]["build"]["variants"][0]["softdevice_version"] == "7.3.0"
+                            else "0x00026000"
+                        ),
                         "family_id": "0xada52840",
                     }
                 ]
@@ -289,7 +294,7 @@ class CandidateFixture:
                 "interfaces": CATALOG_INTERFACES[board],
                 "transport": (
                     "uf2-mass-storage"
-                    if board in {"t-echo", "t114", "t096"}
+                    if board in UF2_BOARDS
                     else "nrf-serial-dfu"
                     if board == "t1000-e"
                     else "esp-serial"
@@ -423,6 +428,9 @@ class CandidateFixture:
             "create-flasher-acceptance.py": SCRIPTS / "create-flasher-acceptance.py",
             "validate-flasher-acceptance.py": SCRIPTS / "validate-flasher-acceptance.py",
             "flasher_acceptance_contract.py": SCRIPTS / "flasher_acceptance_contract.py",
+            "flasher_software_acceptance.py": SCRIPTS / "flasher_software_acceptance.py",
+            "validation_runner.py": ROOT / "validation" / "run.py",
+            "validation-manifest.toml": ROOT / "validation" / "manifest.toml",
             "flasher_board_catalog.py": SCRIPTS / "flasher_board_catalog.py",
             "flasher_manifest.py": SCRIPTS / "flasher_manifest.py",
             "flasher_memory_contracts.py": SCRIPTS / "flasher_memory_contracts.py",
@@ -456,6 +464,9 @@ class CandidateFixture:
             ("t1000-e", "cli"): ("macos", "x86_64"),
             ("t1000-e", "web"): ("windows", "x86_64"),
         }
+        for board in SHIPPING_BOARDS:
+            for surface in ("cli", "web"):
+                physical_hosts.setdefault((board, surface), ("linux", "x86_64"))
         physical_assignments = []
         for (board, surface), (os_name, architecture) in physical_hosts.items():
             if board not in SHIPPING_BOARDS:
@@ -1590,6 +1601,9 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.root / "qualification" / "create-flasher-acceptance.py",
             self.fixture.root / "qualification" / "validate-flasher-acceptance.py",
             self.fixture.root / "qualification" / "flasher_acceptance_contract.py",
+            self.fixture.root / "qualification" / "flasher_software_acceptance.py",
+            self.fixture.root / "qualification" / "validation_runner.py",
+            self.fixture.root / "qualification" / "validation-manifest.toml",
             self.fixture.root / "qualification" / "flasher_board_catalog.py",
             self.fixture.root / "qualification" / "flasher_hotfix.py",
             self.fixture.root / "qualification" / "flasher_manifest.py",
@@ -1739,6 +1753,83 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         )
         self.assertEqual(suite_verified.returncode, 0, suite_verified.stderr)
 
+        helper = assets / "flasher_hotfix.py"
+        helper_bytes = helper.read_bytes()
+        helper.unlink()
+        standalone_sums = suite_sums.read_bytes()
+        standalone_signature = suite_signature.read_bytes()
+        suite_sums.write_bytes(candidate_sums)
+        suite_signature.write_bytes(candidate_signature)
+        standalone_missing = run_script("verify-flasher-release-assets.py", *arguments)
+        self.assertNotEqual(standalone_missing.returncode, 0)
+        self.assertIn("missing signed release assets", standalone_missing.stderr)
+        suite_sums.write_bytes(standalone_sums)
+        suite_signature.write_bytes(standalone_signature)
+        original_bundle = signed_bundle.read_bytes()
+        review_path = assets / f"public-review-v{VERSION}-run-{workflow_run_id}-attempt-2.json"
+        original_review = review_path.read_bytes()
+
+        def bundled_inventory(payload: bytes, *, copies: int = 1, symlink: bool = False) -> list[str]:
+            with tarfile.open(signed_bundle, "w:gz") as archive:
+                for _ in range(copies):
+                    member = tarfile.TarInfo("qualification/flasher_hotfix.py")
+                    member.size = len(payload)
+                    if symlink:
+                        member.type = tarfile.SYMTYPE
+                        member.linkname = "other-helper.py"
+                        member.size = 0
+                    archive.addfile(member, None if symlink else io.BytesIO(payload))
+            review = json.loads(original_review)
+            review["signed_candidate_sha256"] = sha256(signed_bundle)
+            write_json(review_path, review)
+            return [*inventory_lines, f"{sha256(signed_bundle)}  {signed_bundle.name}\n"]
+
+        bundled_lines = bundled_inventory(helper_bytes)
+        sign_suite_inventory(bundled_lines)
+        bundled_verified = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+        self.assertEqual(bundled_verified.returncode, 0, bundled_verified.stderr)
+        sign_suite_inventory(inventory_lines)
+        unauthenticated = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+        self.assertNotEqual(unauthenticated.returncode, 0)
+        self.assertIn("does not authenticate the helper bundle", unauthenticated.stderr)
+        sign_suite_inventory([*inventory_lines, f"{'0' * 64}  {signed_bundle.name}\n"])
+        wrong_bundle = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+        self.assertNotEqual(wrong_bundle.returncode, 0)
+        self.assertIn("does not authenticate the helper bundle", wrong_bundle.stderr)
+        sign_suite_inventory([*bundled_lines, f"{sha256(self.fixture.root / 'qualification/flasher_hotfix.py')}  flasher_hotfix.py\n"])
+        required_standalone = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+        self.assertNotEqual(required_standalone.returncode, 0)
+        self.assertIn("missing signed release assets", required_standalone.stderr)
+        for payload, copies, symlink, message in (
+            (b"tampered helper", 1, False, "differs from the signed candidate"),
+            (bytes([helper_bytes[0] ^ 1]) + helper_bytes[1:], 1, False, "differs from the signed candidate"),
+            (helper_bytes, 0, False, "one regular qualification helper"),
+            (helper_bytes, 2, False, "one regular qualification helper"),
+            (helper_bytes, 1, True, "one regular qualification helper"),
+        ):
+            with self.subTest(copies=copies, symlink=symlink, payload=payload[:20]):
+                sign_suite_inventory(bundled_inventory(payload, copies=copies, symlink=symlink))
+                rejected = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn(message, rejected.stderr)
+        sign_suite_inventory(bundled_inventory(helper_bytes))
+        hotfix_metadata = self.fixture.root / "metadata/hotfix.json"
+        write_json(hotfix_metadata, {})
+        write_json(assets / f"hotfix-inheritance-v{VERSION}.json", {})
+        write_json(self.fixture.root / "qualification/hotfix.json", {})
+        write_json(assets / f"hotfix-spec-v{VERSION}.json", {})
+        hotfix_missing = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+        self.assertNotEqual(hotfix_missing.returncode, 0)
+        self.assertIn("missing signed release assets", hotfix_missing.stderr)
+        hotfix_metadata.unlink()
+        (self.fixture.root / "qualification/hotfix.json").unlink()
+        (assets / f"hotfix-inheritance-v{VERSION}.json").unlink()
+        (assets / f"hotfix-spec-v{VERSION}.json").unlink()
+        helper.write_bytes(helper_bytes)
+        signed_bundle.write_bytes(original_bundle)
+        review_path.write_bytes(original_review)
+        sign_suite_inventory(inventory_lines)
+
         contradicting_lines = list(inventory_lines)
         contradicting_lines[1] = f"{'0' * 64}  install.sh\n"
         sign_suite_inventory(contradicting_lines)
@@ -1845,6 +1936,22 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertNotIn(f"{suite_record}.minisig", hotfix)
         self.assertIn(flasher_record, hotfix)
         self.assertIn(f"{flasher_record}.minisig", hotfix)
+
+    def test_board_catalog_is_required_when_the_signed_acceptance_helper_imports_it(self) -> None:
+        self.assertEqual(self.sign_candidate().returncode, 0)
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location("verify_flasher_release_assets", script)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        catalog = self.fixture.root / "qualification" / "flasher_board_catalog.py"
+        self.assertIn("flasher_board_catalog.py", module.expected_candidate_assets(self.fixture.root, VERSION))
+        catalog.unlink()
+        with self.assertRaisesRegex(ValueError, "flasher_board_catalog.py"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+        acceptance = self.fixture.root / "qualification" / "flasher_acceptance_contract.py"
+        acceptance.write_text("SHIPPING_BOARDS = ('t-echo',)\n", encoding="utf-8")
+        self.assertNotIn("flasher_board_catalog.py", module.expected_candidate_assets(self.fixture.root, VERSION))
 
     def test_historical_candidate_need_not_contain_the_new_hotfix_helper(self) -> None:
         self.assertEqual(self.sign_candidate().returncode, 0)

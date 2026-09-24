@@ -492,7 +492,7 @@ async fn a_serial_drop_removes_and_recreates_every_logical_radio_together() {
         app_state: prns_runtime::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: prns_runtime::request_endpoints![],
-        remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable,
+        remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable.into(),
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
         on_event: |_event, _state: &prns_runtime::runtime::NoRemoteControlHostControls| {},

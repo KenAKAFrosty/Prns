@@ -52,8 +52,8 @@ def inspect(contract: ReadinessContract, probe: SystemProbe) -> tuple[ReadinessC
             probe,
             ReadinessLane.RESOURCES,
             "resource Rust",
-            "stable",
-            None,
+            contract.resource_toolchain,
+            contract.resource_toolchain,
             rust_targets,
             ("llvm-tools-preview",),
         ),
@@ -396,14 +396,24 @@ def inspect_platform_emulator(
             f"{execution.emulator.executable} was not found",
             setup,
         )
+    host = probe.host_platform()
+    package = execution.emulator.package_for_host(host) if host is not None else None
+    if package is None:
+        return ReadinessCheck(
+            ReadinessLane.PILOT,
+            subject,
+            CheckState.MISSING,
+            "no pinned emulator identity for this host",
+            setup,
+        )
     output = probe.run((str(executable), "--version"))
     found = output.lines()
-    if output.returncode != 0 or found != execution.emulator.identity:
+    if output.returncode != 0 or found != package.identity:
         return ReadinessCheck(
             ReadinessLane.PILOT,
             subject,
             CheckState.MISMATCH,
-            f"found {found!r}; expected {execution.emulator.identity!r}",
+            f"found {found!r}; expected {package.identity!r}",
             setup,
         )
     configured_root = probe.environment(RENODE_ROOT_ENV)
@@ -451,7 +461,7 @@ def platform_emulator_setup(
         )
     else:
         acquisition = (
-            f"install {'; '.join(execution.emulator.identity)} from {package.source_url}",
+            f"install {'; '.join(package.identity)} from {package.source_url}",
             f"verify package SHA-256 {package.source_sha256}",
         )
     return acquisition + (

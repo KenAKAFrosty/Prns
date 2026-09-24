@@ -58,6 +58,9 @@ def complete_roster() -> dict:
         ("t1000-e", "cli"): ("macos", "x86_64"),
         ("t1000-e", "web"): ("windows", "x86_64"),
     }
+    for board in CONTRACT.SHIPPING_BOARDS:
+        for surface in ("cli", "web"):
+            hosts.setdefault((board, surface), ("linux", "x86_64"))
     physical_assignments = []
     for (board, surface), (os_name, architecture) in hosts.items():
         if board not in CONTRACT.SHIPPING_BOARDS:
@@ -126,21 +129,14 @@ def complete_roster() -> dict:
 
 def manifest() -> dict:
     boards = (
-        ("heltec-v4", "Heltec LoRa 32 V4 (S3R2)", "esp-serial", "esp32s3", True),
-        ("heltec-v4-r8", "Heltec LoRa 32 V4 (S3R8)", "esp-serial", "esp32s3", True),
         (
-            "heltec-wireless-stick-lite-v3",
-            "Heltec Wireless Stick Lite V3",
-            "esp-serial",
-            "esp32s3",
-            False,
-        ),
-        ("t-beam-supreme", "LilyGO T-Beam Supreme", "esp-serial", "esp32s3", True),
-        ("xiao-esp32-c6", "Seeed XIAO ESP32-C6", "esp-serial", "esp32c6", False),
-        ("t-echo", "LilyGO T-Echo", "uf2-mass-storage", None, False),
-        ("t114", "Heltec Mesh Node T114", "uf2-mass-storage", None, False),
-        ("t096", "Heltec Mesh Node T096", "uf2-mass-storage", None, False),
-        ("t1000-e", "Seeed SenseCAP T1000-E", "nrf-serial-dfu", None, False),
+            board["slug"],
+            board["display_name"],
+            board["transport"],
+            board.get("expected_chip"),
+            board.get("provisioning") is not None,
+        )
+        for board in json.loads((ROOT / "release/flash/boards.json").read_text())["boards"]
     )
     return {
         "schema": 3,
@@ -192,16 +188,16 @@ def manifest() -> dict:
                     else [
                         {
                             "softdevice_family": "s140",
-                            "softdevice_version": "6.1.1",
-                            "fwid": "0x00b6",
-                            "application_base": "0x00026000",
+                            "softdevice_version": "7.3.0" if slug in {"seeed-wio-tracker-l1", "seeed-sensecap-solar-node-p1"} else "6.1.1",
+                            "fwid": "0x0123" if slug in {"seeed-wio-tracker-l1", "seeed-sensecap-solar-node-p1"} else "0x00b6",
+                            "application_base": "0x00027000" if slug in {"seeed-wio-tracker-l1", "seeed-sensecap-solar-node-p1"} else "0x00026000",
                             "family_id": "0xada52840",
-                            "path": "t096-s140-6.1.1.uf2",
+                            "path": f"{slug}.uf2",
                             "size": 512,
                             "sha256": "e" * 64,
                         }
                     ]
-                    if slug == "t096"
+                    if transport == "uf2-mass-storage"
                     else []
                 ),
                 "nrf_serial_dfu": (
@@ -324,7 +320,8 @@ class AcceptanceScaffoldTests(unittest.TestCase):
         self.assertEqual(
             {
                 json.loads(path.read_text(encoding="utf-8"))["schema"]
-                for path in records.glob("0.3.*.json")
+                for pattern in ("0.3.[0-7].json", "0.3.[0-7]-hotfix.*.json")
+                for path in records.glob(pattern)
             },
             {4, 6},
         )
@@ -333,7 +330,7 @@ class AcceptanceScaffoldTests(unittest.TestCase):
                 json.loads(path.read_text(encoding="utf-8"))["schema"]
                 for path in rosters.glob("0.3.*.json")
             },
-            {2, 3},
+            {2, 3, 5},
         )
 
     def test_scaffold_assigns_complete_transport_aware_coverage(self) -> None:

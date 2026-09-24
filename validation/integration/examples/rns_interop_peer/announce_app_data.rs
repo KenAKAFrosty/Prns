@@ -53,7 +53,7 @@ pub async fn run() -> Result<(), Failure> {
     let client = TcpClientInterface::new(target);
     let (observed_tx, mut observed_rx) = tokio::sync::mpsc::unbounded_channel();
     let node = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [destination],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,

@@ -1,5 +1,7 @@
+mod appliance;
 mod bridge;
 mod contract;
+mod enrollment;
 mod model;
 mod protocol;
 mod release;
@@ -11,7 +13,7 @@ use dioxus_i18n::t;
 
 use crate::local_development;
 use crate::platforms::{
-    board_target_by_slug, Tier, IN_PROGRESS_BOARD_TARGETS, QUALIFICATION_BOARD_TARGETS,
+    board_target_by_slug, Tier, LINUX_APPLIANCE_BOARD_TARGETS, QUALIFICATION_BOARD_TARGETS,
     SHIPPING_BOARD_TARGETS, UPCOMING_BOARD_TARGETS,
 };
 use crate::routes::Route;
@@ -85,7 +87,11 @@ pub fn FlashBoardPage(board: String) -> Element {
 #[component]
 fn FlashExperience(selected_slug: Option<String>) -> Element {
     let selected_target = selected_slug.as_deref().and_then(board_target_by_slug);
-    let missing_selection = selected_slug.is_some() && selected_target.is_none();
+    let selected_appliance = selected_slug
+        .as_deref()
+        .and_then(appliance::Appliance::from_slug);
+    let missing_selection =
+        selected_slug.is_some() && selected_target.is_none() && selected_appliance.is_none();
 
     rsx! {
         header { class: "mb-10",
@@ -102,11 +108,13 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
                 "Flash a Personal Hopspot"
             }
             p { class: "mt-4 max-w-3xl leading-relaxed text-soft",
-                "Choose your exact board and flash a signed release straight from your browser: every byte is verified locally before it touches the device. Update keeps your device's data. Fresh install erases everything, and asks for its own confirmation first."
+                "Choose your device to get started. Flash a signed release from your browser, or follow the setup guide for your board."
             }
         }
 
-        if let Some(target) = selected_target {
+        if let Some(selected) = &selected_appliance {
+            {appliance::installation_guide(selected)}
+        } else if let Some(target) = selected_target {
             if target.is_flashable() && local_development::board_is_included(target.slug) {
                 GuidedFlasher { key: "{target.slug}", target }
             } else if target.is_flashable() && local_development::enabled() {
@@ -121,18 +129,18 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
             }
         }
 
-        section { class: if selected_target.is_some() { "mt-12" } else { "mt-4" },
+        section { class: if selected_target.is_some() || selected_appliance.is_some() { "mt-12" } else { "mt-4" },
             h2 { class: "text-2xl font-semibold tracking-tight text-paper",
-                if selected_target.is_some() { "Change board" } else { "Select the exact board" }
+                if selected_target.is_some() || selected_appliance.is_some() { "Change board" } else { "Select the exact board" }
             }
             p { class: "mt-3 max-w-3xl leading-relaxed text-soft",
-                "Shipping targets flash from a signed public release. Boards in hardware qualification and final bring-up sit beside them and graduate in place."
+                "Each card shows the current support status and next steps for that device."
             }
             div { class: "mt-6 grid gap-4 md:grid-cols-2",
                 for board in SHIPPING_BOARD_TARGETS
                     .iter()
                     .chain(QUALIFICATION_BOARD_TARGETS.iter())
-                    .chain(IN_PROGRESS_BOARD_TARGETS.iter())
+                    .chain(LINUX_APPLIANCE_BOARD_TARGETS.iter())
                 {
                     BoardTargetCard {
                         key: "{board.slug}",

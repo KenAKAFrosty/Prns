@@ -209,7 +209,7 @@ async fn live_refresh_registers_added_paths_and_retires_removed_paths() {
     let catalog = NnPagesCatalog::discover(directory.path()).expect("catalog");
     let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: crate::test_support::remote_control_service(),
+        remote_control: crate::test_support::remote_control_service().into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,

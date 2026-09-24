@@ -4,7 +4,8 @@ use std::num::NonZeroU8;
 use std::time::{Duration, Instant};
 
 use mdns_sd::{
-    IfKind, Receiver, ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent, ServiceInfo,
+    IfKind, IfPredicate, Receiver, ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent,
+    ServiceInfo,
 };
 #[cfg(test)]
 use mdns_sd::{InterfaceId as MdnsInterfaceId, ScopedIpV4};
@@ -200,7 +201,7 @@ async fn run_central_session(
                 ) {
                     InterfaceReconciliation::Unchanged => {}
                     InterfaceReconciliation::Changed(interface_changes) => {
-                        interface_changes.apply(native_mdns_session.daemon())?;
+                        interface_changes.apply(native_mdns_session.daemon(), auto_wifi_device_policy)?;
                         eligible_ip_addresses = current_eligible_ip_addresses;
                         discovery_snapshot =
                             DiscoverySnapshot::new(service_discovery_publisher.capacity());
@@ -914,14 +915,18 @@ struct InterfaceChanges {
 }
 
 impl InterfaceChanges {
-    fn apply(&self, mdns_daemon: &ServiceDaemon) -> Result<(), MdnsDiscoveryError> {
+    fn apply(
+        &self,
+        mdns_daemon: &ServiceDaemon,
+        devices: &AutoWifiDevicePolicy,
+    ) -> Result<(), MdnsDiscoveryError> {
         if !self.removed_ip_addresses.is_empty() {
             mdns_daemon
                 .disable_interface(
                     self.removed_ip_addresses
                         .iter()
                         .copied()
-                        .map(IfKind::Addr)
+                        .map(|address| scoped_mdns_address(address, devices.clone()))
                         .collect::<Vec<_>>(),
                 )
                 .map_err(MdnsDiscoveryError::Mdns)?;
@@ -932,13 +937,38 @@ impl InterfaceChanges {
                     self.added_ip_addresses
                         .iter()
                         .copied()
-                        .map(IfKind::Addr)
+                        .map(|address| scoped_mdns_address(address, devices.clone()))
                         .collect::<Vec<_>>(),
                 )
                 .map_err(MdnsDiscoveryError::Mdns)?;
         }
         Ok(())
     }
+}
+
+// mdns-sd resolves Addr to the first matching OS interface. A bridge and its
+// ports can share a link-local address, so preserve the device policy in the
+// predicate rather than letting that address select an unrelated interface.
+fn scoped_mdns_address(address: IpAddr, devices: AutoWifiDevicePolicy) -> IfKind {
+    IfKind::Predicate(IfPredicate::new(move |interface| {
+        mdns_address_matches(
+            address,
+            &devices,
+            &interface.name,
+            interface.is_loopback(),
+            interface.ip(),
+        )
+    }))
+}
+
+fn mdns_address_matches(
+    address: IpAddr,
+    devices: &AutoWifiDevicePolicy,
+    name: &str,
+    is_loopback: bool,
+    candidate: IpAddr,
+) -> bool {
+    address == candidate && devices.allows(name, is_loopback)
 }
 
 enum DiscoveryRestartTrigger {
@@ -1037,6 +1067,39 @@ mod tests {
             [0x22; contract::EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn shared_link_local_address_does_not_select_a_bridge_port() {
+        let address = "fe80::e638:19ff:fe1f:5248".parse().unwrap();
+        let devices = AutoWifiDevicePolicy::new(vec!["br-ahwlan".into()], Vec::new());
+        assert!(mdns_address_matches(
+            address,
+            &devices,
+            "br-ahwlan",
+            false,
+            address
+        ));
+        assert!(!mdns_address_matches(
+            address, &devices, "eth0", false, address
+        ));
+        assert!(!mdns_address_matches(
+            address, &devices, "phy0-ap0", false, address
+        ));
+        assert!(!mdns_address_matches(
+            address,
+            &devices,
+            "br-ahwlan",
+            true,
+            address
+        ));
+        assert!(!mdns_address_matches(
+            address,
+            &devices,
+            "br-ahwlan",
+            false,
+            "fe80::1".parse().unwrap()
+        ));
     }
 
     #[test]

@@ -34,7 +34,7 @@ async fn main() {
     let node_a = PrnsNode::new(PrnsNodeRecipe {
         pre_configured_destinations: [destination_a],
         transport_identity: None,
-        remote_control: common::remote_control_service(0xD0, 0xD1),
+        remote_control: common::remote_control_service(0xD0, 0xD1).into(),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -51,7 +51,7 @@ async fn main() {
 
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: common::remote_control_service(0xD2, 0xD3),
+        remote_control: common::remote_control_service(0xD2, 0xD3).into(),
         pre_configured_destinations: [destination_b],
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],

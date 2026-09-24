@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 
 from flasher_manifest import FLASH_MANIFEST_SCHEMA
 from flasher_public_review import discover_evidence, sha256
@@ -121,7 +122,6 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         "flasher_acceptance_contract.py": candidate
         / "qualification"
         / "flasher_acceptance_contract.py",
-        "flasher_board_catalog.py": candidate / "qualification" / "flasher_board_catalog.py",
         "flasher_tester_roster.py": candidate / "qualification" / "flasher_tester_roster.py",
         "package-flasher-qualification-evidence.py": candidate
         / "qualification"
@@ -140,6 +140,17 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         "reproducibility.json": candidate / "metadata" / "reproducibility.json",
         "release-history.json": candidate / "metadata" / "release-history.json",
     }
+    board_catalog = candidate / "qualification" / "flasher_board_catalog.py"
+    acceptance_contract = sources["flasher_acceptance_contract.py"]
+    if board_catalog.is_file() or (
+        acceptance_contract.is_file()
+        and "from flasher_board_catalog import" in acceptance_contract.read_text(encoding="utf-8")
+    ):
+        sources["flasher_board_catalog.py"] = board_catalog
+    for helper in ("flasher_software_acceptance.py", "validation_runner.py", "validation-manifest.toml"):
+        helper_path = candidate / "qualification" / helper
+        if helper_path.is_file():
+            sources[helper] = helper_path
     if schema >= 3:
         manifest_helper = candidate / "qualification" / "flasher_manifest.py"
         sources["flasher_manifest.py"] = manifest_helper
@@ -281,18 +292,9 @@ def verify(
         signed_candidate_sha256=sha256(signed_bundle),
         manifest_sha256=sha256(manifest_path),
     )
-    expected_names = (
-        set(candidate_sources)
-        | custody_names
-        | {path.name for path in public_review_assets}
-    )
-    missing = expected_names - actual_names
-    if missing:
-        raise ValueError(
-            "GitHub Release asset inventory is missing signed release assets: "
-            f"{sorted(missing)}"
-        )
-    suite_inventory_replaces_candidate_copy = any(
+    suite_inventory_replaces_candidate_copy = all(
+        name in actual_names for name in SUITE_INVENTORY_ASSETS
+    ) and any(
         not files_equal(candidate_sources[name], assets / name)
         for name in SUITE_INVENTORY_ASSETS
     )
@@ -300,6 +302,34 @@ def verify(
     if suite_inventory_replaces_candidate_copy:
         verify_suite_inventory_signature(assets, candidate_sources["minisign.pub"])
         inventory = suite_custody_inventory(assets)
+        bundled_helper = "flasher_hotfix.py"
+        if (
+            bundled_helper in candidate_sources
+            and bundled_helper not in actual_names
+            and bundled_helper not in inventory
+            and not (candidate / "metadata" / "hotfix.json").is_file()
+        ):
+            if inventory.get(signed_bundle.name) != sha256(signed_bundle):
+                raise ValueError("signed suite custody inventory does not authenticate the helper bundle")
+            member_name = f"qualification/{bundled_helper}"
+            try:
+                with tarfile.open(signed_bundle, "r:gz") as archive:
+                    members = [member for member in archive.getmembers() if member.name == member_name]
+                    if len(members) != 1 or not members[0].isfile():
+                        raise ValueError("signed helper bundle must contain one regular qualification helper")
+                    source = candidate_sources[bundled_helper]
+                    if members[0].size != source.stat().st_size:
+                        raise ValueError("bundled qualification helper differs from the signed candidate")
+                    with archive.extractfile(members[0]) as bundled, source.open("rb") as expected:
+                        while True:
+                            chunk = bundled.read(1024 * 1024)
+                            if chunk != expected.read(1024 * 1024):
+                                raise ValueError("bundled qualification helper differs from the signed candidate")
+                            if not chunk:
+                                break
+            except tarfile.TarError as error:
+                raise ValueError("signed qualification helper bundle is invalid") from error
+            del candidate_sources[bundled_helper]
         contradictions = sorted(
             name
             for name, source in candidate_sources.items()
@@ -312,6 +342,17 @@ def verify(
                 "signed suite custody inventory contradicts the signed candidate: "
                 f"{contradictions}"
             )
+    expected_names = (
+        set(candidate_sources)
+        | custody_names
+        | {path.name for path in public_review_assets}
+    )
+    missing = expected_names - actual_names
+    if missing:
+        raise ValueError(
+            "GitHub Release asset inventory is missing signed release assets: "
+            f"{sorted(missing)}"
+        )
     extras = actual_names - expected_names
     if extras:
         if inventory is None:

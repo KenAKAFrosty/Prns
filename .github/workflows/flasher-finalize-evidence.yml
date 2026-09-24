@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   finalize:
-    name: Validate and sign physical acceptance
+    name: Validate and sign release acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: release-signing
@@ -176,6 +176,27 @@ jobs:
               --evidence-root target/qualification-evidence \
               --prerelease-published-at "$published_at"
           fi
+      - name: Verify automated release-readiness workflow custody
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          acceptance="target/release/acceptance-v${RELEASE_VERSION}.json"
+          if [[ "$(jq -r '.schema' "$acceptance")" != "7" ]]; then
+            exit 0
+          fi
+          run_id="$(jq -r '.software_validation.workflow_run_id' "$acceptance")"
+          digest="$(jq -r '.software_validation.sha256' "$acceptance")"
+          source_commit="$(jq -r '.release.commit' target/candidate/flash-manifest.json)"
+          [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" > target/readiness-run.json
+          jq -e --arg sha "$source_commit" --argjson id "$run_id" '
+            .id == $id and .head_sha == $sha and .conclusion == "success" and
+            .event == "workflow_dispatch" and .path == ".github/workflows/release-readiness.yml"
+          ' target/readiness-run.json
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "release-readiness-manifest-${source_commit}" --dir target/readiness-custody
+          cmp "target/qualification-evidence/${digest}" target/readiness-custody/release-manifest.json
       - name: Verify GitHub provenance for every published binary
         env:
           GH_TOKEN: ${{ github.token }}

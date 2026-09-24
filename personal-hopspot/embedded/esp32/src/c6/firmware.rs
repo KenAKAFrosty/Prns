@@ -127,7 +127,11 @@ pub async fn run(spawner: Spawner) {
     let host = EmbassyHost::new_with_timebase(timebase, entropy);
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
-        remote_control,
+        remote_control: personal_rns::runtime::RemoteControlNodeSetup::new(remote_control)
+            .with_controls(personal_rns::runtime::RemoteControlSupportedHost::new(
+                REMOTE_CONTROL_COMMANDS.handle(),
+                remote_control::capabilities().requests(),
+            )),
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: REMOTE_CONTROL_COMMANDS.handle(),
         storage: C6Storage,

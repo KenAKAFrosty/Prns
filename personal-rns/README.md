@@ -60,6 +60,7 @@ Feature names keep platform costs explicit. Common choices include:
 | Native dual-transport DNS-SD discovery for the stock AutoInterface profile | `wifi-auto-mdns` |
 | Serial, KISS, AX.25 KISS, or RNode | `serial`, `kiss`, `ax25`, `rnode` |
 | WebSocket or I2P | `websocket`, `i2p` |
+| Plain WebSocket server without TLS client dependencies | `websocket-server` |
 | USB or Bluetooth discovery | `usb`, `bluetooth-auto` |
 | LoRa or ESP-NOW on embedded targets | `lora`, `esp-now` |
 

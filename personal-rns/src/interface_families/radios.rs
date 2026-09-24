@@ -1,18 +1,21 @@
 pub use prns_interfaces_embassy::radios::{LoRaRadio, RadioEvent, RadioRecovery, ReceivedAirFrame};
 
 pub mod lr1110 {
+    #[cfg(feature = "lora-2g4")]
+    pub use prns_interfaces_embassy::radios::lr1110::HighFrequencyPath;
     pub use prns_interfaces_embassy::radios::lr1110::{
-        BoardConfig, Error, HighPowerSelection, Lr1110, PowerAmplifierConfig,
+        BoardConfig, Error, HighPowerSelection, Lr1110, Lr11xxPart, PowerAmplifierConfig,
         PowerAmplifierDutyCycle, PowerAmplifierSelection, PowerAmplifierSupply,
         PowerAmplifierTable, ReceiveGain, ReceivedAirFrame, ReferenceClock, RegulatorMode,
         RfSwitchConfig, RfSwitchPins, TcxoStartupTime, TcxoVoltage, TransmitRampTime,
+        SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE,
     };
 }
 
 pub mod sx126x {
     pub use prns_interfaces_embassy::radios::sx126x::{
         Bandwidth, BoardConfig, CodingRate, Error, ExternalPowerAmplifier, FrontendControl,
-        LoraPacket, Modulation, RadioConfig, ReceivedAirFrame, SpreadingFactor, Sx126x,
-        TcxoVoltage,
+        LoraPacket, Modulation, RadioActivityControl, RadioConfig, ReceivedAirFrame,
+        SpreadingFactor, Sx126x, TcxoVoltage,
     };
 }

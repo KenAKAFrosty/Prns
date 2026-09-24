@@ -4,6 +4,11 @@
 //!
 //! Payloads past the link MDU are Resource territory, refused here.
 
+#[cfg(test)]
+mod response_limits;
+#[cfg(test)]
+mod response_link_tests;
+
 use crate::crypto::sha256;
 use crate::engine::{
     CommandId, CommandOutcome, RemoteControlControllerPairingRequest, RequestResponseTimeout,
@@ -56,6 +61,13 @@ const BIN_16: u8 = 0xC5;
 const BIN_32: u8 = 0xC6;
 const NIL: u8 = 0xC0;
 pub const MAX_PACKED_BINARY_HEADER_LEN: usize = 5;
+
+/// The wire transport for a request on an active link, after applying its negotiated MTU.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RequestTransport {
+    Packet,
+    Resource,
+}
 
 /// RNS 1.4.2 `packet.getTruncatedHash()`, naming the request in its response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -511,12 +523,32 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub fn request_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
-        let Some(LinkPhase::Active { mtu, .. }) = self.links.phase_for(link_id) else {
-            return false;
+        matches!(
+            self.plan_request_transport(link_id, data.len()),
+            Ok(RequestTransport::Packet)
+        )
+    }
+
+    /// Reject missing or inactive links before choosing a packet or Resource transfer.
+    pub fn plan_request_transport(
+        &self,
+        link_id: &LinkId,
+        data_len: usize,
+    ) -> Result<RequestTransport, SendRequestRejection> {
+        let mtu = match self.links.phase_for(link_id) {
+            Some(LinkPhase::Active { mtu, .. }) => *mtu,
+            Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
+                return Err(SendRequestRejection::LinkNotActive);
+            }
+            None => return Err(SendRequestRejection::NoSuchLink),
         };
-        let data_len = if data.is_empty() { 1 } else { data.len() };
-        REQUEST_WIRE_OVERHEAD + data_len <= link_mdu(*mtu)
-            && data.len() <= MAX_SEND_REQUEST_DATA_LEN
+        if data_len <= MAX_SEND_REQUEST_DATA_LEN
+            && REQUEST_WIRE_OVERHEAD + data_len.max(1) <= link_mdu(mtu)
+        {
+            Ok(RequestTransport::Packet)
+        } else {
+            Ok(RequestTransport::Resource)
+        }
     }
 
     pub(crate) fn write_commanded_send_request(
@@ -584,24 +616,32 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The request formed no packet, so the row is keyed by `sha256` of the pack. Its first sixteen bytes are the request id (RNS 1.4.2 `truncated_hash(packed_request)`) the response names back.
-    pub(crate) fn book_request_resource_receipt(
+    pub(crate) fn book_request_resource_receipt<Work>(
         &mut self,
         id: CommandId,
         link_id: &LinkId,
         packed_request: &[u8],
-        response_timeout: RequestResponseTimeout,
-        maximum_response_bytes: crate::units::ByteLimit,
+        correlation: crate::routing::links::resources::ResourceCorrelation,
         now: InstantMillis,
-    ) {
+        sink: &mut impl FnMut(crate::engine::EngineReaction<'_, Work>),
+    ) -> crate::engine::WakeSchedules {
+        let crate::routing::links::resources::ResourceCorrelation::Request {
+            response_timeout,
+            maximum_response_bytes,
+            ..
+        } = correlation
+        else {
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
         let Some(LinkPhase::Active {
             rtt, peer_signing, ..
         }) = self.links.phase_for(link_id)
         else {
-            return;
+            return crate::engine::WakeSchedules::UNCHANGED;
         };
         let peer_signing = *peer_signing;
         let timeout_ms = requested_response_timeout_ms(*rtt, response_timeout);
-        let _ = self.receipts.track(OutstandingReceipt {
+        let culled = self.receipts.track(OutstandingReceipt {
             packet_hash: PacketHash::new(sha256(packed_request)),
             command_id: id,
             kind: ReceiptKind::request(
@@ -613,6 +653,15 @@ impl<S: StorageLayout> EngineState<S> {
             sent_at: now,
             timeout_at: InstantMillis(now.0.saturating_add(timeout_ms)),
         });
+        if let Some(culled) = culled {
+            let settlement = self.culled_settlement(culled);
+            crate::engine::settle(sink, culled.command_id, settlement);
+        }
+        crate::engine::WakeSchedules {
+            receipt_timeouts: self.receipt_timeouts_wake(),
+            remote_control_pairing: self.remote_control_pairing_wake(),
+            ..crate::engine::WakeSchedules::UNCHANGED
+        }
     }
 
     /// Fire-and-forget; the reference sends its response packet and moves on.
@@ -798,14 +847,8 @@ mod tests {
         }
     }
 
-    fn engine_with_an_active_link_at(
-        link_id: LinkId,
-        mtu: usize,
-    ) -> EngineState<crate::storage::GrowableHeap> {
-        use crate::crypto::{
-            x25519_diffie_hellman, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey,
-            X25519SecretKey,
-        };
+    fn engine_with_a_pending_link(link_id: LinkId) -> EngineState<crate::storage::GrowableHeap> {
+        use crate::crypto::{Ed25519SecretKey, X25519SecretKey};
         use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
         use crate::routing::links::table::InitiatedLink;
 
@@ -830,6 +873,18 @@ mod tests {
                 command_id: CommandId(1),
             })
             .unwrap();
+        engine
+    }
+
+    fn engine_with_an_active_link_at(
+        link_id: LinkId,
+        mtu: usize,
+    ) -> EngineState<crate::storage::GrowableHeap> {
+        use crate::crypto::{
+            x25519_diffie_hellman, Ed25519PublicKey, X25519PublicKey, X25519SecretKey,
+        };
+
+        let mut engine = engine_with_a_pending_link(link_id);
         let key = LinkKey::derive(
             &link_id,
             &x25519_diffie_hellman(
@@ -1183,6 +1238,77 @@ mod tests {
     }
 
     #[test]
+    fn request_transport_respects_both_packet_boundaries_without_length_overflow() {
+        for mtu in [300, BROADCAST_MTU, BROADCAST_MTU * 2] {
+            let link = LinkId::new([0x43; 16]);
+            let engine = engine_with_an_active_link_at(link, mtu);
+            let largest_packet =
+                (link_mdu(mtu) - REQUEST_WIRE_OVERHEAD).min(MAX_SEND_REQUEST_DATA_LEN);
+            for (length, expected) in [
+                (0, RequestTransport::Packet),
+                (1, RequestTransport::Packet),
+                (largest_packet, RequestTransport::Packet),
+                (largest_packet + 1, RequestTransport::Resource),
+                (usize::MAX, RequestTransport::Resource),
+            ] {
+                assert_eq!(engine.plan_request_transport(&link, length), Ok(expected));
+            }
+        }
+        let link = LinkId::new([0x44; 16]);
+        let mtu = crate::routing::links::data::link_data_frame_ceiling(0);
+        let tiny = engine_with_an_active_link_at(link, mtu);
+        assert!(link_mdu(mtu) < REQUEST_WIRE_OVERHEAD + 1);
+        assert_eq!(
+            tiny.plan_request_transport(&link, 0),
+            Ok(RequestTransport::Resource)
+        );
+    }
+
+    #[test]
+    fn request_transport_refuses_missing_and_both_inactive_link_phases() {
+        use crate::crypto::Ed25519PublicKey;
+        use crate::identity::IdentityHash;
+        use crate::routing::links::resources::receive::tests_support::link_key;
+        use crate::routing::links::table::RespondingLink;
+        use crate::routing::upstream_app_destinations::ProofStrategy;
+
+        let pending = LinkId::new([0x45; 16]);
+        let handshake = LinkId::new([0x46; 16]);
+        let missing = LinkId::new([0x47; 16]);
+        let mut engine = engine_with_a_pending_link(pending);
+        engine
+            .links
+            .track_responding(RespondingLink {
+                link_id: handshake,
+                key: link_key(),
+                requested_at: InstantMillis(500),
+                timeout_at: InstantMillis(5_000),
+                mtu: BROADCAST_MTU,
+                initiator_signing: Ed25519PublicKey([0x99; 32]),
+                destination: DestinationHash::new([0x11; 16]),
+                identity: IdentityHash::new([0x77; 16]),
+                proof_strategy: ProofStrategy::ProveNone,
+            })
+            .unwrap();
+        for length in [
+            0,
+            MAX_SEND_REQUEST_DATA_LEN,
+            MAX_SEND_REQUEST_DATA_LEN + 1,
+            usize::MAX,
+        ] {
+            assert_eq!(
+                [pending, handshake, missing]
+                    .map(|link| engine.plan_request_transport(&link, length)),
+                [
+                    Err(SendRequestRejection::LinkNotActive),
+                    Err(SendRequestRejection::LinkNotActive),
+                    Err(SendRequestRejection::NoSuchLink),
+                ]
+            );
+        }
+    }
+
+    #[test]
     fn a_packet_response_settles_with_response_too_large_past_its_limit() {
         use crate::engine::{SendRequestFailure, Settlement};
         use crate::routing::links::data::write_link_packet;
@@ -1197,7 +1323,7 @@ mod tests {
             CommandId(42),
             1_800,
             20_000,
-            ByteLimit::Maximum(3),
+            ByteLimit::Maximum(5),
         );
         let mut plaintext = [0u8; 64];
         let plaintext_len = write_response_plaintext(
@@ -1226,7 +1352,9 @@ mod tests {
                 Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)),
             )],
         );
-        assert!(!receiver.receipts.has_pending_request(request_id));
+        assert!(!receiver
+            .receipts
+            .has_pending_request(&link_id(), request_id));
     }
 
     #[test]
@@ -1244,7 +1372,7 @@ mod tests {
             CommandId(42),
             1_800,
             20_000,
-            ByteLimit::Maximum(4),
+            ByteLimit::Maximum(6),
         );
         let mut plaintext = [0u8; 64];
         let plaintext_len = write_response_plaintext(
@@ -1270,7 +1398,9 @@ mod tests {
             capture.settlements.as_slice(),
             [(CommandId(42), Settlement::SendRequest(Ok(_)))]
         ));
-        assert!(!receiver.receipts.has_pending_request(request_id));
+        assert!(!receiver
+            .receipts
+            .has_pending_request(&link_id(), request_id));
     }
 
     #[test]

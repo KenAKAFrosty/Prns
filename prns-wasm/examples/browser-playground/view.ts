@@ -101,6 +101,18 @@ export class PlaygroundView {
 
   constructor(elements: PlaygroundElements) {
     this.elements = elements;
+    const port = document.querySelector<HTMLMetaElement>(
+      'meta[name="prns-websocket-port"]',
+    )?.content;
+    if (port && /^[1-9][0-9]{0,4}$/.test(port) && Number(port) <= 65535) {
+      const endpoint = new URL(globalThis.location.href);
+      endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
+      endpoint.port = port;
+      endpoint.pathname = "/";
+      endpoint.search = "";
+      endpoint.hash = "";
+      this.elements.webSocketUrl.value = endpoint.href;
+    }
   }
 
   bindControls(handlers: PlaygroundControlHandlers): void {

@@ -43,10 +43,12 @@ test('link, request, respond, and unregistered-path refusal', async () => {
     const echoHash = requestPathHash('/echo');
     const result = await client.request(link.linkId, echoHash, Buffer.from('ping'), {
       timeoutMillis: 5000,
-      maximumResponseBytes: 9,
+      maximumResponseBytes: 11,
     });
     assert.equal(Buffer.from(result.data).toString(), 'echo:ping');
-    assert.ok(result.packed.length > result.data.length);
+    assert.deepEqual(Buffer.from(result.packed), Buffer.concat([
+      Buffer.from([0xc4, 9]), Buffer.from('echo:ping'),
+    ]));
 
     const requestEvent = serverEvents.find((e) => e.type === 'request');
     assert.ok(requestEvent);
@@ -57,7 +59,7 @@ test('link, request, respond, and unregistered-path refusal', async () => {
       () =>
         client.request(link.linkId, echoHash, Buffer.from('ping'), {
           timeoutMillis: 2000,
-          maximumResponseBytes: 8,
+          maximumResponseBytes: 10,
         }),
       (error: any) => error.code === 'PRNS_RESPONSE_TOO_LARGE'
     );

@@ -1,6 +1,11 @@
 # Signed-candidate acceptance records
 
-Place a completed `VERSION.json` here only after testing the exact public signed prerelease. Create
+From 0.3.8 until 1.0, use schema-7 automated acceptance as described in
+[the acceptance guide](../README.md#pre-10-automated-release-gate). The record
+binds the signed candidate to complete passing exact-source release-readiness
+evidence and explicitly makes no physical-qualification claim.
+
+For historical physical acceptance, place a completed `VERSION.json` here only after testing the exact public signed prerelease. Create
 the initial all-`not-run` record with the signed candidate's qualification generator, follow
 `../README.md`, remove every placeholder through real observations, and submit the evidence through
 normal default-branch review. The protected evidence workflow accepts only the file whose name

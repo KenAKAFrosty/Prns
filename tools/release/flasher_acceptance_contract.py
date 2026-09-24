@@ -1,4 +1,4 @@
-"""Authoritative physical-qualification matrix and scaffold construction."""
+"""Release policy and historical physical-qualification contracts."""
 
 from __future__ import annotations
 
@@ -11,6 +11,17 @@ import re
 from flasher_board_catalog import release_boards
 from flasher_manifest import require_schema, target_artifacts
 from flasher_hotfix import HotfixSpec
+
+
+SOFTWARE_ACCEPTANCE_SCHEMA = 7
+SOFTWARE_ROSTER_SCHEMA = 5
+
+
+def software_qualification(version: object) -> bool:
+    if not isinstance(version, str):
+        return False
+    matched = re.fullmatch(r"0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-hotfix\.[1-9][0-9]*)?", version)
+    return matched is not None and tuple(map(int, matched.groups())) >= (3, 8)
 
 
 RELEASE_BOARDS = release_boards(Path(__file__))
@@ -162,6 +173,14 @@ UF2_COMPATIBILITY_VARIANTS = {
     "t-echo": T_ECHO_COMPATIBILITY_VARIANTS,
     "t114": T114_COMPATIBILITY_VARIANTS,
     "t096": T096_COMPATIBILITY_VARIANTS,
+    "mesh-pocket-5000": ("s140-6.1.1-fwid-0x00b6",),
+    "mesh-pocket-10000": ("s140-6.1.1-fwid-0x00b6",),
+    "rak4631": ("s140-6.1.1-fwid-0x00b6",),
+    "rak10724": ("s140-6.1.1-fwid-0x00b6",),
+    "mesh-tower-v2": ("s140-6.1.1-fwid-0x00b6",),
+    "muzi-base-duo": ("s140-6.1.1-fwid-0x00b6",),
+    "seeed-wio-tracker-l1": ("s140-7.3.0-fwid-0x0123",),
+    "seeed-sensecap-solar-node-p1": ("s140-7.3.0-fwid-0x0123",),
 }
 NOT_RUN = "NOT_RUN"
 UTC_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")

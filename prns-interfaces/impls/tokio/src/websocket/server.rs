@@ -1,7 +1,9 @@
 use std::io;
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use std::vec::Vec;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async_with_config, WebSocketStream};
@@ -27,6 +29,7 @@ pub struct WebSocketServerConnection<S> {
     id: InterfaceId,
     channel_tag: Vec<u8>,
     socket: Option<WebSocketStream<S>>,
+    admission: Option<OwnedSemaphorePermit>,
     policy: EffectiveInterfacePolicy,
     framing_selection: WebSocketFramingSelection,
     status: TokioInterfaceStatus,
@@ -61,6 +64,7 @@ impl<S> WebSocketServerConnection<S> {
             id,
             channel_tag,
             socket: Some(socket),
+            admission: None,
             policy,
             framing_selection,
             status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected),
@@ -114,6 +118,7 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> Interface
 
 pub struct WebSocketServer {
     listener: TcpListener,
+    connection_limit: Option<NonZeroUsize>,
     policy: EffectiveInterfacePolicy,
     channel_tag: Vec<u8>,
     status: WebSocketServerStatus,
@@ -147,11 +152,20 @@ impl WebSocketServer {
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketServer, &channel_tag);
         Ok(Self {
             listener,
+            connection_limit: None,
             policy,
             channel_tag,
             status: WebSocketServerStatus::new(id),
             framing_selection,
         })
+    }
+
+    /// Bound pending handshakes and established sessions together. A permit is
+    /// released when the handshake fails or its attached connection is dropped.
+    #[must_use]
+    pub fn with_connection_limit(mut self, limit: NonZeroUsize) -> Self {
+        self.connection_limit = Some(limit);
+        self
     }
 
     #[must_use]
@@ -183,11 +197,20 @@ impl InterfaceSupervisor for WebSocketServer {
     async fn run(self, fleet: Fleet) {
         let mut handshakes = tokio::task::JoinSet::new();
         let framing_selection = self.framing_selection;
+        let admission = self
+            .connection_limit
+            .map(|limit| Arc::new(Semaphore::new(limit.get())));
         loop {
             tokio::select! {
-                accepted = self.listener.accept(), if handshakes.len() < MAX_PENDING_HANDSHAKES => {
+                accepted = async {
+                    let permit = match &admission {
+                        Some(admission) => Some(admission.clone().acquire_owned().await.map_err(io::Error::other)?),
+                        None => None,
+                    };
+                    self.listener.accept().await.map(|(stream, peer)| (stream, peer, permit))
+                }, if handshakes.len() < MAX_PENDING_HANDSHAKES => {
                     match accepted {
-                        Ok((stream, peer)) => {
+                        Ok((stream, peer, permit)) => {
                             handshakes.spawn(async move {
                                 let result = tokio::time::timeout(
                                     WEBSOCKET_HANDSHAKE_TIMEOUT,
@@ -197,7 +220,7 @@ impl InterfaceSupervisor for WebSocketServer {
                                     ),
                                 )
                                 .await;
-                                (peer, result)
+                                (peer, result, permit)
                             });
                         }
                         Err(_) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
@@ -208,17 +231,18 @@ impl InterfaceSupervisor for WebSocketServer {
                         continue;
                     };
                     match completed {
-                        Ok((peer, Ok(Ok(socket)))) => {
-                        let connection = WebSocketServerConnection::with_policy(
-                            peer.to_string().into_bytes(),
-                            socket,
-                            self.policy,
-                            framing_selection,
-                        );
-                        self.status.admit(connection.status());
-                        let _ = fleet.add(connection);
+                        Ok((peer, Ok(Ok(socket)), permit)) => {
+                            let mut connection = WebSocketServerConnection::with_policy(
+                                peer.to_string().into_bytes(),
+                                socket,
+                                self.policy,
+                                framing_selection,
+                            );
+                            connection.admission = permit;
+                            self.status.admit(connection.status());
+                            let _ = fleet.add(connection);
                         }
-                        Ok((peer, Ok(Err(_)) | Err(_))) => {
+                        Ok((peer, Ok(Err(_)) | Err(_), _)) => {
                             crate::diagnostic_log::debug!("websocket-server: handshake failed from {peer}");
                         }
                         Err(_) => {}

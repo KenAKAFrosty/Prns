@@ -12,8 +12,10 @@ const FULL_SPEED_BULK_CEILING_BPS: BitrateBps = BitrateBps::guess(
 );
 
 pub const HOST_USB_BITRATE_BPS: BitrateBps = FULL_SPEED_BULK_CEILING_BPS;
-pub const HOST_USB_HW_MTU: usize = 8_192;
-pub const DEVICE_USB_HW_MTU: usize = 8_192;
+pub const HOST_USB_HW_MTU: usize = DEVICE_USB_HW_MTU;
+pub const DEVICE_USB_HW_MTU: usize = crate::wire::BROADCAST_MTU;
+/// A local announce and its control reply must fit before the device drains its egress lane.
+pub const DEVICE_MIN_OUTBOUND_FRAMES: usize = 2;
 pub const DEVICE_USB_BITRATE_BPS: BitrateBps = FULL_SPEED_BULK_CEILING_BPS;
 
 pub fn host_descriptor(id: InterfaceId) -> InterfaceDescriptor {
@@ -78,5 +80,26 @@ mod tests {
     #[test]
     fn native_usb_default_retains_the_full_speed_bulk_ceiling() {
         assert_eq!(DEVICE_USB_BITRATE_BPS.get(), 9_728_000);
+    }
+
+    #[test]
+    fn advertised_usb_mtu_fits_the_protocol_with_maximum_ifac() {
+        use crate::interfaces::usb_auto::{Message, MAX_MESSAGE_BYTES};
+        use crate::interfaces::IFAC_MAX_SIZE;
+
+        for descriptor in [
+            host_descriptor(InterfaceId::new([1; 8])),
+            device_descriptor(InterfaceId::new([2; 8]), DEVICE_USB_BITRATE_BPS),
+        ] {
+            let maximum = descriptor.hardware_mtu.unwrap() + IFAC_MAX_SIZE;
+            let packet = std::vec![0xc0; maximum];
+            let mut payload = [0; MAX_MESSAGE_BYTES];
+            assert!(Message::Data(&packet).write_payload(&mut payload).is_ok());
+            let oversized = std::vec![0xc0; maximum + 1];
+            assert_eq!(
+                Message::Data(&oversized).write_payload(&mut payload),
+                Err(crate::interfaces::usb_auto::WriteError::DataTooLarge),
+            );
+        }
     }
 }

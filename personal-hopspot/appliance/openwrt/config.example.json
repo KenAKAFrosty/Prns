@@ -1,0 +1,5 @@
+{
+  "listen": "0.0.0.0:4242",
+  "tcp_mode": "Gateway",
+  "radio": { "HaLow": { "device": "wlan0", "scope": "replace-with-explicit-stable-local-scope" } }
+}

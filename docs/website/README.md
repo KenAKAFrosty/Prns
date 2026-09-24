@@ -27,6 +27,32 @@ dx serve
 First-time Rust or Dioxus dependency downloads may require network access. Once
 present, the essential guide content comes from the repository.
 
+The npm manifest overrides Tailwind CLI's pinned `@parcel/watcher` with 2.6.0,
+which removes the vulnerable `micromatch`/`braces` chain
+([GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)).
+Remove the override when Tailwind selects a watcher without that dependency.
+
+## Device cards
+
+The flasher lists ThinkNode G4 and Heltec HT-HD01-V2 individually alongside the
+firmware boards, with their existing product photos. Their **Set up** actions
+open the current device guides; preview cards do not claim browser flashing or
+a signed public download.
+
+The 0.3.8 release catalog enables Flash for Vision Master E290-HF, Wireless Stick
+Lite V3, both MeshPocket capacities, RAK WisBlock 4631, muzi Base Duo, and
+MeshTower V2 under the automated pre-1.0 acceptance policy.
+
+MeshTower V2 currently assumes the stock `HT-n5262` recovery volume and Board-ID,
+with S140 6.1.1. The volume and SoftDevice are documented in [the original
+firmware PR](https://github.com/KenAKAFrosty/Prns/pull/122); the Board-ID is present
+in [Heltec's published 0.9.0 bootloader](https://github.com/HelTecAutomation/Heltec_nRF52/tree/main/bootloader/HT-n5262).
+The release owner accepted this mapping for 0.3.8 pending Tony's device-level
+`INFO_UF2.TXT` confirmation. It is an explicit assumption, not a hardware test
+receipt. The shared identity cannot distinguish MeshTower, T114, or MeshPocket;
+the public flasher requires model confirmation and a matching SoftDevice.
+MeshTower's release build preserves the thin-LTO setting of its developer build.
+
 ## Test
 
 ```console
@@ -37,6 +63,13 @@ cargo check --manifest-path docs/website/Cargo.toml
 The tests verify canonical benchmark-results inclusion and link rewriting,
 generated benchmark routes, the flash catalog contract, and the platform
 claims the site is allowed to make.
+
+The T1000-E flasher also offers **Switch firmware → Enter recovery mode**
+without preparing an install. It requests the stock UF2 drive from compatible
+Hopspot firmware, reports acknowledgement without claiming drive enumeration,
+and provides manual recovery and Meshtastic restore instructions. See
+[T1000-E recovery](../../personal-hopspot/embedded/nrf52840/RECOVERY.md) for
+firmware compatibility, the USB contract, and physical qualification limits.
 
 ## Static production build
 

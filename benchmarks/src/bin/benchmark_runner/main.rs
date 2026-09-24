@@ -15,7 +15,7 @@ use benchmarks::{
     write_rows, Axis, ConformanceRule, DeviceId, PowerMeter, ResultRow, ScenarioManifest,
     ScenarioTopology, Subject, SubmitterId, REFERENCE_IMPLEMENTATION, RESULT_SCHEMA_VERSION,
 };
-use personal_rns::interfaces::{hardware_mtu_for_bitrate, tcp};
+use personal_rns::interfaces::{backbone, hardware_mtu_for_bitrate, tcp};
 
 use arguments::{parse_args, Args, RunnerCommand};
 use implementation::{implementation, Implementation};
@@ -131,18 +131,30 @@ fn power_meter() -> (Option<PowerMeter>, Option<f64>) {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct RelayTcpPolicy {
+enum RelayInterfaceKind {
+    Tcp,
+    Backbone,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RelayInterfacePolicy {
+    kind: RelayInterfaceKind,
     bitrate_bps: u64,
     mtu_bytes: usize,
 }
 
-fn relay_tcp_policy(line: &str) -> RelayTcpPolicy {
+fn relay_interface_policy(line: &str) -> RelayInterfacePolicy {
     let value = |key: &str| {
         line.split_whitespace()
             .find_map(|field| field.strip_prefix(&format!("{key}=")))
             .unwrap_or_else(|| panic!("relay READY is missing {key}: {line}"))
     };
-    RelayTcpPolicy {
+    RelayInterfacePolicy {
+        kind: match value("interface") {
+            "tcp" => RelayInterfaceKind::Tcp,
+            "backbone" => RelayInterfaceKind::Backbone,
+            other => panic!("relay READY has invalid interface kind {other:?}"),
+        },
         bitrate_bps: value("bitrate_bps")
             .parse()
             .unwrap_or_else(|error| panic!("relay READY has invalid bitrate: {error}")),
@@ -152,19 +164,49 @@ fn relay_tcp_policy(line: &str) -> RelayTcpPolicy {
     }
 }
 
-fn expected_relay_tcp_policy(manifest: &ScenarioManifest, relay_slug: &str) -> RelayTcpPolicy {
-    let bitrate_bps = manifest
-        .profile
-        .tcp_bitrate_bps
-        .unwrap_or_else(|| match relay_slug {
-            "personal-rns" => tcp::TCP_BITRATE_ESTIMATE.get(),
-            REFERENCE_IMPLEMENTATION => 10_000_000,
-            other => panic!("unknown relay implementation {other:?}"),
-        });
-    RelayTcpPolicy {
-        bitrate_bps,
-        mtu_bytes: hardware_mtu_for_bitrate(bitrate_bps)
-            .expect("benchmark TCP bitrate selects an RNS MTU tier"),
+fn expected_relay_interface_policy(
+    manifest: &ScenarioManifest,
+    relay_slug: &str,
+) -> RelayInterfacePolicy {
+    let kind = if cfg!(target_os = "linux") && manifest.profile.tcp_bitrate_bps.is_none() {
+        RelayInterfaceKind::Backbone
+    } else {
+        RelayInterfaceKind::Tcp
+    };
+    match (manifest.profile.tcp_bitrate_bps, relay_slug) {
+        (Some(bitrate_bps), _) => RelayInterfacePolicy {
+            kind,
+            bitrate_bps,
+            mtu_bytes: hardware_mtu_for_bitrate(bitrate_bps)
+                .expect("benchmark TCP bitrate selects an RNS MTU tier"),
+        },
+        (None, "personal-rns") => {
+            let bitrate_bps = if cfg!(target_os = "linux") {
+                backbone::BACKBONE_BITRATE_ESTIMATE.get()
+            } else {
+                tcp::TCP_BITRATE_ESTIMATE.get()
+            };
+            RelayInterfacePolicy {
+                kind,
+                bitrate_bps,
+                mtu_bytes: hardware_mtu_for_bitrate(bitrate_bps)
+                    .expect("Prns default host-interface bitrate selects an RNS MTU tier"),
+            }
+        }
+        (None, REFERENCE_IMPLEMENTATION) => {
+            let bitrate_bps = if cfg!(target_os = "linux") {
+                100_000_000
+            } else {
+                10_000_000
+            };
+            RelayInterfacePolicy {
+                kind,
+                bitrate_bps,
+                mtu_bytes: hardware_mtu_for_bitrate(bitrate_bps)
+                    .expect("RNS default host-interface bitrate selects an MTU tier"),
+            }
+        }
+        (None, other) => panic!("unknown relay implementation {other:?}"),
     }
 }
 
@@ -184,18 +226,18 @@ fn run_transport(args: &Args, manifest_data: &ScenarioManifest, manifest: &std::
 
     let mut relay = spawn_role(relay_command, manifest, "relay", "127.0.0.1:0", args);
     let ready = await_line(&relay, "READY", Duration::from_secs(30));
-    let relay_policy = relay_tcp_policy(&ready);
-    let expected_policy = expected_relay_tcp_policy(manifest_data, relay_impl.slug());
+    let relay_policy = relay_interface_policy(&ready);
+    let expected_policy = expected_relay_interface_policy(manifest_data, relay_impl.slug());
     assert_eq!(
         relay_policy,
         expected_policy,
-        "{} reported a TCP policy that does not match {}",
+        "{} reported an interface policy that does not match {}",
         relay_impl.label(),
         manifest_data.name
     );
     println!(
-        "RELAY_POLICY bitrate_bps={} mtu_bytes={}",
-        relay_policy.bitrate_bps, relay_policy.mtu_bytes
+        "RELAY_POLICY interface={:?} bitrate_bps={} mtu_bytes={}",
+        relay_policy.kind, relay_policy.bitrate_bps, relay_policy.mtu_bytes
     );
     let addresses = ready
         .split_whitespace()
@@ -414,8 +456,8 @@ fn result_metric(line: &str, key: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        expected_relay_tcp_policy, relay_tcp_policy, result_metric, MeasurementPhase, PhaseTracker,
-        RelayTcpPolicy,
+        expected_relay_interface_policy, relay_interface_policy, result_metric, MeasurementPhase,
+        PhaseTracker, RelayInterfaceKind, RelayInterfacePolicy,
     };
     use benchmarks::{load_manifest, ScenarioId, REFERENCE_IMPLEMENTATION};
 
@@ -445,37 +487,65 @@ mod tests {
     #[test]
     fn relay_ready_policy_is_typed_and_manifest_checked() {
         assert_eq!(
-            relay_tcp_policy(
+            relay_interface_policy(
                 "READY role=relay addr=127.0.0.1:1>127.0.0.1:2 \
-                 bitrate_bps=1000000000 mtu_bytes=524288"
+                 interface=backbone bitrate_bps=1000000000 mtu_bytes=524288"
             ),
-            RelayTcpPolicy {
+            RelayInterfacePolicy {
+                kind: RelayInterfaceKind::Backbone,
                 bitrate_bps: 1_000_000_000,
                 mtu_bytes: 524_288,
             }
         );
         let practical = load_manifest(ScenarioId::RawTransportThroughput).expect("manifest");
         assert_eq!(
-            expected_relay_tcp_policy(&practical, "personal-rns"),
-            RelayTcpPolicy {
-                bitrate_bps: 500_000_000,
-                mtu_bytes: 131_072,
+            expected_relay_interface_policy(&practical, "personal-rns"),
+            RelayInterfacePolicy {
+                kind: if cfg!(target_os = "linux") {
+                    RelayInterfaceKind::Backbone
+                } else {
+                    RelayInterfaceKind::Tcp
+                },
+                bitrate_bps: if cfg!(target_os = "linux") {
+                    1_000_000_000
+                } else {
+                    500_000_000
+                },
+                mtu_bytes: if cfg!(target_os = "linux") {
+                    524_288
+                } else {
+                    131_072
+                },
             }
         );
         assert_eq!(
-            expected_relay_tcp_policy(&practical, REFERENCE_IMPLEMENTATION),
-            RelayTcpPolicy {
+            expected_relay_interface_policy(&practical, REFERENCE_IMPLEMENTATION),
+            RelayInterfacePolicy {
+                kind: if cfg!(target_os = "linux") {
+                    RelayInterfaceKind::Backbone
+                } else {
+                    RelayInterfaceKind::Tcp
+                },
+                bitrate_bps: if cfg!(target_os = "linux") {
+                    100_000_000
+                } else {
+                    10_000_000
+                },
+                mtu_bytes: if cfg!(target_os = "linux") {
+                    32_768
+                } else {
+                    16_384
+                },
+            }
+        );
+        let matched =
+            load_manifest(ScenarioId::TransportResourceThroughputMatched).expect("manifest");
+        assert_eq!(
+            expected_relay_interface_policy(&matched, REFERENCE_IMPLEMENTATION),
+            RelayInterfacePolicy {
+                kind: RelayInterfaceKind::Tcp,
                 bitrate_bps: 10_000_000,
-                mtu_bytes: 8_192,
-            }
-        );
-        let unleashed =
-            load_manifest(ScenarioId::TransportResourceThroughputUnleashed).expect("manifest");
-        assert_eq!(
-            expected_relay_tcp_policy(&unleashed, REFERENCE_IMPLEMENTATION),
-            RelayTcpPolicy {
-                bitrate_bps: 1_000_000_000,
-                mtu_bytes: 524_288,
+                mtu_bytes: 16_384,
             }
         );
     }

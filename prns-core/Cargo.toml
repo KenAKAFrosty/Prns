@@ -1,6 +1,6 @@
 [package]
 name = "prns-core"
-version = "0.3.7"
+version = "0.3.8"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -30,6 +30,7 @@ name = "subghz_turbo_evidence"
 required-features = ["std"]
 
 [features]
+lora-2g4 = []
 default = ["std", "std-sync-host", "resource-work-offload"]
 # `zeroize/alloc` rides our own `alloc` gate so `Zeroize for Vec<u8>` is present by declaration rather than incidental dependency feature unification. The host identity vault's keyring backend zeroizes the secret bytes the OS store hands back.
 alloc = ["zeroize/alloc"]
@@ -66,7 +67,7 @@ _keyring-vault = ["std", "dep:keyring", "keyring/crypto-rust", "keyring/apple-na
 flash = ["dep:embedded-storage", "dep:embedded-storage-async"]
 
 [dependencies]
-prns-macros = { version = "=0.3.7", path = "../prns-macros" }
+prns-macros = { version = "=0.3.8", path = "../prns-macros" }
 cfg-if = "1.0"
 
 # Crypto: no_std and alloc-free. Runtime entropy is seeded and reseeded by an audited host source.

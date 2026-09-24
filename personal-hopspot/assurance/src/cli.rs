@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::baseline::{self, BaselineError};
 use crate::contract::{
     ArchitectureId, ComponentId, FailureKind, IdentifierError, MatrixStatus, MiriCoverage,
-    PlatformId, PlatformMilestone, RunnerId, ScenarioId, ToolKind,
+    MiriScope, PlatformId, PlatformMilestone, RunnerId, ScenarioId, ToolKind,
 };
 use crate::evidence::{
     record_failure, record_miri, record_platform_emulation, record_target_isa, FailureCapability,
@@ -167,6 +167,8 @@ struct MiriRecordArguments {
     #[arg(long)]
     coverage: MiriCoverageArgument,
     #[arg(long)]
+    scope: MiriScopeArgument,
+    #[arg(long)]
     completed_tests: u32,
     #[arg(long)]
     rustc_version: String,
@@ -225,6 +227,21 @@ impl From<MiriCoverageArgument> for MiriCoverage {
         match value {
             MiriCoverageArgument::Stacked => Self::Stacked,
             MiriCoverageArgument::StackedAndTree => Self::StackedAndTree,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum MiriScopeArgument {
+    Focused,
+    Exhaustive,
+}
+
+impl From<MiriScopeArgument> for MiriScope {
+    fn from(value: MiriScopeArgument) -> Self {
+        match value {
+            MiriScopeArgument::Focused => Self::Focused,
+            MiriScopeArgument::Exhaustive => Self::Exhaustive,
         }
     }
 }
@@ -431,6 +448,7 @@ fn run(cli: Cli) -> Result<(), AssuranceError> {
                         scenario: ScenarioId::parse(arguments.scenario)?,
                         runner: RunnerId::parse(arguments.runner)?,
                         coverage: arguments.coverage.into(),
+                        scope: arguments.scope.into(),
                         completed_tests: arguments.completed_tests,
                         rustc_version: arguments.rustc_version,
                         miri_version: arguments.miri_version,

@@ -2,19 +2,23 @@ mod byte_stream;
 mod handle_capabilities;
 mod interface_lifecycle;
 mod node_lifecycle;
+mod path_discovery;
 mod persistence;
+#[cfg(test)]
+pub(crate) use persistence::TestDirectory;
 mod remote_control;
 mod request_response;
 mod resource_admission;
 mod resource_transfer;
 
+use portable_atomic::AtomicU64;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -25,12 +29,11 @@ use crate::engine::{
     AllowRequester, AllowRequesterFailure, AnnounceNow, CloseLink, CloseRemoteControlPairing,
     CloseRemoteControlPairingOutcome, CommandId, EgressTarget, EstablishLink, EstablishLinkFailure,
     Identify, IdentifyFailure, IssuedCommand, LinkEstablished, OpenRemoteControlPairing,
-    PacketReceiptDelivered, PathFound, PathRequestId, PrnsCommand, RemoteControlPairingOpened,
-    RequestPath, RequestPathFailure, SendGroup, SendGroupFailure, SendGroupPayload,
-    SendPlainPacket, SendPlainPacketFailure, SendPlainPacketPayload, SendSinglePacket,
-    SendSinglePacketFailure, SendSinglePacketPayload, SendToChannel, SendToChannelBody,
-    SendToChannelFailure, SendToLink, SendToLinkFailure, SendToLinkPayload,
-    SetRegisteredAnnounceAppData, Settlement, PATH_REQUEST_ID_LEN,
+    PacketReceiptDelivered, PrnsCommand, RemoteControlPairingOpened, RequestPathFailure, SendGroup,
+    SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
+    SendPlainPacketPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+    SendToChannel, SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure,
+    SendToLinkPayload, SetRegisteredAnnounceAppData, Settlement,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::rns_management::RnsRemotePathTableRequest;
@@ -54,10 +57,12 @@ use super::remote_control_target_accesses::{
 };
 use super::request_endpoints::RespondToken;
 use super::{InterfaceStore, SendError};
-pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
+pub use byte_stream::{
+    ByteStreamReader, ByteStreamWriter, StreamId, StreamReaderRegistrationError,
+};
 pub use interface_lifecycle::{
     AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, DetachedFleet, Fleet,
-    InterfaceAttachmentMetadata, InterfaceSupervisor,
+    InterfaceArbitration, InterfaceAttachmentMetadata, InterfaceEventSource, InterfaceSupervisor,
 };
 use interface_lifecycle::{DriverMsg, RegisteredInterface};
 pub use node_lifecycle::{
@@ -67,13 +72,18 @@ pub use node_lifecycle::{
 pub use persistence::{
     boot_timeline_origin, wall_clock_timeline_origin, DefaultLocationError,
     DestinationIdentitySeedReport, FlushError, FlushFailurePolicy, FlushMark, FlushReport,
-    NodePersistence, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
+    NodePersistence, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent, PersistenceIo,
+    PersistenceIoCompletion, PersistenceIoError, PersistenceIoOperation, PersistenceIoTask,
     PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PrepareFlushError,
     PreparedFlush, RatchetSeedReport, RegionFlush, RemoteControlAuthorizationPersistence,
     RemoteControlAuthorizationSeedReport, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
     SaveOnLearnWiring, TunnelSeedReport,
 };
-pub use remote_control::{RemoteControlHandle, RemoteControlTargetHandle};
+pub(crate) use persistence::{AuthorizationOwnerError, AuthorizationTransaction};
+pub use remote_control::{
+    RemoteControlHandle, RemoteControlInterfaceWatch, RemoteControlTargetHandle,
+    RemoteControlWatchOpenError, RemoteControlWatchReadError,
+};
 pub use request_response::{RequestOptions, ResponseSendError};
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};
 pub use resource_transfer::{
@@ -276,7 +286,7 @@ impl PrnsNodeHandle {
                 interfaces: Arc::new(Mutex::new(HashMap::new())),
                 store: InterfaceStore::new(),
                 resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
-                entropy: crate::manifold::driver::TokioEntropy,
+                entropy: crate::manifold::driver::TokioEntropy::new(),
                 timing_oracle: Arc::new(Mutex::new(None)),
                 remote_control_controller_grants,
                 remote_control_target_accesses,
@@ -461,28 +471,6 @@ impl PrnsNodeHandle {
         {
             Some(Settlement::EstablishLink(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
-        }
-    }
-
-    pub async fn request_path(
-        &self,
-        destination: DestinationHash,
-    ) -> Result<PathFound, RequestPathError> {
-        let mut request_id = [0; PATH_REQUEST_ID_LEN];
-        getrandom::getrandom(&mut request_id).map_err(|_| RequestPathError::EntropyUnavailable)?;
-        let timing = self.path_command_timing().await;
-        match self
-            .settle_with_timing(
-                PrnsCommand::RequestPath(RequestPath {
-                    destination,
-                    id: PathRequestId::new(request_id),
-                }),
-                timing,
-            )
-            .await
-        {
-            Some(Settlement::RequestPath(result)) => result.map_err(RequestPathError::Failed),
-            Some(_) | None => Err(RequestPathError::NodeStopped),
         }
     }
 

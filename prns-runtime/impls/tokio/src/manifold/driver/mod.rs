@@ -38,15 +38,22 @@ mod scheduling_policy;
 pub use super::grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
 };
+pub(crate) use crate::runtime::TokioEntropy;
+#[cfg(feature = "simulation-control")]
+pub use crypto_pool::{
+    ControlledCrypto, ControlledCryptoError, ControlledCryptoEvent, ControlledCryptoSnapshot,
+    ControlledCryptoStep, ControlledJobId, ControlledWorkKind, ControlledWorkerId,
+    CryptoWorkBoundary,
+};
 pub use crypto_pool::{CryptoPoolConfig, CryptoWorkerPlacement, PoolWorkers};
 pub use egress::Egress;
-pub(crate) use host::TokioEntropy;
 pub use host::{TokioClock, TokioHost};
 pub use host_protocol::{
     AddInterfaceCommand, HostCommand, HostResourceMetadata, HostResourcePayload,
     HostResourcePayloadError, ProvideDecompressedHostCommand, RequestAnyHostCommand,
     ResourceInbound, RespondAnyHostCommand, SendResourceHostCommand,
-    SendResourceSegmentHostCommand, StreamInbound,
+    SendResourceSegmentHostCommand, StreamInbound, StreamReaderRegistrationError,
+    StreamReceiveFailure,
 };
 pub(crate) use host_protocol::{HostResourceDigestPreparation, HostResourceRecycler};
 pub use interface_seam::TokioInterfaceSeam;
@@ -305,6 +312,13 @@ async fn run_inner<S, H, J, P, A, C>(
     }
     const LOCAL_COMMAND_BURST: usize = 32;
     let crypto_completion_wake = Arc::new(tokio::sync::Notify::new());
+    #[cfg(feature = "simulation-control")]
+    let controlled = match &crypto_pool_config {
+        CryptoPoolConfig::Controlled(control) => {
+            Some(control.spawn(crypto_completion_wake.clone()))
+        }
+        CryptoPoolConfig::Inline | CryptoPoolConfig::Pooled { .. } => None,
+    };
     let crypto_pool = crypto_pool_config.resolved().and_then(|resolved| {
         CryptoPool::spawn_with_policy(
             resolved.workers.get(),
@@ -313,6 +327,8 @@ async fn run_inner<S, H, J, P, A, C>(
             resolved.placement,
         )
     });
+    #[cfg(feature = "simulation-control")]
+    let crypto_pool = controlled.or(crypto_pool);
     engine.set_resource_seal_execution(match crypto_pool.as_ref() {
         Some(_) => ResourceSealExecution::ExternalOwned,
         None => ResourceSealExecution::Inline,

@@ -1,0 +1,273 @@
+{
+  "schema": 1,
+  "qualification": "isolated persistent application service, signed lab slots, real reboot and retained wired control",
+  "date": "2026-10-02",
+  "source": {
+    "base_commit": "505d4824ce0fa9c356237374cdff7886fba5cffe",
+    "changes": "uncommitted cold-boot and application-slot-manager implementation at build time"
+  },
+  "toolchain": {
+    "rust": "nightly-2026-06-02",
+    "rust_commit": "6bdf43094fae65d298bc430362f116176cd25a3c",
+    "zig": "0.15.2",
+    "target": "mipsel-unknown-linux-musl",
+    "abi": "static MIPS32r2 little-endian O32 soft-float"
+  },
+  "artifacts": {
+    "application": {
+      "bytes": 3631976,
+      "sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be"
+    },
+    "application_gzip_bytes": 1507694,
+    "previous_application": {
+      "bytes": 3636456,
+      "sha256": "fbcacc9ad3e9be00b523b9c40d1108e896a6f3a254ddb260b2723ef1f4eaf4a8"
+    },
+    "service_shipping_manager": {
+      "bytes": 1213980,
+      "sha256": "29615f81d9859e5b1149bdf8bf478d3786add21418465a00bec12e8dc7ead2dc"
+    },
+    "service_lab_manager": {
+      "bytes": 1215948,
+      "sha256": "652b73670dffffc389806df37728b2882e75a5fef883551cab18b5e82f0f9331"
+    },
+    "final_review_shipping_manager": {
+      "bytes": 1214332,
+      "sha256": "590606efda6449a3e393d5f15b345e3b79a7735f48370bdff3f1f8665293458c"
+    },
+    "final_review_lab_manager": {
+      "bytes": 1216364,
+      "sha256": "82cb3f08839120a615603dd33e7cc14f6d3f350d98ab49a96bb0d9296664e51f"
+    }
+  },
+  "trust": {
+    "production": "repository-pinned Minisign key; no command-line key override",
+    "physical_slots": "temporary separate lab signer; qualification example outside shipping bundle",
+    "final_shipping_manager_lab_signature": "refused on G4",
+    "public_release_signing": "not performed"
+  },
+  "policy": {
+    "trial_launches": 3,
+    "procd_respawn": {
+      "threshold_seconds": 60,
+      "delay_seconds": 2,
+      "retry": 3
+    },
+    "term_timeout_seconds": 15,
+    "flash_reserve_bytes": 262144,
+    "ram_reserve_bytes": 8388608,
+    "automatic_announces": "absent",
+    "vendor_radio_mutations": "none"
+  },
+  "boards": [
+    {
+      "board": "g4",
+      "vendor_board": "morse,ekh03v3",
+      "reboot": {
+        "boot_id_before": "c9d165c6-64bf-41a9-a1d2-cedb10861664",
+        "boot_id_after": "8720964e-8362-4fda-9ae6-736c5f2da917",
+        "elapsed_to_health_seconds": 171.122
+      },
+      "authenticated_build_interfaces_app_and_exact_page": "passed before and after reboot and confirmed restart",
+      "controller_enrollment_on_boot": "absent; retained grants used",
+      "final_application_sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be",
+      "final_lab_manager_sha256": "652b73670dffffc389806df37728b2882e75a5fef883551cab18b5e82f0f9331",
+      "rss_kib": 3988,
+      "threads": 3,
+      "descriptors": 13,
+      "nofile_soft_hard": [
+        128,
+        128
+      ],
+      "core_limit_bytes": 0,
+      "installation_du_kib": 4145,
+      "retained_state_du_kib": 6,
+      "overlay_kib": {
+        "total": 5696,
+        "used": 3984,
+        "available": 1712,
+        "available_after_cleanup": 5308
+      },
+      "confirmed_restart_journal": "unchanged hashes",
+      "config_hashes_before_after": {
+        "/etc/config/network": "8a7b7047124263da23abb39b51477024a5da0b47d6b0a1dfd4199077edfb6c58",
+        "/etc/config/wireless": "2683541386043ed2b83c09070e294bbb4314b48a0c090cb4df47830c8fe4fba5",
+        "/etc/config/firewall": "74c938808f683d390b2d626f44ebd357129ac89e61bd3f580c28a805b85df248",
+        "/etc/config/dhcp": "3ca2dda68988f2d893e1ab740fc9f01c2912d68bf9f1061f5752301ec4938d31",
+        "/etc/config/mesh11sd": "a3fd31b51b532f288cee83cd18e7378550797969862684fafc3fc823f063348a"
+      },
+      "uci_pending_changes": "empty",
+      "morse_health": "passed",
+      "qualification_services_and_slots": "removed",
+      "real_mips_owner_tests": {
+        "passed": 11,
+        "failed": 0
+      },
+      "evidence_hashes": {
+        "final-process": "0d3e8d4b966372a0ba705467fe8e584f0d363ace2f9ef05a6abe694ca4da9bae",
+        "cleanup": "76c3fc7bf6bb5dc51517b08b044e6f99fb2f675ed6144daf51c5df6d8ea792a2",
+        "mips-final-tests": "6000279bd22d8e73af5c6734cf095e971b628f25483f16e8c14f4b287d9e5974",
+        "mips-review-tests": "fe18c67ea827722deb34d8b5c8569918a85af76f17998a6a7f84f820bf0b7f72",
+        "review-cleanup": "a5f44f2a9532ccedb4c47af4ff17e474634e1c6cbd7fd132db9e3903f90606f5"
+      },
+      "final_review_manager_sha256": "82cb3f08839120a615603dd33e7cc14f6d3f350d98ab49a96bb0d9296664e51f",
+      "final_review_mips_tests": "11 passed, 0 failed, including new input edges"
+    },
+    {
+      "board": "heltec",
+      "vendor_board": "Heltec,HT-HD01-V2",
+      "reboot": {
+        "boot_id_before": "48ed1d39-0cff-495a-a579-2714f5eea6c5",
+        "boot_id_after": "29291ee0-5089-4e6f-b723-6f8ea10a89b0",
+        "readiness_timing": "unavailable: initial SSH parser selected a leading blank line; changed UUID and subsequent health verified",
+        "reconciliation_to_health_seconds": 2.037
+      },
+      "authenticated_build_interfaces_app_and_exact_page": "passed before and after reboot and confirmed restart",
+      "controller_enrollment_on_boot": "absent; retained grants used",
+      "final_application_sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be",
+      "final_lab_manager_sha256": "652b73670dffffc389806df37728b2882e75a5fef883551cab18b5e82f0f9331",
+      "rss_kib": 3976,
+      "threads": 2,
+      "descriptors": 13,
+      "nofile_soft_hard": [
+        128,
+        128
+      ],
+      "core_limit_bytes": 0,
+      "installation_du_kib": 4145,
+      "retained_state_du_kib": 6,
+      "overlay_kib": {
+        "total": 5632,
+        "used": 3944,
+        "available": 1688,
+        "available_after_cleanup": 5192
+      },
+      "confirmed_restart_journal": "unchanged hashes",
+      "config_hashes_before_after": {
+        "/etc/config/network": "6a3b8b984c3f22741cb4b444079853b4de0a06f7369bbba93229f685a2a6d15d",
+        "/etc/config/wireless": "855553c60dfe7478162aeb78c8d3df9cce822d0012f6971e782bdd599403aaab",
+        "/etc/config/firewall": "6b335971abb76b41baf6b411a161ed416933d81fee60038f798091338f8327b4",
+        "/etc/config/dhcp": "8639102f47aeaaa6f04f9a969c2aca0d56ba516544bb31cfc8f0e87d5dfbb73c",
+        "/etc/config/mesh11sd": "afe2d42d925699ecb32536836ff58ffb7aa386fcd5648906cfa8ab35efb73277"
+      },
+      "uci_pending_changes": "empty",
+      "morse_health": "passed",
+      "qualification_services_and_slots": "removed",
+      "real_mips_owner_tests": {
+        "passed": 11,
+        "failed": 0
+      },
+      "evidence_hashes": {
+        "final-process": "f0c6da34490ce2d167d3daac088bb5618436ae7fa0e18c737ec5dc58ada3fc6a",
+        "cleanup": "d33c52f90aa35951258293f571522ae2229c715388b5078c773c8521b8946704",
+        "mips-final-tests": "9baca74e9fe61676442c00bb1c78e9f6d9e1ecf7102b939c6b8959431fedc6a3",
+        "mips-review-tests": "f3b333351003b584d43ef22d224a6f40cb5b136e52f3a0eafe1c5e7f4870d4d9",
+        "review-cleanup": "25a6b0d44b4aa54aac3815c6c861ba1e11d79bbe6695dcf3419857a97b912c64"
+      },
+      "final_review_manager_sha256": "82cb3f08839120a615603dd33e7cc14f6d3f350d98ab49a96bb0d9296664e51f",
+      "final_review_mips_tests": "11 passed, 0 failed, including new input edges"
+    },
+    {
+      "board": "heltec3",
+      "vendor_board": "Heltec,HT-HD01-V2",
+      "reboot": {
+        "boot_id_before": "89a0f81d-f7cb-437b-acf0-6a4605d8970e",
+        "boot_id_after": "ce16f2ee-e4ee-4c33-aab2-1539f27b92f5",
+        "readiness_timing": "unavailable: initial SSH parser selected a leading blank line; changed UUID and subsequent health verified",
+        "reconciliation_to_health_seconds": 49.134
+      },
+      "authenticated_build_interfaces_app_and_exact_page": "passed before and after reboot and confirmed restart",
+      "controller_enrollment_on_boot": "absent; retained grants used",
+      "final_application_sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be",
+      "final_lab_manager_sha256": "652b73670dffffc389806df37728b2882e75a5fef883551cab18b5e82f0f9331",
+      "rss_kib": 3984,
+      "threads": 2,
+      "descriptors": 13,
+      "nofile_soft_hard": [
+        128,
+        128
+      ],
+      "core_limit_bytes": 0,
+      "installation_du_kib": 4145,
+      "retained_state_du_kib": 6,
+      "overlay_kib": {
+        "total": 5632,
+        "used": 3984,
+        "available": 1648,
+        "available_after_cleanup": 5160
+      },
+      "confirmed_restart_journal": "unchanged hashes",
+      "config_hashes_before_after": {
+        "/etc/config/network": "98da83f0d1b598d622ed7f4fc9c848254088c33ca0d890b0558bdae3b27728c5",
+        "/etc/config/wireless": "eafe7b47ce0925c64c12f922504b1e4ad2ab41e729d0745d39cf7738055e9f87",
+        "/etc/config/firewall": "7085966c417db4ddb512ba84860d4fbf35ca4cd240b90cd8a4e6931b285ebf01",
+        "/etc/config/dhcp": "3ca2dda68988f2d893e1ab740fc9f01c2912d68bf9f1061f5752301ec4938d31",
+        "/etc/config/mesh11sd": "afe2d42d925699ecb32536836ff58ffb7aa386fcd5648906cfa8ab35efb73277"
+      },
+      "uci_pending_changes": "empty",
+      "morse_health": "passed",
+      "qualification_services_and_slots": "removed",
+      "real_mips_owner_tests": {
+        "passed": 11,
+        "failed": 0
+      },
+      "evidence_hashes": {
+        "final-process": "6032a60a5bb094ef0a7575b20641600197d6b119e29e010b86e66410e58ef462",
+        "cleanup": "8ded03bd61f443f6492b1e42ff159317637aa3c2b607241cc9d0b421343651c2",
+        "mips-final-tests": "43d965459b80c4cff22d833720391ffb7249c163e6737c587b2df55a7a4127a1",
+        "mips-review-tests": "c1f67fe2ea1d5852a3d6cffa9f423e76b91e83be8b813a56f57282f93299626f",
+        "review-cleanup": "a8125c817761c013b3dd65c02f14af4693e482e4a62b90c4a19f5b41acdb316c"
+      },
+      "final_review_manager_sha256": "82cb3f08839120a615603dd33e7cc14f6d3f350d98ab49a96bb0d9296664e51f",
+      "final_review_mips_tests": "11 passed, 0 failed, including new input edges"
+    }
+  ],
+  "g4_additional": {
+    "missing_radio_cold_boot": "authenticated wired build/interfaces/AppMessage/exact page after old five-second deadline",
+    "initial_trial_reboot": {
+      "boot_id_before": "83f56017-b08c-4f85-b26d-11f2c8b74955",
+      "boot_id_after": "c9d165c6-64bf-41a9-a1d2-cedb10861664",
+      "elapsed_to_health_seconds": 161.707
+    },
+    "trial_exhaustion": "three durable candidate launches, then verified previous slot selected after crash",
+    "corrupt_identity": "refused; procd reports four crashes and stops; original restored and authenticated",
+    "stale_confirmation": "refused",
+    "low_space_policy": "refused using deliberately excessive reserve, without filling flash",
+    "graceful_shutdown": "RoutingState and Ratchets Shutdown flush plus hopspot_stopped observed",
+    "independent_recovery_lease": "expiry observed to stop and disable lab service; deliberate restart for final collection"
+  },
+  "verification": {
+    "registered_appliance_suite": "11 library tests plus two command tests, repeated in separate example; passed macOS arm64",
+    "real_mips_linux": "11 library tests passed on every board",
+    "headless_all_features": "passed macOS; Linux-only cold-boot integration test skipped on macOS; equivalent authenticated hardware probe passed G4",
+    "clippy": "appliance all-targets and headless all-features on macOS; Linux-only FFI not implied",
+    "g4_build_fixture_tests": "5 passed",
+    "registry": "passed",
+    "tool_registry": "three pre-existing misplaced network-lab scripts remain"
+  },
+  "harness_findings": [
+    "First Heltec staging completed but SSH completion acknowledgement was lost; persisted trial reconciled before further writes.",
+    "Second Heltec initially had an IPv4-only lab listener despite IPv6-only host management; corrected to [::]:4347 before qualification.",
+    "Heltec SSH output begins with a blank line; initial boot-ID parsing failed. Boot UUIDs subsequently validated and compared; reboot latency unavailable for those boards.",
+    "G4 host Ethernet DHCP lease recovered after reboot; 161.707/171.122-second end-to-end times include management reacquisition and are not application boot benchmarks."
+  ],
+  "evidence_private_directory": "/private/tmp/prns-appliance-qualification-20261002",
+  "backup_private_directory": "scratch/halow-appliance-private-20261002",
+  "limits": [
+    "No physical power cut, interrupted actual flash write or deliberate filesystem filling.",
+    "Publication cut points and corrupt/torn journals are native filesystem fault tests, not an electrical flash model.",
+    "Service reboot checks use wired management and retain vendor radio settings; persistent regional mesh/rate setup and over-air boot are separate gates.",
+    "No least-privilege proof, sustained throughput/state-growth run, firmware replacement, public installer or manager self-update.",
+    "Windows filesystem activation unqualified; clients should delegate to Linux appliance manager."
+  ],
+  "final_review": {
+    "changes": [
+      "malformed non-UTF-8 signature receives SignatureEncoding instead of ReadBudget",
+      "checked read-budget overrun length refuses u64::MAX without overflow"
+    ],
+    "qualification": "all eleven updated MIPS owner tests and RAM-slot stage/launch/authenticated control/exact page/confirmation passed on all boards",
+    "repeated_persistent_reboot": "not performed after these input-edge changes; preceding persistent-service executable hashes retained separately",
+    "final_shipping_manager_lab_signature": "refused on G4",
+    "private_review_artifacts": "removed from all boards"
+  }
+}

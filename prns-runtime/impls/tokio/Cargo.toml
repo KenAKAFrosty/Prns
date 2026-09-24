@@ -1,6 +1,6 @@
 [package]
 name = "prns-runtime-tokio"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -26,14 +26,16 @@ interface-discovery = ["prns-runtime/interface-discovery"]
 interface-discovery-archive = ["interface-discovery", "prns-runtime/interface-discovery-archive"]
 runtime-metrics = ["prns-core/runtime-metrics", "prns-runtime/runtime-metrics"]
 scheduler-tuning = []
+simulation-control = []
 rns-management = ["prns-runtime/rns-management"]
 parallel-persistence = ["prns-core/parallel-persistence"]
 parallel-resource-hash = ["prns-core/parallel-resource-hash"]
 tracing = ["dep:tracing"]
 
 [dependencies]
-prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features = false, features = ["tokio-host", "ed25519-batch", "resource-work-offload", "movable-frame-forwarding"] }
-prns-runtime = { version = "=0.3.7", path = "../../core", default-features = false, features = ["resource-bzip2", "movable-frame-forwarding"] }
+portable-atomic = { version = "1", default-features = false, features = ["fallback", "std"] }
+prns-core = { version = "=0.3.8", path = "../../../prns-core", default-features = false, features = ["tokio-host", "ed25519-batch", "resource-work-offload", "movable-frame-forwarding"] }
+prns-runtime = { version = "=0.3.8", path = "../../core", default-features = false, features = ["resource-bzip2", "movable-frame-forwarding"] }
 heapless = { version = "0.8", default-features = false }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "sync", "time", "io-util", "fs"] }
 rtrb = { version = "0.3.5", default-features = false }
@@ -49,7 +51,7 @@ nix = { version = "0.31", optional = true, default-features = false, features = 
 nix = { version = "0.31", default-features = false, features = ["sched"] }
 
 [dev-dependencies]
-prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features = false, features = ["test-support"] }
+prns-core = { version = "=0.3.8", path = "../../../prns-core", default-features = false, features = ["test-support"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "test-util"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 

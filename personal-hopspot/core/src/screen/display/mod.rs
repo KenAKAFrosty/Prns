@@ -1,4 +1,5 @@
 mod blanking;
+mod pages;
 mod presentation;
 mod time;
 
@@ -7,6 +8,7 @@ pub use blanking::{
     BufferRetention, ButtonDecision, DisplayAutoOff, DisplayBlankReason, DisplayButtonOutcome,
     DisplayVisibility, UserBlankingPolicy,
 };
+pub use pages::MonochromePageCache;
 pub use presentation::{
     EinkPolicy, EinkPolicyConfiguration, EinkPolicyError, EinkRefreshPolicy, PresentationAttempt,
     PresentationDecision, PresentationError, PresentationOutcome, PresentationPolicy,

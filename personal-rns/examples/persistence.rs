@@ -28,7 +28,7 @@ async fn main() {
 
     let listener = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: common::remote_control_service(0xD0, 0xD1),
+        remote_control: common::remote_control_service(0xD0, 0xD1).into(),
         pre_configured_destinations: [listener_destination()],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
@@ -116,7 +116,7 @@ async fn main() {
     let client = TcpClientInterface::new(server_address);
     let announcer = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: common::remote_control_service(0xD2, 0xD3),
+        remote_control: common::remote_control_service(0xD2, 0xD3).into(),
         pre_configured_destinations: [announcing_destination],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,

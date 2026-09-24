@@ -1,4 +1,16 @@
+mod authorization;
 mod host;
+mod io;
+pub(crate) use authorization::{AuthorizationOwnerError, AuthorizationTransaction};
+pub use io::{
+    PersistenceIo, PersistenceIoCompletion, PersistenceIoError, PersistenceIoOperation,
+    PersistenceIoTask,
+};
+
+#[cfg(test)]
+mod test_directory;
+#[cfg(test)]
+pub(crate) use test_directory::TestDirectory;
 
 pub use host::{
     DefaultLocationError, FlushFailurePolicy, NodePersistence, PersistenceEvent,
@@ -163,7 +175,8 @@ impl PrnsNodeHandle {
     }
 }
 
-impl<St, R, F, S: StorageLayout> PrnsNode<St, R, F, S>
+impl<St, R, F, S: StorageLayout, E: prns_core::entropy::EntropySource, C>
+    PrnsNode<St, R, F, S, E, C>
 where
     R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),

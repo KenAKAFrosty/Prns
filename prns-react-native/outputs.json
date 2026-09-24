@@ -8,7 +8,9 @@
   "files": [
     "native-image.json",
     "ios/NativeImage.generated.swift",
-    "android/src/main/java/rs/reticulum/prns/expo/NativeImage.generated.kt"
+    "android/src/main/java/rs/reticulum/prns/expo/NativeImage.generated.kt",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
   "scaffolding": [
     "package.json",

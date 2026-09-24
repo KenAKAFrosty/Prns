@@ -11,14 +11,15 @@ pub use crate::{
     OpenRemoteControlPairingControlError, PacketReceiptDelivered, PreConfiguredDestination,
     PrnsCommand, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy,
     RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
-    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure,
+    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlAppMessages,
     RemoteControlControllerGrantControl, RemoteControlControllerPairingConfirmation,
     RemoteControlControllerPairingInitiationControl,
     RemoteControlControllerPairingInitiationTransport, RemoteControlDescribe, RemoteControlError,
     RemoteControlHostCommand, RemoteControlHostCommandError, RemoteControlHostControls,
-    RemoteControlHostResponse, RemoteControlPairingConfirmation, RemoteControlPairingControl,
+    RemoteControlHostResponse, RemoteControlNodeControls, RemoteControlNodeSetup,
+    RemoteControlPairingConfirmation, RemoteControlPairingControl,
     RemoteControlPairingControlError, RemoteControlPairingLinkCleanupOutcome,
-    RemoteControlTargetAccessControl, RemoteControlTargetConnection,
+    RemoteControlSupportedHost, RemoteControlTargetAccessControl, RemoteControlTargetConnection,
     RemoteControlTargetConnectionControl, RemoteControlTargetConnectionTransport,
     RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
     RemoteControlTargetInventoryError, RemoteControlTargetInventoryServiceError,
@@ -159,7 +160,9 @@ pub use crate::usb_auto::{
 #[cfg(all(feature = "weave", feature = "tokio-host"))]
 pub use crate::weave::WeaveInterface;
 #[cfg(all(feature = "websocket", feature = "tokio-host"))]
-pub use crate::websocket::{WebSocketClientInterface, WebSocketServer};
+pub use crate::websocket::WebSocketClientInterface;
+#[cfg(all(feature = "websocket-server", feature = "tokio-host"))]
+pub use crate::websocket::WebSocketServer;
 #[cfg(all(
     feature = "wifi-auto",
     any(feature = "tokio-host", feature = "embassy-host")

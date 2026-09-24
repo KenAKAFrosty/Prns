@@ -76,7 +76,7 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
     let (target_link_closed_tx, mut target_link_closed_rx) = tokio::sync::mpsc::unbounded_channel();
     let target = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: remote_control_service(target_identity_secrets),
+        remote_control: remote_control_service(target_identity_secrets).into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
@@ -126,7 +126,7 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
         tokio::sync::mpsc::unbounded_channel();
     let controller = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: remote_control_service(controller_identity_secrets),
+        remote_control: remote_control_service(controller_identity_secrets).into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
@@ -339,7 +339,7 @@ async fn target_rejection_retires_the_exchange_without_authorizing_either_node()
     let (target_link_closed_tx, mut target_link_closed_rx) = tokio::sync::mpsc::unbounded_channel();
     let target = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: remote_control_service(target_identity_secrets),
+        remote_control: remote_control_service(target_identity_secrets).into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
@@ -386,7 +386,7 @@ async fn target_rejection_retires_the_exchange_without_authorizing_either_node()
         tokio::sync::mpsc::unbounded_channel();
     let controller = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: remote_control_service(controller_identity_secrets),
+        remote_control: remote_control_service(controller_identity_secrets).into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
@@ -578,7 +578,7 @@ async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirec
         tokio::sync::mpsc::unbounded_channel();
     let target = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: remote_control_service(target_identity_secrets),
+        remote_control: remote_control_service(target_identity_secrets).into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
@@ -612,7 +612,7 @@ async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirec
     let (target_announce_tx, mut target_announce_rx) = tokio::sync::mpsc::unbounded_channel();
     let controller = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        remote_control: remote_control_service(controller_identity_secrets),
+        remote_control: remote_control_service(controller_identity_secrets).into(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,

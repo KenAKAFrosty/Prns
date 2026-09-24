@@ -893,9 +893,10 @@ mod tests {
             correlation: ResourceCorrelation::Unsolicited,
             initial_names: &[0x33; 4],
         };
+        let offer = accepted(1);
         state
             .incoming_resources
-            .accept(link_id, accepted(1))
+            .accept(link_id, offer.hash, offer)
             .unwrap();
         let pending = PendingResourceOffer::try_from_accepted(
             link_id,

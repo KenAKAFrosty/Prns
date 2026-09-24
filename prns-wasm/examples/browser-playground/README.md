@@ -36,3 +36,11 @@ Then open:
 ```text
 http://127.0.0.1:8878/browser-node-playground-console/
 ```
+
+For an OpenWrt-hosted development bundle, use
+`./tools/prns run build.hopspot.browser -- --output NEW_DIRECTORY --websocket-port PORT`.
+Its `prns-websocket-port` metadata prefills a same-host WebSocket URL (using
+`ws:` for HTTP or `wss:` for HTTPS) without automatically connecting. Ordinary
+documentation builds omit the metadata and retain the empty endpoint field.
+See the [Hopspot hosting guide](../../../personal-hopspot/headless/docs/browser-hosting.md)
+for the RAM-only G4 procedure and storage limits.

@@ -1,0 +1,224 @@
+{
+  "schema": 1,
+  "qualification": "guided-halow-application-installation",
+  "status": "PassedOnInspectedBoards",
+  "date": "2026-10-02",
+  "scope": "RAM-only signed application slots and wired controller provisioning; vendor radio configuration unchanged",
+  "build": {
+    "schema": 1,
+    "artifact_kind": "linux-application-slot-manager-development-bundle",
+    "target": "mipsel-unknown-linux-musl",
+    "source_commit": "5e2572a97fa60370d8295806d3404a9c74269321",
+    "working_tree_dirty": true,
+    "rustc": "rustc 1.98.0-nightly (6bdf43094 2026-06-01)\nbinary: rustc\ncommit-hash: 6bdf43094fae65d298bc430362f116176cd25a3c\ncommit-date: 2026-06-01\nhost: aarch64-apple-darwin\nrelease: 1.98.0-nightly\nLLVM version: 22.1.6",
+    "zig_version": "0.15.2",
+    "binary": {
+      "bytes": 1511340,
+      "sha256": "7aa5de63d070f2a3111eb1088b95b2dc7d3bdcdd51236b916b5b61ad1ed16577"
+    },
+    "trust": "repository-pinned release Minisign public key; no CLI override",
+    "cargo_lock_sha256": "77f00fc5c0c8d3a79dacf0b28e8148b0cd9e5ae85feb85beeb93da7223f30bac"
+  },
+  "shipping_manager": {
+    "bytes": 1511340,
+    "sha256": "7aa5de63d070f2a3111eb1088b95b2dc7d3bdcdd51236b916b5b61ad1ed16577"
+  },
+  "separate_lab_manager": {
+    "bytes": 1578432,
+    "sha256": "1c681c174a5c1f89b3fd2aff778888fb83bddc2c9e922f3d263bdf87f672bf3c"
+  },
+  "unchanged_application": {
+    "bytes": 3631976,
+    "sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be"
+  },
+  "page_bytes": 3542,
+  "boards": [
+    {
+      "board": "ThinkNode G4",
+      "vendor_board_name": "morse,ekh03v3",
+      "boot": {
+        "boot": "f804e8e4-2927-47e6-9246-9f3ccf3a0f8c",
+        "uptime_seconds": 2633
+      },
+      "resources": {
+        "overlay_available_bytes": 5476352,
+        "ram_available_bytes": 31408128,
+        "flash_reserve_bytes": 262144,
+        "ram_reserve_bytes": 8388608,
+        "max_compressed_bytes": 2097152,
+        "max_executable_bytes": 4194304
+      },
+      "candidate": {
+        "revision": 1,
+        "executable_sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be"
+      },
+      "trial_launches_after_qualification": 2,
+      "confirmed_activation": {
+        "revision": 4,
+        "status": {
+          "Confirmed": {
+            "slot": "A",
+            "candidate": {
+              "revision": 1,
+              "executable_sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be"
+            }
+          }
+        }
+      },
+      "target_public_key_sha256": "a2bc53115d66287a556cf8d0e639a5af09e544745fa87cc8602d01352cdfa6ff",
+      "controller_public_hash": "94c262a1c246bfb8a20798839fd2b106",
+      "probe": {
+        "event": "app_message",
+        "request_hex": "0101",
+        "response_hex": "010194c262a1c246bfb8a20798839fd2b106",
+        "rtt": "RttMillis(43)"
+      },
+      "vendor_file_sha256": {
+        "/etc/config/network": "8a7b7047124263da23abb39b51477024a5da0b47d6b0a1dfd4199077edfb6c58",
+        "/etc/config/wireless": "2683541386043ed2b83c09070e294bbb4314b48a0c090cb4df47830c8fe4fba5",
+        "/etc/config/firewall": "74c938808f683d390b2d626f44ebd357129ac89e61bd3f580c28a805b85df248",
+        "/etc/config/dhcp": "3ca2dda68988f2d893e1ab740fc9f01c2912d68bf9f1061f5752301ec4938d31",
+        "/etc/config/mesh11sd": "a3fd31b51b532f288cee83cd18e7378550797969862684fafc3fc823f063348a",
+        "/etc/config/system": "cf0d9d66359a870b580c0df0738913edc2c65f7736d0ff02a9947724ac2117eb",
+        "/etc/modules.d/morse": "57a997a7c30130b09e2e845be37db29e7c2666b05b23d138ab75cf6b0fb9bffa"
+      },
+      "stages": [
+        "ReadOnlyInspected",
+        "WrongSignerRefused",
+        "SignedSlotQualified",
+        "PinnedControlAndPageVerified",
+        "RetainedGrantWithoutEnrollmentVerified",
+        "ExactCandidateConfirmed",
+        "TemporaryDeploymentRemoved"
+      ]
+    },
+    {
+      "board": "Heltec HT-HD01-V2 station",
+      "vendor_board_name": "Heltec,HT-HD01-V2",
+      "boot": {
+        "boot": "f62f3a2d-2055-40dd-a79c-11f64fa84ba1",
+        "uptime_seconds": 2460
+      },
+      "resources": {
+        "overlay_available_bytes": 5447680,
+        "ram_available_bytes": 32272384,
+        "flash_reserve_bytes": 262144,
+        "ram_reserve_bytes": 8388608,
+        "max_compressed_bytes": 2097152,
+        "max_executable_bytes": 4194304
+      },
+      "candidate": {
+        "revision": 1,
+        "executable_sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be"
+      },
+      "trial_launches_after_qualification": 2,
+      "confirmed_activation": {
+        "revision": 4,
+        "status": {
+          "Confirmed": {
+            "slot": "A",
+            "candidate": {
+              "revision": 1,
+              "executable_sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be"
+            }
+          }
+        }
+      },
+      "target_public_key_sha256": "9e5b28567526f9b358c707838cf75a8ddb0052fb352a979ade927ec80d343853",
+      "controller_public_hash": "94c262a1c246bfb8a20798839fd2b106",
+      "probe": {
+        "event": "app_message",
+        "request_hex": "0101",
+        "response_hex": "010194c262a1c246bfb8a20798839fd2b106",
+        "rtt": "RttMillis(40)"
+      },
+      "vendor_file_sha256": {
+        "/etc/config/network": "6a3b8b984c3f22741cb4b444079853b4de0a06f7369bbba93229f685a2a6d15d",
+        "/etc/config/wireless": "855553c60dfe7478162aeb78c8d3df9cce822d0012f6971e782bdd599403aaab",
+        "/etc/config/firewall": "6b335971abb76b41baf6b411a161ed416933d81fee60038f798091338f8327b4",
+        "/etc/config/dhcp": "8639102f47aeaaa6f04f9a969c2aca0d56ba516544bb31cfc8f0e87d5dfbb73c",
+        "/etc/config/mesh11sd": "afe2d42d925699ecb32536836ff58ffb7aa386fcd5648906cfa8ab35efb73277",
+        "/etc/config/system": "42c2819462e77367a10ba398ad7511e071174993f465966a31c2cc0c9b369d4e",
+        "/etc/modules.d/morse": "a741aa06cb679f08386501851b457adfdd3e4378f502fd4bdc30b298b5904e39"
+      },
+      "stages": [
+        "ReadOnlyInspected",
+        "WrongSignerRefused",
+        "SignedSlotQualified",
+        "PinnedControlAndPageVerified",
+        "RetainedGrantWithoutEnrollmentVerified",
+        "ExactCandidateConfirmed",
+        "TemporaryDeploymentRemoved"
+      ]
+    },
+    {
+      "board": "Heltec HT-HD01-V2 AP",
+      "vendor_board_name": "Heltec,HT-HD01-V2",
+      "boot": {
+        "boot": "597768fd-a12f-471d-96c7-27bb96b4a718",
+        "uptime_seconds": 2339
+      },
+      "resources": {
+        "overlay_available_bytes": 5427200,
+        "ram_available_bytes": 31834112,
+        "flash_reserve_bytes": 262144,
+        "ram_reserve_bytes": 8388608,
+        "max_compressed_bytes": 2097152,
+        "max_executable_bytes": 4194304
+      },
+      "candidate": {
+        "revision": 1,
+        "executable_sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be"
+      },
+      "trial_launches_after_qualification": 2,
+      "confirmed_activation": {
+        "revision": 4,
+        "status": {
+          "Confirmed": {
+            "slot": "A",
+            "candidate": {
+              "revision": 1,
+              "executable_sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be"
+            }
+          }
+        }
+      },
+      "target_public_key_sha256": "71e4a7f3c72682b8693ae268e3f0c4c591efcb1cb9f09a569620b92578f83936",
+      "controller_public_hash": "94c262a1c246bfb8a20798839fd2b106",
+      "probe": {
+        "event": "app_message",
+        "request_hex": "0101",
+        "response_hex": "010194c262a1c246bfb8a20798839fd2b106",
+        "rtt": "RttMillis(42)"
+      },
+      "vendor_file_sha256": {
+        "/etc/config/network": "98da83f0d1b598d622ed7f4fc9c848254088c33ca0d890b0558bdae3b27728c5",
+        "/etc/config/wireless": "eafe7b47ce0925c64c12f922504b1e4ad2ab41e729d0745d39cf7738055e9f87",
+        "/etc/config/firewall": "7085966c417db4ddb512ba84860d4fbf35ca4cd240b90cd8a4e6931b285ebf01",
+        "/etc/config/dhcp": "3ca2dda68988f2d893e1ab740fc9f01c2912d68bf9f1061f5752301ec4938d31",
+        "/etc/config/mesh11sd": "afe2d42d925699ecb32536836ff58ffb7aa386fcd5648906cfa8ab35efb73277",
+        "/etc/config/system": "ed89c861b2fc0f426197bfb9ca8f79db8a508bf911fecc1b9388059922eeb684",
+        "/etc/modules.d/morse": "b240f8850371c6fbee95e6fd3d663f849159aefd9d93f35f8f962e37000db273"
+      },
+      "stages": [
+        "ReadOnlyInspected",
+        "WrongSignerRefused",
+        "SignedSlotQualified",
+        "PinnedControlAndPageVerified",
+        "RetainedGrantWithoutEnrollmentVerified",
+        "ExactCandidateConfirmed",
+        "TemporaryDeploymentRemoved"
+      ]
+    }
+  ],
+  "electrical_power_loss": "PreparedNotExecuted",
+  "public_release_signing": "NotPerformed",
+  "automated_browser_helper_transport": "NotImplemented",
+  "limits": [
+    "No reboot, electrical power cut or radio activation in this slice",
+    "Private temporary application state was not copied between boards",
+    "Manager bootstrap and upgrade authentication remain gates",
+    "Regional profiles beyond the explicit inspected US profile remain unqualified",
+    "No new over-air throughput, multi-hop or field-range claim"
+  ]
+}

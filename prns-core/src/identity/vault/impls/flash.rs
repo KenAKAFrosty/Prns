@@ -726,6 +726,57 @@ mod tests {
     }
 
     #[test]
+    fn factory_page_preserves_target_and_grant_while_bootstrapping_controller() {
+        use crate::identity::in_memory::InMemoryNodeIdentity;
+        use crate::identity::{IdentityPublicKeys, IdentitySigner};
+        use crate::remote_control::{
+            encode_remote_control_vault_page, load_factory_controller_grant,
+        };
+
+        let controller = InMemoryNodeIdentity::from_secret_key_bytes(&secret(0x42));
+        let public = IdentityPublicKeys {
+            encryption: controller.encryption_public_key(),
+            signing: controller.signing_public_key(),
+        };
+        let target_secret = secret(0x71);
+        let mut flash = FakeFlash::<FAKE_ERASE>::new();
+        flash.bytes = encode_remote_control_vault_page(&target_secret, &public).unwrap();
+        let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(flash, 0);
+        let mut entropy = runtime_entropy(0x31);
+        let first = RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+            &mut vault,
+            &mut entropy,
+        )
+        .unwrap();
+        assert_eq!(
+            (first.origins().controller(), first.origins().target()),
+            (IdentityOrigin::Generated, IdentityOrigin::Loaded)
+        );
+        let identities = first.secrets().identities();
+        let flash = vault.release();
+        assert_eq!(flash.erase_count, 0);
+        let mut rebooted = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(flash, 0);
+        let second = RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+            &mut rebooted,
+            &mut entropy,
+        )
+        .unwrap();
+        assert_eq!(second.secrets().identities(), identities);
+        assert_eq!(
+            *rebooted.load(&label("target")).unwrap().unwrap(),
+            target_secret
+        );
+        assert_eq!(
+            load_factory_controller_grant(&rebooted)
+                .unwrap()
+                .unwrap()
+                .controller()
+                .public_keys(),
+            &public
+        );
+    }
+
+    #[test]
     fn a_corrupt_occupied_slot_surfaces_rather_than_misreading() {
         let mut flash = FakeFlash::<8192>::new();
         flash.bytes[STATE_OFFSET] = STATE_OCCUPIED;

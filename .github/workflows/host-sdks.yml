@@ -87,16 +87,42 @@ env:
   RUSTFLAGS: "-D warnings --cfg aes_armv8"
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
+      - run: python tools/prns run release.host-sdk.versions
+      - run: python tools/prns run release.host-sdk.distribution.check
+      - run: python tools/prns run repo.host-contract.check
+      - run: cc -std=c11 -Wall -Wextra -Werror -fsyntax-only prns-host/abi/c/tests/header-smoke.c
+      - run: c++ -std=c++17 -Wall -Wextra -Werror -Iprns-host/abi/c/include -include prns_host.h -x c++ -fsyntax-only /dev/null
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: rustfmt
+      - run: cargo fmt --manifest-path prns-host/impls/native/Cargo.toml -- --check
+      - run: cargo fmt --manifest-path prns-host/abi/c/Cargo.toml -- --check
+      - run: python3 validation/run.py verify
+
   contract:
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
-          components: clippy,rustfmt
+          components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: |
@@ -105,9 +131,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with:
-          python-version: "3.14"
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         with:
           dotnet-version: 8.0.x
@@ -122,20 +145,13 @@ jobs:
       - uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9
         with:
           version: "1.12.6"
-      - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
+      - uses: ./.github/actions/setup-swift
         with:
           swift-version: "6.3.3"
-      - run: python tools/prns run release.host-sdk.versions
-      - run: python tools/prns run release.host-sdk.distribution.check
-      - run: python tools/prns run repo.host-contract.check
-      - run: cargo fmt --manifest-path prns-host/impls/native/Cargo.toml -- --check
       - run: cargo clippy --manifest-path prns-host/impls/native/Cargo.toml --all-targets --locked -- -D warnings
       - run: cargo test --manifest-path prns-host/impls/native/Cargo.toml --locked
-      - run: cargo fmt --manifest-path prns-host/abi/c/Cargo.toml -- --check
       - run: cargo clippy --manifest-path prns-host/abi/c/Cargo.toml --all-targets --locked -- -D warnings
       - run: cargo test --manifest-path prns-host/abi/c/Cargo.toml --locked
-      - run: cc -std=c11 -Wall -Wextra -Werror -fsyntax-only prns-host/abi/c/tests/header-smoke.c
-      - run: c++ -std=c++17 -Wall -Wextra -Werror -Iprns-host/abi/c/include -include prns_host.h -x c++ -fsyntax-only /dev/null
       - run: cargo build --manifest-path prns-host/abi/c/Cargo.toml --locked
       - run: python3 validation/run.py run --suite host-c-contract
       - run: python3 validation/run.py run --suite host-dotnet-contract
@@ -149,10 +165,9 @@ jobs:
       - run: python3 validation/run.py run --suite host-swift-contract
       - run: python3 validation/run.py run --suite host-julia-contract
       - run: python3 validation/run.py run --suite host-jvm-contract
-      - run: python3 validation/run.py verify
 
   native:
-    needs: contract
+    needs: preflight
     strategy:
       fail-fast: false
       max-parallel: 16
@@ -363,7 +378,7 @@ jobs:
           retention-days: 7
 
   android:
-    needs: contract
+    needs: preflight
     strategy:
       fail-fast: false
       max-parallel: 16
@@ -422,7 +437,7 @@ jobs:
           if-no-files-found: error
 
   rust-packages:
-    needs: contract
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -553,7 +568,7 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       inputs.publish_pypi &&
       inputs.expected_sha == github.sha
-    needs: [native, managed]
+    needs: [contract, native, managed]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: host-sdk-release
@@ -575,7 +590,7 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       inputs.publish_nuget &&
       inputs.expected_sha == github.sha
-    needs: dotnet-package-smoke
+    needs: [contract, dotnet-package-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: host-sdk-release
@@ -615,7 +630,7 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       inputs.publish_maven &&
       inputs.expected_sha == github.sha
-    needs: managed
+    needs: [contract, managed]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: host-sdk-release
@@ -680,7 +695,7 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       inputs.publish_crates &&
       inputs.expected_sha == github.sha
-    needs: rust-packages
+    needs: [contract, rust-packages]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: host-sdk-release

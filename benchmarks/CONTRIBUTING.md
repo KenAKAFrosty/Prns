@@ -4,7 +4,7 @@ Start with the concise [benchmark operator guide](README.md) for smoke, full,
 resume, publish, energy, profiling, and interpretation commands. This document
 owns the detailed methodology and publication rules.
 
-This suite answers one release question: how does Prns compare with the compiled RNS 1.4.2 reference on ten core protocol profiles? Seven endpoint scenarios run all four Prns/reference directions; three transport scenarios run each implementation as the relay behind the same fixed wire driver, for a fixed 34-cell matrix.
+This suite answers one release question: how does Prns compare with stock interpreted RNS 1.5.4 on ten core protocol profiles? Seven endpoint scenarios run all four Prns/reference directions; three transport scenarios run each implementation as the relay behind the same fixed wire driver, for a fixed 34-cell matrix.
 
 ## Operator interface
 
@@ -14,7 +14,7 @@ From the repository root:
 cargo benchmark --smoke
 ```
 
-That is the quickest confidence check. It provisions the locked compiled reference, builds release participants, exercises every direction, checks exact scenario accounting, and leaves an ignored diagnostic run beneath `benchmarks/.benchmark-runs/`.
+That is the quickest confidence check. It provisions the locked stock reference, builds release participants, exercises every direction, checks exact scenario accounting, and leaves an ignored diagnostic run beneath `benchmarks/.benchmark-runs/`.
 
 For publishable local evidence, run:
 
@@ -40,9 +40,11 @@ Publication copies the immutable suite under `benchmarks/results/HOST/suites/RUN
 
 ## Prerequisites and platform behavior
 
-The frontend requires Rust/Cargo, `uv`, and a native C compiler. `uv` provisions pinned Python 3.13 and the locked RNS/Cython environment; do not create a Python environment by hand.
+The frontend requires Rust/Cargo, `uv`, and the platform compiler. `uv` provisions pinned Python 3.13 and the locked stock RNS environment; do not create a Python environment by hand.
 
 Release participants use the portable Rust target with runtime CPU-feature dispatch, matching the binaries users actually receive; every AArch64 host also enables RustCrypto's runtime-detected ARMv8 AES backend. Host builds default to the thresholded parallel resource-hash and persistence paths, matching prnsd and Hopspot production hosts. The exact flags and tool versions are captured in suite evidence.
+
+On Linux, default-policy endpoint and relay profiles use each implementation's Backbone interface. The controlled `-matched` profiles remain on TCP because stock RNS Backbone fixes its policy at 100 Mbps / 32,768 bytes and has no configurable bitrate. The request/response profile also remains on TCP because its fixed 500-byte interface MTU deliberately forces the response Resource path, while stock RNS Backbone has no fixed-MTU setting. macOS and Windows use TCP because stock RNS Backbone is unavailable there. The default-policy rows retain each implementation's normal bitrate/MTU policy; the controlled `-matched` rows set both implementations to RNS TCP's 10 Mbps / 16,384-byte policy.
 
 - macOS: ordinary runs explain that energy is absent. `cargo benchmark --energy` authorizes `powermetrics` through `sudo`; Cargo, Python, caches, participants, and outputs remain owned by the normal user.
 - Linux: readable RAPL counters are used automatically. `--energy` fails rather than silently omitting required energy.
@@ -58,12 +60,12 @@ The ten `scenarios/*/manifest.json` files own scenario IDs, versions, order, top
 - `link-message-throughput`
 - `request-response`
 - `resource-max-segment`
-- `resource-max-segment-unleashed`
+- `resource-max-segment-matched`
 - `resource-64mib-stream`
-- `resource-64mib-stream-unleashed`
+- `resource-64mib-stream-matched`
 - `raw-transport-throughput`
 - `transport-resource-throughput`
-- `transport-resource-throughput-unleashed`
+- `transport-resource-throughput-matched`
 
 Manifests may attach a typed `cell_notes` entry to an exact initiator/responder or relay subject. The renderer marks that row and repeats the interpretation beneath every host table where the subject appears. Use these notes for durable protocol-role context and corroborated cross-host findings; immutable result rows retain machine provenance and are not rewritten to carry later analysis.
 
@@ -71,19 +73,19 @@ Request/response keeps exactly four operations in flight over four pre-establish
 
 Link-message rows require exact initiator sends, responder deliveries, and application-byte totals. Stock RNS can leave a small tail of packet receipts unproved after all bytes have arrived; those are exposed separately as `receipt_unproved` and never mislabeled as wire loss.
 
-Resource rows are one logical stream: the protocol-owned part/window machinery remains asynchronous inside each resource, and the receiver sends an ordered application acknowledgement before the next logical resource starts. This prevents a transport proof from being mistaken for application delivery and makes sent, settled, received, and byte totals independently exact. The 64-segment workload repeats the shared deterministic maximum-size block on both participants, so the wire bytes are identical while Prns can exercise its bounded-memory streaming API. Each resource workload has a default-policy row and a controlled `-unleashed` counterpart that explicitly configures both real endpoint TCP interfaces for 1 Gbps. Encryption, resource hashing, proof settlement, assembly, and application acknowledgement remain unchanged; only the interface bitrate policy and resulting MTU tier differ.
+Resource rows are one logical stream: the protocol-owned part/window machinery remains asynchronous inside each resource, and the receiver sends an ordered application acknowledgement before the next logical resource starts. This prevents a transport proof from being mistaken for application delivery and makes sent, settled, received, and byte totals independently exact. The 64-segment workload repeats the shared deterministic maximum-size block on both participants, so the wire bytes are identical while Prns can exercise its bounded-memory streaming API. Each resource workload has a default-policy row and a controlled `-matched` counterpart that explicitly configures both real endpoint interfaces for RNS's 10 Mbps / 16,384-byte policy. Encryption, resource hashing, proof settlement, assembly, and application acknowledgement remain unchanged; only the interface bitrate policy and resulting MTU tier differ.
 
 Raw transport is the open, HDLC-framed localhost TCP backbone ceiling. A fixed driver signs one announce on each side before measurement, learns the relay's real transport identity from its rebroadcasts, and proves one warm forward each way. The timed `raw-transport-throughput` path then holds up to 256 unique opaque SINGLE/DATA frames outstanding per direction with deterministic 60–420-byte payloads. Endpoint encryption, decryption, signing, and proof verification are outside that path; real relay SHA-256 deduplication, route and reverse-route bookkeeping, header rewriting, copies, buffering, framing, and TCP I/O remain. Returned opaque proof frames release driver credit and keep reverse-route state bounded.
 
-The tiny raw SINGLE scenario is default-policy-only: changing the MTU tier cannot change its 60–420-byte frames. Prns therefore reports its normal 500 Mbps / 131,072-byte TCP policy and compiled RNS 1.4.2 its normal 10 Mbps / 8,192-byte policy, with no artificial 1 Gbps twin.
+The tiny raw SINGLE scenario is default-policy-only: changing the MTU tier cannot change its 60–420-byte frames. Each row reports the normal policy selected by that implementation and platform.
 
-The transported-resource pair measures the large-frame switchboard separately. Before timing, the driver establishes one genuine transported link through the relay and validates its signed link proof. The timed path holds up to 16 full-size opaque LINK/DATA resource parts in flight per direction; receive-side driver accounting releases credits without injecting per-frame proof traffic. `transport-resource-throughput` preserves each relay's normal TCP policy, while `transport-resource-throughput-unleashed` explicitly configures both relay interfaces for 1 Gbps and requires the 524,288-byte tier. This changes the effective resource-part size, where MTU policy materially matters, while keeping endpoint crypto and assembly outside the relay measurement.
+The transported-resource pair measures the large-frame switchboard separately. Before timing, the driver establishes one genuine transported link through the relay and validates its signed link proof. The timed path holds up to 16 full-size opaque LINK/DATA resource parts in flight per direction; receive-side driver accounting releases credits without injecting per-frame proof traffic. `transport-resource-throughput` preserves each relay's normal interface policy, while `transport-resource-throughput-matched` explicitly configures both relay interfaces for 10 Mbps and requires the 16,384-byte tier. This changes the effective resource-part size, where MTU policy materially matters, while keeping endpoint crypto and assembly outside the relay measurement.
 
 Before every relay sample, the driver runs separate two-second full-duplex source and sink calibration phases using the same bounded generators, HDLC writers, framed readers, validators, and proof/credit-return work as the live scenario. Lightweight blocking peers drain or feed pre-encoded frame batches outside the driver’s async scheduler, so synthetic-peer scheduling and per-frame feeder syscalls cannot depress the component under qualification. The driver reports source and sink capacities separately and uses the lower rate as the harness ceiling. Publication requires that ceiling to exceed measured carried-payload throughput by at least 1.25×, so either a feeder- or consumer-limited run fails as `harness_headroom`; smoke runs exercise both complete calibration phases without enforcing the performance threshold. Conformance additionally requires nonzero traffic both ways, exact directional frame and payload-byte totals, and zero missing, duplicate, corrupt, reordered, unexpected, outstanding, timed-out, buffer-pool-miss, or credit-leak counts. Egress wire rates are actual TCP bytes read, not estimates obtained by re-encoding decoded frames. Relay CPU and RSS belong only to the relay process. Any package-energy rows are explicitly whole-cell measurements and must never be described as relay-only energy.
 
 The harness preallocates and recycles its transport frame and HDLC buffers before `MEASURE_READY`; it never clones a decoded frame or a full resource template in the measured loop. Tiny frames already waiting on a writer are HDLC-encoded into a fixed 64 KiB buffer and sent in one ordered TCP write; large resource frames retain a one-frame buffer and never grow it. The source computes and records each DATA frame’s protocol hash once, and the opposite driver side uses that expected hash only after exact header and all-byte payload validation when constructing the return proof. Required work remains intact: payload ownership required by a public stack API, HDLC transformation, the source-side expected hash, full integrity scans, and the relay's own SHA-256, copies, and bookkeeping are not optimized out. Participant control events use bounded queues, while Prns responder delivery counters are updated directly in the delivery callback. Linux role CPU is sampled exactly at the measurement boundaries and peak RSS comes from `wait4`, rather than a periodic `/proc` polling thread.
 
-A release suite is accepted only with 34/34 cells and 102 samples `{0,1,2}` across the matrix, one full 40-character source SHA, one scenario-version set, compiled RNS 1.4.2 proof, and clean scenario-owned accounting. Measurement samples are never silently retried.
+A release suite is accepted only with 34/34 cells and 102 samples `{0,1,2}` across the matrix, one full 40-character source SHA, one scenario-version set, stock interpreted RNS 1.5.4 proof, and clean scenario-owned accounting. Measurement samples are never silently retried.
 
 ## Evidence meaning
 

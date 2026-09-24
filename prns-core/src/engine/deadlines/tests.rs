@@ -1693,3 +1693,79 @@ fn a_recently_requested_destination_holds_off_the_overdue_links_path_request() {
         "a path request inside the minimum interval suppresses the re-request",
     );
 }
+
+#[test]
+fn halow_relay_uses_group_intent_and_onward_echo_retires_its_retry() {
+    let source = InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowPeer, b"previous");
+    let next = InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowPeer, b"next");
+    let shared = InterfaceId::from_channel_tag(InterfaceKind::WifiHaLowBroadcast, b"radio");
+    let interfaces = [
+        routable_descriptor(source),
+        routable_descriptor(next),
+        routable_descriptor(shared),
+    ];
+    let mut state = transporting_node();
+    let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
+    let out = state.ingest_for_test(
+        InboundPacket {
+            arrived_at: InstantMillis(1_000),
+            source_interface: source,
+            bytes: &mut raw,
+        },
+        AttachedInterfaces::new(&interfaces),
+    );
+    assert_eq!(out, rns_1_4_2_announce_accepted(1));
+    let mut emitted = std::vec::Vec::new();
+    let _ = state.fire_due_scheduled_announces(
+        InstantMillis(1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+        AttachedInterfaces::new(&interfaces),
+        &mut |reaction| {
+            if let EngineReaction::Directive(Directive::SendAnnounceToFleet {
+                supervisor,
+                fan,
+                bytes,
+                ..
+            }) = reaction
+            {
+                assert_eq!(supervisor, InterfaceKind::WifiHaLow);
+                assert_eq!(fan, FanTarget::All);
+                emitted.push(bytes.to_vec());
+            }
+        },
+    );
+    assert_eq!(emitted.len(), 1, "one directive, not one per peer");
+    let mut echo = emitted.remove(0);
+    echo[1] += 1;
+    let out = state.ingest_for_test(
+        InboundPacket {
+            arrived_at: InstantMillis(5_000),
+            source_interface: next,
+            bytes: &mut echo,
+        },
+        AttachedInterfaces::new(&interfaces),
+    );
+    assert_eq!(
+        out,
+        crate::engine::IngestPacketOutcome::Announce(crate::engine::AnnounceIngest::Ignored)
+    );
+    assert_eq!(state.route_count(), 1);
+    assert_eq!(
+        state.scheduled_announce_count(),
+        0,
+        "onward echo cancels, rather than extending, propagation"
+    );
+    let mut late = 0;
+    let _ = state.fire_due_scheduled_announces(
+        InstantMillis(120_000),
+        AttachedInterfaces::new(&interfaces),
+        &mut |reaction| {
+            if matches!(
+                reaction,
+                EngineReaction::Directive(Directive::SendAnnounceToFleet { .. })
+            ) {
+                late += 1;
+            }
+        },
+    );
+    assert_eq!(late, 0);
+}

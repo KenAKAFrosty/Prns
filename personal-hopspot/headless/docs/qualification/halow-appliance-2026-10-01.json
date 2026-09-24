@@ -1,0 +1,290 @@
+{
+  "schema": 1,
+  "status": "qualified_initial_operation_with_unresolved_recovery",
+  "source": {
+    "build": {
+      "schema": 1,
+      "artifact_kind": "linux-application-development-bundle",
+      "qualification": "TCP plus experimental HaLoW; not a firmware image or a signed public release",
+      "cargo_features": [
+        "wifi-halow"
+      ],
+      "target": "mipsel-unknown-linux-musl",
+      "source_commit": "e852f85b9bcfbd7d41e19fec2120b65bb2c2fd0f",
+      "working_tree_dirty": true,
+      "rustc": "rustc 1.98.0-nightly (6bdf43094 2026-06-01)\nbinary: rustc\ncommit-hash: 6bdf43094fae65d298bc430362f116176cd25a3c\ncommit-date: 2026-06-01\nhost: aarch64-apple-darwin\nrelease: 1.98.0-nightly\nLLVM version: 22.1.6",
+      "cargo": "cargo 1.98.0-nightly (fbb61be30 2026-05-26)",
+      "zig_version": "0.15.2",
+      "zig_executable_sha256": "c65cd34917923f575448cc0603dd7c2326da0af0e5c323043d090662dcdf351c",
+      "cargo_lock_sha256": "5ec4f2243da930465a87708db2494760dea9ff068335a38e69bdb83766c1e818",
+      "rustflags": "-C link-self-contained=no -C target-feature=+crt-static",
+      "c_target": "mipsel-linux-musleabi -mcpu=mips32r2 -msoft-float",
+      "binary": {
+        "path": "personal-hopspot-headless",
+        "bytes": 3620680,
+        "sha256": "a7e425c20ad49e61c45a66855c64b86db62b520b9d9664b07e4d8cb260a16da0"
+      },
+      "probe": {
+        "path": "fetch_page",
+        "bytes": 3464804,
+        "sha256": "add5b799cb1feec411fabc64aade06f001ac612cb1cc677e4efd2807d9db1ff8"
+      }
+    },
+    "changed_source_sha256": {
+      "personal-hopspot/headless/src/main.rs": "337461f09a03b38cf57543dcebe67fc5ec4ff50ea7da558aa470c075d51d9b11",
+      "personal-hopspot/headless/src/lib.rs": "66e25a8d57192ef0a32fa96c9c4aefeea9a63c7e94aa7dd59e8539647e61441a",
+      "personal-hopspot/headless/src/tcp.rs": "490d90662659705af4239c06f9ece5ca2e5d63b8aaa805a03408ebc6465bf5b5",
+      "tools/build/hopspot-g4.py": "8f7695f240d20b9a9ffc96f7521af7794a1e6035fcbd88ce508bc635c57e4601"
+    }
+  },
+  "hardware": {
+    "g4": {
+      "board_name": "morse,ekh03v3",
+      "model": "ThinkNode G4",
+      "kernel": "5.15.150",
+      "overlay_available_kib": 5336
+    },
+    "heltec": {
+      "board_name": "Heltec,HT-HD01-V2",
+      "model": "Heltec HT-HD01-V2",
+      "kernel": "5.15.167",
+      "overlay_available_kib": 5288
+    },
+    "heltec3": {
+      "board_name": "Heltec,HT-HD01-V2",
+      "model": "Heltec HT-HD01-V2",
+      "kernel": "5.15.167",
+      "overlay_available_kib": 5272
+    }
+  },
+  "profile": {
+    "region": "US device profiles",
+    "mode": "open 802.11s",
+    "center_khz": 924000,
+    "bandwidth_mhz": 8,
+    "mcs": 2,
+    "guard_interval": "long",
+    "power_save": "off",
+    "mesh_forwarding": "off",
+    "txpower_dbm": 18,
+    "vendor_led_button_services": "active"
+  },
+  "control": {
+    "controller_identity_hash": "6f4dd0975c5cbf521f0704a573ae23e8",
+    "transport": "Mac TCP to one board, HaLoW to another",
+    "initial_local_describe_announce": "passed_all_three",
+    "initial_point_to_point_remote_path": "timeout_no_radio_path_request_seen",
+    "explicit_gateway_remote_snapshots": "passed_all_three",
+    "verified_controller_app_message": "passed_all_three",
+    "authorized_invalid_app_message": "ApplyFailed",
+    "unlisted_app_request": "exchange Timeout; healthy independent page passed; timeout alone does not identify denial",
+    "watch_overlap": "admitted; resync_required sequences 1 through 10; six page transfers passed",
+    "watch_idle": "initial resync_required; two heartbeats"
+  },
+  "traffic": {
+    "baseline_page_directions": 6,
+    "gateway_page_directions": 6,
+    "load": {
+      "operations": 310,
+      "pages": 300,
+      "duration_seconds": 74.753,
+      "page_request_rtt_ms": {
+        "min": 46,
+        "median": 99,
+        "p95": 170,
+        "max": 330
+      }
+    },
+    "overlap_watch_pages": 6,
+    "healthy_pair_after_radio_lifecycle": 3,
+    "recovery_page_directions": 6
+  },
+  "captures": {
+    "g4": {
+      "captured_frames": 2310,
+      "own_transmissions": 1160,
+      "ordinary_announces": 9,
+      "ordinary_announce_unicasts": 0,
+      "relay_broadcast_announces": 7,
+      "groups": {
+        "1:0": 9,
+        "0:0": 1
+      },
+      "unicast_frames": 1150
+    },
+    "heltec": {
+      "captured_frames": 2383,
+      "own_transmissions": 1176,
+      "ordinary_announces": 9,
+      "ordinary_announce_unicasts": 0,
+      "relay_broadcast_announces": 7,
+      "groups": {
+        "1:0": 9,
+        "0:0": 1
+      },
+      "unicast_frames": 1166
+    },
+    "heltec3": {
+      "captured_frames": 2264,
+      "own_transmissions": 1130,
+      "ordinary_announces": 7,
+      "ordinary_announce_unicasts": 0,
+      "relay_broadcast_announces": 5,
+      "groups": {
+        "1:0": 7,
+        "0:0": 1
+      },
+      "unicast_frames": 1122
+    }
+  },
+  "metrics": {
+    "g4": {
+      "pre-load": {
+        "VmRSS_kib": 4092,
+        "VmHWM_kib": 4248,
+        "threads": 2,
+        "fds": 12,
+        "state_kib": 40,
+        "firmware_health": "success"
+      },
+      "post-load": {
+        "VmRSS_kib": 4396,
+        "VmHWM_kib": 4740,
+        "threads": 2,
+        "fds": 12,
+        "state_kib": 40,
+        "firmware_health": "success"
+      }
+    },
+    "heltec": {
+      "pre-load": {
+        "VmRSS_kib": 4120,
+        "VmHWM_kib": 4220,
+        "threads": 2,
+        "fds": 12,
+        "state_kib": 40,
+        "firmware_health": "success"
+      },
+      "post-load": {
+        "VmRSS_kib": 4400,
+        "VmHWM_kib": 4728,
+        "threads": 2,
+        "fds": 12,
+        "state_kib": 40,
+        "firmware_health": "success"
+      }
+    },
+    "heltec3": {
+      "pre-load": {
+        "VmRSS_kib": 4108,
+        "VmHWM_kib": 4244,
+        "threads": 2,
+        "fds": 12,
+        "state_kib": 40,
+        "firmware_health": "success"
+      },
+      "post-load": {
+        "VmRSS_kib": 4372,
+        "VmHWM_kib": 4744,
+        "threads": 2,
+        "fds": 12,
+        "state_kib": 40,
+        "firmware_health": "success"
+      }
+    }
+  },
+  "retained_identities": {
+    "g4": {
+      "page": "d0502f470dfd69f57b595f2b7c183b35",
+      "target_key": "d58297008e14b235759c9c5dc8a150677b906e716b151f9d80cec2798e87b05ce566b95505ebefe69d041f4306bcc8c0411249e9f0f69a6981e2bb9708c8e23e"
+    },
+    "heltec": {
+      "page": "10b966558f2220c45336dbfeb6214092",
+      "target_key": "3a336d24d1f0d7abf4aff8405b450a5936d8ce1a9c3b003238c8322072e9b24f582bf2a3102d81bec1ddc42b20888257738d0d66a1d0f6c40dfd8bfde5b62bcb"
+    },
+    "heltec3": {
+      "page": "b7c9967587415d641683efef7f1842ef",
+      "target_key": "e9cef7f978adc887c7604dfa66ae4b2f052f8b12defe4d0bf369a0afd2019870a9a626d7668fcc456ff97b6d360061832a181b150766c3f04b0aeee2475e7574"
+    }
+  },
+  "retained_peer_ids": {
+    "g4": [
+      "23977ef0dc3cf90c",
+      "23b2beed7ececddb",
+      "24f24af394977e2c"
+    ],
+    "heltec": [
+      "238ec63701a2f8c5",
+      "23930fdf86169a3a",
+      "246f1329ac9496ba"
+    ],
+    "heltec3": [
+      "235c910701c554a4",
+      "23b246afa2fe437b",
+      "2478fa3e676eb008"
+    ]
+  },
+  "recovery": {
+    "network_device": "heltec3 wlan0",
+    "ifindex_before": 10,
+    "ifindex_after": 11,
+    "after_wifi_up": "two established mesh neighbors; firmware healthy",
+    "app_alive_after_recreation": "wired control passed",
+    "over_air_control_before_app_restart": "EstablishLink Timeout",
+    "one_app_restart": "identities unchanged; target-path Timeout remained",
+    "all_app_restart": "all six pages passed; G4 and first Heltec remote snapshots passed; second Heltec through G4 target-path Timeout remained",
+    "root_cause": "unresolved; binding and retained routing/negative evidence need separate regression",
+    "rf_partition": "not qualified; lifecycle command was not a sustained isolation experiment"
+  },
+  "storage": {
+    "gzip_bytes": 1501636,
+    "two_compressed_slots_bytes": 3003272,
+    "gzip_sha256": "338579b5c1fe4d28cb0941b8ea2881de5f65e3e0fd0e57c6610f418989390740",
+    "g4_expansion": "RAM-only expansion, matching executable SHA-256, and --version passed",
+    "persistent_update_reboot": "unqualified"
+  },
+  "restore": {
+    "g4": {
+      "five_config_hashes": "matched",
+      "module_parameters": "matched",
+      "pending_uci_changes": "none",
+      "firmware_health": "success",
+      "original_channel_khz": 924000,
+      "management_http": "responded",
+      "temporary_app": "stopped"
+    },
+    "heltec": {
+      "five_config_hashes": "matched",
+      "module_parameters": "matched",
+      "pending_uci_changes": "none",
+      "firmware_health": "success",
+      "original_channel_khz": 924000,
+      "management_http": "responded",
+      "temporary_app": "stopped"
+    },
+    "heltec3": {
+      "five_config_hashes": "matched",
+      "module_parameters": "matched",
+      "pending_uci_changes": "none",
+      "firmware_health": "success",
+      "original_channel_khz": 908000,
+      "management_http": "responded",
+      "temporary_app": "stopped"
+    }
+  },
+  "limits": [
+    "short close-range page workload; not saturated Resource throughput",
+    "fully connected mesh; not a forced physical two-hop route",
+    "EtherType-filtered Ethernet captures; not RF retransmission/airtime counts",
+    "no persistent installation, reboot or power-loss qualification",
+    "no range or ESP-NOW qualification"
+  ],
+  "raw_evidence": "Private local /private/tmp/halow-qualification-20261001; configuration backups and access helpers excluded",
+  "software_checks": {
+    "headless_tests_all_optional_features": "passed 13 tests on macOS arm64",
+    "clippy_all_targets_all_optional_features": "passed with warnings denied",
+    "website_web_feature_check": "passed on macOS arm64",
+    "format_and_diff": "passed",
+    "tools_verify": "pre-existing failure: network-lab scripts outside tools; unchanged"
+  }
+}

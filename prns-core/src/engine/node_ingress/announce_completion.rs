@@ -13,7 +13,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub(super) fn apply_announce_ingest<Work>(
         &mut self,
         ingest: AnnounceIngest,
-        accepted_observation: Option<AcceptedAnnounceEffect<'_>>,
+        effects: &mut IngestEffects<'_>,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
         wake: &mut WakeSchedules,
@@ -33,21 +33,12 @@ impl<S: StorageLayout> EngineState<S> {
                 if let Some(AcceptedAnnounceEffect {
                     observation,
                     rate_accounting,
-                }) = accepted_observation
+                }) = effects.accepted_announce.take()
                 {
                     sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
                         observation,
                         rate_accounting,
                     }));
-                }
-                while let Some(settled) = self.pop_settled_path_request(&accepted.destination) {
-                    settle(
-                        sink,
-                        settled.command_id,
-                        Settlement::RequestPath(Ok(PathFound {
-                            hops: crate::units::HopCount(accepted.hops),
-                        })),
-                    );
                 }
                 wake.scheduled_announces = self.scheduled_announces_wake();
                 wake.path_request_timeouts = self.path_request_timeouts_wake();
@@ -71,6 +62,18 @@ impl<S: StorageLayout> EngineState<S> {
                     cause,
                 }));
             }
+        }
+        if let Some(path) = effects.discovered_path.take() {
+            while let Some(settled) = self.pop_settled_path_request(&path.destination) {
+                settle(
+                    sink,
+                    settled.command_id,
+                    Settlement::RequestPath(Ok(PathFound {
+                        hops: crate::units::HopCount(path.hops),
+                    })),
+                );
+            }
+            wake.path_request_timeouts = self.path_request_timeouts_wake();
         }
     }
 
@@ -108,15 +111,7 @@ impl<S: StorageLayout> EngineState<S> {
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
             &mut effects,
         );
-        let accepted_observation = effects.accepted_announce.take();
-        self.apply_announce_ingest(
-            ingest,
-            accepted_observation,
-            source,
-            interfaces,
-            &mut wake,
-            sink,
-        );
+        self.apply_announce_ingest(ingest, &mut effects, source, interfaces, &mut wake, sink);
         if let Some(expiry) = effects.destination_identity_expiry {
             wake.expired_destination_identities = WakeSchedule::AtMost(expiry);
         }

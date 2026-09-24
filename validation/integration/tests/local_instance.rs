@@ -99,7 +99,7 @@ async fn becomes_the_instance_when_none_is_running() {
     let bus = ports.bus;
     let control = ports.control;
     let node = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: EMPTY,
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -143,7 +143,7 @@ async fn a_control_collision_prevents_election_and_releases_the_bus() {
     let control = occupied_control.local_addr().expect("addr").port();
     let bus = free_port().await;
     let node = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: EMPTY,
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -182,7 +182,7 @@ async fn joins_as_a_client_when_an_instance_is_already_running() {
     let control = free_port().await;
 
     let node = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: EMPTY,
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -217,7 +217,7 @@ async fn refuses_to_take_a_role_when_told_to_and_an_instance_exists() {
     let control = free_port().await;
 
     let node = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: EMPTY,
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -252,7 +252,7 @@ async fn a_client_rides_the_instances_bus() {
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: EMPTY,
         app_state: personal_rns::runtime::NoRemoteControlHostControls,
@@ -280,7 +280,7 @@ async fn a_client_rides_the_instances_bus() {
     let single_b = single(secret(0xB2));
     let dest_b = single_b.destination_hash().expect("B's name is valid");
     let node_b = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable.into(),
         transport_identity: None,
         pre_configured_destinations: [single_b],
         app_state: personal_rns::runtime::NoRemoteControlHostControls,

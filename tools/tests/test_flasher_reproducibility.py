@@ -139,6 +139,18 @@ def manifest(
                 "variants": [],
             },
         )
+    included = {target["board_slug"] for target in value["targets"]}
+    catalog = json.loads((ROOT / "release/flash/boards.json").read_text())["boards"]
+    for board in catalog:
+        slug = board["slug"]
+        if slug not in SHIPPING_BOARDS or slug in included:
+            continue
+        value["targets"].append({
+            "board_slug": slug,
+            "transport": board["transport"],
+            "parts": [{"size": 1_000_000}] if board["transport"] == "esp-serial" else [],
+            "variants": [{"size": 350_000}] if board["transport"] == "uf2-mass-storage" else [],
+        })
     if source_size is not None:
         for target in value["targets"]:
             if target["board_slug"] in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}:
@@ -501,6 +513,34 @@ class FlasherReproducibilityTests(unittest.TestCase):
             value["tools"]["node"] = "v24.18.1"
             with self.assertRaisesRegex(ValueError, "exact pins"):
                 validate_metadata(value, commit=COMMIT)
+
+    def test_build_metadata_matches_dioxus_source_and_binary_distributions(self) -> None:
+        variants = []
+        for banner in (
+            "dioxus 0.7.5",
+            "dioxus 0.7.5 (was built without git repository)",
+            "dioxus 0.7.5 (d027e26)",
+        ):
+            reported = {**tools(), "dioxus": banner}
+            value = build_metadata(
+                commit=COMMIT,
+                source_date_epoch=1_774_358_400,
+                tools=reported,
+                system="Linux",
+                machine="x86_64",
+            )
+            validate_metadata(value, commit=COMMIT)
+            self.assertEqual(reported["dioxus"], banner)
+            variants.append(value)
+        self.assertEqual(variants, [variants[0]] * len(variants))
+
+        for banner in ("dioxus 0.7.4 (d027e26)", "dioxus 0.7.50 (d027e26)"):
+            with self.subTest(banner=banner), self.assertRaisesRegex(ValueError, "exact pins"):
+                build_metadata(
+                    commit=COMMIT,
+                    source_date_epoch=1_774_358_400,
+                    tools={**tools(), "dioxus": banner},
+                )
 
     def test_build_metadata_uses_each_tools_version_report_flag(self) -> None:
         commands: list[tuple[str, ...]] = []

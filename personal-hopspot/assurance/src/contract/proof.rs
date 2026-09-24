@@ -10,7 +10,7 @@ use super::{
     ScenarioId, TargetId,
 };
 
-pub const PROOF_FRAGMENT_SCHEMA_VERSION: u32 = 2;
+pub const PROOF_FRAGMENT_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "kebab-case")]
@@ -74,6 +74,13 @@ pub enum MiriCoverage {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+pub enum MiriScope {
+    Focused,
+    Exhaustive,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum PlatformMilestone {
     ApplicationEntry,
     RuntimeInitialized,
@@ -84,6 +91,7 @@ pub enum PlatformMilestone {
 pub enum ProofEvidence {
     Miri {
         coverage: MiriCoverage,
+        scope: MiriScope,
         completed_tests: u32,
     },
     PlatformEmulation {
@@ -392,9 +400,17 @@ fn validate_evidence(
         (
             Subject::Component(_),
             ProofEvidence::Miri {
-                completed_tests, ..
+                completed_tests,
+                scope,
+                coverage,
             },
-        ) => *completed_tests > 0,
+        ) => {
+            *completed_tests > 0
+                && !matches!(
+                    (scope, coverage),
+                    (MiriScope::Exhaustive, MiriCoverage::Stacked)
+                )
+        }
         (
             Subject::Architecture(subject),
             ProofEvidence::TargetIsa {
@@ -500,9 +516,10 @@ fn require_log(artifacts: &[EvidenceArtifact]) -> Result<(), ProofContractError>
 mod tests {
     use super::{
         ArchitectureId, ComponentId, EvidenceArtifact, EvidenceFingerprint, EvidenceGap,
-        EvidencePath, Failure, FailureKind, MiriCoverage, ProofArtifactKind, ProofContractError,
-        ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId, SourceCustody,
-        SourceIdentity, Subject, ToolIdentity, ToolKind, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
+        EvidencePath, Failure, FailureKind, MiriCoverage, MiriScope, ProofArtifactKind,
+        ProofContractError, ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId,
+        SourceCustody, SourceIdentity, Subject, ToolIdentity, ToolKind, Verdict,
+        PROOF_FRAGMENT_SCHEMA_VERSION,
     };
     use personal_hopspot_builder::RepositoryCommit;
 
@@ -536,6 +553,7 @@ mod tests {
             verdict: Verdict::Passed {
                 evidence: ProofEvidence::Miri {
                     coverage: MiriCoverage::Stacked,
+                    scope: MiriScope::Focused,
                     completed_tests: 4,
                 },
             },
@@ -555,11 +573,25 @@ mod tests {
     }
 
     #[test]
+    fn exhaustive_scope_requires_both_borrow_models() -> Result<(), Box<dyn std::error::Error>> {
+        let mut fragment = fragment()?;
+        if let Verdict::Passed {
+            evidence: ProofEvidence::Miri { scope, .. },
+        } = &mut fragment.verdict
+        {
+            *scope = MiriScope::Exhaustive;
+        }
+        assert!(fragment.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
     fn partial_proof_requires_a_named_gap() -> Result<(), Box<dyn std::error::Error>> {
         let mut fragment = fragment()?;
         fragment.verdict = Verdict::Partial {
             evidence: ProofEvidence::Miri {
                 coverage: MiriCoverage::StackedAndTree,
+                scope: MiriScope::Exhaustive,
                 completed_tests: 4,
             },
             gaps: Vec::new(),

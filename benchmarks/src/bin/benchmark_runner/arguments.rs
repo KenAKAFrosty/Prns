@@ -26,7 +26,7 @@ pub(super) enum RunnerCommand {
     Suite(SuiteArgs),
 }
 
-const USAGE: &str = "usage:\n  benchmark_runner run <scenario> [--initiator personal-rns] [--responder rns-1.4.2-compiled] [--relay personal-rns] [--transport-window 256] [options]\n  benchmark_runner suite release [--samples 3] [--duration-ms 30000] [--output DIR] [--suite-id ID] [--only-cells 7,9,10] [--dry-run|--smoke]";
+const USAGE: &str = "usage:\n  benchmark_runner run <scenario> [--initiator personal-rns] [--responder rns-1.5.4] [--relay personal-rns] [--transport-window 256] [options]\n  benchmark_runner suite release [--samples 3] [--duration-ms 30000] [--output DIR] [--suite-id ID] [--only-cells 7,9,10] [--dry-run|--smoke]";
 
 pub(super) fn parse_args() -> RunnerCommand {
     let mut arguments = std::env::args().skip(1);

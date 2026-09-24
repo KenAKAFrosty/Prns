@@ -5,6 +5,7 @@ import {
   cancelNrfBootloaderSelection,
   continueNrfBootloaderSelection,
   createNrfDfuSession,
+  requestUf2HandOff,
   runNrfSerialDfu,
 } from "../src/nrf-serial-dfu.js";
 
@@ -336,6 +337,59 @@ test("managed Personal Hopspot entry uses exact WebUSB control then a bounded se
   });
   assert.equal(usbState.closed, true);
   assert.equal(values.some(({ phase }) => phase === "awaiting_bootloader_port"), true);
+});
+
+test("UF2 hand-off sends only the hand-off verb over the exact Personal Hopspot control contract", async () => {
+  const usbState = { filters: null, claimed: null, control: null, closed: false };
+  const usbDevice = {
+    vendorId: 0x1209,
+    productId: 0x0001,
+    manufacturerName: "Stay Personal",
+    productName: "Personal Hopspot (T1000-E)",
+    serialNumber: "PERSONAL-RNS-T1000E-HOP",
+    configurations: [{ configurationValue: 1 }],
+    configuration: null,
+    opened: false,
+    async open() { this.opened = true; },
+    async selectConfiguration() {
+      this.configuration = { interfaces: [{ interfaceNumber: 0 }] };
+    },
+    async claimInterface(interfaceNumber) { usbState.claimed = interfaceNumber; },
+    async controlTransferOut(control) {
+      usbState.control = control;
+      return { status: "ok", bytesWritten: 0 };
+    },
+    async close() { this.opened = false; usbState.closed = true; },
+  };
+  const usb = {
+    async requestDevice(options) {
+      usbState.filters = options;
+      return usbDevice;
+    },
+  };
+
+  await requestUf2HandOff(usb, { ...contract().managedApplication, request: 0x55 });
+
+  usbDevice.controlTransferOut = async () => ({ status: "stall", bytesWritten: 0 });
+  await assert.rejects(
+    requestUf2HandOff(usb, { ...contract().managedApplication, request: 0x55 }),
+    /Older releases do not support/,
+  );
+
+  assert.deepEqual(usbState.filters, { filters: [{
+    vendorId: 0x1209,
+    productId: 0x0001,
+    serialNumber: "PERSONAL-RNS-T1000E-HOP",
+  }] });
+  assert.equal(usbState.claimed, 0);
+  assert.deepEqual(usbState.control, {
+    requestType: "vendor",
+    recipient: "device",
+    request: 0x55,
+    value: 0x5052,
+    index: 0x4e53,
+  });
+  assert.equal(usbState.closed, true);
 });
 
 test("permission denial and wrong selected identities fail closed before transfer", async () => {

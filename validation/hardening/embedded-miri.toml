@@ -38,17 +38,38 @@ id = "flash-journal-state-machine"
 manifest = "prns-runtime/impls/embassy/Cargo.toml"
 features = ["std"]
 quick_filters = [
+    "runtime::embedded_persistence::tests::a_pending_node_name_makes_persistence_due_immediately",
+    "runtime::embedded_persistence::tests::node_name_survives_progress_reboot_compaction_and_reboot",
+    "runtime::embedded_persistence::tests::node_name_owners_isolate_restore_failure_cancellation_and_retry",
+    "runtime::embedded_persistence::tests::power_loss::names::uncertain_node_name_commit_is_resolved_before_a_queued_group_change",
     "runtime::embedded_persistence::tests::authorization_snapshots_survive_compaction_and_restore_complete_runtime_tables",
     "runtime::embedded_persistence::tests::discovery_group_snapshot_survives_compaction_and_reboot",
     "runtime::embedded_persistence::tests::exact_route_and_ratchet_deadlines_are_distinct",
     "runtime::embedded_persistence::tests::failed_discovery_group_write_retains_the_last_durable_snapshot",
     "runtime::embedded_persistence::tests::failures_keep_dirty_state_and_raise_the_notice",
     "runtime::embedded_persistence::tests::malformed_newest_discovery_group_record_preserves_the_last_valid_snapshot",
+    "runtime::embedded_persistence::tests::encoding::shared_route_encoder_preserves_bytes_and_refuses_every_short_buffer",
+    "runtime::embedded_persistence::tests::encoding::shared_ratchet_encoder_preserves_bytes_and_refuses_every_short_buffer",
+    "runtime::embedded_persistence::tests::power_loss::cancellation::cancelled_authorization_commit_is_confirmed_without_rewriting_the_prior_table",
+    "runtime::embedded_persistence::tests::power_loss::cancellation::cancelled_authorization_rollback_retries_instead_of_losing_its_deadline",
+    "runtime::embedded_persistence::tests::isolated_group_owners_keep_admission_completion_and_durable_state_separate",
 ]
-full_filters = ["runtime::embedded_persistence::tests"]
+full_filters = [
+    "runtime::embedded_persistence::tests::power_loss::queued_group_compaction_recovers_at_every_torn_io_boundary",
+    "runtime::embedded_persistence::tests::power_loss::grants::interrupted_grant_update_compaction_restores_whole_authority_tables",
+    "runtime::embedded_persistence::tests::power_loss::grants::interrupted_grant_revocation_compaction_restores_whole_authority_tables",
+    "runtime::embedded_persistence::tests::power_loss::compaction_steps::cancelled_arena_erases_wait_for_a_new_wear_budget",
+    "runtime::embedded_persistence::tests",
+]
 sources = [
     "prns-runtime/impls/embassy/Cargo.toml",
     "prns-runtime/impls/embassy/Cargo.lock",
-    "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",
+    "prns-runtime/impls/embassy/src/runtime/embedded_persistence",
+    "prns-runtime/impls/embassy/src/runtime/node_name_store.rs",
+    "prns-core/src/remote_control/inventory.rs",
     "prns-core/src/persistence",
+    "prns-core/src/remote_control/core.rs",
+    "prns-core/src/remote_control/test_support.rs",
+    "prns-runtime/impls/embassy/src/runtime/node_facade/mod.rs",
+    "prns-runtime/impls/embassy/src/runtime/node_facade/node_lifecycle",
 ]

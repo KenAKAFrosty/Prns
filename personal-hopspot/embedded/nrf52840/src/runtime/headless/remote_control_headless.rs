@@ -1,46 +1,81 @@
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Instant, Timer};
 use personal_hopspot_core as hopspot;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    any(feature = "board-rak4631", feature = "board-rak10724")
+))]
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
+#[cfg(feature = "board-muzi-base-duo")]
+use personal_rns::interfaces::lora::configuration::DurableConfiguration;
+#[cfg(feature = "board-muzi-base-duo")]
+use personal_rns::interfaces::lora::LoRaConfiguration;
+use personal_rns::interfaces::lora::LoRaConfigurationState;
+#[cfg(feature = "board-muzi-base-duo")]
+use personal_rns::interfaces::lora::LoRaConfigurationState as BoardConfigurationState;
+#[cfg(not(feature = "board-muzi-base-duo"))]
 use personal_rns::interfaces::subghz::{
-    ResolvedSubGMode, SubGConfiguration, SubGConfigurationState,
+    SubGConfiguration, SubGConfigurationState as BoardConfigurationState,
 };
 use personal_rns::interfaces::{
     InterfaceGravity, InterfaceId, InterfaceMode, InterfaceSnapshot, InterfaceStatus, Membership,
 };
 use personal_rns::manifold::embassy::EmbassyInterfaceStatus;
-#[cfg(feature = "board-t1000e")]
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
 use personal_rns::remote_control::RemoteControlGnssPower;
 use personal_rns::remote_control::{
     RemoteControlApplyOutcome, RemoteControlCapabilities, RemoteControlInterfacePower,
     RemoteControlLoRaOutcome, RemoteControlPowerOutcome, RemoteControlRequestKind,
     RemoteControlSystemPower,
 };
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    any(feature = "board-rak4631", feature = "board-rak10724")
+))]
 use personal_rns::remote_control::{
     RemoteControlDiscoveryGroups, RemoteControlDiscoveryGroupsInventoryOutcome,
     RemoteControlDiscoveryGroupsReplaceOutcome, RemoteControlGroupOutcome,
+};
+#[cfg(feature = "board-muzi-base-duo")]
+use personal_rns::remote_control::{
+    RemoteControlLoRaProfile, RemoteControlRadioBands, RemoteControlRadioConfiguration,
+    RemoteControlRadioOutcome, RemoteControlRadioSaved, RemoteControlRadioStatus,
 };
 use personal_rns::runtime::{
     RemoteControlHostCommand, RemoteControlHostCommandError, RemoteControlHostResponse,
 };
 
-#[cfg(feature = "board-t1000e")]
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
 use crate::boards::selected as board;
 
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(not(feature = "board-muzi-base-duo"))]
+use super::super::subg_configuration::{apply_subg_configuration, ConfigurationStore};
+#[cfg(any(
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    any(feature = "board-rak4631", feature = "board-rak10724")
+))]
 use super::bluetooth::{BLE_SHARED, BLE_SUPERVISOR_ID, MEMBERS};
 use super::{INTERFACE_STORE, REMOTE_CONTROL_COMMANDS};
 
 const RESPONSE_GRACE_PERIOD: Duration = Duration::from_millis(250);
 const LORA_ENABLED: u8 = 1 << 0;
 const USB_ENABLED: u8 = 1 << 1;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    any(feature = "board-rak4631", feature = "board-rak10724")
+))]
 const BLUETOOTH_ENABLED: u8 = 1 << 2;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    any(feature = "board-rak4631", feature = "board-rak10724")
+))]
 const SNAPSHOT_CAPACITY: usize = MEMBERS + 3;
-#[cfg(feature = "board-t1000e")]
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
 const SNAPSHOT_CAPACITY: usize = 2;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -69,8 +104,14 @@ struct Context<'a> {
     desired_interfaces: &'a mut u8,
     scheduled_effect: &'a mut Option<ScheduledEffect>,
     lora_controller: &'a mut personal_rns::lora::LoRaController<'static>,
-    subg_configuration: &'a mut SubGConfigurationState,
-    #[cfg(feature = "board-t1000e")]
+    #[cfg(not(feature = "board-muzi-base-duo"))]
+    subg_store: &'a mut ConfigurationStore,
+    subg_configuration: &'a mut BoardConfigurationState,
+    #[cfg(feature = "board-muzi-base-duo")]
+    radio_service: &'a mut hopspot::LoRaConfigurationService,
+    #[cfg(feature = "board-muzi-base-duo")]
+    radio_store: &'a mut hopspot::SubGConfigurationStore<super::super::learned_state::BoardFlash>,
+    #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
     gnss_wanted: &'a mut bool,
 }
 
@@ -84,6 +125,8 @@ pub(super) fn capabilities() -> RemoteControlCapabilities {
         RemoteControlRequestKind::InventoryInterfaceConfig,
         RemoteControlRequestKind::SetInterfaceLoRaProfile,
         RemoteControlRequestKind::DescribeBuild,
+        RemoteControlRequestKind::SetNodeName,
+        RemoteControlRequestKind::DescribeNodeName,
         RemoteControlRequestKind::SetSystemPower,
         RemoteControlRequestKind::InventoryControllers,
         RemoteControlRequestKind::AuthorizeController,
@@ -91,7 +134,11 @@ pub(super) fn capabilities() -> RemoteControlCapabilities {
     ] {
         capabilities = capabilities.with_request(kind);
     }
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        any(feature = "board-rak4631", feature = "board-rak10724")
+    ))]
     for kind in [
         RemoteControlRequestKind::SetInterfaceGroup,
         RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
@@ -99,9 +146,15 @@ pub(super) fn capabilities() -> RemoteControlCapabilities {
     ] {
         capabilities = capabilities.with_request(kind);
     }
-    #[cfg(feature = "board-t1000e")]
+    #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
     {
         capabilities = capabilities.with_request(RemoteControlRequestKind::SetGnssPower);
+    }
+    #[cfg(feature = "board-muzi-base-duo")]
+    {
+        capabilities = capabilities
+            .with_request(RemoteControlRequestKind::InspectRadio)
+            .with_request(RemoteControlRequestKind::ConfigureRadio);
     }
     capabilities
 }
@@ -110,13 +163,20 @@ pub(super) async fn run_headless(
     lora_status: &'static EmbassyInterfaceStatus,
     usb_status: &'static EmbassyInterfaceStatus,
     mut lora_controller: personal_rns::lora::LoRaController<'static>,
-    mut subg_configuration: SubGConfigurationState,
+    mut subg_configuration: BoardConfigurationState,
+    #[cfg(not(feature = "board-muzi-base-duo"))] mut subg_store: ConfigurationStore,
+    #[cfg(feature = "board-muzi-base-duo")] mut radio_store: hopspot::SubGConfigurationStore<
+        super::super::learned_state::BoardFlash,
+    >,
+    #[cfg(feature = "board-muzi-base-duo")] mut radio_service: hopspot::LoRaConfigurationService,
 ) -> ! {
     let mut system_awake = true;
     let mut desired_interfaces = enabled_interfaces(lora_status, usb_status);
     let mut scheduled_effect: Option<ScheduledEffect> = None;
-    #[cfg(feature = "board-t1000e")]
+    #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
     let mut gnss_wanted = true;
+
+    super::node_name::restore().await;
 
     loop {
         let pending = match scheduled_effect.as_ref() {
@@ -156,7 +216,16 @@ pub(super) async fn run_headless(
                         scheduled_effect: &mut scheduled_effect,
                         lora_controller: &mut lora_controller,
                         subg_configuration: &mut subg_configuration,
-                        #[cfg(feature = "board-t1000e")]
+                        #[cfg(not(feature = "board-muzi-base-duo"))]
+                        subg_store: &mut subg_store,
+                        #[cfg(feature = "board-muzi-base-duo")]
+                        radio_service: &mut radio_service,
+                        #[cfg(feature = "board-muzi-base-duo")]
+                        radio_store: &mut radio_store,
+                        #[cfg(any(
+                            feature = "board-t1000e",
+                            feature = "board-sensecap-solar-node"
+                        ))]
                         gnss_wanted: &mut gnss_wanted,
                     },
                     command,
@@ -187,24 +256,33 @@ async fn execute(
             ))
         }
         RemoteControlHostCommand::InventoryInterfaceConfig { id } => {
-            let profile = match *context.subg_configuration {
-                SubGConfigurationState::Configured(configuration) => {
-                    let ResolvedSubGMode::LoRa(profile) = configuration.resolve();
-                    Some(profile)
-                }
-                SubGConfigurationState::Unconfigured => None,
+            let profile = match LoRaConfigurationState::from(*context.subg_configuration) {
+                LoRaConfigurationState::Configured(configuration) => Some(configuration.profile()),
+                LoRaConfigurationState::Unconfigured => None,
             };
-            #[cfg(feature = "board-mesh-tower-v2")]
+            #[cfg(any(
+                feature = "board-mesh-tower-v2",
+                feature = "board-muzi-base-duo",
+                any(feature = "board-rak4631", feature = "board-rak10724")
+            ))]
             let ble_groups = BluetoothAutoStatus::new(&BLE_SHARED).discovery_groups();
-            #[cfg(feature = "board-mesh-tower-v2")]
+            #[cfg(any(
+                feature = "board-mesh-tower-v2",
+                feature = "board-muzi-base-duo",
+                any(feature = "board-rak4631", feature = "board-rak10724")
+            ))]
             let ble_group = hopspot::singleton_discovery_group(&ble_groups);
-            #[cfg(not(feature = "board-mesh-tower-v2"))]
+            #[cfg(not(any(
+                feature = "board-mesh-tower-v2",
+                feature = "board-muzi-base-duo",
+                any(feature = "board-rak4631", feature = "board-rak10724")
+            )))]
             let ble_group = None;
             let outcome = hopspot::remote_control_interface_config_from_snapshots(
                 context.snapshots,
                 id,
                 |snapshot, card| {
-                    hopspot::decorate_hopspot_remote_control_card(
+                    hopspot::decorate_hopspot_radio_card(
                         snapshot, card, ble_group, profile, None, None,
                     )
                 },
@@ -251,7 +329,11 @@ async fn execute(
             };
             Ok(RemoteControlHostResponse::SetInterfacePower(outcome))
         }
-        #[cfg(feature = "board-mesh-tower-v2")]
+        #[cfg(any(
+            feature = "board-mesh-tower-v2",
+            feature = "board-muzi-base-duo",
+            any(feature = "board-rak4631", feature = "board-rak10724")
+        ))]
         RemoteControlHostCommand::SetInterfaceGroup { id, group } => {
             let groups = personal_rns::interfaces::DiscoveryGroupSet::from_singleton(group);
             let outcome = replace_bluetooth_discovery_groups(id, &groups).await?;
@@ -269,7 +351,11 @@ async fn execute(
             };
             Ok(RemoteControlHostResponse::SetInterfaceGroup(outcome))
         }
-        #[cfg(feature = "board-mesh-tower-v2")]
+        #[cfg(any(
+            feature = "board-mesh-tower-v2",
+            feature = "board-muzi-base-duo",
+            any(feature = "board-rak4631", feature = "board-rak10724")
+        ))]
         RemoteControlHostCommand::InventoryInterfaceDiscoveryGroups { id } => {
             let outcome = if id == BLE_SUPERVISOR_ID {
                 RemoteControlDiscoveryGroupsInventoryOutcome::Groups(
@@ -282,11 +368,78 @@ async fn execute(
             };
             Ok(RemoteControlHostResponse::InventoryInterfaceDiscoveryGroups(outcome))
         }
-        #[cfg(feature = "board-mesh-tower-v2")]
+        #[cfg(any(
+            feature = "board-mesh-tower-v2",
+            feature = "board-muzi-base-duo",
+            any(feature = "board-rak4631", feature = "board-rak10724")
+        ))]
         RemoteControlHostCommand::ReplaceInterfaceDiscoveryGroups { id, groups } => {
             let groups = groups.into_groups();
             Ok(RemoteControlHostResponse::ReplaceInterfaceDiscoveryGroups(
                 replace_bluetooth_discovery_groups(id, &groups).await?,
+            ))
+        }
+        #[cfg(feature = "board-muzi-base-duo")]
+        RemoteControlHostCommand::InspectRadio { id } => {
+            if id != context.lora_status.id() {
+                return Ok(RemoteControlHostResponse::InspectRadio(
+                    RemoteControlRadioStatus::UnknownInterface,
+                ));
+            }
+            let saved = match context.radio_service.durable() {
+                DurableConfiguration::Unknown => RemoteControlRadioSaved::Unknown,
+                DurableConfiguration::Confirmed(LoRaConfigurationState::Unconfigured) => {
+                    RemoteControlRadioSaved::Confirmed(
+                        RemoteControlRadioConfiguration::Unconfigured,
+                    )
+                }
+                DurableConfiguration::Confirmed(LoRaConfigurationState::Configured(
+                    configuration,
+                )) => RemoteControlRadioSaved::Confirmed(RemoteControlRadioConfiguration::Profile(
+                    RemoteControlLoRaProfile::from_band_profile(configuration.profile())
+                        .ok_or(RemoteControlHostCommandError::ApplyFailed)?,
+                )),
+            };
+            let operating = context
+                .radio_service
+                .operating_state(context.lora_status.observed_connection());
+            Ok(RemoteControlHostResponse::InspectRadio(
+                RemoteControlRadioStatus::Status {
+                    bands: RemoteControlRadioBands::SubGAndGhz24,
+                    operating,
+                    saved,
+                },
+            ))
+        }
+        #[cfg(feature = "board-muzi-base-duo")]
+        RemoteControlHostCommand::ConfigureRadio { id, configuration } => {
+            if id != context.lora_status.id() {
+                return Ok(RemoteControlHostResponse::ConfigureRadio(
+                    RemoteControlRadioOutcome::UnknownInterface,
+                ));
+            }
+            let requested = match configuration {
+                RemoteControlRadioConfiguration::Unconfigured => {
+                    LoRaConfigurationState::Unconfigured
+                }
+                RemoteControlRadioConfiguration::Profile(profile) => {
+                    let Some(profile) = profile.band_profile() else {
+                        return Ok(RemoteControlHostResponse::ConfigureRadio(
+                            RemoteControlRadioOutcome::InvalidConfiguration,
+                        ));
+                    };
+                    LoRaConfigurationState::Configured(LoRaConfiguration::manual(profile))
+                }
+            };
+            let result = context
+                .radio_service
+                .apply(requested, context.lora_controller, context.radio_store)
+                .await;
+            if result == hopspot::LoRaConfigurationResult::Saved {
+                *context.subg_configuration = requested;
+            }
+            Ok(RemoteControlHostResponse::ConfigureRadio(
+                result.remote_outcome(),
             ))
         }
         RemoteControlHostCommand::SetInterfaceLoRaProfile { id, profile } => {
@@ -295,23 +448,49 @@ async fn execute(
                     RemoteControlLoRaOutcome::UnknownInterface,
                 ));
             }
-            let profile = profile
-                .profile()
-                .ok_or(RemoteControlHostCommandError::ApplyFailed)?;
-            let requested =
-                SubGConfigurationState::Configured(SubGConfiguration::manual_lora(profile));
-            if *context.subg_configuration != requested {
-                if context.lora_controller.apply_configuration(requested).await
-                    == personal_rns::lora::LoRaApplyOutcome::Rejected
-                {
+            #[cfg(feature = "board-muzi-base-duo")]
+            let requested = {
+                let profile = profile
+                    .band_profile()
+                    .ok_or(RemoteControlHostCommandError::ApplyFailed)?;
+                let requested =
+                    LoRaConfigurationState::Configured(LoRaConfiguration::manual(profile));
+                let result = context
+                    .radio_service
+                    .apply(requested, context.lora_controller, context.radio_store)
+                    .await;
+                if result != hopspot::LoRaConfigurationResult::Saved {
                     return Err(RemoteControlHostCommandError::ApplyFailed);
                 }
-                *context.subg_configuration = requested;
-            }
+                requested
+            };
+            #[cfg(not(feature = "board-muzi-base-duo"))]
+            let requested = {
+                let profile = profile
+                    .profile()
+                    .ok_or(RemoteControlHostCommandError::ApplyFailed)?;
+                let requested =
+                    BoardConfigurationState::Configured(SubGConfiguration::manual_lora(profile));
+                apply_subg_configuration(
+                    context.lora_controller,
+                    context.subg_store,
+                    context.subg_configuration,
+                    requested,
+                )
+                .await?;
+                requested
+            };
+            *context.subg_configuration = requested;
             Ok(RemoteControlHostResponse::SetInterfaceLoRaProfile(
                 RemoteControlLoRaOutcome::Applied,
             ))
         }
+        RemoteControlHostCommand::SetNodeName { name } => Ok(
+            RemoteControlHostResponse::SetNodeName(super::node_name::set(name).await?),
+        ),
+        RemoteControlHostCommand::DescribeNodeName => Ok(
+            RemoteControlHostResponse::DescribeNodeName(super::node_name::current()),
+        ),
         RemoteControlHostCommand::DescribeBuild => Ok(RemoteControlHostResponse::DescribeBuild(
             hopspot::hopspot_remote_control_build_version()
                 .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?,
@@ -332,7 +511,7 @@ async fn execute(
                 RemoteControlApplyOutcome::Unchanged
             } else if desired_awake {
                 restore_desired_interfaces(&context);
-                #[cfg(feature = "board-t1000e")]
+                #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
                 if *context.gnss_wanted {
                     board::control_gnss(hopspot::GnssReceiverCommand::Enable);
                 }
@@ -344,7 +523,7 @@ async fn execute(
             };
             Ok(RemoteControlHostResponse::SetSystemPower(outcome))
         }
-        #[cfg(feature = "board-t1000e")]
+        #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
         RemoteControlHostCommand::SetGnssPower { power } => {
             let desired = power == RemoteControlGnssPower::On;
             let outcome = if *context.gnss_wanted == desired {
@@ -366,7 +545,11 @@ async fn execute(
     }
 }
 
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    any(feature = "board-rak4631", feature = "board-rak10724")
+))]
 async fn replace_bluetooth_discovery_groups(
     id: InterfaceId,
     desired: &personal_rns::interfaces::DiscoveryGroupSet,
@@ -459,7 +642,11 @@ fn interface_bit(context: &Context<'_>, id: InterfaceId) -> Option<u8> {
     } else if context.usb_status.id() == id {
         Some(USB_ENABLED)
     } else {
-        #[cfg(feature = "board-mesh-tower-v2")]
+        #[cfg(any(
+            feature = "board-mesh-tower-v2",
+            feature = "board-muzi-base-duo",
+            any(feature = "board-rak4631", feature = "board-rak10724")
+        ))]
         if id == BLE_SUPERVISOR_ID {
             return Some(BLUETOOTH_ENABLED);
         }
@@ -493,7 +680,11 @@ fn apply_interface_enabled(context: &Context<'_>, id: InterfaceId, enabled: bool
     } else if context.usb_status.id() == id {
         set_status(context.usb_status, enabled);
     } else {
-        #[cfg(feature = "board-mesh-tower-v2")]
+        #[cfg(any(
+            feature = "board-mesh-tower-v2",
+            feature = "board-muzi-base-duo",
+            any(feature = "board-rak4631", feature = "board-rak10724")
+        ))]
         if id == BLE_SUPERVISOR_ID {
             let status = BluetoothAutoStatus::new(&BLE_SHARED);
             if enabled {
@@ -514,7 +705,11 @@ fn restore_desired_interfaces(context: &Context<'_>) {
         context.usb_status,
         *context.desired_interfaces & USB_ENABLED != 0,
     );
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        any(feature = "board-rak4631", feature = "board-rak10724")
+    ))]
     {
         let bluetooth = BluetoothAutoStatus::new(&BLE_SHARED);
         if *context.desired_interfaces & BLUETOOTH_ENABLED != 0 {
@@ -529,12 +724,20 @@ fn interfaces_match_desired(context: &Context<'_>) -> bool {
     context.lora_status.is_enabled() == (*context.desired_interfaces & LORA_ENABLED != 0)
         && context.usb_status.is_enabled() == (*context.desired_interfaces & USB_ENABLED != 0)
         && {
-            #[cfg(feature = "board-mesh-tower-v2")]
+            #[cfg(any(
+                feature = "board-mesh-tower-v2",
+                feature = "board-muzi-base-duo",
+                any(feature = "board-rak4631", feature = "board-rak10724")
+            ))]
             {
                 BluetoothAutoStatus::new(&BLE_SHARED).is_enabled()
                     == (*context.desired_interfaces & BLUETOOTH_ENABLED != 0)
             }
-            #[cfg(not(feature = "board-mesh-tower-v2"))]
+            #[cfg(not(any(
+                feature = "board-mesh-tower-v2",
+                feature = "board-muzi-base-duo",
+                any(feature = "board-rak4631", feature = "board-rak10724")
+            )))]
             {
                 true
             }
@@ -552,7 +755,11 @@ fn enabled_interfaces(
     if usb_status.is_enabled() {
         enabled |= USB_ENABLED;
     }
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        any(feature = "board-rak4631", feature = "board-rak10724")
+    ))]
     if BluetoothAutoStatus::new(&BLE_SHARED).is_enabled() {
         enabled |= BLUETOOTH_ENABLED;
     }
@@ -584,7 +791,11 @@ fn apply_scheduled(
             } else if usb_status.id() == id {
                 usb_status.disable();
             } else {
-                #[cfg(feature = "board-mesh-tower-v2")]
+                #[cfg(any(
+                    feature = "board-mesh-tower-v2",
+                    feature = "board-muzi-base-duo",
+                    any(feature = "board-rak4631", feature = "board-rak10724")
+                ))]
                 if id == BLE_SUPERVISOR_ID {
                     BluetoothAutoStatus::new(&BLE_SHARED).disable();
                 }
@@ -593,7 +804,11 @@ fn apply_scheduled(
         ScheduledAction::ReconcileInterfaces => {
             set_status(lora_status, desired_interfaces & LORA_ENABLED != 0);
             set_status(usb_status, desired_interfaces & USB_ENABLED != 0);
-            #[cfg(feature = "board-mesh-tower-v2")]
+            #[cfg(any(
+                feature = "board-mesh-tower-v2",
+                feature = "board-muzi-base-duo",
+                any(feature = "board-rak4631", feature = "board-rak10724")
+            ))]
             if desired_interfaces & BLUETOOTH_ENABLED != 0 {
                 BluetoothAutoStatus::new(&BLE_SHARED).enable();
             } else {
@@ -603,9 +818,13 @@ fn apply_scheduled(
         ScheduledAction::SleepSystem => {
             lora_status.disable();
             usb_status.disable();
-            #[cfg(feature = "board-mesh-tower-v2")]
+            #[cfg(any(
+                feature = "board-mesh-tower-v2",
+                feature = "board-muzi-base-duo",
+                any(feature = "board-rak4631", feature = "board-rak10724")
+            ))]
             BluetoothAutoStatus::new(&BLE_SHARED).disable();
-            #[cfg(feature = "board-t1000e")]
+            #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
             board::control_gnss(hopspot::GnssReceiverCommand::Disable);
             *system_awake = false;
         }
@@ -616,7 +835,11 @@ fn snapshots(
     lora: &EmbassyInterfaceStatus,
     usb: &EmbassyInterfaceStatus,
 ) -> Result<heapless::Vec<InterfaceSnapshot, SNAPSHOT_CAPACITY>, RemoteControlHostCommandError> {
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        any(feature = "board-rak4631", feature = "board-rak10724")
+    ))]
     let bluetooth = BluetoothAutoStatus::new(&BLE_SHARED);
     let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), SNAPSHOT_CAPACITY> =
         heapless::Vec::new();
@@ -626,7 +849,11 @@ fn snapshots(
     entries
         .push((usb, Membership::Independent))
         .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        any(feature = "board-rak4631", feature = "board-rak10724")
+    ))]
     {
         let supervisor_id = bluetooth.id();
         entries

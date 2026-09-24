@@ -19,6 +19,8 @@ members = [
     "docs/command",
     "tools/repo/cargo-tools-command",
     "personal-hopspot/flasher",
+    "personal-hopspot/appliance",
+    "validation/simulation",
 ]
 default-members = [
     "personal-rns",
@@ -67,3 +69,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(mutants)'] }
 [profile.release]
 codegen-units = 1
 lto = "fat"
+
+[profile.simulation]
+inherits = "dev"
+opt-level = 2
+debug-assertions = true
+overflow-checks = true

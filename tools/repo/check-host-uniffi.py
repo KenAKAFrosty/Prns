@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the native image and qualify actual generated foreign bindings."""
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import sys
@@ -16,13 +17,16 @@ def run(*args):
 
 def main():
     run(sys.executable, ROOT / 'tools/repo/generate-host-contract.py', '--check')
-    run('cargo', 'test', '--manifest-path', IMAGE.parent / 'Cargo.toml', '--test', 'transport')
-    run('cargo', 'build', '--manifest-path', IMAGE / 'Cargo.toml',
+    run('cargo', 'test', '--locked', '--manifest-path', IMAGE.parent / 'Cargo.toml', '--test', 'transport')
+    run('cargo', 'build', '--locked', '--manifest-path', IMAGE / 'Cargo.toml',
         '--features', 'uniffi-bindgen', '--lib', '--bin', 'uniffi-bindgen')
     extension = '.dylib' if sys.platform == 'darwin' else '.dll' if sys.platform == 'win32' else '.so'
-    library = IMAGE / 'target/debug' / (('' if sys.platform == 'win32' else 'lib') + 'prns_host_mobile' + extension)
-    bindgen = IMAGE / 'target/debug' / ('uniffi-bindgen.exe' if sys.platform == 'win32' else 'uniffi-bindgen')
-    with tempfile.TemporaryDirectory(prefix='foreign-conformance-', dir=IMAGE / 'target') as generated:
+    target = Path(os.environ.get('CARGO_TARGET_DIR', IMAGE / 'target'))
+    if not target.is_absolute():
+        target = ROOT / target
+    library = target / 'debug' / (('' if sys.platform == 'win32' else 'lib') + 'prns_host_mobile' + extension)
+    bindgen = target / 'debug' / ('uniffi-bindgen.exe' if sys.platform == 'win32' else 'uniffi-bindgen')
+    with tempfile.TemporaryDirectory(prefix='foreign-conformance-', dir=target) as generated:
         output = Path(generated)
         run(bindgen, 'generate', '--library', library, '--language', 'python', '--out-dir', output, '--no-format')
         if sys.platform == 'win32': shutil.copy2(library, output / library.name)

@@ -83,10 +83,18 @@ pub(super) fn run(sd: &'static Softdevice, runtime: Runtime) -> impl core::futur
     }
 }
 
-#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+#[cfg(any(
+    feature = "board-t096",
+    feature = "board-t114",
+    feature = "board-wio-tracker-l1"
+))]
 pub(super) fn usb_vbus_present() -> bool {
     super::super::bluetooth_auto::usb_vbus_present()
 }
 
-#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+#[cfg(any(
+    feature = "board-t096",
+    feature = "board-t114",
+    feature = "board-wio-tracker-l1"
+))]
 pub(super) use personal_rns::bluetooth_auto::BluetoothAutoStatus;

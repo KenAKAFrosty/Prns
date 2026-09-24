@@ -1,0 +1,419 @@
+{
+  "schema": 1,
+  "qualification": "explicit persistent US open-mesh profile, epoch-verified over-air control/pages and independent lab rollback",
+  "date": "2026-10-02",
+  "source": {
+    "base_commit": "e510565e15e3b9d8facbb042a74556fc9d98ee92",
+    "changes": "radio planner, proactive path profile and exclusively HaLoW simulator additions in this change"
+  },
+  "toolchain": {
+    "rust": "nightly-2026-06-02",
+    "zig": "0.15.2",
+    "target": "mipsel-unknown-linux-musl",
+    "abi": "static MIPS32r2 little-endian O32 soft-float"
+  },
+  "artifacts": {
+    "unchanged_application": {
+      "bytes": 3631976,
+      "sha256": "443a74ca0b335563d3ebd47f52ca360c63804f42f22a49dae846bc94b6e1c7be"
+    },
+    "application_gzip_bytes": 1507694,
+    "shipping_manager": {
+      "bytes": 1243580,
+      "sha256": "6fcc54c07baeb9c2e07764eaad6de7f4581dbbf59861f5519f9b55eb73bf7a3a"
+    },
+    "separate_lab_manager": {
+      "bytes": 1245964,
+      "sha256": "7278670607eaa54541e4291e521df6c4dde3a3d50ff676577a4626b49cef4113"
+    },
+    "MIPS_owner_test_binary": {
+      "bytes": 1446108,
+      "sha256": "f2b9041aa67bab73879c0b925b2c8f0fda1ab1174b774e2b5dde78992cba5546",
+      "target": "mipsel-unknown-linux-musl",
+      "flags": "-C link-self-contained=no -C target-feature=+crt-static",
+      "compiler": "nightly-2026-06-02"
+    }
+  },
+  "profile": {
+    "binding": {
+      "radio": "radio1",
+      "interface": "default_radio1",
+      "device": "wlan0"
+    },
+    "channel": "Us924Mhz8Mhz",
+    "preset": "Mcs2LongGuard18Dbm",
+    "mesh_paths": "ProactiveRequests",
+    "mesh_id": "Hopspot-Boot-Lab-20261002"
+  },
+  "shipping_example_mesh_id": "Hopspot",
+  "observed_radio_contract": {
+    "frequency_khz": 924000,
+    "bandwidth_mhz": 8,
+    "fixed_mcs": 2,
+    "fixed_bw_enum": 3,
+    "fixed_spatial_streams": 1,
+    "fixed_guard": 0,
+    "txpower_dbm": 18,
+    "power_saving": "disabled",
+    "short_GI_rate_control": "disabled",
+    "mesh_fwding": 0,
+    "mesh_hwmp_rootmode": 2,
+    "mesh_gate_announcements": 0,
+    "application_automatic_announces": "absent",
+    "discovery": "explicit_controller_page_announcements",
+    "group_frame_rate": "vendor_behavior_not_forced_by_unicast_preset",
+    "IP_bridge_attachment": "none"
+  },
+  "planner": {
+    "effect": "read_only_no_application_state_open",
+    "profile_limit_bytes": 4096,
+    "boot_adapter_limit_bytes": 131072,
+    "qualified_boot_adapter_hashes": {
+      "g4": "134f5a4d6378c73d9f6670a3dfda4f10edc91f1488c01e2178eb8ca088e70782",
+      "heltec": "7254d7930320e502c9a4e30a88b99e9202be3b1d1990a563e784df7a93be6805"
+    },
+    "fingerprint_scope": "installed_netifd_adapter_only_not_full_vendor_firmware_attestation",
+    "physical_G4_refusals": [
+      "wrong_named_Morse_binding",
+      "pending_actual_UCI_edit"
+    ],
+    "radio_activation_journals_after_negative_checks": "unchanged"
+  },
+  "findings": [
+    {
+      "case": "second_Heltec_rootmode_zero_cold_boot",
+      "observation": "mesh_peers_established_broadcast_received_empty_kernel_mesh_paths_directed_requests_missing_at_target_ingress",
+      "wired_control": "healthy",
+      "packet_socket_ifindex": "matched_actual_device",
+      "explicit_page_seed_and_radio_cycle": "did_not_restore_unicast",
+      "rootmode_two_with_forwarding_zero": "direct_paths_and_authenticated_control_recovered_without_app_restart",
+      "closed_firmware_mechanism": "not_established"
+    },
+    {
+      "case": "first_Heltec_first_corrected_boot",
+      "observation": "240_second_over_air_path_probe_budget_exhausted",
+      "later_observation": "wired_control_and_kernel_paths_healthy_both_gateways_worked",
+      "repeat": "new_UUID_verified_explicit_controller_workflow_passed",
+      "authorization_denial": "not_inferred"
+    },
+    {
+      "case": "mesh_to_vendor_AP_restoration",
+      "observation": "original_hashes_and_Morse_health_passed_but_G4_and_second_Heltec_AP_interfaces_remained_down",
+      "recovery": "explicit_clean_vendor_reboots_restored_operational_APs_and_first_Heltec_reassociated",
+      "automatic_lease_scope": "restored_files_and_stopped_application_did_not_itself_reboot",
+      "exact_radio_firmware_mechanism": "not_established",
+      "boundary": "radio_health_and_file_hashes_do_not_prove_operational_recovery"
+    }
+  ],
+  "boards": [
+    {
+      "board": "g4",
+      "vendor_board": "morse,ekh03v3",
+      "kernel": "5.15.150",
+      "qualified_reboot": {
+        "before_boot_uuid": "2dffdb76-bcb7-4976-8f1f-a6d167925eba",
+        "after_boot_uuid": "0ea67f12-c909-43cd-83c9-e204e421a530",
+        "entry_gateway": "heltec",
+        "qualifying_traffic_checks": "after_new_boot_UUID_verification",
+        "complete_workflow_elapsed_seconds": 154.488,
+        "application_startup_latency": "not_measured",
+        "pre_epoch_successful_probes": "excluded_from_qualification"
+      },
+      "authenticated_operations": {
+        "build_interfaces_config_peers": "passed",
+        "verified_controller_app_message": "passed",
+        "exact_page_bytes": 3542,
+        "wired_management": "passed"
+      },
+      "enrollment_at_boot": "absent_retained_grants_used",
+      "radio_and_activation_hashes_across_qualified_reboot": "unchanged",
+      "qualified_config_hashes": {
+        "/etc/config/wireless": "b163f628a39fd73ae4b8e073c0cda2c560836da668d11337d179ae174a780bec",
+        "/etc/config/mesh11sd": "cbb72529df8d9438c861e328c90453cda195d28c257022eb42ff35a42cdf8316"
+      },
+      "final_resource_snapshot": {
+        "rss_kib": 4224,
+        "threads": 3,
+        "descriptors": 13,
+        "installation_du_kib": 2705,
+        "overlay_available_kib": 3188,
+        "application_slots": "one_confirmed_compressed_slot",
+        "sustained_growth": "not_measured"
+      },
+      "real_MIPS_library_tests": {
+        "passed": 15,
+        "failed": 0
+      },
+      "restoration": {
+        "board": "g4",
+        "restoration": "automatic_lease_expiry",
+        "expiry_delay_seconds": 5,
+        "seven_original_vendor_hashes": "matched",
+        "pending_uci_changes": "empty",
+        "isolated_application_listener": "absent",
+        "isolated_services_and_device_files": "removed",
+        "private_backups": "retained_on_host",
+        "vendor_config_hashes": {
+          "/etc/config/network": "8a7b7047124263da23abb39b51477024a5da0b47d6b0a1dfd4199077edfb6c58",
+          "/etc/config/wireless": "2683541386043ed2b83c09070e294bbb4314b48a0c090cb4df47830c8fe4fba5",
+          "/etc/config/firewall": "74c938808f683d390b2d626f44ebd357129ac89e61bd3f580c28a805b85df248",
+          "/etc/config/dhcp": "3ca2dda68988f2d893e1ab740fc9f01c2912d68bf9f1061f5752301ec4938d31",
+          "/etc/config/mesh11sd": "a3fd31b51b532f288cee83cd18e7378550797969862684fafc3fc823f063348a",
+          "/etc/config/system": "cf0d9d66359a870b580c0df0738913edc2c65f7736d0ff02a9947724ac2117eb",
+          "/etc/modules.d/morse": "57a997a7c30130b09e2e845be37db29e7c2666b05b23d138ab75cf6b0fb9bffa"
+        },
+        "final_operational_radio": {
+          "role": "AccessPoint",
+          "frequency_khz": 924000,
+          "bandwidth_mhz": 8,
+          "interface_state": "UP_LOWER_UP",
+          "original_seven_hashes": "matched_after_operational_recovery",
+          "station_association": "not_required_for_AP_readiness"
+        },
+        "operational_recovery": "explicit_clean_vendor_reboot_after_lease_or_restore_body",
+        "vendor_reboot": {
+          "board": "g4",
+          "before_boot_uuid": "0ea67f12-c909-43cd-83c9-e204e421a530",
+          "after_boot_uuid": "cd62d4d7-c40c-4417-894e-458cbc6fcad0",
+          "management_reacquisition_seconds": 140.707,
+          "timing_boundary": "scheduled reboot to validated wired UUID; not app or radio startup latency"
+        }
+      },
+      "HaLoW_parent_and_peer_interface_ids": "stable_between_warm_and_final_post_reboot_snapshots"
+    },
+    {
+      "board": "heltec",
+      "vendor_board": "Heltec,HT-HD01-V2",
+      "kernel": "5.15.167",
+      "qualified_reboot": {
+        "before_boot_uuid": "0160c8c3-3603-4261-9b79-f9e69b09a12a",
+        "after_boot_uuid": "f13d867e-f568-419c-b123-f32a5e687549",
+        "entry_gateway": "heltec3",
+        "qualifying_traffic_checks": "after_new_boot_UUID_verification",
+        "complete_workflow_elapsed_seconds": 149.458,
+        "application_startup_latency": "not_measured",
+        "pre_epoch_successful_probes": "excluded_from_qualification"
+      },
+      "authenticated_operations": {
+        "build_interfaces_config_peers": "passed",
+        "verified_controller_app_message": "passed",
+        "exact_page_bytes": 3542,
+        "wired_management": "passed"
+      },
+      "enrollment_at_boot": "absent_retained_grants_used",
+      "radio_and_activation_hashes_across_qualified_reboot": "unchanged",
+      "qualified_config_hashes": {
+        "/etc/config/wireless": "ed5599a177af6bafda068611d1141f7d413a8780c15061bb1e42bd9f065e784d",
+        "/etc/config/mesh11sd": "2bcf1335c42544c347cb696656914d5e19401bb4cba73d22affda0d3394f81d3"
+      },
+      "final_resource_snapshot": {
+        "rss_kib": 4168,
+        "threads": 3,
+        "descriptors": 13,
+        "installation_du_kib": 2704,
+        "overlay_available_kib": 3168,
+        "application_slots": "one_confirmed_compressed_slot",
+        "sustained_growth": "not_measured"
+      },
+      "real_MIPS_library_tests": {
+        "passed": 15,
+        "failed": 0
+      },
+      "restoration": {
+        "board": "heltec",
+        "restoration": "same_restore_body_invoked_explicitly",
+        "expiry_delay_seconds": null,
+        "seven_original_vendor_hashes": "matched",
+        "pending_uci_changes": "empty",
+        "isolated_application_listener": "absent",
+        "isolated_services_and_device_files": "removed",
+        "private_backups": "retained_on_host",
+        "vendor_config_hashes": {
+          "/etc/config/network": "6a3b8b984c3f22741cb4b444079853b4de0a06f7369bbba93229f685a2a6d15d",
+          "/etc/config/wireless": "855553c60dfe7478162aeb78c8d3df9cce822d0012f6971e782bdd599403aaab",
+          "/etc/config/firewall": "6b335971abb76b41baf6b411a161ed416933d81fee60038f798091338f8327b4",
+          "/etc/config/dhcp": "8639102f47aeaaa6f04f9a969c2aca0d56ba516544bb31cfc8f0e87d5dfbb73c",
+          "/etc/config/mesh11sd": "afe2d42d925699ecb32536836ff58ffb7aa386fcd5648906cfa8ab35efb73277",
+          "/etc/config/system": "42c2819462e77367a10ba398ad7511e071174993f465966a31c2cc0c9b369d4e",
+          "/etc/modules.d/morse": "a741aa06cb679f08386501851b457adfdd3e4378f502fd4bdc30b298b5904e39"
+        },
+        "final_operational_radio": {
+          "role": "Station",
+          "frequency_khz": 924000,
+          "bandwidth_mhz": 8,
+          "interface_state": "UP_LOWER_UP",
+          "original_seven_hashes": "matched_after_operational_recovery",
+          "station_association": "G4"
+        },
+        "operational_recovery": "reassociated_after_G4_vendor_reboot_without_own_reboot"
+      },
+      "HaLoW_parent_and_peer_interface_ids": "stable_between_warm_and_final_post_reboot_snapshots"
+    },
+    {
+      "board": "heltec3",
+      "vendor_board": "Heltec,HT-HD01-V2",
+      "kernel": "5.15.167",
+      "qualified_reboot": {
+        "before_boot_uuid": "d16110d6-309a-4d85-8310-e99b290a78db",
+        "after_boot_uuid": "ac7a1292-f117-441f-9daa-b3d6730a3dc5",
+        "entry_gateway": "g4",
+        "qualifying_traffic_checks": "after_new_boot_UUID_verification",
+        "complete_workflow_elapsed_seconds": 156.382,
+        "application_startup_latency": "not_measured",
+        "pre_epoch_successful_probes": "excluded_from_qualification"
+      },
+      "authenticated_operations": {
+        "build_interfaces_config_peers": "passed",
+        "verified_controller_app_message": "passed",
+        "exact_page_bytes": 3542,
+        "wired_management": "passed"
+      },
+      "enrollment_at_boot": "absent_retained_grants_used",
+      "radio_and_activation_hashes_across_qualified_reboot": "unchanged",
+      "qualified_config_hashes": {
+        "/etc/config/wireless": "49dd0593865af13873ef31ccbb56c1ec53c8d0baf65aeaead849af98bd4d86e4",
+        "/etc/config/mesh11sd": "2bcf1335c42544c347cb696656914d5e19401bb4cba73d22affda0d3394f81d3"
+      },
+      "final_resource_snapshot": {
+        "rss_kib": 4200,
+        "threads": 3,
+        "descriptors": 13,
+        "installation_du_kib": 2704,
+        "overlay_available_kib": 3156,
+        "application_slots": "one_confirmed_compressed_slot",
+        "sustained_growth": "not_measured"
+      },
+      "real_MIPS_library_tests": {
+        "passed": 15,
+        "failed": 0
+      },
+      "restoration": {
+        "board": "heltec3",
+        "restoration": "same_restore_body_invoked_explicitly",
+        "expiry_delay_seconds": null,
+        "seven_original_vendor_hashes": "matched",
+        "pending_uci_changes": "empty",
+        "isolated_application_listener": "absent",
+        "isolated_services_and_device_files": "removed",
+        "private_backups": "retained_on_host",
+        "vendor_config_hashes": {
+          "/etc/config/network": "98da83f0d1b598d622ed7f4fc9c848254088c33ca0d890b0558bdae3b27728c5",
+          "/etc/config/wireless": "eafe7b47ce0925c64c12f922504b1e4ad2ab41e729d0745d39cf7738055e9f87",
+          "/etc/config/firewall": "7085966c417db4ddb512ba84860d4fbf35ca4cd240b90cd8a4e6931b285ebf01",
+          "/etc/config/dhcp": "3ca2dda68988f2d893e1ab740fc9f01c2912d68bf9f1061f5752301ec4938d31",
+          "/etc/config/mesh11sd": "afe2d42d925699ecb32536836ff58ffb7aa386fcd5648906cfa8ab35efb73277",
+          "/etc/config/system": "ed89c861b2fc0f426197bfb9ca8f79db8a508bf911fecc1b9388059922eeb684",
+          "/etc/modules.d/morse": "b240f8850371c6fbee95e6fd3d663f849159aefd9d93f35f8f962e37000db273"
+        },
+        "final_operational_radio": {
+          "role": "AccessPoint",
+          "frequency_khz": 908000,
+          "bandwidth_mhz": 8,
+          "interface_state": "UP_LOWER_UP",
+          "original_seven_hashes": "matched_after_operational_recovery",
+          "station_association": "not_required_for_AP_readiness"
+        },
+        "operational_recovery": "explicit_clean_vendor_reboot_after_lease_or_restore_body",
+        "vendor_reboot": {
+          "board": "heltec3",
+          "before_boot_uuid": "ac7a1292-f117-441f-9daa-b3d6730a3dc5",
+          "after_boot_uuid": "b37f4e26-60e3-40cf-8807-9c533558f720",
+          "management_reacquisition_seconds": 131.607,
+          "timing_boundary": "scheduled reboot to validated wired UUID; not app or radio startup latency"
+        }
+      },
+      "HaLoW_parent_and_peer_interface_ids": "stable_between_warm_and_final_post_reboot_snapshots"
+    }
+  ],
+  "final_directed_pages": {
+    "pairs": [
+      "g4_to_heltec",
+      "g4_to_heltec3",
+      "heltec_to_g4",
+      "heltec_to_heltec3",
+      "heltec3_to_g4",
+      "heltec3_to_heltec"
+    ],
+    "exact_bytes_each": 3542,
+    "result": "passed"
+  },
+  "simulation": {
+    "scope": "production_software_transport_not_RF_or_UCI",
+    "medium_owner_tests_passed": 8,
+    "routine_cases": 144,
+    "fresh_runs_per_case": 2,
+    "routine_artifact": "validation-artifacts/results/halow-simulation/routine/run-0014",
+    "recovery_scenarios": 12,
+    "matrix_seeds": [
+      0,
+      1,
+      42,
+      24301
+    ],
+    "integration_tests_passed": 14,
+    "integration_tests_ignored": 2,
+    "integration_elapsed_seconds": 43.25,
+    "new_scenarios": [
+      "DelayedRadioBoot",
+      "MissingUnicastPaths"
+    ],
+    "expanded_cases_defined": 1152,
+    "expanded_campaign_this_change": "not_run",
+    "fixture_fix": "different_physical_gateway_addresses_have_distinct_connection_identities"
+  },
+  "host_checks": {
+    "appliance_all_target_tests": "passed_15_library_plus_2_command_plus_2_example",
+    "appliance_all_target_clippy": "passed_warnings_denied",
+    "simulator_clippy": "passed_warnings_denied",
+    "formatting": "passed",
+    "diff_check": "passed",
+    "validation_registry": "passed",
+    "tools_registry": "known_previous_three_network_lab_script_placement_failures_not_resolved",
+    "commands": [
+      "cargo test --locked -p personal-hopspot-appliance --all-targets",
+      "cargo clippy --locked -p personal-hopspot-appliance --all-targets -- -D warnings",
+      "cargo test --locked -p prns-simulation --features controlled-time --lib halow",
+      "cargo test --locked -p prns-simulation --features controlled-time --test halow -- --nocapture",
+      "cargo clippy --locked -p prns-simulation --features controlled-time --lib --test halow -- -D warnings",
+      "cargo fmt --all -- --check",
+      "git diff --check",
+      "python3 validation/run.py verify"
+    ]
+  },
+  "recovery_lease": {
+    "normal_seconds": 1200,
+    "G4_observed_automatic_expiry_seconds": 5,
+    "installation": "independent_persistent_procd_service",
+    "wireless_and_mesh11sd_commit": "separate_nonatomic_commits",
+    "public_radio_apply": "absent",
+    "operational_recovery_boundary": "clean_vendor_reboot_needed_for_both_APs_explicit_operator_actions_in_this_lab"
+  },
+  "trust": {
+    "production": "repository_pinned_release_key",
+    "lab": "separate_qualification_example_outside_shipping_bundle",
+    "public_release_signing": "not_performed",
+    "firmware_and_calibration_flashing": "none"
+  },
+  "private_evidence": {
+    "directory": "/private/tmp/prns-radio-qualification-20261002",
+    "retained_backups": "scratch/halow-radio-private-20261002",
+    "directory_mode": "0700",
+    "archive_mode": "0600",
+    "credentials_and_private_identities": "excluded_from_this_report"
+  },
+  "limits": [
+    "unattended_cold_discovery_not_qualified",
+    "electrical_power_cuts_and_interrupted_flash_not_tested",
+    "field_range_and_sustained_PRNS_throughput_not_measured",
+    "larger_or_forced_physical_multihop_not_tested",
+    "radio_commit_transaction_owner_not_implemented",
+    "least_privilege_and_long_running_log_state_growth_not_qualified",
+    "browser_local_helper_install_transport_not_implemented"
+  ],
+  "host_recovery": {
+    "default_internet_interface": "en1",
+    "default_gateway": "192.168.4.1",
+    "G4_LuCI": "direct_HTTP_403_serves_normal_unauthenticated_login_form",
+    "authenticated_LuCI_session": "not_retested"
+  }
+}

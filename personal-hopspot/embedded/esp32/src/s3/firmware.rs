@@ -74,13 +74,29 @@ where
 {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let p = esp_hal::init(config);
+    // `bringup` restores identities and prepares runtime state. On an S3
+    // without PSRAM, that work must already use the internal allocator.
+    if B::INTERNAL_SRAM_ONLY {
+        crate::storage::use_internal_sram_allocations();
+    }
     let bringup = B::bringup(p).await;
-    // Pin into esp_alloc's global external heap, not `PsramAlloc`. On Heltec V4-R8, `PsramAlloc` is
+    // Pin into the board-selected heap, not `PsramAlloc`. On Heltec V4-R8, `PsramAlloc` is
     // the private bump that `reinit_private_psram_heap` resets inside `run_core` before the LoRa
     // queue lands — pinning here would place the live future (OLED/I2C state) in that window and
     // get overwritten, which zeroed I2C Config.frequency after radio bring-up.
-    allocator_api2::boxed::Box::pin_in(run_core::<B>(spawner, bringup), esp_alloc::ExternalMemory)
+    if B::INTERNAL_SRAM_ONLY {
+        allocator_api2::boxed::Box::pin_in(
+            run_core::<B>(spawner, bringup),
+            esp_alloc::InternalMemory,
+        )
         .await;
+    } else {
+        allocator_api2::boxed::Box::pin_in(
+            run_core::<B>(spawner, bringup),
+            esp_alloc::ExternalMemory,
+        )
+        .await;
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -112,7 +128,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut battery_source = battery;
     let gnss = hardware.gnss;
     let S3InterfaceHardware {
-        usb_device,
+        usb,
         #[cfg(feature = "lora")]
         lora_radio,
         wifi: wifi_hardware,
@@ -184,8 +200,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             None
         }
     });
-    let station_configured = initial_wifi_station.is_some();
-    let radio_mode = boot_radio_mode(station_configured);
+    let network_enabled = !B::INTERNAL_SRAM_ONLY;
+    let station_configured = network_enabled && initial_wifi_station.is_some();
+    let radio_mode = if network_enabled {
+        boot_radio_mode(station_configured)
+    } else {
+        RadioMode::Ble
+    };
     log::info!(
         "wifi-config source={wifi_config_source:?} station={} ssid_len={} tcp={}",
         station_configured,
@@ -271,13 +292,18 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         mac_octets,
         initial_wifi_station,
         radio_mode == RadioMode::AccessPoint,
+        network_enabled,
     );
     boot_stage(BootPhase::WifiReady);
-    log::info!(
-        "Wi-Fi initialized station={} network_stack={}",
-        wifi.is_some(),
-        tcp_stack.is_some()
-    );
+    if network_enabled {
+        log::info!(
+            "Wi-Fi initialized station={} network_stack={}",
+            wifi.is_some(),
+            tcp_stack.is_some()
+        );
+    } else {
+        log::info!("V3 profile active: LoRa + BLE + USB; Wi-Fi Auto, ESP-NOW, and TCP disabled");
+    }
     let identity_startup_notice =
         crate::identity::startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
@@ -341,7 +367,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let remote_control_handle = REMOTE_CONTROL_COMMANDS.handle();
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
-        remote_control,
+        remote_control: personal_rns::runtime::RemoteControlNodeSetup::new(remote_control)
+            .with_controls(personal_rns::runtime::RemoteControlSupportedHost::new(
+                remote_control_handle,
+                remote_control::capabilities::<B>().requests(),
+            )),
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: remote_control_handle,
         storage: EngineStorageType::default(),
@@ -357,9 +387,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
 
-    let usb_outbound = crate::storage::allocate_manifold_outbound::<EMBEDDED_MAX_WIRE_FRAME_LEN>(
-        OUTBOUND_BURST_DEPTH,
-    );
+    let usb_outbound = crate::storage::allocate_manifold_outbound::<
+        { personal_rns::interfaces::usb_auto::MAX_DATA_BYTES },
+    >(OUTBOUND_BURST_DEPTH);
     let usb_lane = manifold_lanes
         .claim_accounted_interface_with_outbound_buffer(
             &USB_MANIFOLD_LANE,
@@ -461,19 +491,36 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         EXECUTOR
             .init(esp_rtos::embassy::Executor::new())
             .run(|spawner| {
-                let run = crate::storage::allocate_psram(manifold_run(node, persistence));
-                let run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>> =
+                #[cfg(feature = "sram-storage")]
+                spawner
+                    .spawn(sram_manifold_task(node, persistence).expect("SRAM manifold task fits"));
+                #[cfg(not(feature = "sram-storage"))]
+                {
+                    let run = crate::storage::allocate_psram(manifold_run(node, persistence));
+                    let run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>> =
                     // SAFETY: `allocate_psram` leaks this allocation, so it cannot move or be freed.
                     unsafe { core::pin::Pin::new_unchecked(run) };
-                spawner.spawn(manifold_task(run).expect("manifold task fits"));
+                    spawner.spawn(manifold_task(run).expect("manifold task fits"));
+                }
                 spawner.spawn(core_one_liveness_task().expect("core-one liveness task fits"));
             })
     });
     boot_stage(BootPhase::CoreOneStartReady);
 
-    let (usb_rx, usb_tx) = UsbSerialJtag::new(usb_device).into_async().split();
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), entropy);
-    spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam, usb_status).expect("usb task fits"));
+    match usb {
+        S3UsbHardware::SerialJtag(usb_device) => {
+            let (usb_rx, usb_tx) = UsbSerialJtag::new(usb_device).into_async().split();
+            spawner.spawn(
+                usb_device_task(usb_rx, usb_tx, usb_seam, usb_status).expect("usb task fits"),
+            );
+        }
+        S3UsbHardware::Uart { rx, tx } => {
+            spawner.spawn(
+                usb_uart_device_task(rx, tx, usb_seam, usb_status).expect("USB UART task fits"),
+            );
+        }
+    }
 
     #[cfg(feature = "lora")]
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), entropy);
@@ -555,13 +602,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
             gnss: B::Gnss::AVAILABILITY,
+            discovery_groups: screen::DiscoveryGroupEditorAvailability::Available,
             #[cfg(feature = "remote-control-pairing")]
             remote_control_pairing: if B::REMOTE_CONTROL_PAIRING {
                 screen::RemoteControlPairingAvailability::Available
             } else {
                 screen::RemoteControlPairingAvailability::Unavailable
             },
-            discovery_groups: screen::DiscoveryGroupEditorAvailability::Available,
         });
         let startup_notice = identity_startup_notice.or(subg_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -675,6 +722,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 );
             }
 
+            // Applying a channel-changing profile retags the running interface and updates
+            // its status ID. Read that live ID for card classification instead of retaining
+            // the boot-time ID, otherwise LoRa disappears from the home screen until reset.
             let snapshots = build_snapshots(
                 usb_status,
                 wifi_status.as_ref(),
@@ -1098,6 +1148,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                                     screen::RemoteControlTargetPairingFailure::Close,
                                                 )
                                             });
+                                            ui_state.remote_control_pairing_close_failed();
                                         }
                                     }
                                 }
@@ -1515,6 +1566,15 @@ async fn manifold_task(run: core::pin::Pin<&'static mut dyn core::future::Future
     run.await
 }
 
+#[cfg(feature = "sram-storage")]
+#[embassy_executor::task]
+async fn sram_manifold_task(
+    node: &'static mut S3Node,
+    persistence: &'static mut crate::persistence::S3Persistence,
+) {
+    manifold_run(node, persistence).await
+}
+
 async fn manifold_run(
     node: &'static mut S3Node,
     persistence: &'static mut crate::persistence::S3Persistence,
@@ -1527,9 +1587,6 @@ async fn manifold_run(
     #[cfg(feature = "remote-control-pairing")]
     {
         set_remote_control_clock(report.logical_start);
-        observe_restored_remote_control_grants(
-            report.remote_control_controller_grants_restored_count,
-        );
     }
     boot_stage(BootPhase::PersistenceRestoreComplete);
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
