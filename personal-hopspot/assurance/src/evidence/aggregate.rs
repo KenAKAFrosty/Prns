@@ -503,11 +503,28 @@ mod tests {
     #[test]
     fn absent_evidence_is_preserved_as_required_failure() -> Result<(), AggregateError> {
         let matrix = assemble(Vec::new(), Vec::new())?;
-        assert_eq!(matrix.targets.len(), 14);
+        let canonical = personal_hopspot_resources::matrix::canonical_targets()?;
+        assert_eq!(
+            matrix
+                .targets
+                .iter()
+                .map(|target| target.id.as_str())
+                .collect::<Vec<_>>(),
+            canonical
+                .iter()
+                .map(|target| target.id())
+                .collect::<Vec<_>>()
+        );
+        let required_proofs = crate::capabilities::canonical()?
+            .iter()
+            .filter(|capability| {
+                matches!(capability.support, crate::contract::SupportLevel::Required)
+            })
+            .count();
         assert_eq!(
             matrix.status,
             MatrixStatus::Failed {
-                required_failures: 20,
+                required_failures: canonical.len() + required_proofs,
             }
         );
         Ok(())
