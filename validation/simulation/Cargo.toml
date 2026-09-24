@@ -1,0 +1,17 @@
+[package]
+name = "prns-simulation"
+version = "0.3.7"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Deterministic, host-native virtual device validation for Personal Reticulum"
+publish = false
+
+[dependencies]
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

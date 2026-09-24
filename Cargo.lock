@@ -3404,6 +3404,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-simulation"
+version = "0.3.7"
+dependencies = [
+ "personal-rns",
+ "tokio",
+]
+
+[[package]]
 name = "prns-tools-command"
 version = "0.1.0"
 

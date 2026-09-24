@@ -19,6 +19,7 @@ members = [
     "docs/command",
     "tools/repo/cargo-tools-command",
     "personal-hopspot/flasher",
+    "validation/simulation",
 ]
 default-members = [
     "personal-rns",
