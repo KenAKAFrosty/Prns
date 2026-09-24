@@ -163,6 +163,15 @@ impl FaultPlan {
         )
     }
 
+    #[must_use]
+    pub fn rules(&self) -> &[TransmissionRule] {
+        &self.rules
+    }
+
+    pub(crate) fn from_canonical_rules(rules: Vec<TransmissionRule>) -> Self {
+        Self { rules }
+    }
+
     pub(crate) fn action_for(&self, ordinal: TransmissionOrdinal) -> Option<TransmissionAction> {
         self.rules
             .binary_search_by_key(&ordinal, |rule| rule.ordinal)

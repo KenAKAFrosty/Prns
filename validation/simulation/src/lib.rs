@@ -6,6 +6,7 @@ mod config;
 mod fault;
 mod interface;
 mod medium;
+mod seeded;
 mod time;
 mod trace;
 
@@ -15,6 +16,10 @@ pub use fault::{
 };
 pub use interface::VirtualInterface;
 pub use medium::{AttachError, EndpointId, VirtualMedium};
+pub use seeded::{
+    RatePerMillion, RatePerMillionError, SeededFaultProfile, SeededFaultProfileError,
+    SeededFaultRecipe, SimulationSeed, SEEDED_FAULT_ALGORITHM_VERSION,
+};
 pub use time::{AdvanceError, AdvanceReport, SimulationDurationInTicks, SimulationTick};
 pub use trace::{DeliveryCopy, MediumEvent, ReceptionDropReason, TraceSnapshot};
 

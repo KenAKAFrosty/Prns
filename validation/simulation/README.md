@@ -14,6 +14,7 @@ The medium intentionally makes its limits and faults explicit:
 - channel tags are nonempty, bounded, and unique within a medium;
 - scheduled frame drops use stable transmission ordinals;
 - a logical medium clock drives bounded delay, duplication, and reordering;
+- versioned seeded recipes materialize exact, replayable fault plans;
 - every accepted transmission and delivery outcome enters a bounded trace;
 - trace eviction is counted instead of silently pretending the trace is whole.
 
