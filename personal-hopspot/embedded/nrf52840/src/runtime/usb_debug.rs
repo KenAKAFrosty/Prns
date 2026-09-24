@@ -11,7 +11,10 @@ use embassy_usb::class::cdc_acm::CdcAcmClass;
 use embassy_usb::driver::Driver;
 use embassy_usb::UsbDevice;
 
-const RING_BYTES: usize = 1024;
+// T114's default image only has ~1.5 KiB of static-RAM headroom above the
+// minimum runtime stack. Keep the ring small enough that CDC + larger USB
+// descriptor buffers still link; oldest lines drop when the host is slow.
+const RING_BYTES: usize = 256;
 const PACKET_BYTES: usize = 63;
 
 struct Ring {

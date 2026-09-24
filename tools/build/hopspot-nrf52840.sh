@@ -46,7 +46,8 @@ elif [[ -n "${2:-}" ]]; then
     exit 1
 fi
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"crate="$root/personal-hopspot/embedded/nrf52840"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+crate="$root/personal-hopspot/embedded/nrf52840"
 output="$root/target/hopspot-$board"
 cargo_target="$output/cargo"
 elf="$cargo_target/thumbv7em-none-eabihf/release/$firmware_name"
