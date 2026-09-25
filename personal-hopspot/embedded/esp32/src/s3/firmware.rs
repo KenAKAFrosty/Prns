@@ -144,10 +144,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         memory.flash_capacity(),
     )));
     let shared_flash = SharedNorFlash::new(flash, memory.flash_capacity());
-    let remote_control_bootstrap =
+    let remote_control_load =
         remote_control_bootstrap.expect("RemoteControl identity bootstrap failed");
+    let factory_grant = remote_control_load.factory_grant;
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
-        remote_control_bootstrap.into_parts();
+        remote_control_load.bootstrap.into_parts();
     let wifi_configuration_key = remote_control_identity_secrets
         .target_sealing_key(screen::WIFI_CONFIGURATION_SEALING_DOMAIN);
     let mut wifi_configuration_store =
@@ -298,7 +299,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     super::firmware_update_listener::set_destination(ota_destination);
     let mut remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
-        RemoteControlInitialControllerGrants::Nobody,
+        crate::identity::factory_or_fallback_grants(factory_grant),
         RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
         remote_control::capabilities::<B>(),
     );

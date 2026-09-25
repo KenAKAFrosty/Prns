@@ -82,16 +82,19 @@ pub(super) fn observe(event: &PrnsEvent<'_>) {
             destination: established.destination,
         }),
         PrnsEvent::Diagnostic(Diagnostic::PeerIdentified { link_id, identity }) => {
-            Some(OtaEvent::Identified { link_id, identity })
+            Some(OtaEvent::Identified {
+                link_id: *link_id,
+                identity: *identity,
+            })
         }
         PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, .. }) => {
-            Some(OtaEvent::Closed { link_id })
+            Some(OtaEvent::Closed { link_id: *link_id })
         }
         PrnsEvent::Message(Message::ChannelMessage {
             link_id,
             message_type,
             data,
-        }) if message_type == byte_stream::STREAM_DATA_TYPE => {
+        }) if *message_type == byte_stream::STREAM_DATA_TYPE => {
             let Ok(frame) = byte_stream::parse(data) else {
                 return;
             };
@@ -103,7 +106,7 @@ pub(super) fn observe(event: &PrnsEvent<'_>) {
                 return;
             }
             Some(OtaEvent::Chunk {
-                link_id,
+                link_id: *link_id,
                 bytes,
                 eof: frame.header.eof,
             })
