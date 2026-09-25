@@ -33,10 +33,33 @@ text checks, retained saved data and each reported one physical peer; the checkp
 distinguishes the checks repeated after those layout changes. iOS radio recovery,
 permission-denial trials and broader background/restoration qualification remain
 open. No new message-delivery or USB-unplugged acceptance is claimed for this
-slice. Persisted messaging names and the
-Saved/Discovered contact journey are next in the
+Connections slice. The messaging slice below has separate acceptance in the
 [two-phone demo plan](../../docs/phone-node-demo.md). Earlier transport checks do
 not qualify the new controls or broader background/restoration behavior.
+
+**Contacts** now owns the editable messaging name, My address sharing and explicit
+**Announce yourself**. Saving a name updates future announces and path responses;
+it does not broadcast immediately or change cryptographic identity. Saved contacts
+preserve private aliases separately from announced names. **Discovered** lists
+only authenticated LXMF destinations with last-heard age and ingress details,
+bounded to 256 entries and 24 hours per native generation. Clear discovered hides
+that history without deleting saved contacts or messages. An authenticated
+discovery can upgrade a manually saved address through **Save messaging contact**,
+preserving its private name and pin setting.
+
+**New message** selects saved messaging contacts or discovered recipients; manual
+address entry remains available. Inbox lists actual conversations. A fresh send
+can resolve missing recipient metadata through a bounded native path lookup,
+including after restart, before committing a message. It checks saved identity
+associations and current stamp requirements; **Finding contact…** is not durable
+acceptance. Existing proof-backed delivery, explicit retry and cancellation remain
+unchanged. The [messaging checkpoint](../../checkpoints/2026-09-24-messaging-discovery.md)
+records reciprocal delivery, discovery-clear sends and Android cold-launch
+resolution before the final Apple notification repair. That repair is installed,
+but its physical retry remains pending device access. Automatic iOS cold-launch
+recovery remains blocked by a stale Bluetooth peer at the other phone; the lookup
+keeps the draft unqueued.
+Settled Bluetooth link recovery is the next prerequisite in the demo plan.
 
 Pairing is authorization, not a live connection. Contacts and mailbox rows are
 local application records, not proof that their peer is reachable. Development
