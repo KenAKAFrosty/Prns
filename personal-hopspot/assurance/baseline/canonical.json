@@ -17,12 +17,12 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "a33269a83da4f39cfe5d5f45c337331f393244b21e070b40245c6242a4a22458",
+          "report_fingerprint": "fd7f7d4cb797a6030394ff8e28867edc859466cb0820dfc924c29f4c27ce1dc5",
           "build_fingerprint": "fb29d4aed932ec1b3e69e34d8bcf57f252ffebe898746a0147d581e1435924d3",
           "toolchain_fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
-          "memory_contract_fingerprint": "6bdf05a832be66d106f992cbbff9ee81aa2908f43aa1cd916a2d7d5036dc8050"
+          "memory_contract_fingerprint": "79b7ebb26fbcf54fed9bbeb4a706a36de1b582cfd207ae28609e86b1c48db552"
         }
       }
     },
@@ -38,12 +38,12 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "84baba2befdfafce21d46660b0b623383209921fc6462c0f69c5afeb8d31b73a",
+          "report_fingerprint": "e7c905f20596dce58e0e8dc0bccb11c2b01ea0c60a0ab86e1568dd91c2f4a9d6",
           "build_fingerprint": "ba2f94fb2ac21174b5b1ab62e95ab8f14ea426e8b8dd923c8505fdeaec644ce4",
           "toolchain_fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
-          "memory_contract_fingerprint": "edde6c941960211bbae24c72d078be01f78296665cf59be930b62a0504a0a0ae"
+          "memory_contract_fingerprint": "1892468145b17702bed6ff0d1fac7859c083bff8467db188a183b1561f39ad44"
         }
       }
     },
@@ -59,12 +59,12 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "1f51e6acbda56bf683daebf29a2a573cdd0f846cf133ab87314ce404f565b31a",
+          "report_fingerprint": "622b06d98f01b74e20360ba95b561e0da152d568cab29997a9b7e7fb4d709c77",
           "build_fingerprint": "7bd0cff88105969798f43c7d0c3fb9344017a29985a5eff44df63a0c3238798f",
           "toolchain_fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
-          "memory_contract_fingerprint": "02a248cfb04405e1b2ffd22d46eee20e11cd4daf1b2ec5e5edd9618e177fe83f"
+          "memory_contract_fingerprint": "24de7f31cf7ec03e2b429c78caf4715021aab127bb50e37ca0a7fc8f4238f31d"
         }
       }
     },
@@ -80,12 +80,12 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "0a82787da16fb143a33daa3495b60c4e15c3366c442e1933329178847b5df02a",
+          "report_fingerprint": "5a45c8ee80d0eeb0e82cc949641c7e91e8d6c991236d43b8fb10c8943a303c68",
           "build_fingerprint": "f6a20de2e63999f7be51e6a3eb8d5a3102b39e2adc9634b92ccbf3ab7daacfee",
           "toolchain_fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
-          "memory_contract_fingerprint": "668f69da930b8ff21ac8c831e00627b0e41fb95e15a3a0988486a4b4dd7a291a"
+          "memory_contract_fingerprint": "264427a220750a901bf89edcdfeeb3ce538ab8fec54f92c04d3bffff1fa41de0"
         }
       }
     },
@@ -101,12 +101,12 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "f3f3f6357984389ec38ba87ba89f8045a7ecbbe85795ebcfc8b6a93b804fbbc8",
+          "report_fingerprint": "5eb46e575a87e3a5c0a564a7deeb9f68b19406e6365ce63d95f9c2a4a1c6d8a3",
           "build_fingerprint": "53ea7c013994772884fed0e050c2a450ac4ac8d8032f38ba65173e33c1c5198f",
           "toolchain_fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
-          "memory_contract_fingerprint": "e74a361f8799e2b23315fd80fd3f5d7b7750c529519e0a736f55b08378d0b429"
+          "memory_contract_fingerprint": "fe0671d39736d18a48fd2fa7ffa803c8e27e94b167556cd0d7335fb028beb1e7"
         }
       }
     },
@@ -122,12 +122,12 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "a61afb237f44c2811412b7abf5b84ae5fe60792ee7eb102d0ed3af8803951b88",
+          "report_fingerprint": "03e4ad2f2c8513c8d7d75b654b08e75940b2a823a1dd960cba829c59d9eb471e",
           "build_fingerprint": "97797d01b7ffd38511b3132bc5eb8996c54d6364fa3f5dc4a6423fb7f93a15f4",
           "toolchain_fingerprint": "05df86ce3c2a86bd89a98f1c4228c28cd12ba41314a6c80bbb51cb14de8b73fc",
-          "memory_contract_fingerprint": "772284c4db5165552c28eef25d051364dbde697a6e83a821738e19895f6e65b7"
+          "memory_contract_fingerprint": "a7c69198c8c6721c99b5b6f654de59e0f652e5a0474b9b195d35da1e90832dbb"
         }
       }
     },
@@ -143,9 +143,9 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "8f459a2cb99135598d6025427d4e0cbbd87dee503342cf8afdf9e191c8066482",
+          "report_fingerprint": "59e426cc4ef13de7996ecf5e7be463d403cfce89b2916b78c29d92760604081b",
           "build_fingerprint": "9cfbdbdef5697e571ce627dfa04d4b0879e19a61709a81cc74035039ba79bb70",
           "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
           "memory_contract_fingerprint": "7d726b15f5339a3c519d79fe5d9258727bbbbf2d59d9de545fc56872dd1ef966"
@@ -164,9 +164,9 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "f71ad8017d263ad5691e7bc7e6b935e75fbd19c112097729e8754580cf9f5d70",
+          "report_fingerprint": "9150753d1c36cc1383ed4bf89f18a45519bd4cef6179cc126cec7f879bc6dcfa",
           "build_fingerprint": "a664c84f8ae355a06014302cdeee84948079f5afa250ae6b65482722c270cdf2",
           "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
           "memory_contract_fingerprint": "5031137380b84665145c00f57a0d1884a34c9d141b1716c08c846cc06f5764ae"
@@ -185,9 +185,9 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "87d3052278d17e1e830902c1d613888a77ded706423844bb036b4b651f9bda70",
+          "report_fingerprint": "8ddf6d8ecb31bb35d63a824a2c16fc2137d2b0b580748048170b238510402169",
           "build_fingerprint": "4f8b0fcbfadf94f620af6e02e693198ea8a0b8aebe550b50c3ee772084f45e8e",
           "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
           "memory_contract_fingerprint": "84fd98e0890d45d58fda9c9016a3a9f29a6597290522b917fd53c307350e6e74"
@@ -206,9 +206,9 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "61d556a0635fa8e84622bfabc8c3f3cf43ba05e329c31d45a9b8fc13204763b0",
+          "report_fingerprint": "8bb81d1ffa8a29ed25bb8415d5d27c9d6a6bb4e445df2794cbd9f49d214e4e75",
           "build_fingerprint": "76cd90b4ec9c132c0516a7400e19232f86475afd4a8db222cd675cd8320d132d",
           "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
           "memory_contract_fingerprint": "67d46a84dbb0457acb7ab7eec2d788be69bad1c0321b532ea89eac04503e29b0"
@@ -227,9 +227,9 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "c88e3aacd4120e88e251125a5853c48ee948e2888f7f3f65b76d2fec1eeae34b",
+          "report_fingerprint": "4026b659d5c9eb351de2f3007db0b9c82ebfc30b0df0dd87fd95cd1b11e4c4cf",
           "build_fingerprint": "02ef74edd9930ff1a226f8a08e12c5e5ea96aacb0ea382853f0e348019eef17b",
           "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
           "memory_contract_fingerprint": "61ca3603b893f24cfe8089db6fdb476fb2247a08731089bcc27c8c243a78335d"
@@ -248,12 +248,33 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "1dff689ba4f2b2bde453cb06e2a25d5404a7446c5cc739b6fa729b5ce4d39b32",
+          "report_fingerprint": "1911985e016e9ec0764c008eed8e99e1ce893684e02f09eb1a0dbe0465a2e925",
           "build_fingerprint": "f793b36e19e64f0ae305163a1b589135ca48b95ef823608233c398569e733fd5",
           "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
           "memory_contract_fingerprint": "4202531688f76435d00b5616607a680308941b8e5de9b81d4e7240a5fbe278f0"
+        }
+      }
+    },
+    {
+      "id": "rak4631",
+      "display_name": "RAK WisBlock Starter Kit S140 6.1.1",
+      "memory_profile": "rak4631",
+      "architecture": "thumbv7em",
+      "rust_target": "thumbv7em-none-eabihf",
+      "architecture_adapter": "thumbv7em-rust-lld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
+          },
+          "report_fingerprint": "a1897af0666b23fc673d0973b598bf42a3dad8b6d414ef45c3ba01260ac8cc59",
+          "build_fingerprint": "963c36182b50e32c52aec20dad600ebf349f36353b77983140306b55e04372c6",
+          "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
+          "memory_contract_fingerprint": "29be3a50debea93a8c102f323b3b4b72338d9c70aadd96b1fbcf4288b4ad6e75"
         }
       }
     },
@@ -269,9 +290,9 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "2edd5c1c749332fc8a0deccb106ffbd824bc846d48bc424ff0cd95207d3be368",
+          "report_fingerprint": "309c10dd8ad8289a3d5fa06ab12b3a17acddb7d7113617c1be5dc6bb1d0f8af3",
           "build_fingerprint": "b1e5f1ea9dce9a026b2a99a1508c46f6989e755a91b84a344ab96cf96c0dcba9",
           "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
           "memory_contract_fingerprint": "82bc66481701d83730861051b82f79f5e2e9863d9c6170467875bddd6af967a7"
@@ -290,12 +311,33 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "report_fingerprint": "f38e730593deb6e17792a185d6510b1efc1d39e7ad3ab40d63605f03f1f92657",
+          "report_fingerprint": "9c9b16389092993099264990303a0f4fe28410a938283f4ff821376a9a8c8cc1",
           "build_fingerprint": "5de4b9a223b2b31486456bbc2cd2c8750ce22a492338f6e5b0682c08cd279a29",
           "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
           "memory_contract_fingerprint": "171a6f8d90fa5c11eb0f5b57a76f1ec3d4b75e0af9f11b530518cb95d5ca7931"
+        }
+      }
+    },
+    {
+      "id": "muzi-base-duo",
+      "display_name": "muzi Base Duo",
+      "memory_profile": "muzi-base-duo",
+      "architecture": "thumbv7em",
+      "rust_target": "thumbv7em-none-eabihf",
+      "architecture_adapter": "thumbv7em-rust-lld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
+          },
+          "report_fingerprint": "127511b34df9b3178b049f992cef3b2d9087c567f11ea08463298579b74ac267",
+          "build_fingerprint": "159e9a48f7e291a14e316f9a9fae78bca177f87b72b5188da3998af092cbcf61",
+          "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
+          "memory_contract_fingerprint": "65d4343c7333dab42311b10c2ceeaed65858d0697b356d2e5f0cfa801c64c604"
         }
       }
     }
@@ -326,9 +368,9 @@
         "source": {
           "custody": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "scenario_fingerprint": "426a015ade10c2d879be01a968a386143f1d47980e56d7daa8a8afaf3a1ffa9b"
+          "scenario_fingerprint": "d9a08e581f0cc05c853944b77424ef4ef5f8e316d44d18280e6ec3d987b5613e"
         },
         "tools": [
           {
@@ -352,14 +394,14 @@
           {
             "kind": "log",
             "path": "sx126x-stacked.log",
-            "bytes": 2042,
-            "fingerprint": "a1addf30a95b83d26a2235a5e99edbd5ce3a806a8bb2e75797ab641a719bd982"
+            "bytes": 4755,
+            "fingerprint": "15e451a2fb4f7f90c4e127c8ec0582c7ab4cb27cc0aae221521a7218f42f5cc2"
           },
           {
             "kind": "log",
             "path": "sx126x-tree.log",
             "bytes": 2060,
-            "fingerprint": "2fa58cded1ae0e6e402b84362abedb29edfb1298ec502ca416757242bb675a2e"
+            "fingerprint": "2215e8f0c38b8161ea855673fcd425c06850d5576595ac5c866ba91450a30294"
           }
         ]
       }
@@ -389,9 +431,9 @@
         "source": {
           "custody": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "scenario_fingerprint": "91cc3cf0efeeaae05e018bd61a2b62f7affd9ebb77dfefdefe6391fdb45726b4"
+          "scenario_fingerprint": "d1a93920f7688a3d40cce3d4c4867f6425ead913cb55846094c78e45380875c1"
         },
         "tools": [
           {
@@ -408,21 +450,21 @@
           "evidence": {
             "kind": "miri",
             "coverage": "stacked-and-tree",
-            "completed_tests": 16
+            "completed_tests": 20
           }
         },
         "artifacts": [
           {
             "kind": "log",
             "path": "lr1110-stacked.log",
-            "bytes": 1938,
-            "fingerprint": "039bfb5d736837a4602650d5809f0507dfb926a14a1f3cdda49217c2123e7ba7"
+            "bytes": 2307,
+            "fingerprint": "4ae76e64ce0630c5672eb02fbe6d3d993690b100bc0636fbc61e5aabba366557"
           },
           {
             "kind": "log",
             "path": "lr1110-tree.log",
-            "bytes": 1956,
-            "fingerprint": "58f2db9ed177667910b8b82faa41e86551015a7e4eba46f770cb23d1227efe18"
+            "bytes": 2325,
+            "fingerprint": "a3c1835e5e88916fddb0072d667b2ea2625029f0e9fb24e30f2d5bed19c966f6"
           }
         ]
       }
@@ -452,9 +494,9 @@
         "source": {
           "custody": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "scenario_fingerprint": "2ea8b9c31c659f7bb38df45b4c84b4d2f220a46a2cb3d2e09664df96c9a56612"
+          "scenario_fingerprint": "62a586249289ca9faf04c3e8e592536d93b35e9cf3dd40b48aefd099b30310c8"
         },
         "tools": [
           {
@@ -471,21 +513,21 @@
           "evidence": {
             "kind": "miri",
             "coverage": "stacked-and-tree",
-            "completed_tests": 18
+            "completed_tests": 28
           }
         },
         "artifacts": [
           {
             "kind": "log",
             "path": "embedded-persistence-stacked.log",
-            "bytes": 2665,
-            "fingerprint": "6c4a4117693ac83270967d0157a62d4a4fb7ee86d8155c2f49e255c8d7a13a14"
+            "bytes": 6421,
+            "fingerprint": "321826b9e4260bf03a500bfe9e97ca01671c54a318061bf82c5d9808ec72ae81"
           },
           {
             "kind": "log",
             "path": "embedded-persistence-tree.log",
-            "bytes": 2683,
-            "fingerprint": "2080d3c6a0f1e0b9173cab7f3c276d9051fe6921a1e2044bdbbfd495c012a6a8"
+            "bytes": 3812,
+            "fingerprint": "baf6aab835d3830d89a516ca4234cb40a001d9785b2916599cc2ab08dc9c17d2"
           }
         ]
       }
@@ -515,9 +557,9 @@
         "source": {
           "custody": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "scenario_fingerprint": "0cbe62f9a374b9d802f430644d814fdbde824899cf6532b8f346ad7bc6a4779f"
+          "scenario_fingerprint": "9afa68984d285a59233e25ce2f8aac68e72e507c8071063ce599f0a577f4cd59"
         },
         "tools": [
           {
@@ -552,14 +594,14 @@
           {
             "kind": "executable",
             "path": "thumbv7em.elf",
-            "bytes": 145552,
-            "fingerprint": "03537a780b6fd6a8db871caeb1e72b4c1d6822c76cc13e385e51e052d4547803"
+            "bytes": 145968,
+            "fingerprint": "db4f012e886a3c429187bb4f902d9a6f91a8b2c11bb0a6270d623408a9a6dbfd"
           },
           {
             "kind": "log",
             "path": "thumbv7em.log",
-            "bytes": 14756,
-            "fingerprint": "ed516812d9abba3298841084ac55ec9a9dc6a5f72c7e434bbaa64342cea88e37"
+            "bytes": 11552,
+            "fingerprint": "e9653ac540227b7994ded4d956111b4b071329f08156f404b195186e9e00f6ee"
           }
         ]
       }
@@ -589,9 +631,9 @@
         "source": {
           "custody": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "scenario_fingerprint": "0cbe62f9a374b9d802f430644d814fdbde824899cf6532b8f346ad7bc6a4779f"
+          "scenario_fingerprint": "9afa68984d285a59233e25ce2f8aac68e72e507c8071063ce599f0a577f4cd59"
         },
         "tools": [
           {
@@ -626,14 +668,14 @@
           {
             "kind": "executable",
             "path": "riscv32imac.elf",
-            "bytes": 103212,
-            "fingerprint": "878fa48e5e3d790047b51efbdf44914f07441850c0994eede3b9faed962848ec"
+            "bytes": 104272,
+            "fingerprint": "72d676ad5a143c286ab1087e28be184b3c3f375006715b20de3121e04a04280e"
           },
           {
             "kind": "log",
             "path": "riscv32imac.log",
-            "bytes": 11395,
-            "fingerprint": "3a3a76fa21bf6714ea7a4365fd69ee4f42a1538114e46333b8fd07ec459c1026"
+            "bytes": 14642,
+            "fingerprint": "9d1700c657e126bca9ab1d2b459285eeb3c79e46fac60a826aa55c3930e4244e"
           }
         ]
       }
@@ -663,9 +705,9 @@
         "source": {
           "custody": {
             "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
           },
-          "scenario_fingerprint": "5e51185797ccbe4346432b84d55b90c752e8b698a348a496f543441d80ebddfd"
+          "scenario_fingerprint": "8dcf1eb14c11f5489eb98b3629b7f3c77911e065fed8cf1add3a40bdc296c72b"
         },
         "tools": [
           {
@@ -700,14 +742,14 @@
           {
             "kind": "executable",
             "path": "xtensa-esp32s3.elf",
-            "bytes": 85336,
-            "fingerprint": "0da1411725c0a623a8e221ef324b576c77069d03d340344e6ab47ae4cad02404"
+            "bytes": 84680,
+            "fingerprint": "5741e0c07f53840ddd120fb1c0d964e9276a0949b36b42da842d30758f6fbb70"
           },
           {
             "kind": "log",
             "path": "xtensa-esp32s3.log",
-            "bytes": 13861,
-            "fingerprint": "83c72ec4e48946e5c4dc0c4e0650951085f7b120a6db70ef58fe2b4b582cb7f6"
+            "bytes": 13988,
+            "fingerprint": "c62eeaa5c42939b260e807749c07a774194e41b2e1d93cec2d1cc0afe86932fd"
           }
         ]
       }
@@ -728,7 +770,7 @@
       "reason": "evidence-not-produced"
     },
     {
-      "kind": "observed",
+      "kind": "unavailable",
       "capability": {
         "subject": {
           "kind": "platform",
@@ -740,70 +782,7 @@
           "kind": "pilot"
         }
       },
-      "proof": {
-        "schema_version": 2,
-        "subject": {
-          "kind": "platform",
-          "id": "esp32s3"
-        },
-        "scenario": "platform-startup",
-        "proof": "platform-emulation",
-        "runner": "qemu-esp32s3-startup",
-        "source": {
-          "custody": {
-            "kind": "clean-commit",
-            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
-          },
-          "scenario_fingerprint": "0a2ca43caf5d00960b881661da25ec0f77d28c30efb9191a4afc8d98ed4d9d01"
-        },
-        "tools": [
-          {
-            "kind": "cargo",
-            "version": "cargo 1.95.0-nightly (f2d3ce0bd 2026-03-21) (1.95.0.0)"
-          },
-          {
-            "kind": "rustc",
-            "version": "rustc 1.95.0-nightly (95e5bda86 2026-04-15) (1.95.0.0)"
-          },
-          {
-            "kind": "linker",
-            "version": "xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0"
-          },
-          {
-            "kind": "qemu",
-            "version": "QEMU emulator version 9.2.2 (esp_develop_9.2.2_20260417); executable-sha256=dab87a4b3be6493c37326ef1ef2db64d42592507ed9f381232d5a1b6fa5492fb"
-          }
-        ],
-        "verdict": {
-          "kind": "passed",
-          "evidence": {
-            "kind": "platform-emulation",
-            "platform": "esp32s3",
-            "milestone": "runtime-initialized",
-            "transcript_fingerprint": "c91f1eb7a8925858d3cba8e22336ea30d9ec5448eba2bb34929fa7926c4ccf2a"
-          }
-        },
-        "artifacts": [
-          {
-            "kind": "transcript",
-            "path": "esp32s3.transcript",
-            "bytes": 118,
-            "fingerprint": "c91f1eb7a8925858d3cba8e22336ea30d9ec5448eba2bb34929fa7926c4ccf2a"
-          },
-          {
-            "kind": "executable",
-            "path": "esp32s3.elf",
-            "bytes": 697748,
-            "fingerprint": "6bd59bfad8f83c6080d92c787476a1bfd6db35d0dbf623d0f86ebffd073cf394"
-          },
-          {
-            "kind": "log",
-            "path": "esp32s3.log",
-            "bytes": 4378,
-            "fingerprint": "3adbb454693c7168f3649c32a4e739586b3d101c8d17eced337cf80d41d3db9a"
-          }
-        ]
-      }
+      "reason": "evidence-not-produced"
     },
     {
       "kind": "unavailable",

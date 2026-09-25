@@ -340,12 +340,18 @@ mod tests {
     #[test]
     fn recorded_status_must_match_required_failures() -> Result<(), Box<dyn std::error::Error>> {
         let mut matrix = assemble(Vec::new(), Vec::new())?;
+        let MatrixStatus::Failed {
+            required_failures: expected,
+        } = matrix.status
+        else {
+            return Err("missing evidence must fail".into());
+        };
         matrix.status = MatrixStatus::Passed;
         assert!(matches!(
             validate(&matrix),
             Err(MatrixValidationError::IncorrectStatus {
-                required_failures: 20,
-            })
+                required_failures,
+            }) if required_failures == expected
         ));
         Ok(())
     }

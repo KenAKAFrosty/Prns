@@ -55,9 +55,10 @@ fn comparison_calls_out_fingerprint_changes() -> Result<(), Box<dyn std::error::
             memory_contract_fingerprint: fingerprint('d')?,
         },
     };
-    before.status = MatrixStatus::Failed {
-        required_failures: 19,
+    let MatrixStatus::Failed { required_failures } = &mut before.status else {
+        return Err("missing evidence must fail".into());
     };
+    *required_failures -= 1;
     let mut after = before.clone();
     if let Verdict::Passed { evidence } = &mut after.targets[0].resource {
         evidence.report_fingerprint = fingerprint('e')?;
@@ -82,7 +83,10 @@ fn matrix_report_exposes_failure_counts_and_typed_details() -> Result<(), Box<dy
 
     let markdown = super::render::matrix(&matrix);
 
-    assert!(markdown.contains("failed (20 required failures)"));
+    let MatrixStatus::Failed { required_failures } = matrix.status else {
+        return Err("missing evidence must fail".into());
+    };
+    assert!(markdown.contains(&format!("failed ({required_failures} required failures)")));
     assert!(markdown.contains("structural-violation: bad \\| entry point"));
     assert!(markdown.contains("evidence-not-produced"));
     assert!(markdown.contains("contract: emulator-does-not-model-platform"));
