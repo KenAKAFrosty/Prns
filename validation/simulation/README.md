@@ -155,6 +155,52 @@ cargo test --locked -p prns-simulation --features controlled-time --lib manual_t
 cargo test --locked -p prns-simulation --features controlled-time --test manual_time
 ```
 
+### Wake-driven scenario actors
+
+`ManualTaskRunner` borrows a manual driver for the entire lifetime of a bounded
+set of actor futures. Capacity is an explicit nonzero value. Each `poll_next`
+call polls at most one ready actor and returns `Pending`, `Completed` with its
+typed output and task ID, or `Idle`. The scenario must bound its total calls;
+a self-waking actor cannot turn one call into an unbounded polling loop. Futures
+must still cooperate by returning from each individual poll.
+
+New actors start ready. Subsequent polls require a wake; repeated wakes coalesce
+into one ready entry. Selection follows cyclic admission order across ready IDs,
+so an immediately self-waking actor does not monopolize a fixed set. Ordered
+indexes select ready actors without scanning dormant futures. Completion removes
+both registration and readiness before dropping the future, returns the output
+without retaining it, and frees capacity. IDs never repeat within a runner and
+fail closed on exhaustion. Retained stale wakers cannot revive completed actors
+or keep the scheduler alive. Dropping the runner drops its remaining futures.
+
+Actor futures may be non-Send. They are polled in the driver's Tokio timer context
+without entering Tokio's task scheduler, preserving cooperative-yield wakes and
+leaving task order under the runner's control. No spawned tasks are supported.
+The driver cannot be accessed independently while borrowed by the runner, and
+its existing clock-drift and spawned-task checks still apply. Errors detected
+after a poll do not undo actor effects or recover a completed output; discard
+that runner and its driver.
+
+`advance_to_next_event` refuses with `ReadyTasks` while registered actors are
+ready. After settling ready work, the scenario still supplies its known runtime
+deadlines as boundaries; the runner does not inspect Tokio's timer queue. `Idle`
+means only that no registered actor was ready when checked, not that all runtime
+or external work has settled. Concurrent external wakes are safe to record but
+do not establish deterministic replay or atomicity with time advancement.
+
+A 1,024-actor channel test verifies exact per-actor poll counts: waking one actor
+does not repoll its 1,023 dormant neighbors. Other tests cover readiness
+coalescing, round-robin selection, cross-thread wakes during polling, capacity
+and ID exhaustion, teardown, cooperative yields, and exact timer boundaries.
+The production BLE supervisor regression now also verifies discovery and its
+10-second silent-handshake timeout through wake-driven polling. These are actor
+and detached-supervisor tests, not a 1,024-node capacity or throughput result.
+Shipping runtime behavior is unchanged.
+
+```console
+cargo test --locked -p prns-simulation --features controlled-time --lib manual_time::tasks
+```
+
 ## Large-fleet design requirements
 
 Both media require an explicit topology choice: fully connected, or sparse with

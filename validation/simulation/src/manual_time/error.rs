@@ -13,6 +13,9 @@ pub enum ManualTimeError {
     SpawnedTasks {
         count: usize,
     },
+    ReadyTasks {
+        count: usize,
+    },
     ClockDrift {
         expected: Duration,
         observed: Duration,
@@ -39,6 +42,7 @@ impl fmt::Display for ManualTimeError {
             Self::InvalidTickDuration { requested } => write!(formatter, "tick duration {requested:?} must be a nonzero whole number of milliseconds fitting u64"),
             Self::InsideRuntime => formatter.write_str("manual time driving requires a synchronous caller outside Tokio"),
             Self::SpawnedTasks { count } => write!(formatter, "manual time driving does not support {count} live spawned tasks"),
+            Self::ReadyTasks { count } => write!(formatter, "settle {count} ready manual tasks before advancing time"),
             Self::ClockDrift { expected, observed } => write!(formatter, "runtime clock changed outside the driver: expected {expected:?}, observed {observed:?}"),
             Self::MediumDrift { expected, observed } => write!(formatter, "medium clock changed outside the driver: expected {}, observed {}", expected.get(), observed.get()),
             Self::BeforeCurrent { current, requested } => write!(formatter, "cannot move manual time backward from {} to {}", current.get(), requested.get()),
@@ -58,6 +62,7 @@ impl std::error::Error for ManualTimeError {
             Self::InvalidTickDuration { .. }
             | Self::InsideRuntime
             | Self::SpawnedTasks { .. }
+            | Self::ReadyTasks { .. }
             | Self::ClockDrift { .. }
             | Self::MediumDrift { .. }
             | Self::BeforeCurrent { .. }

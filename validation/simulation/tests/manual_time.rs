@@ -20,8 +20,8 @@ use prns_simulation::ble::{
     VirtualGattConfig,
 };
 use prns_simulation::{
-    ManualAdvance, ManualMedium, ManualTimeDriver, ManualTimeError, ManualTimeSnapshot,
-    SimulationDurationInTicks, SimulationTick, TopologyConfig,
+    ManualAdvance, ManualMedium, ManualTaskPoll, ManualTaskRunner, ManualTimeDriver,
+    ManualTimeError, ManualTimeSnapshot, SimulationDurationInTicks, SimulationTick, TopologyConfig,
 };
 
 const MAX_PEERS: usize = 4;
@@ -177,6 +177,57 @@ fn production_supervisor_times_out_on_the_coordinated_clock() {
     assert_eq!(
         ready(&mut driver, pin!(link.control_recv())),
         Err(VirtualBleError::LinkClosed)
+    );
+}
+
+#[test]
+fn production_supervisor_discovery_and_timeout_are_wake_driven() {
+    let Scenario {
+        lab,
+        mut driver,
+        supervisor,
+        remote: _remote,
+    } = scenario(2);
+    let status = supervisor.status();
+    let (fleet, _detached) = Fleet::detached(status.id());
+    let mut runner = ManualTaskRunner::new(&mut driver, NonZeroUsize::MIN);
+    let task = runner
+        .insert(supervisor.run(fleet))
+        .unwrap_or_else(|error| unreachable!("one supervisor: {error}"));
+    let settle = |runner: &mut ManualTaskRunner<'_, ()>| {
+        for polls in 0..32 {
+            match checked(runner.poll_next()) {
+                ManualTaskPoll::Idle => return polls,
+                ManualTaskPoll::Pending { task: polled } => assert_eq!(polled, task),
+                ManualTaskPoll::Completed { .. } => unreachable!("supervisor must stay live"),
+            }
+        }
+        unreachable!("supervisor must settle within its poll budget")
+    };
+    assert!(settle(&mut runner) > 0);
+    assert_eq!(lab.active_connection_count(), 0);
+    let _ = checked(runner.advance_to_next_event(tick(9_999)));
+    assert!(settle(&mut runner) > 0);
+    assert_eq!(lab.active_connection_count(), 1);
+    let _ = checked(runner.advance_to_next_event(tick(9_999)));
+    assert_eq!(settle(&mut runner), 0);
+    assert_eq!(lab.active_connection_count(), 1);
+    let _ = checked(runner.advance_to_next_event(tick(10_000)));
+    assert!(settle(&mut runner) > 0);
+    assert_eq!(
+        (
+            lab.active_connection_count(),
+            status.connection(),
+            checked(runner.snapshot())
+        ),
+        (
+            0,
+            ConnectionState::Disconnected,
+            ManualTimeSnapshot {
+                tick: tick(10_000),
+                runtime_elapsed: Duration::from_secs(10),
+            },
+        )
     );
 }
 

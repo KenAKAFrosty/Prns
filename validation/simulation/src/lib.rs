@@ -23,7 +23,8 @@ pub use fault::{
 pub use interface::VirtualInterface;
 #[cfg(feature = "controlled-time")]
 pub use manual_time::{
-    ManualAdvance, ManualMedium, ManualTimeDriver, ManualTimeError, ManualTimeSnapshot,
+    ManualAdvance, ManualMedium, ManualTaskAdmissionError, ManualTaskId, ManualTaskPoll,
+    ManualTaskRunner, ManualTimeDriver, ManualTimeError, ManualTimeSnapshot,
 };
 pub use medium::{AttachError, EndpointId, VirtualMedium};
 pub use seeded::{
