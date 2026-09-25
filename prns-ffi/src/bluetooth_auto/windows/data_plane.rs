@@ -280,11 +280,42 @@ impl BleSource for WinGattSource {
             frame = self.inbound.recv() => frame.ok_or(WindowsBleError::Closed)?,
             _ = self.closed.changed() => return Err(WindowsBleError::Closed),
         };
-        let len = frame.len().min(out.len());
-        let dst = out.get_mut(..len).ok_or(WindowsBleError::FrameTooLarge)?;
-        let src = frame.get(..len).ok_or(WindowsBleError::FrameTooLarge)?;
-        dst.copy_from_slice(src);
-        Ok(len)
+        prns_core::interfaces::bluetooth_auto::copy_received_frame(&frame, out)
+            .map_err(|_| WindowsBleError::FrameTooLarge)
+    }
+}
+
+#[cfg(test)]
+mod receive_tests {
+    use super::*;
+    use prns_core::interfaces::bluetooth_auto::BLE_WIRE_FRAME_LEN;
+
+    #[tokio::test]
+    async fn small_receive_buffers_refuse_whole_frames_and_preserve_the_next_frame() {
+        let (sender, inbound) = tokio_mpsc::channel(2);
+        let (_open, closed) = watch::channel(false);
+        assert!(sender.send(Box::from([1, 2, 3])).await.is_ok());
+        assert!(sender
+            .send(Box::from([0x17; BLE_WIRE_FRAME_LEN]))
+            .await
+            .is_ok());
+        let mut source = WinGattSource {
+            inbound,
+            closed,
+            _keepalive: SourceKeepalive::Peripheral,
+        };
+        let mut small = [0xA5; 2];
+        assert!(matches!(
+            source.recv_frame(&mut small).await,
+            Err(WindowsBleError::FrameTooLarge)
+        ));
+        assert_eq!(small, [0xA5; 2]);
+        let mut wire = [0; BLE_WIRE_FRAME_LEN];
+        assert!(matches!(
+            source.recv_frame(&mut wire).await,
+            Ok(BLE_WIRE_FRAME_LEN)
+        ));
+        assert_eq!(wire, [0x17; BLE_WIRE_FRAME_LEN]);
     }
 }
 

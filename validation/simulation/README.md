@@ -48,6 +48,14 @@ maximum frames, cancellation, backpressure, malformed control values, and
 disconnect during a fragmented send. The full-node capstone transfers 256-byte
 requests through 20-byte data values before and after recovery.
 
+Tokio BLE peer receive storage is bounded by the packet MTU plus maximum
+interface-authentication headroom, rather than the global frame ceiling.
+Source adapters refuse insufficient buffers without returning a truncated
+prefix, and peer tasks check returned lengths before using them. A
+[local future-layout measurement](measurements/ble-peer-buffer.md) records the
+allocation change and its limits; it is not a total-memory or fleet-capacity
+claim.
+
 The logical clock owns media delivery and advertisement scheduling. Production
 runtime deadlines still use real time, so full runtime replay is not yet
 deterministic. This models the characteristic-value boundary, not native
@@ -125,8 +133,7 @@ capstones establish two-node correctness only.
   simulated interval. Scale runs must retain correctness assertions for delivery,
   recovery, backpressure, and cleanup, not merely demonstrate that nodes start.
 
-Remaining obstacles include real-time runtime deadlines and per-peer allocation.
-The production BLE peer receive buffer also uses the global maximum wire-frame
-size (524,352 bytes), despite its smaller transport MTU. Audit transport-specific
-bounds and measure against the existing runtime before changing allocation
-policy; do not conceal that cost in the simulator.
+Remaining obstacles include real-time runtime deadlines and a measured accounting
+of total per-node and per-peer allocation. The transport-sized BLE receive
+buffer removes one known large allocation, not all of those costs. Native
+queues, scheduler storage, and full production-node scale still need evidence.

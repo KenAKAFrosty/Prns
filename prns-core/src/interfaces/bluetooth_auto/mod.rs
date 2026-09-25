@@ -4,6 +4,7 @@ mod framing;
 mod handshake;
 mod identity;
 mod policy;
+mod receive;
 
 pub use crate::interfaces::{
     DiscoveryGroupHash, DiscoveryGroupHashSet, DiscoveryGroupId, DiscoveryGroupIdError,
@@ -24,7 +25,7 @@ pub use backend::{
 };
 pub use framing::{
     encode_stream_frame, fragments_of, Fragment, FragmentKind, Reassembler, StreamDeframer,
-    BLE_HW_MTU, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
+    BLE_HW_MTU, BLE_WIRE_FRAME_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 pub use handshake::{
     is_keeper, l2cap_arrangement, l2cap_plan, needs_redial, we_should_be_central, AndroidHost,
@@ -37,6 +38,7 @@ pub use identity::{
     decode_persisted_ble_identity, encode_persisted_ble_identity, BleAddress, BleIdentity,
     PersistedBleIdentityError, BLE_IDENTITY_LEN, GROUP_ID, PERSISTED_BLE_IDENTITY_LEN,
 };
+pub use receive::{copy_received_frame, BleReceiveError};
 /// Canonical name for a Bluetooth LE device address.
 pub type BluetoothLeAddress = BleAddress;
 /// Canonical name for a Bluetooth LE auto-interface identity.

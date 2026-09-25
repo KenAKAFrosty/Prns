@@ -31,7 +31,7 @@ use prns_core::interfaces::{
     TransferRates, DEFAULT_DISCOVERY_GROUP_HASH,
 };
 use prns_runtime::manifold::driver::TokioInterfaceStatus;
-use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 struct ClosedSignal {
@@ -124,7 +124,7 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
-        let mut buf = [0u8; MAX_WIRE_FRAME_LEN];
+        let mut buf = [0u8; contract::BLE_WIRE_FRAME_LEN];
         loop {
             tokio::select! {
                 received = self.source.recv_frame(&mut buf) => {
@@ -140,6 +140,13 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                     };
                     if len == 0 {
                         continue;
+                    }
+                    if len > buf.len() {
+                        crate::diagnostic_log::warn!(
+                            "bluetooth: peer {:?} reported invalid receive length {len}",
+                            self.identity
+                        );
+                        break;
                     }
                     self.status.add_rx(len as u64);
                     seam.next_inbound(&buf[..len]).await;
@@ -1163,9 +1170,7 @@ mod tests {
 
         async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, Closed> {
             let frame = self.data_rx.recv().await.ok_or(Closed)?;
-            let len = frame.len().min(out.len());
-            out[..len].copy_from_slice(&frame[..len]);
-            Ok(len)
+            contract::copy_received_frame(&frame, out).map_err(|_| Closed)
         }
     }
 

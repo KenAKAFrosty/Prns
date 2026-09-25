@@ -2252,7 +2252,11 @@ impl BleSource for L2capSource {
             return Err(BluerError::NotUpgraded);
         };
         loop {
-            if let Some(len) = self.deframer.next_frame(out) {
+            if let Some(len) = self
+                .deframer
+                .next_frame_checked(out)
+                .map_err(|_| BluerError::FrameTooLarge)?
+            {
                 return Ok(len);
             }
             let mut scratch = [0u8; L2CAP_SDU_LEN];
@@ -2374,9 +2378,8 @@ impl BleSource for GattSource {
                 continue;
             };
             if let Some(frame) = self.reassembler.absorb(&fragment) {
-                let len = frame.len().min(out.len());
-                out[..len].copy_from_slice(&frame[..len]);
-                return Ok(len);
+                return prns_core::interfaces::bluetooth_auto::copy_received_frame(frame, out)
+                    .map_err(|_| BluerError::FrameTooLarge);
             }
         }
     }
@@ -2429,6 +2432,38 @@ impl BleSink for GattSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn small_receive_buffers_refuse_whole_frames_and_preserve_the_next_frame() {
+        use prns_core::interfaces::bluetooth_auto::BLE_WIRE_FRAME_LEN;
+        let mut values = Vec::new();
+        for frame in [vec![1, 2, 3], vec![0x17; BLE_WIRE_FRAME_LEN]] {
+            for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
+                let mut value = vec![0; GATT_FRAGMENT_PAYLOAD];
+                let length = fragment
+                    .encode(&mut value)
+                    .unwrap_or_else(|| unreachable!("fragment fits"));
+                value.truncate(length);
+                values.push(value);
+            }
+        }
+        let mut source = GattSource {
+            rx: GattRx::Notify(Box::pin(futures_util::stream::iter(values))),
+            reassembler: Reassembler::new(),
+        };
+        let mut small = [0xA5; 2];
+        assert!(matches!(
+            source.recv_frame(&mut small).await,
+            Err(BluerError::FrameTooLarge)
+        ));
+        assert_eq!(small, [0xA5; 2]);
+        let mut wire = [0; BLE_WIRE_FRAME_LEN];
+        assert!(matches!(
+            source.recv_frame(&mut wire).await,
+            Ok(BLE_WIRE_FRAME_LEN)
+        ));
+        assert_eq!(wire, [0x17; BLE_WIRE_FRAME_LEN]);
+    }
 
     #[test]
     fn prns_name_and_role_marker_recover_a_missing_bluez_uuid() {

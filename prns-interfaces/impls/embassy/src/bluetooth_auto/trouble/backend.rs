@@ -551,9 +551,8 @@ impl BleSource for EmbeddedBleSource {
         match select(self.data_in.receive(), self.slot.wait_for_close()).await {
             Either::First(frame) => {
                 let frame = frame.lock().await;
-                let len = frame.len().min(out.len());
-                out[..len].copy_from_slice(&frame[..len]);
-                Ok(len)
+                prns_core::interfaces::bluetooth_auto::copy_received_frame(&frame, out)
+                    .map_err(|_| Closed)
             }
             Either::Second(()) => Err(Closed),
         }
