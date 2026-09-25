@@ -4,6 +4,10 @@ use tokio::sync::watch;
 
 use super::BleAddress;
 
+mod index;
+
+pub(super) use index::ConnectionIndex;
+
 pub(super) struct Connection {
     addresses: [BleAddress; 2],
     closed: watch::Sender<bool>,

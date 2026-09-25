@@ -50,6 +50,21 @@ transmission visit only adjacent nodes. A 1,024-radio chain test checks every
 observation against its expected neighbor, with bounded queues and trace storage.
 This is medium-level evidence, not a full-node capacity result.
 
+BLE connection admission, partitioning, radio shutdown, and backend teardown use
+per-radio connection indexes rather than scanning every connection in the fleet.
+Each connection is indexed at both endpoints; their admission budgets also bound
+retired entries, which are reclaimed when that radio is next touched. Endpoint
+destruction closes the shared lifecycle without reacquiring the network lock.
+The explicit fleet-wide `active_connection_count` remains a linear inspection.
+This trades additional bounded host-side index storage for local operations;
+it changes neither firmware memory nor the production peer buffer.
+
+A 1,024-pair regression holds 2,048 virtual backends live, replaces 128 links,
+checks capacity refusal and closed endpoints, verifies exact data delivery across
+every replaced and untouched pair, and retires all connections. These are backend
+and GATT tests, not 2,048 full production nodes. A separate ignored timing probe
+has [local before/after measurements](measurements/ble-connection-index.md).
+
 Frame reachability is sampled at transmission; delayed frames already in flight
 retain their original recipients. BLE lab partitions instead close queued and
 established links before returning and prevent dialing previously seen peers
@@ -70,15 +85,16 @@ capstones establish two-node correctness only.
 - Advance directly to due events with explicit work budgets, including delivery
   fanout. Bring production deadlines under controlled time before claiming
   deterministic full-fleet replay or accelerated long-duration scenarios.
-- Bound queues, active links, discovery history, and diagnostics. Index live
-  connections per radio and support repeated node churn without exhausting
-  lifetime identifiers. Use aggregate counters alongside selective bounded traces.
+- Bound queues, active links, discovery history, and diagnostics. Support repeated
+  node churn without exhausting lifetime identifiers. Use aggregate counters
+  alongside selective bounded traces.
 - Measure memory per node and active peer, event throughput, and wall time per
   simulated interval. Scale runs must retain correctness assertions for delivery,
   recovery, backpressure, and cleanup, not merely demonstrate that nodes start.
 
-Remaining obstacles include global connection scans and
-real-time runtime deadlines. The production BLE peer receive buffer also uses
-the global maximum wire-frame size (524,352 bytes), despite its smaller transport
-MTU. Audit transport-specific bounds and measure against the existing runtime
-before changing allocation policy; do not conceal that cost in the simulator.
+Remaining obstacles include real-time runtime deadlines, lifetime radio IDs,
+and discovery history retained across backend churn. The production BLE peer
+receive buffer also uses the global maximum wire-frame size (524,352 bytes),
+despite its smaller transport MTU. Audit transport-specific bounds and measure
+against the existing runtime before changing allocation policy; do not conceal
+that cost in the simulator.

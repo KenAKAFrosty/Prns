@@ -9,7 +9,7 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 use tokio::sync::{mpsc, watch};
 
-use super::connection::{Connection, ConnectionEndpoint};
+use super::connection::{Connection, ConnectionEndpoint, ConnectionIndex};
 use super::gatt::{ControlValue, VirtualBleSink, VirtualBleSource, VirtualGattConfig};
 use super::{
     BleAddress, BleAdvanceError, BleAdvanceReport, BleAdvertisement, BleAdvertisementError,
@@ -288,9 +288,7 @@ impl VirtualBleLab {
 
     #[must_use]
     pub fn active_connection_count(&self) -> usize {
-        let mut network = self.lock_network();
-        network.prune_closed();
-        network.connections.len()
+        self.lock_network().connections.active_count()
     }
 
     pub fn disconnect_between(
@@ -298,15 +296,18 @@ impl VirtualBleLab {
         first: BleAddress,
         second: BleAddress,
     ) -> VirtualBleDisconnectReport {
-        close_connections(&mut self.lock_network(), |connection| {
-            connection.connects(first) && connection.connects(second)
-        })
+        VirtualBleDisconnectReport {
+            connections_closed: self
+                .lock_network()
+                .connections
+                .disconnect_between(first, second),
+        }
     }
 
     pub fn disconnect_radio(&self, address: BleAddress) -> VirtualBleDisconnectReport {
-        close_connections(&mut self.lock_network(), |connection| {
-            connection.connects(address)
-        })
+        VirtualBleDisconnectReport {
+            connections_closed: self.lock_network().connections.disconnect_radio(address),
+        }
     }
 
     /// Isolating a pair closes its queued and established connections before returning.
@@ -333,9 +334,7 @@ impl VirtualBleLab {
                 error.map_node(|node| if node == first_radio { first } else { second })
             })?;
         if mutation == TopologyMutation::Applied && reachability == Reachability::Isolated {
-            let _ = close_connections(&mut network, |connection| {
-                connection.connects(first) && connection.connects(second)
-            });
+            let _ = network.connections.disconnect_between(first, second);
         }
         Ok(mutation)
     }
@@ -351,21 +350,7 @@ impl VirtualBleLab {
 #[derive(Default)]
 struct ConnectionNetwork {
     peers: BTreeMap<BleAddress, RegisteredPeer>,
-    connections: Vec<Arc<Connection>>,
-}
-
-impl ConnectionNetwork {
-    fn prune_closed(&mut self) {
-        self.connections
-            .retain(|connection| !connection.is_closed());
-    }
-
-    fn connection_count(&self, address: BleAddress) -> usize {
-        self.connections
-            .iter()
-            .filter(|connection| connection.connects(address))
-            .count()
-    }
+    connections: ConnectionIndex,
 }
 
 struct RegisteredPeer {
@@ -424,9 +409,7 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _ = self.medium.set_radio_power(self.radio, mode)?;
         if !mode.is_on() {
-            let _ = close_connections(&mut network, |connection| {
-                connection.connects(self.config.address)
-            });
+            let _ = network.connections.disconnect_radio(self.config.address);
             self.dialed = None;
             while self.inbound_rx.try_recv().is_ok() {}
         }
@@ -495,16 +478,15 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
         if !self.known_peers.contains(&address) {
             return DialOutcome::UnknownPeer;
         }
-        network.prune_closed();
+        let mine_count = network.connections.count_for(self.config.address);
+        let peer_count = network.connections.count_for(address);
         let Some(peer) = network.peers.get(&address) else {
             return DialOutcome::UnknownPeer;
         };
         if !self.medium.is_connectable(self.radio, peer.radio) {
             return DialOutcome::UnknownPeer;
         }
-        if network.connection_count(self.config.address) >= self.config.connection_capacity
-            || network.connection_count(address) >= peer.connection_capacity
-        {
+        if mine_count >= self.config.connection_capacity || peer_count >= peer.connection_capacity {
             return DialOutcome::Busy;
         }
         let lifecycle = Arc::new(Connection::new(self.config.address, address));
@@ -519,7 +501,7 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
         );
         match peer.inbound.try_send(theirs) {
             Ok(()) => {
-                network.connections.push(lifecycle);
+                network.connections.insert(lifecycle);
                 self.dialed = Some(mine);
                 DialOutcome::Started
             }
@@ -535,9 +517,7 @@ impl Drop for VirtualBleBackend {
             .network
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _ = close_connections(&mut network, |connection| {
-            connection.connects(self.config.address)
-        });
+        let _ = network.connections.disconnect_radio(self.config.address);
         if network
             .peers
             .get(&self.config.address)
@@ -698,19 +678,6 @@ fn link_pair(
     )
 }
 
-fn close_connections(
-    network: &mut ConnectionNetwork,
-    matches: impl Fn(&Connection) -> bool,
-) -> VirtualBleDisconnectReport {
-    let connections_closed = network
-        .connections
-        .iter()
-        .filter(|connection| matches(connection) && connection.close())
-        .count();
-    network.prune_closed();
-    VirtualBleDisconnectReport { connections_closed }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -846,46 +813,5 @@ mod tests {
             vec![10, 10, 6]
         );
         Ok(())
-    }
-
-    #[test]
-    fn endpoint_teardown_during_disconnect_does_not_relock_the_registry() {
-        let (done, completion) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let connection = Arc::new(Connection::new(
-                BleAddress::new([1; 6]),
-                BleAddress::new([2; 6]),
-            ));
-            let endpoint = Mutex::new(Some(ConnectionEndpoint {
-                connection: connection.clone(),
-            }));
-            let registry = Mutex::new(ConnectionNetwork {
-                connections: vec![connection],
-                ..ConnectionNetwork::default()
-            });
-            let mut network = registry
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let report = close_connections(&mut network, |_| {
-                // Force teardown while the registry lock and traversal reference are held.
-                drop(
-                    endpoint
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .take(),
-                );
-                false
-            });
-            let _ = done.send((report, network.connections.len()));
-        });
-        assert_eq!(
-            completion.recv_timeout(std::time::Duration::from_secs(1)),
-            Ok((
-                VirtualBleDisconnectReport {
-                    connections_closed: 0
-                },
-                0
-            ))
-        );
     }
 }
