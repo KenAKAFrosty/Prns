@@ -21,8 +21,8 @@ pub use advertisement::{
     NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
 pub use backend::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
-    RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, BluetoothRadioState,
+    DialOutcome, Origin, RadioMode, ScanningMode,
 };
 pub use duplex::{receive_frames_during, send_frame_duplex, BleDuplexOutcome, BleFrameForwarder};
 pub use framing::{

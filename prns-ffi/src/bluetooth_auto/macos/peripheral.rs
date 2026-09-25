@@ -220,7 +220,9 @@ define_class!(
         fn did_update_state(&self, peripheral: &CBPeripheralManager) {
             // SAFETY: CoreBluetooth supplied this live manager to its delegate on the configured
             // serial dispatch queue.
-            if unsafe { peripheral.state() } == CBManagerState::PoweredOn {
+            let state = unsafe { peripheral.state() };
+            self.ivars().manager_signals.peripheral_state_changed(state);
+            if state == CBManagerState::PoweredOn {
                 *self.ivars().manager.borrow_mut() =
                     Some(SendPeripheralManager(peripheral.retain()));
                 if !*self.ivars().service_registration_requested.borrow() {

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use objc2_core_bluetooth::CBCharacteristicProperties;
+use objc2_core_bluetooth::{CBCharacteristicProperties, CBManagerState};
 use prns_core::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleIdentity, Control, RadioMode, ScanningMode,
 };
@@ -210,7 +210,8 @@ fn startup_requires_central_gatt_and_l2cap_readiness() {
     signals.l2cap_published(0x0081);
     assert_eq!(manager_readiness(*current.borrow()).unwrap(), None);
 
-    signals.central_powered();
+    signals.central_state_changed(CBManagerState::PoweredOn);
+    signals.peripheral_state_changed(CBManagerState::PoweredOn);
     assert_eq!(manager_readiness(*current.borrow()).unwrap(), None);
 
     signals.gatt_service_published();
@@ -249,7 +250,8 @@ fn bounded_ingress_separates_inbound_and_sighting_pressure() {
             rssi: Some(-50),
         }))
     );
-    manager_signals.central_powered();
+    manager_signals.central_state_changed(CBManagerState::PoweredOn);
+    manager_signals.peripheral_state_changed(CBManagerState::PoweredOn);
     manager_signals.gatt_service_published();
     manager_signals.l2cap_published(0x0081);
     assert_eq!(
