@@ -458,11 +458,32 @@ fn supplied_pipes_keep_pipe_identity_and_carry_announces() -> Result<(), String>
     let (first_wire, second_wire) =
         std::os::unix::net::UnixStream::pair().map_err(|error| error.to_string())?;
     let first_sink = Arc::new(RecordingSink::new());
-    let first = NativeHost::start(supplied_pipe_config("first")?, first_sink)
-        .map_err(|error| format!("{error:?}"))?;
+    let mut first_config = supplied_pipe_config("first")?;
+    if let DestinationConfig::Single(destination) = &mut first_config.destinations[0] {
+        destination.announce_app_data = b"authenticated peer".to_vec();
+    }
+    let first =
+        NativeHost::start(first_config, first_sink).map_err(|error| format!("{error:?}"))?;
     let second_sink = Arc::new(RecordingSink::new());
-    let second = NativeHost::start(supplied_pipe_config("second")?, second_sink.clone())
-        .map_err(|error| format!("{error:?}"))?;
+    let (accepted, observed) = std::sync::mpsc::sync_channel(1);
+    let second = NativeHost::start_with_embedding(
+        supplied_pipe_config("second")?,
+        second_sink.clone(),
+        NativeEmbedding {
+            accepted_announces: Some(Box::new(move |observation| {
+                let _ = accepted.try_send((
+                    observation.destination,
+                    observation.announced_identity,
+                    observation.source_interface,
+                    observation.hops,
+                    observation.app_data.to_vec(),
+                    observation.is_path_response,
+                ));
+            })),
+            ..NativeEmbedding::default()
+        },
+    )
+    .map_err(|error| format!("{error:?}"))?;
 
     let (_first_pipe, first_interface) = attach_supplied_wire(&first, "to-second", first_wire)?;
     let (_second_pipe, second_interface) = attach_supplied_wire(&second, "to-first", second_wire)?;
@@ -500,6 +521,16 @@ fn supplied_pipes_keep_pipe_identity_and_carry_announces() -> Result<(), String>
             second_sink.diagnostics()
         ));
     }
+
+    let (heard, identity, source_interface, hops, app_data, is_path_response) = observed
+        .recv_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("authenticated announce was not observed: {error}"))?;
+    assert_eq!(heard, destination);
+    assert_eq!(identity, first.identity_hash());
+    assert_eq!(source_interface, second_interface);
+    assert_eq!(hops, 1);
+    assert_eq!(app_data, b"authenticated peer");
+    assert!(!is_path_response);
 
     first.stop();
     second.stop();
