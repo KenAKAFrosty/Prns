@@ -502,6 +502,9 @@ define_class!(
                         |request, profile, control_rx, data_rx| {
                             self.prepare_inbound_link(request, profile, control_rx, data_rx)
                         },
+                        |peer_id| {
+                            self.ivars().pending_l2cap.borrow_mut().remove(&peer_id);
+                        },
                     )
                 },
                 |first, outcome| {
