@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use personal_rns::engine::{
@@ -23,8 +24,8 @@ use personal_rns::runtime::{
 use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::bluetooth_auto::BluetoothAuto;
 use prns_simulation::ble::{
-    BleMediumConfig, VirtualBleBackendConfig, VirtualBleLab, VirtualBleLinkConfig,
-    VirtualGattConfig,
+    BleMediumConfig, VirtualBleBackendConfig, VirtualBleBackendLimits, VirtualBleLab,
+    VirtualBleLinkConfig, VirtualGattConfig,
 };
 use prns_simulation::{SimulationDurationInTicks, SimulationTick, TopologyConfig};
 
@@ -64,8 +65,11 @@ fn backend_config(address: u8, rssi: i8) -> VirtualBleBackendConfig {
         rssi,
         BleRoleCapabilities::DualRole,
         SimulationDurationInTicks::from_ticks(1),
-        2,
-        MAX_PEERS,
+        VirtualBleBackendLimits {
+            inbound_links: NonZeroUsize::new(2).unwrap_or_else(|| unreachable!()),
+            connections: NonZeroUsize::new(MAX_PEERS).unwrap_or_else(|| unreachable!()),
+            discovered_peers: NonZeroUsize::new(4).unwrap_or_else(|| unreachable!()),
+        },
         link,
     )
     .unwrap_or_else(|error| unreachable!("test backend configuration is valid: {error}"))

@@ -25,6 +25,20 @@ the budget; closing either endpoint releases its reservation. The BLE capstone
 runs two production nodes and exchanges requests before loss, after forced
 disconnect, and after radio disable/re-enable.
 
+Backend limits explicitly separate nonzero inbound-link, connection, and
+discovered-peer capacities. Discovery retains at most the configured number of
+addresses, evicting the least recently observed peer; repeated observations
+refresh recency, but dialing does not. Snapshots expose the bounded history in
+observation order and a saturating lifetime eviction count. Evicting a sighting
+does not close an established link. This is a simulator retention policy, not
+an emulation of a particular operating system's scan cache.
+
+A sighting records the attached radio instance as well as its address. A cached
+or queued sighting of a departed backend cannot admit a connection to a new
+backend that reuses that address; the replacement must be observed first.
+Turning a radio off clears both its discovery history and queued observations,
+without resetting eviction statistics. Stopping scanning alone retains history.
+
 Control messages cross bounded characteristic queues as encoded bytes and use
 the production parser on receipt. Data uses the production GATT fragmenter and
 reassembler, with explicit limits on complete characteristic values and queued
@@ -65,6 +79,11 @@ every replaced and untouched pair, and retires all connections. These are backen
 and GATT tests, not 2,048 full production nodes. A separate ignored timing probe
 has [local before/after measurements](measurements/ble-connection-index.md).
 
+A separate churn regression replaces 2,048 advertisers sequentially around one
+scanner and checks the complete bounded history and eviction count after every
+observation. Only two backends are live in this test; it establishes retention
+behavior under churn, not concurrent full-node capacity or a throughput claim.
+
 Frame reachability is sampled at transmission; delayed frames already in flight
 retain their original recipients. BLE lab partitions instead close queued and
 established links before returning and prevent dialing previously seen peers
@@ -92,9 +111,8 @@ capstones establish two-node correctness only.
   simulated interval. Scale runs must retain correctness assertions for delivery,
   recovery, backpressure, and cleanup, not merely demonstrate that nodes start.
 
-Remaining obstacles include real-time runtime deadlines, lifetime radio IDs,
-and discovery history retained across backend churn. The production BLE peer
-receive buffer also uses the global maximum wire-frame size (524,352 bytes),
-despite its smaller transport MTU. Audit transport-specific bounds and measure
+Remaining obstacles include real-time runtime deadlines and lifetime radio IDs.
+The production BLE peer receive buffer also uses the global maximum wire-frame
+size (524,352 bytes), despite its smaller transport MTU. Audit transport-specific bounds and measure
 against the existing runtime before changing allocation policy; do not conceal
 that cost in the simulator.

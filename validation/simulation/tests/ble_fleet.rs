@@ -8,8 +8,8 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 use prns_simulation::ble::{
     BleAddress, BleAdvanceReport, BleMediumConfig, BleRoleCapabilities, VirtualBleBackend,
-    VirtualBleBackendConfig, VirtualBleDisconnectReport, VirtualBleError, VirtualBleLab,
-    VirtualBleLink, VirtualBleLinkConfig, VirtualGattConfig,
+    VirtualBleBackendConfig, VirtualBleBackendLimits, VirtualBleDisconnectReport, VirtualBleError,
+    VirtualBleLab, VirtualBleLink, VirtualBleLinkConfig, VirtualGattConfig,
 };
 use prns_simulation::{Reachability, SimulationDurationInTicks, SimulationTick, TopologyConfig};
 
@@ -88,8 +88,11 @@ impl Fleet {
                     -40,
                     BleRoleCapabilities::DualRole,
                     SimulationDurationInTicks::from_ticks(1),
-                    1,
-                    MAX_PEERS,
+                    VirtualBleBackendLimits {
+                        inbound_links: NonZeroUsize::MIN,
+                        connections: NonZeroUsize::MIN,
+                        discovered_peers: NonZeroUsize::MIN,
+                    },
                     link,
                 )
             };

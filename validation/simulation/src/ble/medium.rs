@@ -260,6 +260,8 @@ impl VirtualBleMedium {
             if let Some(advertising) = &mut attached.advertising {
                 advertising.next_emission = Some(now);
             }
+        } else {
+            attached.observations.clear();
         }
         state
             .trace

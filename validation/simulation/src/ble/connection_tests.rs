@@ -41,8 +41,11 @@ impl Pair {
                 -40,
                 BleRoleCapabilities::DualRole,
                 SimulationDurationInTicks::from_ticks(1),
-                1,
-                capacity,
+                VirtualBleBackendLimits {
+                    inbound_links: NonZeroUsize::MIN,
+                    connections: NonZeroUsize::new(capacity).unwrap_or_else(|| unreachable!()),
+                    discovered_peers: NonZeroUsize::MIN,
+                },
                 VirtualBleLinkConfig::new(1, 1, 8, gatt)?,
             )
         };

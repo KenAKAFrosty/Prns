@@ -1,5 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use personal_rns::interfaces::bluetooth_auto::{
@@ -10,6 +11,7 @@ use personal_rns::interfaces::bluetooth_auto::{
 use tokio::sync::{mpsc, watch};
 
 use super::connection::{Connection, ConnectionEndpoint, ConnectionIndex};
+use super::discovery::{BleDiscoveredPeer, BleDiscoverySnapshot, DiscoveryCache};
 use super::gatt::{ControlValue, VirtualBleSink, VirtualBleSource, VirtualGattConfig};
 use super::{
     BleAddress, BleAdvanceError, BleAdvanceReport, BleAdvertisement, BleAdvertisementError,
@@ -23,8 +25,6 @@ use crate::{SimulationDurationInTicks, SimulationTick};
 pub enum VirtualBleBackendConfigError {
     Advertisement(BleAdvertisementError),
     ZeroAdvertisingInterval,
-    ZeroInboundLinkCapacity,
-    ZeroConnectionCapacity,
     ZeroControlCapacity,
     ZeroDataFragmentCapacity,
     ZeroMaximumFrameLength,
@@ -37,12 +37,6 @@ impl fmt::Display for VirtualBleBackendConfigError {
             Self::Advertisement(error) => write!(formatter, "invalid BLE advertisement: {error}"),
             Self::ZeroAdvertisingInterval => {
                 formatter.write_str("advertising interval must be nonzero")
-            }
-            Self::ZeroInboundLinkCapacity => {
-                formatter.write_str("inbound link capacity must be nonzero")
-            }
-            Self::ZeroConnectionCapacity => {
-                formatter.write_str("connection capacity must be nonzero")
             }
             Self::ZeroControlCapacity => {
                 formatter.write_str("control message capacity must be nonzero")
@@ -64,12 +58,18 @@ impl fmt::Display for VirtualBleBackendConfigError {
 impl std::error::Error for VirtualBleBackendConfigError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VirtualBleBackendLimits {
+    pub inbound_links: NonZeroUsize,
+    pub connections: NonZeroUsize,
+    pub discovered_peers: NonZeroUsize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtualBleBackendConfig {
     address: BleAddress,
     received_signal_strength_dbm: i8,
     advertising: BleAdvertisingParameters,
-    inbound_link_capacity: usize,
-    connection_capacity: usize,
+    limits: VirtualBleBackendLimits,
     link: VirtualBleLinkConfig,
 }
 
@@ -79,18 +79,11 @@ impl VirtualBleBackendConfig {
         received_signal_strength_dbm: i8,
         role_capabilities: BleRoleCapabilities,
         advertising_interval: SimulationDurationInTicks,
-        inbound_link_capacity: usize,
-        connection_capacity: usize,
+        limits: VirtualBleBackendLimits,
         link: VirtualBleLinkConfig,
     ) -> Result<Self, VirtualBleBackendConfigError> {
         if advertising_interval == SimulationDurationInTicks::ZERO {
             return Err(VirtualBleBackendConfigError::ZeroAdvertisingInterval);
-        }
-        if inbound_link_capacity == 0 {
-            return Err(VirtualBleBackendConfigError::ZeroInboundLinkCapacity);
-        }
-        if connection_capacity == 0 {
-            return Err(VirtualBleBackendConfigError::ZeroConnectionCapacity);
         }
         let advertisement = BleAdvertisement::reticulum(role_capabilities)
             .map_err(VirtualBleBackendConfigError::Advertisement)?;
@@ -100,8 +93,7 @@ impl VirtualBleBackendConfig {
             address,
             received_signal_strength_dbm,
             advertising,
-            inbound_link_capacity,
-            connection_capacity,
+            limits,
             link,
         })
     }
@@ -236,13 +228,13 @@ impl VirtualBleLab {
         let radio = self
             .medium
             .attach(config.address, config.received_signal_strength_dbm)?;
-        let (inbound, inbound_rx) = mpsc::channel(config.inbound_link_capacity);
+        let (inbound, inbound_rx) = mpsc::channel(config.limits.inbound_links.get());
         let replaced = network.peers.insert(
             config.address,
             RegisteredPeer {
                 radio,
                 inbound,
-                connection_capacity: config.connection_capacity,
+                connection_capacity: config.limits.connections.get(),
                 received_signal_strength_dbm: config.received_signal_strength_dbm,
                 link: config.link,
             },
@@ -257,7 +249,7 @@ impl VirtualBleLab {
             config,
             radio,
             inbound_rx,
-            known_peers: BTreeSet::new(),
+            discovery: DiscoveryCache::new(config.limits.discovered_peers),
             dialed: None,
         })
     }
@@ -367,8 +359,15 @@ pub struct VirtualBleBackend {
     config: VirtualBleBackendConfig,
     radio: BleRadioId,
     inbound_rx: mpsc::Receiver<VirtualBleLink>,
-    known_peers: BTreeSet<BleAddress>,
+    discovery: DiscoveryCache,
     dialed: Option<VirtualBleLink>,
+}
+
+impl VirtualBleBackend {
+    #[must_use]
+    pub fn discovery_snapshot(&self) -> BleDiscoverySnapshot {
+        self.discovery.snapshot()
+    }
 }
 
 impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
@@ -412,6 +411,7 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
             let _ = network.connections.disconnect_radio(self.config.address);
             self.dialed = None;
             while self.inbound_rx.try_recv().is_ok() {}
+            self.discovery.clear();
         }
         Ok(())
     }
@@ -449,7 +449,10 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
                 },
                 observation = medium.next_observation(radio) => match observation {
                     Ok(observation) if observation.advertisement.contains_reticulum_service() => {
-                        let _ = self.known_peers.insert(observation.address);
+                        self.discovery.observe(BleDiscoveredPeer {
+                            address: observation.address,
+                            radio: observation.advertiser,
+                        });
                         return BleEvent::Sighting {
                             address: observation.address,
                             rssi: Some(observation.received_signal_strength_dbm),
@@ -475,18 +478,20 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
         if self.dialed.is_some() {
             return DialOutcome::Busy;
         }
-        if !self.known_peers.contains(&address) {
+        let Some(observed_radio) = self.discovery.radio_for(address) else {
             return DialOutcome::UnknownPeer;
-        }
+        };
         let mine_count = network.connections.count_for(self.config.address);
         let peer_count = network.connections.count_for(address);
         let Some(peer) = network.peers.get(&address) else {
             return DialOutcome::UnknownPeer;
         };
-        if !self.medium.is_connectable(self.radio, peer.radio) {
+        if peer.radio != observed_radio || !self.medium.is_connectable(self.radio, peer.radio) {
             return DialOutcome::UnknownPeer;
         }
-        if mine_count >= self.config.connection_capacity || peer_count >= peer.connection_capacity {
+        if mine_count >= self.config.limits.connections.get()
+            || peer_count >= peer.connection_capacity
+        {
             return DialOutcome::Busy;
         }
         let lifecycle = Arc::new(Connection::new(self.config.address, address));

@@ -1,3 +1,5 @@
+use std::num::NonZeroUsize;
+
 use personal_rns::interfaces::bluetooth_auto::{
     AdvertisingMode, AppleHost, BleBackend, BleEvent, BleIdentity, BleLink, BleSink, BleSource,
     BlueZHost, DialOutcome, DiscoveryGroupSet, Endpoint, Handshake, HandshakeOutcome,
@@ -33,8 +35,11 @@ fn backend_config(
         received_signal_strength_dbm,
         BleRoleCapabilities::DualRole,
         SimulationDurationInTicks::from_ticks(2),
-        2,
-        MAX_PEERS,
+        VirtualBleBackendLimits {
+            inbound_links: NonZeroUsize::new(2).unwrap_or_else(|| unreachable!()),
+            connections: NonZeroUsize::new(MAX_PEERS).unwrap_or_else(|| unreachable!()),
+            discovered_peers: NonZeroUsize::new(4).unwrap_or_else(|| unreachable!()),
+        },
         link,
     )
     .unwrap_or_else(|error| unreachable!("test backend is valid: {error}"))
@@ -90,36 +95,15 @@ fn backend_configuration_rejects_each_zero_capacity_as_a_whole_value() {
             BleAddress::new([1; 6]),
             -40,
             BleRoleCapabilities::DualRole,
-            SimulationDurationInTicks::from_ticks(1),
-            0,
-            MAX_PEERS,
-            link,
-        ),
-        Err(VirtualBleBackendConfigError::ZeroInboundLinkCapacity),
-    );
-    assert_eq!(
-        VirtualBleBackendConfig::new(
-            BleAddress::new([1; 6]),
-            -40,
-            BleRoleCapabilities::DualRole,
             SimulationDurationInTicks::ZERO,
-            1,
-            MAX_PEERS,
+            VirtualBleBackendLimits {
+                inbound_links: NonZeroUsize::MIN,
+                connections: NonZeroUsize::MIN,
+                discovered_peers: NonZeroUsize::MIN,
+            },
             link,
         ),
         Err(VirtualBleBackendConfigError::ZeroAdvertisingInterval),
-    );
-    assert_eq!(
-        VirtualBleBackendConfig::new(
-            BleAddress::new([1; 6]),
-            -40,
-            BleRoleCapabilities::DualRole,
-            SimulationDurationInTicks::from_ticks(1),
-            1,
-            0,
-            link
-        ),
-        Err(VirtualBleBackendConfigError::ZeroConnectionCapacity),
     );
 }
 
