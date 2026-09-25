@@ -660,6 +660,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_prns_app_checksum_func_change_remote_node(
     ): Int
+    external fun uniffi_prns_app_checksum_func_clear_lxmf_discovery(
+    ): Int
     external fun uniffi_prns_app_checksum_func_create_manual_contact(
     ): Int
     external fun uniffi_prns_app_checksum_func_delete_contact(
@@ -704,6 +706,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_prns_app_checksum_func_read_bluetooth_settings(
     ): Int
+    external fun uniffi_prns_app_checksum_func_read_messaging_profile(
+    ): Int
     external fun uniffi_prns_app_checksum_func_read_remote_node(
     ): Int
     external fun uniffi_prns_app_checksum_func_read_snapshot(
@@ -711,6 +715,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_prns_app_checksum_func_reject_pairing(
     ): Int
     external fun uniffi_prns_app_checksum_func_retry_lxmf_message(
+    ): Int
+    external fun uniffi_prns_app_checksum_func_save_discovered_contact(
     ): Int
     external fun uniffi_prns_app_checksum_func_save_observed_destination(
     ): Int
@@ -721,6 +727,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_prns_app_checksum_func_set_contact_alias(
     ): Int
     external fun uniffi_prns_app_checksum_func_set_contact_pinned(
+    ): Int
+    external fun uniffi_prns_app_checksum_func_set_messaging_name(
     ): Int
     external fun uniffi_prns_app_checksum_func_shared_host(
     ): Int
@@ -741,187 +749,195 @@ internal object UniffiLib {
 
     }
     external fun uniffi_prns_app_fn_func_announce_lxmf(
-    ): Long
-    external fun uniffi_prns_app_fn_func_announce_target(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_approve_pairing(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_binding_contract(uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_cancel_lxmf_message(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_change_remote_node(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_create_manual_contact(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_delete_contact(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_describe_target(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_finish_remote_wifi_trial(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_get_contact(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_initiate_pairing(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_inspect_remote_wifi_trial(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_list_contacts(
-    ): Long
-    external fun uniffi_prns_app_fn_func_list_lxmf_messages(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_list_lxmf_peers(
-    ): Long
-    external fun uniffi_prns_app_fn_func_measure_lxmf_text(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_native_create_generated_identity(`storageRoot`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_native_create_imported_identity(`storageRoot`: RustBuffer.ByValue,`identity`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_native_inspect_identity(`storageRoot`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_restoration(`storageRoot`: RustBuffer.ByValue,`centralIdentifier`: RustBuffer.ByValue,`peripheralIdentifier`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_native_prepare_storage(`storageRoot`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_native_reset(`storageRoot`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_native_start(`storageRoot`: RustBuffer.ByValue,`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_restoration(`storageRoot`: RustBuffer.ByValue,`input`: RustBuffer.ByValue,`centralIdentifier`: RustBuffer.ByValue,`peripheralIdentifier`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_native_stop(uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_preview_identity_import(`identity`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_read_bluetooth_settings(
-    ): Long
-    external fun uniffi_prns_app_fn_func_read_remote_node(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_read_snapshot(
-    ): Long
-    external fun uniffi_prns_app_fn_func_reject_pairing(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_retry_lxmf_message(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_save_observed_destination(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_send_direct_text(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_set_bluetooth_enabled(`enabled`: Byte,
-    ): Long
-    external fun uniffi_prns_app_fn_func_set_contact_alias(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_set_contact_pinned(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_prns_app_fn_func_shared_host(uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_start_remote_wifi_trial(`input`: RustBuffer.ByValue,
-    ): Long
-    external fun ffi_prns_app_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_prns_app_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_prns_app_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
-    external fun ffi_prns_app_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_prns_app_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_u8(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_u8(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Int
-    external fun ffi_prns_app_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_i8(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_i8(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Byte
-    external fun ffi_prns_app_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_u16(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_u16(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Int
-    external fun ffi_prns_app_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_i16(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_i16(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Short
-    external fun ffi_prns_app_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_u32(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_u32(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Int
-    external fun ffi_prns_app_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_i32(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_i32(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Int
-    external fun ffi_prns_app_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_u64(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_u64(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun ffi_prns_app_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_i64(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_i64(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Long
-    external fun ffi_prns_app_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_f32(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_f32(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Float
-    external fun ffi_prns_app_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_f64(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_f64(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Double
-    external fun ffi_prns_app_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_rust_buffer(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_rust_buffer(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): RustBuffer.ByValue
-    external fun ffi_prns_app_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_cancel_void(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_free_void(`handle`: Long,
-    ): Unit
-    external fun ffi_prns_app_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
-    ): Unit
+): Long
+external fun uniffi_prns_app_fn_func_announce_target(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_approve_pairing(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_binding_contract(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_cancel_lxmf_message(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_change_remote_node(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_clear_lxmf_discovery(
+): Long
+external fun uniffi_prns_app_fn_func_create_manual_contact(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_delete_contact(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_describe_target(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_finish_remote_wifi_trial(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_get_contact(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_initiate_pairing(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_inspect_remote_wifi_trial(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_list_contacts(
+): Long
+external fun uniffi_prns_app_fn_func_list_lxmf_messages(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_list_lxmf_peers(
+): Long
+external fun uniffi_prns_app_fn_func_measure_lxmf_text(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_native_create_generated_identity(`storageRoot`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_native_create_imported_identity(`storageRoot`: RustBuffer.ByValue,`identity`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_native_inspect_identity(`storageRoot`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_restoration(`storageRoot`: RustBuffer.ByValue,`centralIdentifier`: RustBuffer.ByValue,`peripheralIdentifier`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_native_prepare_storage(`storageRoot`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_native_reset(`storageRoot`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_native_start(`storageRoot`: RustBuffer.ByValue,`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_restoration(`storageRoot`: RustBuffer.ByValue,`input`: RustBuffer.ByValue,`centralIdentifier`: RustBuffer.ByValue,`peripheralIdentifier`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_native_stop(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_preview_identity_import(`identity`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_read_bluetooth_settings(
+): Long
+external fun uniffi_prns_app_fn_func_read_messaging_profile(
+): Long
+external fun uniffi_prns_app_fn_func_read_remote_node(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_read_snapshot(
+): Long
+external fun uniffi_prns_app_fn_func_reject_pairing(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_retry_lxmf_message(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_save_discovered_contact(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_save_observed_destination(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_send_direct_text(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_set_bluetooth_enabled(`enabled`: Byte,
+): Long
+external fun uniffi_prns_app_fn_func_set_contact_alias(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_set_contact_pinned(`input`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_set_messaging_name(`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_prns_app_fn_func_shared_host(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_prns_app_fn_func_start_remote_wifi_trial(`input`: RustBuffer.ByValue,
+): Long
+external fun ffi_prns_app_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_prns_app_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_prns_app_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun ffi_prns_app_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_prns_app_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_u8(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_u8(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Int
+external fun ffi_prns_app_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_i8(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_i8(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Byte
+external fun ffi_prns_app_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_u16(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_u16(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Int
+external fun ffi_prns_app_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_i16(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_i16(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Short
+external fun ffi_prns_app_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_u32(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_u32(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Int
+external fun ffi_prns_app_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_i32(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_i32(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Int
+external fun ffi_prns_app_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_u64(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_u64(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun ffi_prns_app_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_i64(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_i64(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun ffi_prns_app_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_f32(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_f32(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Float
+external fun ffi_prns_app_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_f64(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_f64(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Double
+external fun ffi_prns_app_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_rust_buffer(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_rust_buffer(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun ffi_prns_app_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_cancel_void(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_free_void(`handle`: Long,
+): Unit
+external fun ffi_prns_app_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
 
 
 }
@@ -953,6 +969,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_change_remote_node() != 10229) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_prns_app_checksum_func_clear_lxmf_discovery() != 10179) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_create_manual_contact() != 1882) {
@@ -1021,6 +1040,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_prns_app_checksum_func_read_bluetooth_settings() != 48522) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_prns_app_checksum_func_read_messaging_profile() != 32931) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_prns_app_checksum_func_read_remote_node() != 34426) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1031,6 +1053,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_retry_lxmf_message() != 20310) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_prns_app_checksum_func_save_discovered_contact() != 21421) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_save_observed_destination() != 49523) {
@@ -1046,6 +1071,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_set_contact_pinned() != 4387) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_prns_app_checksum_func_set_messaging_name() != 62039) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_shared_host() != 49238) {
@@ -1584,9 +1612,13 @@ data class Contact (
     ,
     var `alias`: kotlin.String?
     ,
+    var `announcedName`: kotlin.String?
+    ,
     var `identity`: Bytes16?
     ,
     var `pinned`: kotlin.Boolean
+    ,
+    var `isMessaging`: kotlin.Boolean
 
 ){
 
@@ -1605,7 +1637,9 @@ public object FfiConverterTypeContact: FfiConverterRustBuffer<Contact> {
         return Contact(
             FfiConverterTypeBytes16.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
             FfiConverterOptionalTypeBytes16.read(buf),
+            FfiConverterBoolean.read(buf),
             FfiConverterBoolean.read(buf),
         )
     }
@@ -1613,15 +1647,19 @@ public object FfiConverterTypeContact: FfiConverterRustBuffer<Contact> {
     override fun allocationSize(value: Contact) = (
             FfiConverterTypeBytes16.allocationSize(value.`destination`) +
             FfiConverterOptionalString.allocationSize(value.`alias`) +
+            FfiConverterOptionalString.allocationSize(value.`announcedName`) +
             FfiConverterOptionalTypeBytes16.allocationSize(value.`identity`) +
-            FfiConverterBoolean.allocationSize(value.`pinned`)
+            FfiConverterBoolean.allocationSize(value.`pinned`) +
+            FfiConverterBoolean.allocationSize(value.`isMessaging`)
     )
 
     override fun write(value: Contact, buf: ByteBuffer) {
             FfiConverterTypeBytes16.write(value.`destination`, buf)
             FfiConverterOptionalString.write(value.`alias`, buf)
+            FfiConverterOptionalString.write(value.`announcedName`, buf)
             FfiConverterOptionalTypeBytes16.write(value.`identity`, buf)
             FfiConverterBoolean.write(value.`pinned`, buf)
+            FfiConverterBoolean.write(value.`isMessaging`, buf)
     }
 }
 
@@ -2230,6 +2268,44 @@ public object FfiConverterTypeLocalBluetoothSnapshot: FfiConverterRustBuffer<Loc
 
 
 
+data class LocalMessagingProfile (
+    var `displayName`: kotlin.String
+    ,
+    var `destination`: Bytes16?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalMessagingProfile: FfiConverterRustBuffer<LocalMessagingProfile> {
+    override fun read(buf: ByteBuffer): LocalMessagingProfile {
+        return LocalMessagingProfile(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalTypeBytes16.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LocalMessagingProfile) = (
+            FfiConverterString.allocationSize(value.`displayName`) +
+            FfiConverterOptionalTypeBytes16.allocationSize(value.`destination`)
+    )
+
+    override fun write(value: LocalMessagingProfile, buf: ByteBuffer) {
+            FfiConverterString.write(value.`displayName`, buf)
+            FfiConverterOptionalTypeBytes16.write(value.`destination`, buf)
+    }
+}
+
+
+
 data class LxmfHealth (
     var `state`: LxmfHealthState
     ,
@@ -2349,11 +2425,19 @@ public object FfiConverterTypeLxmfMessage: FfiConverterRustBuffer<LxmfMessage> {
 data class LxmfPeerSummary (
     var `destination`: Bytes16
     ,
+    var `identity`: Bytes16
+    ,
     var `displayName`: kotlin.String?
     ,
     var `requiredStampCost`: kotlin.ULong?
     ,
     var `lastObservedAgeMillis`: kotlin.ULong
+    ,
+    var `sourceInterface`: kotlin.ByteArray
+    ,
+    var `hops`: kotlin.UByte
+    ,
+    var `isPathResponse`: kotlin.Boolean
 
 ){
 
@@ -2371,24 +2455,36 @@ public object FfiConverterTypeLxmfPeerSummary: FfiConverterRustBuffer<LxmfPeerSu
     override fun read(buf: ByteBuffer): LxmfPeerSummary {
         return LxmfPeerSummary(
             FfiConverterTypeBytes16.read(buf),
+            FfiConverterTypeBytes16.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalULong.read(buf),
             FfiConverterULong.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterUByte.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
     override fun allocationSize(value: LxmfPeerSummary) = (
             FfiConverterTypeBytes16.allocationSize(value.`destination`) +
+            FfiConverterTypeBytes16.allocationSize(value.`identity`) +
             FfiConverterOptionalString.allocationSize(value.`displayName`) +
             FfiConverterOptionalULong.allocationSize(value.`requiredStampCost`) +
-            FfiConverterULong.allocationSize(value.`lastObservedAgeMillis`)
+            FfiConverterULong.allocationSize(value.`lastObservedAgeMillis`) +
+            FfiConverterByteArray.allocationSize(value.`sourceInterface`) +
+            FfiConverterUByte.allocationSize(value.`hops`) +
+            FfiConverterBoolean.allocationSize(value.`isPathResponse`)
     )
 
     override fun write(value: LxmfPeerSummary, buf: ByteBuffer) {
             FfiConverterTypeBytes16.write(value.`destination`, buf)
+            FfiConverterTypeBytes16.write(value.`identity`, buf)
             FfiConverterOptionalString.write(value.`displayName`, buf)
             FfiConverterOptionalULong.write(value.`requiredStampCost`, buf)
             FfiConverterULong.write(value.`lastObservedAgeMillis`, buf)
+            FfiConverterByteArray.write(value.`sourceInterface`, buf)
+            FfiConverterUByte.write(value.`hops`, buf)
+            FfiConverterBoolean.write(value.`isPathResponse`, buf)
     }
 }
 
@@ -3490,7 +3586,8 @@ public object FfiConverterTypeStartRemoteWifiTrialInput: FfiConverterRustBuffer<
 
 enum class AnnounceLxmfOutcome {
 
-    ANNOUNCED,
+    REQUESTED,
+    NO_USABLE_CONNECTION,
     LOCAL_NODE_STOPPED,
     BUSY,
     FAILED;
@@ -5404,6 +5501,179 @@ public object FfiConverterTypeLocalHostState : FfiConverterRustBuffer<LocalHostS
 
 
 
+sealed class LocalMessagingProfileOutcome {
+
+    data class Ready(
+        val `profile`: rs.reticulum.prns.app.bindings.LocalMessagingProfile) : LocalMessagingProfileOutcome()
+
+    {
+
+
+        companion object
+    }
+
+    data class SavedButNotApplied(
+        val `profile`: rs.reticulum.prns.app.bindings.LocalMessagingProfile,
+        val `detail`: kotlin.String) : LocalMessagingProfileOutcome()
+
+    {
+
+
+        companion object
+    }
+
+    data class InvalidInput(
+        val `detail`: kotlin.String) : LocalMessagingProfileOutcome()
+
+    {
+
+
+        companion object
+    }
+
+    object Busy : LocalMessagingProfileOutcome()
+
+
+    data class Unavailable(
+        val `detail`: kotlin.String) : LocalMessagingProfileOutcome()
+
+    {
+
+
+        companion object
+    }
+
+    data class DevelopmentResetRequired(
+        val `reason`: kotlin.String) : LocalMessagingProfileOutcome()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalMessagingProfileOutcome : FfiConverterRustBuffer<LocalMessagingProfileOutcome>{
+    override fun read(buf: ByteBuffer): LocalMessagingProfileOutcome {
+        return when(buf.getInt()) {
+            1 -> LocalMessagingProfileOutcome.Ready(
+                FfiConverterTypeLocalMessagingProfile.read(buf),
+                )
+            2 -> LocalMessagingProfileOutcome.SavedButNotApplied(
+                FfiConverterTypeLocalMessagingProfile.read(buf),
+                FfiConverterString.read(buf),
+                )
+            3 -> LocalMessagingProfileOutcome.InvalidInput(
+                FfiConverterString.read(buf),
+                )
+            4 -> LocalMessagingProfileOutcome.Busy
+            5 -> LocalMessagingProfileOutcome.Unavailable(
+                FfiConverterString.read(buf),
+                )
+            6 -> LocalMessagingProfileOutcome.DevelopmentResetRequired(
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: LocalMessagingProfileOutcome) = when(value) {
+        is LocalMessagingProfileOutcome.Ready -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeLocalMessagingProfile.allocationSize(value.`profile`)
+            )
+        }
+        is LocalMessagingProfileOutcome.SavedButNotApplied -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeLocalMessagingProfile.allocationSize(value.`profile`)
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+        is LocalMessagingProfileOutcome.InvalidInput -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+        is LocalMessagingProfileOutcome.Busy -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalMessagingProfileOutcome.Unavailable -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+        is LocalMessagingProfileOutcome.DevelopmentResetRequired -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`reason`)
+            )
+        }
+    }
+
+    override fun write(value: LocalMessagingProfileOutcome, buf: ByteBuffer) {
+        when(value) {
+            is LocalMessagingProfileOutcome.Ready -> {
+                buf.putInt(1)
+                FfiConverterTypeLocalMessagingProfile.write(value.`profile`, buf)
+                Unit
+            }
+            is LocalMessagingProfileOutcome.SavedButNotApplied -> {
+                buf.putInt(2)
+                FfiConverterTypeLocalMessagingProfile.write(value.`profile`, buf)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is LocalMessagingProfileOutcome.InvalidInput -> {
+                buf.putInt(3)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is LocalMessagingProfileOutcome.Busy -> {
+                buf.putInt(4)
+                Unit
+            }
+            is LocalMessagingProfileOutcome.Unavailable -> {
+                buf.putInt(5)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is LocalMessagingProfileOutcome.DevelopmentResetRequired -> {
+                buf.putInt(6)
+                FfiConverterString.write(value.`reason`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
 
 enum class LxmfDeliveryFailure {
 
@@ -5643,6 +5913,41 @@ public object FfiConverterTypeLxmfDirection: FfiConverterRustBuffer<LxmfDirectio
     override fun allocationSize(value: LxmfDirection) = 4UL
 
     override fun write(value: LxmfDirection, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class LxmfDiscoveryClearOutcome {
+
+    CLEARED,
+    LOCAL_NODE_STOPPED,
+    BUSY;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLxmfDiscoveryClearOutcome: FfiConverterRustBuffer<LxmfDiscoveryClearOutcome> {
+    override fun read(buf: ByteBuffer) = try {
+        LxmfDiscoveryClearOutcome.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: LxmfDiscoveryClearOutcome) = 4UL
+
+    override fun write(value: LxmfDiscoveryClearOutcome, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }
@@ -9537,6 +9842,25 @@ sealed class SendDirectTextOutcome {
     object PeerIdentityUnavailable : SendDirectTextOutcome()
 
 
+    data class IdentityConflict(
+        val `expected`: rs.reticulum.prns.app.bindings.Bytes16,
+        val `observed`: rs.reticulum.prns.app.bindings.Bytes16) : SendDirectTextOutcome()
+
+    {
+
+
+        companion object
+    }
+
+    data class RecipientUnavailable(
+        val `detail`: kotlin.String) : SendDirectTextOutcome()
+
+    {
+
+
+        companion object
+    }
+
     data class DevelopmentUnavailable(
         val `detail`: kotlin.String) : SendDirectTextOutcome()
 
@@ -9581,10 +9905,17 @@ public object FfiConverterTypeSendDirectTextOutcome : FfiConverterRustBuffer<Sen
                 FfiConverterULong.read(buf),
                 )
             4 -> SendDirectTextOutcome.PeerIdentityUnavailable
-            5 -> SendDirectTextOutcome.DevelopmentUnavailable(
+            5 -> SendDirectTextOutcome.IdentityConflict(
+                FfiConverterTypeBytes16.read(buf),
+                FfiConverterTypeBytes16.read(buf),
+                )
+            6 -> SendDirectTextOutcome.RecipientUnavailable(
                 FfiConverterString.read(buf),
                 )
-            6 -> SendDirectTextOutcome.DevelopmentResetRequired(
+            7 -> SendDirectTextOutcome.DevelopmentUnavailable(
+                FfiConverterString.read(buf),
+                )
+            8 -> SendDirectTextOutcome.DevelopmentResetRequired(
                 FfiConverterString.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
@@ -9617,6 +9948,21 @@ public object FfiConverterTypeSendDirectTextOutcome : FfiConverterRustBuffer<Sen
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
                 4UL
+            )
+        }
+        is SendDirectTextOutcome.IdentityConflict -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeBytes16.allocationSize(value.`expected`)
+                + FfiConverterTypeBytes16.allocationSize(value.`observed`)
+            )
+        }
+        is SendDirectTextOutcome.RecipientUnavailable -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
             )
         }
         is SendDirectTextOutcome.DevelopmentUnavailable -> {
@@ -9656,13 +10002,24 @@ public object FfiConverterTypeSendDirectTextOutcome : FfiConverterRustBuffer<Sen
                 buf.putInt(4)
                 Unit
             }
-            is SendDirectTextOutcome.DevelopmentUnavailable -> {
+            is SendDirectTextOutcome.IdentityConflict -> {
                 buf.putInt(5)
+                FfiConverterTypeBytes16.write(value.`expected`, buf)
+                FfiConverterTypeBytes16.write(value.`observed`, buf)
+                Unit
+            }
+            is SendDirectTextOutcome.RecipientUnavailable -> {
+                buf.putInt(6)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is SendDirectTextOutcome.DevelopmentUnavailable -> {
+                buf.putInt(7)
                 FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
             is SendDirectTextOutcome.DevelopmentResetRequired -> {
-                buf.putInt(6)
+                buf.putInt(8)
                 FfiConverterString.write(value.`reason`, buf)
                 Unit
             }
@@ -10688,6 +11045,20 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
     }
 
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `clearLxmfDiscovery`() : LxmfDiscoveryClearOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_clear_lxmf_discovery(),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeLxmfDiscoveryClearOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
      suspend fun `createManualContact`(`input`: CreateManualContactInput) : ContactMutationOutcome {
         return uniffiRustCallAsync(
         UniffiLib.uniffi_prns_app_fn_func_create_manual_contact(FfiConverterTypeCreateManualContactInput.lower(`input`),),
@@ -10987,6 +11358,20 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
     }
 
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `readMessagingProfile`() : LocalMessagingProfileOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_read_messaging_profile(),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeLocalMessagingProfileOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
      suspend fun `readRemoteNode`(`input`: ReadRemoteNodeInput) : ReadRemoteNodeOutcome {
         return uniffiRustCallAsync(
         UniffiLib.uniffi_prns_app_fn_func_read_remote_node(FfiConverterTypeReadRemoteNodeInput.lower(`input`),),
@@ -11043,6 +11428,20 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
         { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeRetryLxmfMessageOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `saveDiscoveredContact`(`input`: ContactDestinationInput) : ContactMutationOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_save_discovered_contact(FfiConverterTypeContactDestinationInput.lower(`input`),),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeContactMutationOutcome.lift(it) },
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )
@@ -11116,6 +11515,20 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
         { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeContactMutationOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `setMessagingName`(`name`: kotlin.String) : LocalMessagingProfileOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_set_messaging_name(FfiConverterString.lower(`name`),),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeLocalMessagingProfileOutcome.lift(it) },
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )

@@ -816,16 +816,20 @@ public func FfiConverterTypeChangeRemoteNodeInput_lower(_ value: ChangeRemoteNod
 public struct Contact: Equatable, Hashable {
     public var destination: Bytes16
     public var alias: String?
+    public var announcedName: String?
     public var identity: Bytes16?
     public var pinned: Bool
+    public var isMessaging: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(destination: Bytes16, alias: String?, identity: Bytes16?, pinned: Bool) {
+    public init(destination: Bytes16, alias: String?, announcedName: String?, identity: Bytes16?, pinned: Bool, isMessaging: Bool) {
         self.destination = destination
         self.alias = alias
+        self.announcedName = announcedName
         self.identity = identity
         self.pinned = pinned
+        self.isMessaging = isMessaging
     }
 
 
@@ -846,16 +850,20 @@ public struct FfiConverterTypeContact: FfiConverterRustBuffer {
             try Contact(
                 destination: FfiConverterTypeBytes16.read(from: &buf),
                 alias: FfiConverterOptionString.read(from: &buf),
+                announcedName: FfiConverterOptionString.read(from: &buf),
                 identity: FfiConverterOptionTypeBytes16.read(from: &buf),
-                pinned: FfiConverterBool.read(from: &buf)
+                pinned: FfiConverterBool.read(from: &buf),
+                isMessaging: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: Contact, into buf: inout [UInt8]) {
         FfiConverterTypeBytes16.write(value.destination, into: &buf)
         FfiConverterOptionString.write(value.alias, into: &buf)
+        FfiConverterOptionString.write(value.announcedName, into: &buf)
         FfiConverterOptionTypeBytes16.write(value.identity, into: &buf)
         FfiConverterBool.write(value.pinned, into: &buf)
+        FfiConverterBool.write(value.isMessaging, into: &buf)
     }
 }
 
@@ -1675,6 +1683,60 @@ public func FfiConverterTypeLocalBluetoothSnapshot_lower(_ value: LocalBluetooth
 }
 
 
+public struct LocalMessagingProfile: Equatable, Hashable {
+    public var displayName: String
+    public var destination: Bytes16?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(displayName: String, destination: Bytes16?) {
+        self.displayName = displayName
+        self.destination = destination
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LocalMessagingProfile: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLocalMessagingProfile: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LocalMessagingProfile {
+        return
+            try LocalMessagingProfile(
+                displayName: FfiConverterString.read(from: &buf),
+                destination: FfiConverterOptionTypeBytes16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LocalMessagingProfile, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.displayName, into: &buf)
+        FfiConverterOptionTypeBytes16.write(value.destination, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalMessagingProfile_lift(_ buf: RustBuffer) throws -> LocalMessagingProfile {
+    return try FfiConverterTypeLocalMessagingProfile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalMessagingProfile_lower(_ value: LocalMessagingProfile) -> RustBuffer {
+    return FfiConverterTypeLocalMessagingProfile.lower(value)
+}
+
+
 public struct LxmfHealth: Equatable, Hashable {
     public var state: LxmfHealthState
     public var inboundOverflowCount: UInt64
@@ -1817,17 +1879,25 @@ public func FfiConverterTypeLxmfMessage_lower(_ value: LxmfMessage) -> RustBuffe
 
 public struct LxmfPeerSummary: Equatable, Hashable {
     public var destination: Bytes16
+    public var identity: Bytes16
     public var displayName: String?
     public var requiredStampCost: UInt64?
     public var lastObservedAgeMillis: UInt64
+    public var sourceInterface: Data
+    public var hops: UInt8
+    public var isPathResponse: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(destination: Bytes16, displayName: String?, requiredStampCost: UInt64?, lastObservedAgeMillis: UInt64) {
+    public init(destination: Bytes16, identity: Bytes16, displayName: String?, requiredStampCost: UInt64?, lastObservedAgeMillis: UInt64, sourceInterface: Data, hops: UInt8, isPathResponse: Bool) {
         self.destination = destination
+        self.identity = identity
         self.displayName = displayName
         self.requiredStampCost = requiredStampCost
         self.lastObservedAgeMillis = lastObservedAgeMillis
+        self.sourceInterface = sourceInterface
+        self.hops = hops
+        self.isPathResponse = isPathResponse
     }
 
 
@@ -1847,17 +1917,25 @@ public struct FfiConverterTypeLxmfPeerSummary: FfiConverterRustBuffer {
         return
             try LxmfPeerSummary(
                 destination: FfiConverterTypeBytes16.read(from: &buf),
+                identity: FfiConverterTypeBytes16.read(from: &buf),
                 displayName: FfiConverterOptionString.read(from: &buf),
                 requiredStampCost: FfiConverterOptionUInt64.read(from: &buf),
-                lastObservedAgeMillis: FfiConverterUInt64.read(from: &buf)
+                lastObservedAgeMillis: FfiConverterUInt64.read(from: &buf),
+                sourceInterface: FfiConverterData.read(from: &buf),
+                hops: FfiConverterUInt8.read(from: &buf),
+                isPathResponse: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: LxmfPeerSummary, into buf: inout [UInt8]) {
         FfiConverterTypeBytes16.write(value.destination, into: &buf)
+        FfiConverterTypeBytes16.write(value.identity, into: &buf)
         FfiConverterOptionString.write(value.displayName, into: &buf)
         FfiConverterOptionUInt64.write(value.requiredStampCost, into: &buf)
         FfiConverterUInt64.write(value.lastObservedAgeMillis, into: &buf)
+        FfiConverterData.write(value.sourceInterface, into: &buf)
+        FfiConverterUInt8.write(value.hops, into: &buf)
+        FfiConverterBool.write(value.isPathResponse, into: &buf)
     }
 }
 
@@ -3311,7 +3389,8 @@ public func FfiConverterTypeStartRemoteWifiTrialInput_lower(_ value: StartRemote
 
 public enum AnnounceLxmfOutcome: Equatable, Hashable {
 
-    case announced
+    case requested
+    case noUsableConnection
     case localNodeStopped
     case busy
     case failed
@@ -3336,13 +3415,15 @@ public struct FfiConverterTypeAnnounceLxmfOutcome: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .announced
+        case 1: return .requested
 
-        case 2: return .localNodeStopped
+        case 2: return .noUsableConnection
 
-        case 3: return .busy
+        case 3: return .localNodeStopped
 
-        case 4: return .failed
+        case 4: return .busy
+
+        case 5: return .failed
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3352,20 +3433,24 @@ public struct FfiConverterTypeAnnounceLxmfOutcome: FfiConverterRustBuffer {
         switch value {
 
 
-        case .announced:
+        case .requested:
             writeInt(&buf, Int32(1))
 
 
-        case .localNodeStopped:
+        case .noUsableConnection:
             writeInt(&buf, Int32(2))
 
 
-        case .busy:
+        case .localNodeStopped:
             writeInt(&buf, Int32(3))
 
 
-        case .failed:
+        case .busy:
             writeInt(&buf, Int32(4))
+
+
+        case .failed:
+            writeInt(&buf, Int32(5))
 
         }
     }
@@ -5084,6 +5169,117 @@ public func FfiConverterTypeLocalHostState_lower(_ value: LocalHostState) -> Rus
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum LocalMessagingProfileOutcome: Equatable, Hashable {
+
+    case ready(profile: LocalMessagingProfile
+    )
+    case savedButNotApplied(profile: LocalMessagingProfile, detail: String
+    )
+    case invalidInput(detail: String
+    )
+    case busy
+    case unavailable(detail: String
+    )
+    case developmentResetRequired(reason: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LocalMessagingProfileOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLocalMessagingProfileOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = LocalMessagingProfileOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LocalMessagingProfileOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .ready(profile: try FfiConverterTypeLocalMessagingProfile.read(from: &buf)
+        )
+
+        case 2: return .savedButNotApplied(profile: try FfiConverterTypeLocalMessagingProfile.read(from: &buf), detail: try FfiConverterString.read(from: &buf)
+        )
+
+        case 3: return .invalidInput(detail: try FfiConverterString.read(from: &buf)
+        )
+
+        case 4: return .busy
+
+        case 5: return .unavailable(detail: try FfiConverterString.read(from: &buf)
+        )
+
+        case 6: return .developmentResetRequired(reason: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: LocalMessagingProfileOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .ready(profile):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeLocalMessagingProfile.write(profile, into: &buf)
+
+
+        case let .savedButNotApplied(profile,detail):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeLocalMessagingProfile.write(profile, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
+
+
+        case let .invalidInput(detail):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(detail, into: &buf)
+
+
+        case .busy:
+            writeInt(&buf, Int32(4))
+
+
+        case let .unavailable(detail):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(detail, into: &buf)
+
+
+        case let .developmentResetRequired(reason):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(reason, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalMessagingProfileOutcome_lift(_ buf: RustBuffer) throws -> LocalMessagingProfileOutcome {
+    return try FfiConverterTypeLocalMessagingProfileOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalMessagingProfileOutcome_lower(_ value: LocalMessagingProfileOutcome) -> RustBuffer {
+    return FfiConverterTypeLocalMessagingProfileOutcome.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum LxmfDeliveryFailure: Equatable, Hashable {
 
     case noRoute
@@ -5338,6 +5534,80 @@ public func FfiConverterTypeLxmfDirection_lift(_ buf: RustBuffer) throws -> Lxmf
 #endif
 public func FfiConverterTypeLxmfDirection_lower(_ value: LxmfDirection) -> RustBuffer {
     return FfiConverterTypeLxmfDirection.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum LxmfDiscoveryClearOutcome: Equatable, Hashable {
+
+    case cleared
+    case localNodeStopped
+    case busy
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LxmfDiscoveryClearOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLxmfDiscoveryClearOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = LxmfDiscoveryClearOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LxmfDiscoveryClearOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .cleared
+
+        case 2: return .localNodeStopped
+
+        case 3: return .busy
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: LxmfDiscoveryClearOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .cleared:
+            writeInt(&buf, Int32(1))
+
+
+        case .localNodeStopped:
+            writeInt(&buf, Int32(2))
+
+
+        case .busy:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLxmfDiscoveryClearOutcome_lift(_ buf: RustBuffer) throws -> LxmfDiscoveryClearOutcome {
+    return try FfiConverterTypeLxmfDiscoveryClearOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLxmfDiscoveryClearOutcome_lower(_ value: LxmfDiscoveryClearOutcome) -> RustBuffer {
+    return FfiConverterTypeLxmfDiscoveryClearOutcome.lower(value)
 }
 
 
@@ -9397,6 +9667,10 @@ public enum SendDirectTextOutcome: Equatable, Hashable {
     case unsupportedRemoteStampRequirement(requiredStampCost: UInt64
     )
     case peerIdentityUnavailable
+    case identityConflict(expected: Bytes16, observed: Bytes16
+    )
+    case recipientUnavailable(detail: String
+    )
     case developmentUnavailable(detail: String
     )
     case developmentResetRequired(reason: String
@@ -9433,10 +9707,16 @@ public struct FfiConverterTypeSendDirectTextOutcome: FfiConverterRustBuffer {
 
         case 4: return .peerIdentityUnavailable
 
-        case 5: return .developmentUnavailable(detail: try FfiConverterString.read(from: &buf)
+        case 5: return .identityConflict(expected: try FfiConverterTypeBytes16.read(from: &buf), observed: try FfiConverterTypeBytes16.read(from: &buf)
         )
 
-        case 6: return .developmentResetRequired(reason: try FfiConverterString.read(from: &buf)
+        case 6: return .recipientUnavailable(detail: try FfiConverterString.read(from: &buf)
+        )
+
+        case 7: return .developmentUnavailable(detail: try FfiConverterString.read(from: &buf)
+        )
+
+        case 8: return .developmentResetRequired(reason: try FfiConverterString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -9466,13 +9746,24 @@ public struct FfiConverterTypeSendDirectTextOutcome: FfiConverterRustBuffer {
             writeInt(&buf, Int32(4))
 
 
-        case let .developmentUnavailable(detail):
+        case let .identityConflict(expected,observed):
             writeInt(&buf, Int32(5))
+            FfiConverterTypeBytes16.write(expected, into: &buf)
+            FfiConverterTypeBytes16.write(observed, into: &buf)
+
+
+        case let .recipientUnavailable(detail):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(detail, into: &buf)
+
+
+        case let .developmentUnavailable(detail):
+            writeInt(&buf, Int32(7))
             FfiConverterString.write(detail, into: &buf)
 
 
         case let .developmentResetRequired(reason):
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(8))
             FfiConverterString.write(reason, into: &buf)
 
         }
@@ -10514,6 +10805,21 @@ public func changeRemoteNode(input: ChangeRemoteNodeInput)async  -> ChangeRemote
 
         )
 }
+public func clearLxmfDiscovery()async  -> LxmfDiscoveryClearOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_clear_lxmf_discovery(
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeLxmfDiscoveryClearOutcome_lift,
+            errorHandler: nil
+
+        )
+}
 public func createManualContact(input: CreateManualContactInput)async  -> ContactMutationOutcome  {
     return
         try!  await uniffiRustCallAsync(
@@ -10801,6 +11107,21 @@ public func readBluetoothSettings()async  -> LocalBluetoothSettingsOutcome  {
 
         )
 }
+public func readMessagingProfile()async  -> LocalMessagingProfileOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_read_messaging_profile(
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeLocalMessagingProfileOutcome_lift,
+            errorHandler: nil
+
+        )
+}
 public func readRemoteNode(input: ReadRemoteNodeInput)async  -> ReadRemoteNodeOutcome  {
     return
         try!  await uniffiRustCallAsync(
@@ -10863,6 +11184,21 @@ public func retryLxmfMessage(input: RetryLxmfMessageInput)async  -> RetryLxmfMes
             completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
             freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeRetryLxmfMessageOutcome_lift,
+            errorHandler: nil
+
+        )
+}
+public func saveDiscoveredContact(input: ContactDestinationInput)async  -> ContactMutationOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_save_discovered_contact(FfiConverterTypeContactDestinationInput_lower(input)
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeContactMutationOutcome_lift,
             errorHandler: nil
 
         )
@@ -10945,6 +11281,21 @@ public func setContactPinned(input: SetContactPinnedInput)async  -> ContactMutat
 
         )
 }
+public func setMessagingName(name: String)async  -> LocalMessagingProfileOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_set_messaging_name(FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeLocalMessagingProfileOutcome_lift,
+            errorHandler: nil
+
+        )
+}
 /**
  * The same SDK host used by native services. Stop remains the app owner's operation.
  */
@@ -11001,6 +11352,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_change_remote_node() != 10229) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_prns_app_checksum_func_clear_lxmf_discovery() != 10179) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_create_manual_contact() != 1882) {
@@ -11069,6 +11423,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_prns_app_checksum_func_read_bluetooth_settings() != 48522) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_prns_app_checksum_func_read_messaging_profile() != 32931) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_prns_app_checksum_func_read_remote_node() != 34426) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11079,6 +11436,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_retry_lxmf_message() != 20310) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_prns_app_checksum_func_save_discovered_contact() != 21421) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_save_observed_destination() != 49523) {
@@ -11094,6 +11454,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_set_contact_pinned() != 4387) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_prns_app_checksum_func_set_messaging_name() != 62039) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_shared_host() != 49238) {

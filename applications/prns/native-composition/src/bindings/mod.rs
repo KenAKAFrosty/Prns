@@ -56,6 +56,16 @@ pub async fn set_bluetooth_enabled(enabled: bool) -> LocalBluetoothSettingsOutco
     crate::lifecycle::bluetooth_settings(Some(enabled)).await
 }
 
+#[uniffi::export]
+pub async fn read_messaging_profile() -> LocalMessagingProfileOutcome {
+    crate::lifecycle::profile::messaging_profile(None).await
+}
+
+#[uniffi::export]
+pub async fn set_messaging_name(name: String) -> LocalMessagingProfileOutcome {
+    crate::lifecycle::profile::messaging_profile(Some(name)).await
+}
+
 /// The same SDK host used by native services. Stop remains the app owner's operation.
 #[uniffi::export]
 pub fn shared_host() -> Option<std::sync::Arc<prns_host_uniffi::HostClientHandle>> {
@@ -253,6 +263,16 @@ pub async fn get_contact(input: ContactDestinationInput) -> ContactLookupOutcome
 #[uniffi::export]
 pub async fn list_contacts() -> ContactListOutcome {
     crate::lifecycle::admission::list_contacts().await
+}
+
+#[uniffi::export]
+pub async fn save_discovered_contact(input: ContactDestinationInput) -> ContactMutationOutcome {
+    crate::lifecycle::admission::save_discovered_contact(input).await
+}
+
+#[uniffi::export]
+pub async fn clear_lxmf_discovery() -> LxmfDiscoveryClearOutcome {
+    crate::lifecycle::admission::clear_lxmf_discovery().await
 }
 
 #[uniffi::export]

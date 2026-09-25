@@ -3,6 +3,240 @@ use crate::test_support::foreign_block_on;
 use prns_host::{BackendInfo, BackendKind, Capability, PersistenceSnapshot};
 
 #[test]
+fn stopped_messaging_profile_commit_survives_waiter_cancellation_and_reopen() {
+    use std::future::Future;
+    let temporary = tempfile::tempdir().unwrap();
+    let storage = temporary.path().join("prns/development");
+    let supervisor = Supervisor {
+        snapshots: Arc::new(SnapshotStore::new()),
+        operation_admitted: Arc::new(AtomicBool::new(false)),
+        state: Mutex::new(SupervisorState::default()),
+    };
+    assert!(matches!(
+        foreign_block_on(profile::messaging_profile_with_supervisor(
+            &supervisor,
+            None
+        )),
+        LocalMessagingProfileOutcome::Unavailable { .. }
+    ));
+    // Model a cold process with a persisted identity but no cached identity owner or node.
+    let paths = prepare_storage(&storage).unwrap();
+    let secret = [0x43; personal_rns::identity::IDENTITY_SECRET_KEY_LEN];
+    let identity = *PrivateIdentityMaterial::from_bytes(secret)
+        .identity_hash()
+        .as_bytes();
+    FileVault::new(&paths.identities)
+        .store(&primary_label().unwrap(), &secret)
+        .unwrap();
+    assert_eq!(
+        admission::prepare_native_storage_with_supervisor(&supervisor, &storage),
+        NativeStoragePreparationOutcome::Prepared
+    );
+    assert_eq!(
+        supervisor.snapshots.read().primary_identity,
+        PrimaryIdentityState::Present {
+            identity_hash: identity.to_vec()
+        }
+    );
+    assert!(
+        matches!(foreign_block_on(profile::messaging_profile_with_supervisor(&supervisor, None)),
+        LocalMessagingProfileOutcome::Ready { profile } if profile.destination == crate::messaging_profile::messaging_destination(identity))
+    );
+    let (entered, wait_entered) = std_mpsc::sync_channel(1);
+    let (release, wait_release) = std_mpsc::sync_channel(1);
+    supervisor
+        .lock_state()
+        .application_owner
+        .as_ref()
+        .unwrap()
+        .admit_test_barrier(entered, wait_release)
+        .unwrap();
+    wait_entered.recv().unwrap();
+    let mut mutation = Box::pin(profile::messaging_profile_with_supervisor(
+        &supervisor,
+        Some("  My name  ".into()),
+    ));
+    assert!(mutation
+        .as_mut()
+        .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+        .is_pending());
+    drop(mutation);
+    release.send(()).unwrap();
+    assert_eq!(
+        supervisor
+            .lock_state()
+            .application_owner
+            .as_ref()
+            .unwrap()
+            .read_messaging_name_blocking()
+            .unwrap(),
+        "My name"
+    );
+    supervisor
+        .lock_state()
+        .application_owner
+        .take()
+        .unwrap()
+        .close()
+        .unwrap();
+    assert_eq!(
+        admission::prepare_native_storage_with_supervisor(&supervisor, &storage),
+        NativeStoragePreparationOutcome::Prepared
+    );
+    assert_eq!(
+        foreign_block_on(profile::messaging_profile_with_supervisor(
+            &supervisor,
+            None
+        )),
+        LocalMessagingProfileOutcome::Ready {
+            profile: LocalMessagingProfile {
+                display_name: "My name".into(),
+                destination: crate::messaging_profile::messaging_destination(identity)
+            },
+        }
+    );
+    assert!(matches!(
+        foreign_block_on(profile::messaging_profile_with_supervisor(
+            &supervisor,
+            Some("\n".into())
+        )),
+        LocalMessagingProfileOutcome::InvalidInput { .. }
+    ));
+    assert_eq!(
+        supervisor.snapshots.read().runtime,
+        DevelopmentNodeRuntime::Stopped
+    );
+}
+
+#[test]
+fn messaging_name_saved_during_actor_close_reports_partial_application() {
+    let temporary = tempfile::tempdir().unwrap();
+    let storage = temporary.path().join("prns/development");
+    let supervisor = Supervisor {
+        snapshots: Arc::new(SnapshotStore::new()),
+        operation_admitted: Arc::new(AtomicBool::new(false)),
+        state: Mutex::new(SupervisorState::default()),
+    };
+    assert_eq!(
+        admission::prepare_native_storage_with_supervisor(&supervisor, &storage),
+        NativeStoragePreparationOutcome::Prepared
+    );
+    let (commands, receiver) = mpsc::channel(1);
+    drop(receiver);
+    let (shutdown, _) = watch::channel(false);
+    let (_, done) = std_mpsc::sync_channel(1);
+    supervisor.lock_state().worker = Some(test_worker(
+        commands,
+        ShutdownSignal {
+            sender: shutdown,
+            requested: Arc::new(AtomicBool::new(false)),
+        },
+        done,
+        None,
+        storage,
+    ));
+    supervisor
+        .snapshots
+        .set_runtime(DevelopmentNodeRuntime::Running);
+    assert!(
+        matches!(foreign_block_on(profile::messaging_profile_with_supervisor(&supervisor, Some("Saved name".into()))), LocalMessagingProfileOutcome::SavedButNotApplied { profile, .. } if profile.display_name == "Saved name")
+    );
+    assert_eq!(
+        supervisor
+            .lock_state()
+            .application_owner
+            .as_ref()
+            .unwrap()
+            .read_messaging_name_blocking()
+            .unwrap(),
+        "Saved name"
+    );
+}
+
+#[cfg(not(any(feature = "apple", feature = "android")))]
+#[test]
+fn messaging_name_updates_live_without_identity_or_generation_change_and_restarts() {
+    let temporary = tempfile::tempdir().unwrap();
+    let storage = temporary.path().join("prns/development");
+    let paths = prepare_storage(&storage).unwrap();
+    let supervisor = Supervisor {
+        snapshots: Arc::new(SnapshotStore::new()),
+        operation_admitted: Arc::new(AtomicBool::new(false)),
+        state: Mutex::new(SupervisorState::default()),
+    };
+    {
+        let mut state = supervisor.lock_state();
+        identity_vault(&mut state, &paths)
+            .unwrap()
+            .store(
+                &primary_label().unwrap(),
+                &[0x64; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        admission::prepare_native_storage_with_supervisor(&supervisor, &storage),
+        NativeStoragePreparationOutcome::Prepared
+    );
+    assert!(matches!(
+        foreign_block_on(profile::messaging_profile_with_supervisor(
+            &supervisor,
+            Some("First name".into())
+        )),
+        LocalMessagingProfileOutcome::Ready { .. }
+    ));
+    let start = || {
+        start_configured_with_supervisor(
+            &supervisor,
+            &storage,
+            DevelopmentNodeStartInput {
+                development_tcp_target: None,
+            },
+            AppleBluetoothPreparation::WithoutRestoration,
+        )
+    };
+    assert!(matches!(
+        start(),
+        DevelopmentNodeStartOutcome::Started { .. }
+    ));
+    let before = supervisor.snapshots.read();
+    let LocalMessagingProfileOutcome::Ready { profile: updated } = foreign_block_on(
+        profile::messaging_profile_with_supervisor(&supervisor, Some("Second name".into())),
+    ) else {
+        panic!("live registered announce data must accept the saved name");
+    };
+    assert_eq!(updated.display_name, "Second name");
+    assert!(updated.destination.is_some());
+    assert_eq!(
+        supervisor.snapshots.read().generation_id,
+        before.generation_id
+    );
+    assert_eq!(
+        supervisor.snapshots.read().primary_identity,
+        before.primary_identity
+    );
+    assert_eq!(
+        stop_locked(&supervisor, &mut supervisor.lock_state()),
+        DevelopmentNodeStopOutcome::Stopped
+    );
+    assert!(matches!(
+        start(),
+        DevelopmentNodeStartOutcome::Started { .. }
+    ));
+    assert_eq!(
+        foreign_block_on(profile::messaging_profile_with_supervisor(
+            &supervisor,
+            None
+        )),
+        LocalMessagingProfileOutcome::Ready { profile: updated }
+    );
+    assert_eq!(
+        stop_locked(&supervisor, &mut supervisor.lock_state()),
+        DevelopmentNodeStopOutcome::Stopped
+    );
+}
+
+#[test]
 fn stopped_bluetooth_settings_persist_and_remain_visible_after_shutdown() {
     let temporary = tempfile::tempdir().unwrap();
     let storage = temporary.path().join("prns/development");
@@ -1006,6 +1240,8 @@ async fn learn_pending_peer(service: &prns_lxmf::mailbox::DurableDirectLxmfServi
                 arrived_at_millis: 4_200,
                 app_data: &announce[..announce_len],
                 is_path_response: false,
+                source_interface: prns_host::InterfaceId::new([0x42; 8]),
+                hops: 1,
             }),
         prns_lxmf::direct::CallbackOutcome::Enqueued
     );
@@ -1433,11 +1669,31 @@ fn tracked_lxmf_send_tasks_are_bounded() {
 
 #[test]
 fn admitted_send_waiter_requires_a_definitive_commit_outcome() {
+    let temporary = tempfile::tempdir().unwrap();
+    let storage = temporary.path().join("prns/development");
     let supervisor = Arc::new(Supervisor {
         snapshots: Arc::new(SnapshotStore::new()),
         operation_admitted: Arc::new(AtomicBool::new(false)),
         state: Mutex::new(SupervisorState::default()),
     });
+    assert_eq!(
+        admission::prepare_native_storage_with_supervisor(&supervisor, &storage),
+        NativeStoragePreparationOutcome::Prepared
+    );
+    supervisor
+        .lock_state()
+        .application_owner
+        .as_ref()
+        .unwrap()
+        .admit_directory_async(DirectoryRequest::CreateManual {
+            destination: [7; 16],
+            identity: Some([9; 16]),
+            alias: None,
+        })
+        .unwrap()
+        .blocking_recv()
+        .unwrap()
+        .unwrap();
     supervisor
         .snapshots
         .set_runtime(DevelopmentNodeRuntime::Running);
@@ -1452,7 +1708,7 @@ fn admitted_send_waiter_requires_a_definitive_commit_outcome() {
         },
         done,
         None,
-        PathBuf::from("/unused"),
+        storage.canonicalize().unwrap(),
     ));
     let owner = Arc::clone(&supervisor);
     let waiter = std::thread::spawn(move || {
@@ -1465,9 +1721,11 @@ fn admitted_send_waiter_requires_a_definitive_commit_outcome() {
             },
         ))
     });
-    let Some(Command::SendDirectText(_, response)) = receiver.blocking_recv() else {
+    let Some(Command::SendDirectText(_, expected_identity, response)) = receiver.blocking_recv()
+    else {
         panic!("production admission must submit the send");
     };
+    assert_eq!(expected_identity, Some([9; 16]));
     std::thread::sleep(Duration::from_millis(25));
     assert!(!waiter.is_finished());
     response
@@ -1891,6 +2149,7 @@ async fn durable_lxmf_send_accepts_and_queries_before_pending_proof() {
             title: "Proof gate".to_owned(),
             content: "Still sending".to_owned(),
         },
+        None,
         send_response,
         1_700_000_000_000,
     );
@@ -2071,6 +2330,7 @@ async fn admitted_insert_survives_stop_and_response_drain_boundaries() {
             title: "Retain response".to_owned(),
             content: "Commit exactly once".to_owned(),
         },
+        None,
         send_response,
         1_700_000_000_500,
     );
@@ -2166,6 +2426,7 @@ async fn generated_send_caller_drop_preserves_the_owned_durable_insert() {
             title: "Caller left".to_owned(),
             content: "Commit once".to_owned(),
         },
+        None,
         response,
         1_700_000_000_500,
     );
@@ -2924,7 +3185,8 @@ fn observed_save_rechecks_generation_after_waiting_outside_the_supervisor_lock()
     let (query_started_tx, query_started_rx) = std_mpsc::sync_channel(1);
     let (release_query_tx, release_query_rx) = std_mpsc::sync_channel(1);
     let actor = std::thread::spawn(move || {
-        let Some(Command::ObservedIdentity(destination, response)) = old_command_rx.blocking_recv()
+        let Some(Command::ObservedIdentity(destination, false, response)) =
+            old_command_rx.blocking_recv()
         else {
             panic!("observed identity command was not admitted");
         };
@@ -2932,7 +3194,10 @@ fn observed_save_rechecks_generation_after_waiting_outside_the_supervisor_lock()
         query_started_tx.send(()).expect("publish query start");
         release_query_rx.recv().expect("release identity response");
         response
-            .send(Ok(Some([5; 16])))
+            .send(Ok(Some(ObservedContact {
+                identity: [5; 16],
+                announced_name: None,
+            })))
             .expect("publish identity response");
     });
     let (shutdown_sender, _shutdown_rx) = watch::channel(false);
@@ -3016,14 +3281,17 @@ fn observed_save_persists_the_generation_identity_and_reopens() {
     let identity = [0x42; 16];
     let (commands, mut command_rx) = mpsc::channel(1);
     let actor = std::thread::spawn(move || {
-        let Some(Command::ObservedIdentity(observed_destination, response)) =
+        let Some(Command::ObservedIdentity(observed_destination, false, response)) =
             command_rx.blocking_recv()
         else {
             panic!("observed identity command was not admitted");
         };
         assert_eq!(observed_destination, destination);
         response
-            .send(Ok(Some(identity)))
+            .send(Ok(Some(ObservedContact {
+                identity,
+                announced_name: None,
+            })))
             .expect("publish identity response");
     });
     let (shutdown_sender, _shutdown_rx) = watch::channel(false);
@@ -3828,14 +4096,14 @@ fn identity_and_node_reopen_reset_and_recreate_in_one_process() {
             remaining_bytes: 0,
         }
     );
-    assert_eq!(
+    assert!(matches!(
         foreign_block_on(admission::send_direct_text(SendDirectTextInput {
             destination: [0x99; 16],
             title: "Unknown peer".to_owned(),
             content: "No message should be sent".to_owned(),
         })),
-        SendDirectTextOutcome::PeerIdentityUnavailable
-    );
+        SendDirectTextOutcome::RecipientUnavailable { .. }
+    ));
     let LocalHostState::Running { host } = running.local_host else {
         panic!("the running generation did not publish its canonical Host snapshot");
     };

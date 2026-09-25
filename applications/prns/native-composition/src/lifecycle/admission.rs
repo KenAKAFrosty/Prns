@@ -25,6 +25,10 @@ pub(super) fn prepare_native_storage_with_supervisor(
         });
     match prepared {
         Ok(enabled) => {
+            // Native bootstrap owns filesystem access. Publish an already persisted
+            // identity even when no node has started, so offline profiles have an address.
+            let identity = inspect_identity_locked(&mut state, storage_root);
+            supervisor.snapshots.set_primary_identity(identity);
             if supervisor.snapshots.read().bluetooth.desired_enabled != Some(enabled) {
                 supervisor
                     .snapshots
@@ -284,6 +288,16 @@ pub async fn list_lxmf_peers() -> LxmfPeerListOutcome {
     }
 }
 
+pub async fn clear_lxmf_discovery() -> LxmfDiscoveryClearOutcome {
+    match admit_running(supervisor(), Command::ClearLxmfDiscovery) {
+        Ok(receiver) => bounded_reply(receiver, LXMF_QUERY_TIMEOUT)
+            .await
+            .unwrap_or(LxmfDiscoveryClearOutcome::Busy),
+        Err(LxmfAdmissionFailure::LocalNodeStopped) => LxmfDiscoveryClearOutcome::LocalNodeStopped,
+        Err(LxmfAdmissionFailure::Busy) => LxmfDiscoveryClearOutcome::Busy,
+    }
+}
+
 pub async fn measure_lxmf_text(input: MeasureLxmfTextInput) -> MeasureLxmfTextOutcome {
     match admit_running(supervisor(), |response| {
         Command::MeasureLxmfText(input, response)
@@ -314,8 +328,25 @@ pub(super) async fn send_direct_text_with_supervisor(
     supervisor: &Supervisor,
     input: SendDirectTextInput,
 ) -> SendDirectTextOutcome {
+    let expected_identity = match get_contact_with_supervisor(
+        supervisor,
+        ContactDestinationInput {
+            destination: input.destination,
+        },
+    )
+    .await
+    {
+        ContactLookupOutcome::Found { contact } => contact.identity,
+        ContactLookupOutcome::NotFound => None,
+        ContactLookupOutcome::DevelopmentUnavailable { detail } => {
+            return SendDirectTextOutcome::DevelopmentUnavailable { detail };
+        }
+        ContactLookupOutcome::DevelopmentResetRequired { reason } => {
+            return SendDirectTextOutcome::DevelopmentResetRequired { reason };
+        }
+    };
     let receiver = match admit_running(supervisor, |response| {
-        Command::SendDirectText(input, response)
+        Command::SendDirectText(input, expected_identity, response)
     }) {
         Ok(receiver) => receiver,
         Err(failure) => {
@@ -426,8 +457,15 @@ pub async fn delete_contact(input: ContactDestinationInput) -> ContactMutationOu
     .await
 }
 pub async fn get_contact(input: ContactDestinationInput) -> ContactLookupOutcome {
+    get_contact_with_supervisor(supervisor(), input).await
+}
+
+async fn get_contact_with_supervisor(
+    supervisor: &Supervisor,
+    input: ContactDestinationInput,
+) -> ContactLookupOutcome {
     let receiver = match admit_directory(
-        supervisor(),
+        supervisor,
         DirectoryRequest::Get {
             destination: input.destination,
         },
@@ -468,6 +506,18 @@ pub(super) async fn save_observed_destination_with_supervisor(
     supervisor: &Supervisor,
     input: ContactDestinationInput,
 ) -> ContactMutationOutcome {
+    save_observation_with_supervisor(supervisor, input, false).await
+}
+
+pub async fn save_discovered_contact(input: ContactDestinationInput) -> ContactMutationOutcome {
+    save_observation_with_supervisor(supervisor(), input, true).await
+}
+
+async fn save_observation_with_supervisor(
+    supervisor: &Supervisor,
+    input: ContactDestinationInput,
+    messaging_only: bool,
+) -> ContactMutationOutcome {
     let admitted = (|| {
         let state = try_state(supervisor).map_err(|detail| {
             ContactMutationOutcome::DevelopmentUnavailable {
@@ -480,7 +530,11 @@ pub(super) async fn save_observed_destination_with_supervisor(
         let (response, receiver) = oneshot::channel();
         worker
             .commands
-            .try_send(Command::ObservedIdentity(input.destination, response))
+            .try_send(Command::ObservedIdentity(
+                input.destination,
+                messaging_only,
+                response,
+            ))
             .map_err(|_| ContactMutationOutcome::DevelopmentUnavailable {
                 detail: "The local observation lane is full or closed.".to_owned(),
             })?;
@@ -510,10 +564,19 @@ pub(super) async fn save_observed_destination_with_supervisor(
                 "The observed association belongs to a generation that has stopped.",
             ));
         }
-        prepared_owner(&state)?.admit_directory_async(DirectoryRequest::SaveObserved {
-            destination: input.destination,
-            identity,
-        })
+        let request = if messaging_only {
+            DirectoryRequest::SaveDiscovered {
+                destination: input.destination,
+                identity: identity.identity,
+                announced_name: identity.announced_name,
+            }
+        } else {
+            DirectoryRequest::SaveObserved {
+                destination: input.destination,
+                identity: identity.identity,
+            }
+        };
+        prepared_owner(&state)?.admit_directory_async(request)
     })();
     match admitted {
         Ok(receiver) => receive_mutation(receiver).await,

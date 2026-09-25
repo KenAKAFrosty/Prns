@@ -44,6 +44,18 @@ function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRu
     setBluetoothEnabled: jest.fn(async (enabled: boolean) =>
       Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled }),
     ),
+    readMessagingProfile: jest.fn(async () =>
+      Bindings.LocalMessagingProfileOutcome.Ready.new({
+        profile: { displayName: "prns", destination: undefined },
+      }),
+    ),
+    setMessagingName: jest.fn(async (displayName: string) =>
+      Bindings.LocalMessagingProfileOutcome.Ready.new({
+        profile: { displayName, destination: undefined },
+      }),
+    ),
+    saveDiscoveredContact: jest.fn(async () => Bindings.ContactMutationOutcome.NotObserved.new()),
+    clearLxmfDiscovery: jest.fn(async () => Bindings.LxmfDiscoveryClearOutcome.Cleared),
     inspectDevelopmentIdentity: jest.fn(async () => Bindings.PrimaryIdentityState.Missing.new()),
     previewIdentityImport: jest.fn(async () =>
       Bindings.IdentityImportPreviewOutcome.InvalidLength.new(),
@@ -103,7 +115,7 @@ function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRu
     ),
     retryLxmfMessage: jest.fn(async () => Bindings.RetryLxmfMessageOutcome.NotFound.new()),
     cancelLxmfMessage: jest.fn(async () => Bindings.CancelLxmfMessageOutcome.NotFound.new()),
-    announceLxmf: jest.fn(async () => Bindings.AnnounceLxmfOutcome.Announced),
+    announceLxmf: jest.fn(async () => Bindings.AnnounceLxmfOutcome.Requested),
     measureLxmfText: jest.fn(async () =>
       Bindings.MeasureLxmfTextOutcome.Measured.new({
         wireBytes: 113,

@@ -38,19 +38,39 @@ pub(crate) fn project_health(snapshot: &DurableLxmfSnapshot) -> Result<LxmfHealt
 
 pub(crate) fn project_peers(
     snapshot: &DurableLxmfSnapshot,
-    now_millis: u64,
+    _now_millis: u64,
 ) -> LxmfPeerListOutcome {
     let peers = snapshot
         .peers
         .iter()
         .map(|peer| LxmfPeerSummary {
             destination: peer.destination,
+            identity: peer.announced_identity,
             display_name: peer.display_name.clone(),
             required_stamp_cost: peer.required_stamp_cost,
-            last_observed_age_millis: now_millis.saturating_sub(peer.observed_at_millis),
+            last_observed_age_millis: peer.age_millis,
+            source_interface: peer.source_interface.to_vec(),
+            hops: peer.hops,
+            is_path_response: peer.is_path_response,
         })
         .collect();
     LxmfPeerListOutcome::Listed { peers }
+}
+
+pub(crate) fn has_usable_announce_connection(
+    interfaces: &[personal_rns::node_introspection::InterfaceTimingSnapshot],
+    bluetooth_ready: bool,
+) -> bool {
+    use personal_rns::interfaces::InterfaceKind;
+    interfaces.iter().any(|interface| {
+        interface.connection.is_online()
+            && interface.capabilities.allows_transmit()
+            && interface.id.kind().is_some_and(|kind| {
+                kind != InterfaceKind::Loopback
+                    && kind.member_kind().is_none()
+                    && (kind != InterfaceKind::BluetoothPeer || bluetooth_ready)
+            })
+    })
 }
 
 pub(crate) fn mailbox_list_request(
@@ -125,6 +145,14 @@ pub(crate) fn project_send_outcome(outcome: DurableSendDirectTextOutcome) -> Sen
         },
         DurableSendDirectTextOutcome::PeerIdentityUnavailable => {
             SendDirectTextOutcome::PeerIdentityUnavailable
+        }
+        DurableSendDirectTextOutcome::PeerIdentityConflict { expected, observed } => {
+            SendDirectTextOutcome::IdentityConflict { expected, observed }
+        }
+        DurableSendDirectTextOutcome::RecipientResolutionTimedOut => {
+            SendDirectTextOutcome::RecipientUnavailable {
+                detail: "The contact did not answer the bounded path and messaging lookup. Check the connection and try again.".into(),
+            }
         }
         DurableSendDirectTextOutcome::DevelopmentUnavailable { detail } => {
             SendDirectTextOutcome::DevelopmentUnavailable { detail }
@@ -394,6 +422,34 @@ mod tests {
             )),
             Err(MailboxFailure::ResetRequired("corrupt".to_owned()))
         );
+    }
+
+    #[test]
+    fn announce_requires_online_transmitting_members_and_live_bluetooth_intent() {
+        use personal_rns::interfaces::{
+            BitrateBps, ConnectionState, EgressCapability, IngressCapability,
+            InterfaceCapabilities, InterfaceId, InterfaceKind, TransportCapability,
+        };
+        let mut interface = personal_rns::node_introspection::InterfaceTimingSnapshot {
+            id: InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, b"supervisor"),
+            bitrate: BitrateBps::guess(1_000),
+            capabilities: InterfaceCapabilities {
+                ingress: IngressCapability::Enabled,
+                egress: EgressCapability::Enabled(TransportCapability::NoTransport),
+            },
+            connection: ConnectionState::Connected,
+        };
+        assert!(!has_usable_announce_connection(&[interface], true));
+        interface.id = InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, b"peer");
+        assert!(!has_usable_announce_connection(&[interface], false));
+        assert!(has_usable_announce_connection(&[interface], true));
+        interface.capabilities.egress = EgressCapability::Disabled;
+        assert!(!has_usable_announce_connection(&[interface], true));
+        interface.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
+        interface.id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"tcp");
+        assert!(has_usable_announce_connection(&[interface], false));
+        interface.connection = ConnectionState::Disabled;
+        assert!(!has_usable_announce_connection(&[interface], false));
     }
 
     #[test]

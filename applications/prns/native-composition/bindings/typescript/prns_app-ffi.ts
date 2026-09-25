@@ -289,6 +289,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_fn_func_clear_lxmf_discovery": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_fn_func_create_manual_contact": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -399,6 +404,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_fn_func_read_messaging_profile": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_fn_func_read_remote_node": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -415,6 +425,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_fn_func_retry_lxmf_message": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_save_discovered_contact": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -440,6 +455,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_fn_func_set_contact_pinned": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_set_messaging_name": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -485,6 +505,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_checksum_func_change_remote_node": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_clear_lxmf_discovery": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -599,6 +624,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_checksum_func_read_messaging_profile": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_checksum_func_read_remote_node": {
       args: [],
       ret: FfiType.UInt16,
@@ -615,6 +645,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_checksum_func_retry_lxmf_message": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_save_discovered_contact": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -640,6 +675,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_checksum_func_set_contact_pinned": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_set_messaging_name": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -734,6 +774,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_fn_func_binding_contract(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_cancel_lxmf_message(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_change_remote_node(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_clear_lxmf_discovery(): bigint;
     uniffi_prns_app_fn_func_create_manual_contact(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_delete_contact(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_describe_target(input: Uint8Array): bigint;
@@ -756,15 +797,18 @@ interface NativeModuleInterface {
     uniffi_prns_app_fn_func_native_stop(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_preview_identity_import(identity: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_read_bluetooth_settings(): bigint;
+    uniffi_prns_app_fn_func_read_messaging_profile(): bigint;
     uniffi_prns_app_fn_func_read_remote_node(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_read_snapshot(): bigint;
     uniffi_prns_app_fn_func_reject_pairing(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_retry_lxmf_message(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_save_discovered_contact(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_save_observed_destination(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_send_direct_text(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_set_bluetooth_enabled(enabled: number): bigint;
     uniffi_prns_app_fn_func_set_contact_alias(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_set_contact_pinned(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_set_messaging_name(name: Uint8Array): bigint;
     uniffi_prns_app_fn_func_shared_host(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_start_remote_wifi_trial(input: Uint8Array): bigint;
     ffi_prns_app_uniffi_contract_version(): number;
@@ -774,6 +818,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_checksum_func_binding_contract(): number;
     uniffi_prns_app_checksum_func_cancel_lxmf_message(): number;
     uniffi_prns_app_checksum_func_change_remote_node(): number;
+    uniffi_prns_app_checksum_func_clear_lxmf_discovery(): number;
     uniffi_prns_app_checksum_func_create_manual_contact(): number;
     uniffi_prns_app_checksum_func_delete_contact(): number;
     uniffi_prns_app_checksum_func_describe_target(): number;
@@ -796,15 +841,18 @@ interface NativeModuleInterface {
     uniffi_prns_app_checksum_func_native_stop(): number;
     uniffi_prns_app_checksum_func_preview_identity_import(): number;
     uniffi_prns_app_checksum_func_read_bluetooth_settings(): number;
+    uniffi_prns_app_checksum_func_read_messaging_profile(): number;
     uniffi_prns_app_checksum_func_read_remote_node(): number;
     uniffi_prns_app_checksum_func_read_snapshot(): number;
     uniffi_prns_app_checksum_func_reject_pairing(): number;
     uniffi_prns_app_checksum_func_retry_lxmf_message(): number;
+    uniffi_prns_app_checksum_func_save_discovered_contact(): number;
     uniffi_prns_app_checksum_func_save_observed_destination(): number;
     uniffi_prns_app_checksum_func_send_direct_text(): number;
     uniffi_prns_app_checksum_func_set_bluetooth_enabled(): number;
     uniffi_prns_app_checksum_func_set_contact_alias(): number;
     uniffi_prns_app_checksum_func_set_contact_pinned(): number;
+    uniffi_prns_app_checksum_func_set_messaging_name(): number;
     uniffi_prns_app_checksum_func_shared_host(): number;
     uniffi_prns_app_checksum_func_start_remote_wifi_trial(): number;
     // Codegen call sites use these via `nativeModule().rustbuffer_alloc(...)`

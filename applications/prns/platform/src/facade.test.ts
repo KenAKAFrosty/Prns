@@ -288,6 +288,26 @@ test("Bluetooth preferences use prepared offline storage without starting or adm
   expect(native.prepareOutbound).not.toHaveBeenCalled();
 });
 
+test("messaging profile reads and writes prepare storage without starting or broadcasting", async () => {
+  const native = nativeModule();
+  const outcome = Bindings.LocalMessagingProfileOutcome.Ready.new({
+    profile: { displayName: "My node", destination: new Uint8Array(16).fill(0x42) },
+  });
+  const readMessagingProfile = jest.fn(async () => outcome);
+  const setMessagingName = jest.fn(async (_name: string) => {
+    expect(native.prepareStorage).toHaveBeenCalledTimes(1);
+    return outcome;
+  });
+  const announceLxmf = jest.fn(async () => Bindings.AnnounceLxmfOutcome.Requested);
+  const { runtime } = setup({ readMessagingProfile, setMessagingName, announceLxmf }, native);
+  expect(await runtime.setMessagingName("My node")).toBe(outcome);
+  expect(await runtime.readMessagingProfile()).toBe(outcome);
+  expect(setMessagingName).toHaveBeenCalledWith("My node");
+  expect(native.start).not.toHaveBeenCalled();
+  expect(native.prepareOutbound).not.toHaveBeenCalled();
+  expect(announceLxmf).not.toHaveBeenCalled();
+});
+
 test("cold retry does not refresh outbound or submit when storage preparation fails or is cancelled", async () => {
   for (const cancelled of [false, true]) {
     const controller = new AbortController();

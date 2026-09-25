@@ -239,6 +239,46 @@ export async function changeRemoteNode(input: ChangeRemoteNodeInput, asyncOpts_?
     }
     }
 
+export async function clearLxmfDiscovery(asyncOpts_?: { signal: AbortSignal }): Promise<LxmfDiscoveryClearOutcome> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_prns_app_fn_func_clear_lxmf_discovery(
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_prns_app_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_prns_app_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_prns_app_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_prns_app_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeLxmfDiscoveryClearOutcome.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
 export async function createManualContact(input: CreateManualContactInput, asyncOpts_?: { signal: AbortSignal }): Promise<ContactMutationOutcome> {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -916,6 +956,46 @@ export async function readBluetoothSettings(asyncOpts_?: { signal: AbortSignal }
     }
     }
 
+export async function readMessagingProfile(asyncOpts_?: { signal: AbortSignal }): Promise<LocalMessagingProfileOutcome> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_prns_app_fn_func_read_messaging_profile(
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_prns_app_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_prns_app_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_prns_app_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_prns_app_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeLocalMessagingProfileOutcome.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
 export async function readRemoteNode(input: ReadRemoteNodeInput, asyncOpts_?: { signal: AbortSignal }): Promise<ReadRemoteNodeOutcome> {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -1066,6 +1146,46 @@ export async function retryLxmfMessage(input: RetryLxmfMessageInput, asyncOpts_?
             /*liftFunc:*/ (__rb) => {
                 try {
                     return FfiConverterTypeRetryLxmfMessageOutcome.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+export async function saveDiscoveredContact(input: ContactDestinationInput, asyncOpts_?: { signal: AbortSignal }): Promise<ContactMutationOutcome> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_prns_app_fn_func_save_discovered_contact(FfiConverterTypeContactDestinationInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_prns_app_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_prns_app_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_prns_app_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_prns_app_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeContactMutationOutcome.lift(__rb);
                 } finally {
                     nativeModule().rustbuffer_free(__rb);
                 }
@@ -1269,6 +1389,46 @@ export async function setContactPinned(input: SetContactPinnedInput, asyncOpts_?
             /*liftFunc:*/ (__rb) => {
                 try {
                     return FfiConverterTypeContactMutationOutcome.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+export async function setMessagingName(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<LocalMessagingProfileOutcome> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_prns_app_fn_func_set_messaging_name(FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_prns_app_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_prns_app_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_prns_app_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_prns_app_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeLocalMessagingProfileOutcome.lift(__rb);
                 } finally {
                     nativeModule().rustbuffer_free(__rb);
                 }
@@ -2444,8 +2604,10 @@ const FfiConverterTypeBytes16 = FfiConverterUint8Array;
 export type Contact = {
     destination: Bytes16,
     alias?: string | undefined,
+    announcedName?: string | undefined,
     identity?: Bytes16 | undefined,
-    pinned: boolean
+    pinned: boolean,
+    isMessaging: boolean
 }
 
 /**
@@ -2471,21 +2633,27 @@ const FfiConverterTypeContact = (() => {
             return {
                 destination: FfiConverterTypeBytes16.readFromCursor(c),
                 alias: FfiConverterOptionalString.readFromCursor(c),
+                announcedName: FfiConverterOptionalString.readFromCursor(c),
                 identity: FfiConverterOptionalTypeBytes16.readFromCursor(c),
-                pinned: FfiConverterBool.readFromCursor(c)
+                pinned: FfiConverterBool.readFromCursor(c),
+                isMessaging: FfiConverterBool.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             FfiConverterTypeBytes16.writeIntoCursor(value.destination, c);
             FfiConverterOptionalString.writeIntoCursor(value.alias, c);
+            FfiConverterOptionalString.writeIntoCursor(value.announcedName, c);
             FfiConverterOptionalTypeBytes16.writeIntoCursor(value.identity, c);
             FfiConverterBool.writeIntoCursor(value.pinned, c);
+            FfiConverterBool.writeIntoCursor(value.isMessaging, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeBytes16.allocationSize(value.destination) +
              FfiConverterOptionalString.allocationSize(value.alias) +
+             FfiConverterOptionalString.allocationSize(value.announcedName) +
              FfiConverterOptionalTypeBytes16.allocationSize(value.identity) +
-             FfiConverterBool.allocationSize(value.pinned);
+             FfiConverterBool.allocationSize(value.pinned) +
+             FfiConverterBool.allocationSize(value.isMessaging);
 
         }
     };
@@ -6469,6 +6637,49 @@ const FfiConverterTypeListLxmfMessagesInput = (() => {
     return new FFIConverter();
 })();
 
+export type LocalMessagingProfile = {
+    displayName: string,
+    destination?: Bytes16 | undefined
+}
+
+/**
+ * Generated factory for {@link LocalMessagingProfile} record objects.
+ */
+export const LocalMessagingProfile = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<LocalMessagingProfile, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<LocalMessagingProfile>,
+    });
+})();
+
+const FfiConverterTypeLocalMessagingProfile = (() => {
+    type TypeName = LocalMessagingProfile;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                displayName: FfiConverterString.readFromCursor(c),
+                destination: FfiConverterOptionalTypeBytes16.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterString.writeIntoCursor(value.displayName, c);
+            FfiConverterOptionalTypeBytes16.writeIntoCursor(value.destination, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.displayName) +
+             FfiConverterOptionalTypeBytes16.allocationSize(value.destination);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 /**
  * Typealias from the type name used in the UDL file to the builtin type.  This
  * is needed because the UDL type name is used in function/method signatures.
@@ -7095,9 +7306,13 @@ const FfiConverterTypeLxmfMessage = (() => {
 
 export type LxmfPeerSummary = {
     destination: Bytes16,
+    identity: Bytes16,
     displayName?: string | undefined,
     requiredStampCost?: bigint | undefined,
-    lastObservedAgeMillis: bigint
+    lastObservedAgeMillis: bigint,
+    sourceInterface: Uint8Array,
+    hops: number,
+    isPathResponse: boolean
 }
 
 /**
@@ -7122,22 +7337,34 @@ const FfiConverterTypeLxmfPeerSummary = (() => {
         readFromCursor(c: Cursor): TypeName {
             return {
                 destination: FfiConverterTypeBytes16.readFromCursor(c),
+                identity: FfiConverterTypeBytes16.readFromCursor(c),
                 displayName: FfiConverterOptionalString.readFromCursor(c),
                 requiredStampCost: FfiConverterOptionalUInt64.readFromCursor(c),
-                lastObservedAgeMillis: FfiConverterUInt64.readFromCursor(c)
+                lastObservedAgeMillis: FfiConverterUInt64.readFromCursor(c),
+                sourceInterface: FfiConverterUint8Array.readFromCursor(c),
+                hops: FfiConverterUInt8.readFromCursor(c),
+                isPathResponse: FfiConverterBool.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             FfiConverterTypeBytes16.writeIntoCursor(value.destination, c);
+            FfiConverterTypeBytes16.writeIntoCursor(value.identity, c);
             FfiConverterOptionalString.writeIntoCursor(value.displayName, c);
             FfiConverterOptionalUInt64.writeIntoCursor(value.requiredStampCost, c);
             FfiConverterUInt64.writeIntoCursor(value.lastObservedAgeMillis, c);
+            FfiConverterUint8Array.writeIntoCursor(value.sourceInterface, c);
+            FfiConverterUInt8.writeIntoCursor(value.hops, c);
+            FfiConverterBool.writeIntoCursor(value.isPathResponse, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeBytes16.allocationSize(value.destination) +
+             FfiConverterTypeBytes16.allocationSize(value.identity) +
              FfiConverterOptionalString.allocationSize(value.displayName) +
              FfiConverterOptionalUInt64.allocationSize(value.requiredStampCost) +
-             FfiConverterUInt64.allocationSize(value.lastObservedAgeMillis);
+             FfiConverterUInt64.allocationSize(value.lastObservedAgeMillis) +
+             FfiConverterUint8Array.allocationSize(value.sourceInterface) +
+             FfiConverterUInt8.allocationSize(value.hops) +
+             FfiConverterBool.allocationSize(value.isPathResponse);
 
         }
     };
@@ -8890,7 +9117,8 @@ const FfiConverterTypeStartRemoteWifiTrialInput = (() => {
 })();
 
 export enum AnnounceLxmfOutcome {
-    Announced,
+    Requested,
+    NoUsableConnection,
     LocalNodeStopped,
     Busy,
     Failed
@@ -8901,19 +9129,21 @@ const FfiConverterTypeAnnounceLxmfOutcome = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         readFromCursor(c: Cursor): TypeName {
             switch (c.readI32()) {
-                case 1: return AnnounceLxmfOutcome.Announced;
-                case 2: return AnnounceLxmfOutcome.LocalNodeStopped;
-                case 3: return AnnounceLxmfOutcome.Busy;
-                case 4: return AnnounceLxmfOutcome.Failed;
+                case 1: return AnnounceLxmfOutcome.Requested;
+                case 2: return AnnounceLxmfOutcome.NoUsableConnection;
+                case 3: return AnnounceLxmfOutcome.LocalNodeStopped;
+                case 4: return AnnounceLxmfOutcome.Busy;
+                case 5: return AnnounceLxmfOutcome.Failed;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             switch (value) {
-                case AnnounceLxmfOutcome.Announced: return c.writeI32(1);
-                case AnnounceLxmfOutcome.LocalNodeStopped: return c.writeI32(2);
-                case AnnounceLxmfOutcome.Busy: return c.writeI32(3);
-                case AnnounceLxmfOutcome.Failed: return c.writeI32(4);
+                case AnnounceLxmfOutcome.Requested: return c.writeI32(1);
+                case AnnounceLxmfOutcome.NoUsableConnection: return c.writeI32(2);
+                case AnnounceLxmfOutcome.LocalNodeStopped: return c.writeI32(3);
+                case AnnounceLxmfOutcome.Busy: return c.writeI32(4);
+                case AnnounceLxmfOutcome.Failed: return c.writeI32(5);
             }
         }
         allocationSize(value: TypeName): number {
@@ -11515,6 +11745,347 @@ const FfiConverterTypeLocalBluetoothSettingsOutcome = (() => {
 })();
 
 
+// Enum: LocalMessagingProfileOutcome
+export enum LocalMessagingProfileOutcome_Tags {
+    Ready = "Ready",
+    SavedButNotApplied = "SavedButNotApplied",
+    InvalidInput = "InvalidInput",
+    Busy = "Busy",
+    Unavailable = "Unavailable",
+    DevelopmentResetRequired = "DevelopmentResetRequired"
+}
+export const LocalMessagingProfileOutcome = (() => {
+
+    type Ready__interface = {
+        tag: LocalMessagingProfileOutcome_Tags.Ready;
+        inner:
+Readonly<{profile: LocalMessagingProfile}>
+    };
+    class Ready_ extends UniffiEnum implements Ready__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalMessagingProfileOutcome";
+        readonly tag = LocalMessagingProfileOutcome_Tags.Ready;
+        readonly inner:
+Readonly<{profile: LocalMessagingProfile}>;
+        constructor(
+inner: {profile: LocalMessagingProfile }) {
+            super("LocalMessagingProfileOutcome", "Ready");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {profile: LocalMessagingProfile }): Ready_ {
+            return new Ready_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Ready_ {
+            return obj.tag === LocalMessagingProfileOutcome_Tags.Ready;
+        }
+
+    }
+
+    type SavedButNotApplied__interface = {
+        tag: LocalMessagingProfileOutcome_Tags.SavedButNotApplied;
+        inner:
+Readonly<{profile: LocalMessagingProfile; detail: string}>
+    };
+    class SavedButNotApplied_ extends UniffiEnum implements SavedButNotApplied__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalMessagingProfileOutcome";
+        readonly tag = LocalMessagingProfileOutcome_Tags.SavedButNotApplied;
+        readonly inner:
+Readonly<{profile: LocalMessagingProfile; detail: string}>;
+        constructor(
+inner: {profile: LocalMessagingProfile; detail: string }) {
+            super("LocalMessagingProfileOutcome", "SavedButNotApplied");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {profile: LocalMessagingProfile; detail: string }): SavedButNotApplied_ {
+            return new SavedButNotApplied_(inner);
+        }
+
+        static instanceOf(obj: any): obj is SavedButNotApplied_ {
+            return obj.tag === LocalMessagingProfileOutcome_Tags.SavedButNotApplied;
+        }
+
+    }
+
+    type InvalidInput__interface = {
+        tag: LocalMessagingProfileOutcome_Tags.InvalidInput;
+        inner:
+Readonly<{detail: string}>
+    };
+    class InvalidInput_ extends UniffiEnum implements InvalidInput__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalMessagingProfileOutcome";
+        readonly tag = LocalMessagingProfileOutcome_Tags.InvalidInput;
+        readonly inner:
+Readonly<{detail: string}>;
+        constructor(
+inner: {detail: string }) {
+            super("LocalMessagingProfileOutcome", "InvalidInput");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {detail: string }): InvalidInput_ {
+            return new InvalidInput_(inner);
+        }
+
+        static instanceOf(obj: any): obj is InvalidInput_ {
+            return obj.tag === LocalMessagingProfileOutcome_Tags.InvalidInput;
+        }
+
+    }
+
+    type Busy__interface = {
+        tag: LocalMessagingProfileOutcome_Tags.Busy
+    };
+    class Busy_ extends UniffiEnum implements Busy__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalMessagingProfileOutcome";
+        readonly tag = LocalMessagingProfileOutcome_Tags.Busy;
+        constructor() {
+            super("LocalMessagingProfileOutcome", "Busy");
+        }
+
+        static new(): Busy_ {
+            return new Busy_();
+        }
+
+        static instanceOf(obj: any): obj is Busy_ {
+            return obj.tag === LocalMessagingProfileOutcome_Tags.Busy;
+        }
+
+    }
+
+    type Unavailable__interface = {
+        tag: LocalMessagingProfileOutcome_Tags.Unavailable;
+        inner:
+Readonly<{detail: string}>
+    };
+    class Unavailable_ extends UniffiEnum implements Unavailable__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalMessagingProfileOutcome";
+        readonly tag = LocalMessagingProfileOutcome_Tags.Unavailable;
+        readonly inner:
+Readonly<{detail: string}>;
+        constructor(
+inner: {detail: string }) {
+            super("LocalMessagingProfileOutcome", "Unavailable");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {detail: string }): Unavailable_ {
+            return new Unavailable_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Unavailable_ {
+            return obj.tag === LocalMessagingProfileOutcome_Tags.Unavailable;
+        }
+
+    }
+
+    type DevelopmentResetRequired__interface = {
+        tag: LocalMessagingProfileOutcome_Tags.DevelopmentResetRequired;
+        inner:
+Readonly<{reason: string}>
+    };
+    class DevelopmentResetRequired_ extends UniffiEnum implements DevelopmentResetRequired__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalMessagingProfileOutcome";
+        readonly tag = LocalMessagingProfileOutcome_Tags.DevelopmentResetRequired;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("LocalMessagingProfileOutcome", "DevelopmentResetRequired");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): DevelopmentResetRequired_ {
+            return new DevelopmentResetRequired_(inner);
+        }
+
+        static instanceOf(obj: any): obj is DevelopmentResetRequired_ {
+            return obj.tag === LocalMessagingProfileOutcome_Tags.DevelopmentResetRequired;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is LocalMessagingProfileOutcome {
+        return obj[uniffiTypeNameSymbol] === "LocalMessagingProfileOutcome";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Ready: Ready_,
+  SavedButNotApplied: SavedButNotApplied_,
+  InvalidInput: InvalidInput_,
+  Busy: Busy_,
+  Unavailable: Unavailable_,
+  DevelopmentResetRequired: DevelopmentResetRequired_
+    });
+
+})();
+export type LocalMessagingProfileOutcome = InstanceType<
+    typeof LocalMessagingProfileOutcome['Ready' | 'SavedButNotApplied' | 'InvalidInput' | 'Busy' | 'Unavailable' | 'DevelopmentResetRequired']
+>;
+
+// FfiConverter for enum LocalMessagingProfileOutcome
+const FfiConverterTypeLocalMessagingProfileOutcome = (() => {
+    type TypeName = LocalMessagingProfileOutcome;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new LocalMessagingProfileOutcome.Ready({profile: FfiConverterTypeLocalMessagingProfile.readFromCursor(c) });
+                case 2: return new LocalMessagingProfileOutcome.SavedButNotApplied({profile: FfiConverterTypeLocalMessagingProfile.readFromCursor(c), detail: FfiConverterString.readFromCursor(c) });
+                case 3: return new LocalMessagingProfileOutcome.InvalidInput({detail: FfiConverterString.readFromCursor(c) });
+                case 4: return new LocalMessagingProfileOutcome.Busy();
+                case 5: return new LocalMessagingProfileOutcome.Unavailable({detail: FfiConverterString.readFromCursor(c) });
+                case 6: return new LocalMessagingProfileOutcome.DevelopmentResetRequired({reason: FfiConverterString.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case LocalMessagingProfileOutcome_Tags.Ready: {
+                    c.writeI32(1);
+                    const inner = value.inner;
+                    FfiConverterTypeLocalMessagingProfile.writeIntoCursor(inner.profile, c);
+                    return;
+                }
+                case LocalMessagingProfileOutcome_Tags.SavedButNotApplied: {
+                    c.writeI32(2);
+                    const inner = value.inner;
+                    FfiConverterTypeLocalMessagingProfile.writeIntoCursor(inner.profile, c);
+                    FfiConverterString.writeIntoCursor(inner.detail, c);
+                    return;
+                }
+                case LocalMessagingProfileOutcome_Tags.InvalidInput: {
+                    c.writeI32(3);
+                    const inner = value.inner;
+                    FfiConverterString.writeIntoCursor(inner.detail, c);
+                    return;
+                }
+                case LocalMessagingProfileOutcome_Tags.Busy: {
+                    c.writeI32(4);
+                    return;
+                }
+                case LocalMessagingProfileOutcome_Tags.Unavailable: {
+                    c.writeI32(5);
+                    const inner = value.inner;
+                    FfiConverterString.writeIntoCursor(inner.detail, c);
+                    return;
+                }
+                case LocalMessagingProfileOutcome_Tags.DevelopmentResetRequired: {
+                    c.writeI32(6);
+                    const inner = value.inner;
+                    FfiConverterString.writeIntoCursor(inner.reason, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that LocalMessagingProfileOutcome_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case LocalMessagingProfileOutcome_Tags.Ready: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeLocalMessagingProfile.allocationSize(inner.profile);
+                    return size;
+                }
+                case LocalMessagingProfileOutcome_Tags.SavedButNotApplied: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeLocalMessagingProfile.allocationSize(inner.profile);
+                    size += FfiConverterString.allocationSize(inner.detail);
+                    return size;
+                }
+                case LocalMessagingProfileOutcome_Tags.InvalidInput: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterString.allocationSize(inner.detail);
+                    return size;
+                }
+                case LocalMessagingProfileOutcome_Tags.Busy: {
+                    return 4;
+                }
+                case LocalMessagingProfileOutcome_Tags.Unavailable: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterString.allocationSize(inner.detail);
+                    return size;
+                }
+                case LocalMessagingProfileOutcome_Tags.DevelopmentResetRequired: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum LxmfDiscoveryClearOutcome {
+    Cleared,
+    LocalNodeStopped,
+    Busy
+}
+
+const FfiConverterTypeLxmfDiscoveryClearOutcome = (() => {
+    type TypeName = LxmfDiscoveryClearOutcome;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return LxmfDiscoveryClearOutcome.Cleared;
+                case 2: return LxmfDiscoveryClearOutcome.LocalNodeStopped;
+                case 3: return LxmfDiscoveryClearOutcome.Busy;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value) {
+                case LxmfDiscoveryClearOutcome.Cleared: return c.writeI32(1);
+                case LxmfDiscoveryClearOutcome.LocalNodeStopped: return c.writeI32(2);
+                case LxmfDiscoveryClearOutcome.Busy: return c.writeI32(3);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return 4;
+        }
+    }
+    return new FFIConverter();
+})();
+
+
 // Enum: LxmfMessageListOutcome
 export enum LxmfMessageListOutcome_Tags {
     Listed = "Listed",
@@ -13786,6 +14357,8 @@ export enum SendDirectTextOutcome_Tags {
     NeedsResource = "NeedsResource",
     UnsupportedRemoteStampRequirement = "UnsupportedRemoteStampRequirement",
     PeerIdentityUnavailable = "PeerIdentityUnavailable",
+    IdentityConflict = "IdentityConflict",
+    RecipientUnavailable = "RecipientUnavailable",
     DevelopmentUnavailable = "DevelopmentUnavailable",
     DevelopmentResetRequired = "DevelopmentResetRequired"
 }
@@ -13908,6 +14481,68 @@ inner: {requiredStampCost: bigint }): UnsupportedRemoteStampRequirement_ {
 
     }
 
+    type IdentityConflict__interface = {
+        tag: SendDirectTextOutcome_Tags.IdentityConflict;
+        inner:
+Readonly<{expected: Bytes16; observed: Bytes16}>
+    };
+    class IdentityConflict_ extends UniffiEnum implements IdentityConflict__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SendDirectTextOutcome";
+        readonly tag = SendDirectTextOutcome_Tags.IdentityConflict;
+        readonly inner:
+Readonly<{expected: Bytes16; observed: Bytes16}>;
+        constructor(
+inner: {expected: Bytes16; observed: Bytes16 }) {
+            super("SendDirectTextOutcome", "IdentityConflict");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {expected: Bytes16; observed: Bytes16 }): IdentityConflict_ {
+            return new IdentityConflict_(inner);
+        }
+
+        static instanceOf(obj: any): obj is IdentityConflict_ {
+            return obj.tag === SendDirectTextOutcome_Tags.IdentityConflict;
+        }
+
+    }
+
+    type RecipientUnavailable__interface = {
+        tag: SendDirectTextOutcome_Tags.RecipientUnavailable;
+        inner:
+Readonly<{detail: string}>
+    };
+    class RecipientUnavailable_ extends UniffiEnum implements RecipientUnavailable__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SendDirectTextOutcome";
+        readonly tag = SendDirectTextOutcome_Tags.RecipientUnavailable;
+        readonly inner:
+Readonly<{detail: string}>;
+        constructor(
+inner: {detail: string }) {
+            super("SendDirectTextOutcome", "RecipientUnavailable");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {detail: string }): RecipientUnavailable_ {
+            return new RecipientUnavailable_(inner);
+        }
+
+        static instanceOf(obj: any): obj is RecipientUnavailable_ {
+            return obj.tag === SendDirectTextOutcome_Tags.RecipientUnavailable;
+        }
+
+    }
+
     type DevelopmentUnavailable__interface = {
         tag: SendDirectTextOutcome_Tags.DevelopmentUnavailable;
         inner:
@@ -13980,13 +14615,15 @@ inner: {reason: string }): DevelopmentResetRequired_ {
   NeedsResource: NeedsResource_,
   UnsupportedRemoteStampRequirement: UnsupportedRemoteStampRequirement_,
   PeerIdentityUnavailable: PeerIdentityUnavailable_,
+  IdentityConflict: IdentityConflict_,
+  RecipientUnavailable: RecipientUnavailable_,
   DevelopmentUnavailable: DevelopmentUnavailable_,
   DevelopmentResetRequired: DevelopmentResetRequired_
     });
 
 })();
 export type SendDirectTextOutcome = InstanceType<
-    typeof SendDirectTextOutcome['Accepted' | 'NeedsResource' | 'UnsupportedRemoteStampRequirement' | 'PeerIdentityUnavailable' | 'DevelopmentUnavailable' | 'DevelopmentResetRequired']
+    typeof SendDirectTextOutcome['Accepted' | 'NeedsResource' | 'UnsupportedRemoteStampRequirement' | 'PeerIdentityUnavailable' | 'IdentityConflict' | 'RecipientUnavailable' | 'DevelopmentUnavailable' | 'DevelopmentResetRequired']
 >;
 
 // FfiConverter for enum SendDirectTextOutcome
@@ -13999,8 +14636,10 @@ const FfiConverterTypeSendDirectTextOutcome = (() => {
                 case 2: return new SendDirectTextOutcome.NeedsResource({wireBytes: FfiConverterUInt32.readFromCursor(c) });
                 case 3: return new SendDirectTextOutcome.UnsupportedRemoteStampRequirement({requiredStampCost: FfiConverterUInt64.readFromCursor(c) });
                 case 4: return new SendDirectTextOutcome.PeerIdentityUnavailable();
-                case 5: return new SendDirectTextOutcome.DevelopmentUnavailable({detail: FfiConverterString.readFromCursor(c) });
-                case 6: return new SendDirectTextOutcome.DevelopmentResetRequired({reason: FfiConverterString.readFromCursor(c) });
+                case 5: return new SendDirectTextOutcome.IdentityConflict({expected: FfiConverterTypeBytes16.readFromCursor(c), observed: FfiConverterTypeBytes16.readFromCursor(c) });
+                case 6: return new SendDirectTextOutcome.RecipientUnavailable({detail: FfiConverterString.readFromCursor(c) });
+                case 7: return new SendDirectTextOutcome.DevelopmentUnavailable({detail: FfiConverterString.readFromCursor(c) });
+                case 8: return new SendDirectTextOutcome.DevelopmentResetRequired({reason: FfiConverterString.readFromCursor(c) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -14028,14 +14667,27 @@ const FfiConverterTypeSendDirectTextOutcome = (() => {
                     c.writeI32(4);
                     return;
                 }
-                case SendDirectTextOutcome_Tags.DevelopmentUnavailable: {
+                case SendDirectTextOutcome_Tags.IdentityConflict: {
                     c.writeI32(5);
+                    const inner = value.inner;
+                    FfiConverterTypeBytes16.writeIntoCursor(inner.expected, c);
+                    FfiConverterTypeBytes16.writeIntoCursor(inner.observed, c);
+                    return;
+                }
+                case SendDirectTextOutcome_Tags.RecipientUnavailable: {
+                    c.writeI32(6);
+                    const inner = value.inner;
+                    FfiConverterString.writeIntoCursor(inner.detail, c);
+                    return;
+                }
+                case SendDirectTextOutcome_Tags.DevelopmentUnavailable: {
+                    c.writeI32(7);
                     const inner = value.inner;
                     FfiConverterString.writeIntoCursor(inner.detail, c);
                     return;
                 }
                 case SendDirectTextOutcome_Tags.DevelopmentResetRequired: {
-                    c.writeI32(6);
+                    c.writeI32(8);
                     const inner = value.inner;
                     FfiConverterString.writeIntoCursor(inner.reason, c);
                     return;
@@ -14067,6 +14719,19 @@ const FfiConverterTypeSendDirectTextOutcome = (() => {
                 }
                 case SendDirectTextOutcome_Tags.PeerIdentityUnavailable: {
                     return 4;
+                }
+                case SendDirectTextOutcome_Tags.IdentityConflict: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeBytes16.allocationSize(inner.expected);
+                    size += FfiConverterTypeBytes16.allocationSize(inner.observed);
+                    return size;
+                }
+                case SendDirectTextOutcome_Tags.RecipientUnavailable: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterString.allocationSize(inner.detail);
+                    return size;
                 }
                 case SendDirectTextOutcome_Tags.DevelopmentUnavailable: {
                     const inner = value.inner;
@@ -14211,6 +14876,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_prns_app_checksum_func_change_remote_node() !== 10229) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_change_remote_node");
     }
+    if (nativeModule().uniffi_prns_app_checksum_func_clear_lxmf_discovery() !== 10179) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_clear_lxmf_discovery");
+    }
     if (nativeModule().uniffi_prns_app_checksum_func_create_manual_contact() !== 1882) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_create_manual_contact");
     }
@@ -14277,6 +14945,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_prns_app_checksum_func_read_bluetooth_settings() !== 48522) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_read_bluetooth_settings");
     }
+    if (nativeModule().uniffi_prns_app_checksum_func_read_messaging_profile() !== 32931) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_read_messaging_profile");
+    }
     if (nativeModule().uniffi_prns_app_checksum_func_read_remote_node() !== 34426) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_read_remote_node");
     }
@@ -14288,6 +14959,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_prns_app_checksum_func_retry_lxmf_message() !== 20310) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_retry_lxmf_message");
+    }
+    if (nativeModule().uniffi_prns_app_checksum_func_save_discovered_contact() !== 21421) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_save_discovered_contact");
     }
     if (nativeModule().uniffi_prns_app_checksum_func_save_observed_destination() !== 49523) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_save_observed_destination");
@@ -14303,6 +14977,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_prns_app_checksum_func_set_contact_pinned() !== 4387) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_set_contact_pinned");
+    }
+    if (nativeModule().uniffi_prns_app_checksum_func_set_messaging_name() !== 62039) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_set_messaging_name");
     }
     if (nativeModule().uniffi_prns_app_checksum_func_shared_host() !== 49238) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_shared_host");
@@ -14356,9 +15033,12 @@ export default Object.freeze({
     FfiConverterTypeLocalBluetoothSnapshot,
     FfiConverterTypeLocalBluetoothState,
     FfiConverterTypeLocalHostState,
+    FfiConverterTypeLocalMessagingProfile,
+    FfiConverterTypeLocalMessagingProfileOutcome,
     FfiConverterTypeLxmfDeliveryFailure,
     FfiConverterTypeLxmfDeliveryState,
     FfiConverterTypeLxmfDirection,
+    FfiConverterTypeLxmfDiscoveryClearOutcome,
     FfiConverterTypeLxmfHealth,
     FfiConverterTypeLxmfHealthState,
     FfiConverterTypeLxmfMessage,
