@@ -3,7 +3,7 @@
 //! Validate and reserve the entire batch before publishing any session or message. After the
 //! admission boundary, receiver teardown is delivery loss, not a fallible partial batch commit.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use tokio::sync::mpsc;
 
@@ -111,11 +111,14 @@ pub(super) fn admit_write_batch<C: Clone, L>(
         mpsc::Receiver<Control>,
         GattInboundReceiver,
     ) -> L,
+    mut retire_pending: impl FnMut(CoreBluetoothPeerId),
 ) -> Result<(), WriteError> {
     if !radio_enabled {
         return Err(WriteError::InsufficientResources);
     }
     let mut new_sessions = HashMap::<CoreBluetoothPeerId, WriteSession<C>>::new();
+    let mut replacements = Vec::new();
+    let mut touched = HashSet::new();
     let mut new_links = Vec::new();
     let mut writes = Vec::new();
 
@@ -136,7 +139,7 @@ pub(super) fn admit_write_batch<C: Clone, L>(
             .map(|session| session.protocol);
         let mut control = None;
         let mut data = false;
-        let new_profile = match (request.target, protocol) {
+        let mut new_profile = match (request.target, protocol) {
             (WriteTarget::Control, None | Some(PeerProtocol::Native)) => {
                 control = Some(Control::decode(value).ok_or(WriteError::InvalidValueLength)?);
                 protocol.is_none().then_some(InboundProfile::Native)
@@ -156,11 +159,26 @@ pub(super) fn admit_write_batch<C: Clone, L>(
             _ => return Err(WriteError::WriteNotPermitted),
         };
 
+        // A settled native link drops its handshake receiver while retaining the
+        // data receiver. CoreBluetooth can omit unsubscribe on disconnect, so a
+        // fresh Hello must be able to retire that exact peer's old session. Do not
+        // reap closed control receivers generally: they are normal for live data.
+        // A Hello after old-session input in this batch cannot split its ownership.
+        let replacement = matches!(control.as_ref(), Some(Control::Hello { .. }))
+            && !touched.contains(&request.peer_id)
+            && sessions.get(&request.peer_id).is_some_and(|session| {
+                session.protocol == PeerProtocol::Native && session.control_tx.is_closed()
+            });
+        if replacement {
+            new_profile = Some(InboundProfile::Native);
+        }
+
         if let Some(profile) = new_profile {
-            if !can_open_inbound(
-                sessions.len().saturating_add(new_sessions.len()),
-                session_capacity,
-            ) {
+            let occupied = sessions
+                .len()
+                .saturating_add(new_sessions.len())
+                .saturating_sub(replacements.len());
+            if !replacement && !can_open_inbound(occupied, session_capacity) {
                 return Err(WriteError::InsufficientResources);
             }
             let permit = inbound
@@ -179,6 +197,9 @@ pub(super) fn admit_write_batch<C: Clone, L>(
                     data_tx,
                 },
             );
+            if replacement {
+                replacements.push(request.peer_id);
+            }
             new_links.push((permit, link));
         }
 
@@ -200,11 +221,18 @@ pub(super) fn admit_write_batch<C: Clone, L>(
                 .map_err(|_| WriteError::InsufficientResources)?;
             writes.push(ReservedWrite::Data(reservation));
         }
+        touched.insert(request.peer_id);
     }
 
     // Admission boundary: every operation below is infallible. Owned permits and data byte
     // reservations roll back on every earlier return. A receiver closing after reservation is
     // ordinary teardown of accepted work and must not turn this into a partially rejected batch.
+    // Retire only after every reservation succeeds, before publishing the new
+    // link. Removing a pending upgrade also releases the old source's waiter;
+    // the old link's later close cannot reap the replacement's live receiver.
+    for peer_id in replacements {
+        retire_pending(peer_id);
+    }
     sessions.extend(new_sessions);
     for write in writes {
         write.commit();
