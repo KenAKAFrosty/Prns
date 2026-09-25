@@ -56,12 +56,34 @@ prefix, and peer tasks check returned lengths before using them. A
 allocation change and its limits; it is not a total-memory or fleet-capacity
 claim.
 
-The logical clock owns media delivery and advertisement scheduling. Production
-runtime deadlines still use real time, so full runtime replay is not yet
-deterministic. This models the characteristic-value boundary, not native
-controller scheduling or OS Bluetooth APIs. L2CAP is explicitly unavailable;
-capability advertisement reports GATT support and the configured frame limit.
-Wi-Fi, flash, reset, sleep, and unified runtime time remain future work.
+The logical medium clock owns delivery and advertisement scheduling. Tokio BLE
+supervisor cooldowns, handshake timeouts, and recent-member status grace use
+Tokio time, matching the manifold's monotonic clock. Tests can pause that clock
+and advance directly to a deadline without a wall-time wait. Test-only Tokio
+clock controls are not enabled by this package's normal dependency features.
+
+The `ble_timing` regression drives the production supervisor against a virtual
+remote through `Fleet::detached`, not a full node. A group mismatch at a nonzero
+runtime instant blocks redial until exactly 60 seconds later; a silent handshake
+holds its slot until 10 seconds, then releases it for a new connection. The
+owner's status test checks the 3-second grace boundary. Single explicit polls
+keep negative assertions from accidentally triggering Tokio's automatic time
+advance. The cooldown regression fails against the previous wall-time policy
+clock. The focused commands are:
+
+```console
+cargo test --locked -p prns-simulation --test ble_timing
+cargo test --locked --manifest-path prns-interfaces/impls/tokio/Cargo.toml --features bluetooth-auto-runtime --lib bluetooth_auto
+```
+
+Medium ticks and runtime time are still advanced independently; these tests do
+not define a tick duration or a combined event-ordering policy. Full runtime
+replay is not yet deterministic, and wall-clock boot timestamps and OS entropy
+remain outside this control. This models the characteristic-value boundary, not
+native controller scheduling or OS Bluetooth APIs. L2CAP is explicitly
+unavailable; capability advertisement reports GATT support and the configured
+frame limit. Wi-Fi, flash, reset, sleep, and a unified time driver remain future
+work.
 
 ## Large-fleet design requirements
 
@@ -133,7 +155,7 @@ capstones establish two-node correctness only.
   simulated interval. Scale runs must retain correctness assertions for delivery,
   recovery, backpressure, and cleanup, not merely demonstrate that nodes start.
 
-Remaining obstacles include real-time runtime deadlines and a measured accounting
-of total per-node and per-peer allocation. The transport-sized BLE receive
-buffer removes one known large allocation, not all of those costs. Native
+Remaining obstacles include coordinated medium/runtime time advancement and a
+measured accounting of total per-node and per-peer allocation. The transport-sized
+BLE receive buffer removes one known large allocation, not all of those costs. Native
 queues, scheduler storage, and full production-node scale still need evidence.

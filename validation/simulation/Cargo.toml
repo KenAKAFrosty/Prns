@@ -15,6 +15,7 @@ tokio = { version = "1", default-features = false, features = ["macros", "rt-mul
 
 [dev-dependencies]
 prns-interfaces-tokio = { path = "../../prns-interfaces/impls/tokio", default-features = false, features = ["bluetooth-auto-runtime"] }
+tokio = { version = "1", default-features = false, features = ["test-util"] }
 
 [lints]
 workspace = true

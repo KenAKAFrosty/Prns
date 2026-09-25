@@ -3,11 +3,12 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
+use tokio::time::Instant;
 
 use prns_core::interfaces::bluetooth_auto::{
     self as contract, BleAddress, BleIdentity, CloseReason, DiscoveryGroupSet, EstablishedPeer,
@@ -996,7 +997,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn aggregate_status_lingers_degraded_after_last_member_drops() {
         let status = BluetoothAutoStatus::new();
         status.mark_up();
@@ -1010,7 +1011,10 @@ mod tests {
         status.set_members(std::vec::Vec::new());
         assert_eq!(status.connection(), ConnectionState::Degraded);
 
-        tokio::time::sleep(RECENT_MEMBER_GRACE + Duration::from_millis(10)).await;
+        tokio::time::advance(RECENT_MEMBER_GRACE - Duration::from_millis(1)).await;
+        assert_eq!(status.connection(), ConnectionState::Degraded);
+
+        tokio::time::advance(Duration::from_millis(1)).await;
         assert_eq!(status.connection(), ConnectionState::Disconnected);
     }
 
