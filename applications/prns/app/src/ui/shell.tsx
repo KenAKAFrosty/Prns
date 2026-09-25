@@ -204,7 +204,15 @@ const styles = StyleSheet.create({
     paddingVertical: space.xs,
   },
   navigationPressable: { borderRadius: radius.sm, minHeight: 48, width: "100%" },
-  compactNavigationPressable: { borderRadius: radius.sm, flex: 1, minHeight: 48, minWidth: 0 },
+  compactNavigationPressable: {
+    borderRadius: radius.sm,
+    flexBasis: "auto",
+    flexGrow: 1,
+    flexShrink: 0,
+    minHeight: 48,
+    minWidth: 0,
+    maxWidth: "100%",
+  },
   wrappingNavigationPressable: {
     borderRadius: radius.sm,
     flexBasis: "30%",
@@ -220,7 +228,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
   },
-  compactNavigationItem: { alignItems: "center", flex: 1, minWidth: 0, paddingHorizontal: 2 },
+  compactNavigationItem: {
+    alignItems: "center",
+    flexGrow: 1,
+    flexShrink: 0,
+    minWidth: 0,
+    paddingHorizontal: 2,
+  },
   navigationLabel: { fontSize: 15, fontWeight: "600", lineHeight: 20 },
   compactNavigationLabel: { fontSize: 12, lineHeight: 16, textAlign: "center" },
 });
