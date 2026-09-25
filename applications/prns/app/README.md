@@ -55,10 +55,15 @@ associations and current stamp requirements; **Finding contact…** is not durab
 acceptance. Existing proof-backed delivery, explicit retry and cancellation remain
 unchanged. The [messaging checkpoint](../../checkpoints/2026-09-24-messaging-discovery.md)
 records reciprocal delivery, discovery-clear sends and Android cold-launch
-resolution before the final Apple notification repair. That repair is installed,
-but its physical retry remains pending device access. Automatic iOS cold-launch
-recovery remains blocked by a stale Bluetooth peer at the other phone; the lookup
-keeps the draft unqueued.
+resolution before the final Apple notification repair. That repair subsequently
+passed the retained-message retry, fresh Saved send and reverse delivery on
+September 25. Incoming source verification remains separate from delivery proof:
+a missing sender public key produces an Unverified receipt, even for a saved
+contact. The checkpoint records this limitation and the key-retention follow-up.
+Automatic iOS cold-launch recovery remains blocked by a stale Bluetooth peer at
+the other phone; the lookup keeps the draft unqueued. The additional restart
+test on the final repair was
+not started before the phone became unavailable.
 Settled Bluetooth link recovery is the next prerequisite in the demo plan.
 
 Pairing is authorization, not a live connection. Contacts and mailbox rows are

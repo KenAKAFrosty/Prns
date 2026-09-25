@@ -12,10 +12,12 @@ and native recipient resolution are implemented. The
 reciprocal discovery, proof-backed delivery, discovery-clear sends and Android
 cold-launch sending before the final Apple notification repair. Automatic iOS
 cold-launch recovery is blocked by a stale Bluetooth member retained by the other
-phone; fix settled link ownership before
-adding broader network inspection. The latest Apple notification repair has
-passing automated checks and a retained-data install; its physical retry is
-pending device access. The user accepts losing ASK's extra force-quit relaunch
+phone; fix settled link ownership before adding broader network inspection.
+The latest Apple notification repair passed the retained-message retry, fresh
+Saved send and reverse delivery on September 25. The additional cold-restart
+check was not started before the phone became unavailable. Receiver source-key
+retention and verification also need follow-up; delivery proof does not establish
+the sender's identity. The user accepts losing ASK's extra force-quit relaunch
 support to make the phone usable as its own node,
 without a board or per-peer authorization.
 Control Center Bluetooth-toggle recovery is another documented ASK difference;
@@ -57,7 +59,7 @@ The existing foundation is useful; this is not a messaging-engine rewrite.
 | Announcing | Contacts exposes a persisted messaging name, explicit Announce yourself and separate My address sharing; reciprocal messaging-build discovery passed | Wider announce/activity inspection remains planned |
 | Discovery | Discovered contacts shows accepted LXMF names, age, ingress and hops; 256-entry capacity, 24-hour expiry and explicit clear | General accepted-announce activity inspection remains planned |
 | Contacts | Save / Message from discovery; saved messaging recipients, private aliases and announced names remain distinct; Inbox contains message-backed conversations; discovery-clear sends passed on both platforms | Android cold-launch send passed; iOS cold-launch send is blocked by Bluetooth recovery |
-| Bluetooth | Connections shows local status, stored enable/disable and physical peers; fresh-session reciprocal messaging passed before the latest Apple notification repair | Final notification-repair retry pending; stale settled peer after iOS restart is a confirmed blocker; iOS OS-radio recovery, permission denial, background and long-idle qualification remain |
+| Bluetooth | Connections shows local status, stored enable/disable and physical peers; final Apple notification repair passed retained-message retry and fresh-session two-way delivery | Stale settled peer after iOS restart remains an open blocker; iOS OS-radio recovery, permission denial, background and long-idle qualification remain |
 | TCP (deferred) | Optional developer TCP client fixture | Not part of this milestone |
 | Inspection | Logical interfaces, counters, routes and identity associations; Connections adds physical Bluetooth peers and their counters/details | Broader network views still use raw labels/IDs/times; current route is not historical message evidence |
 

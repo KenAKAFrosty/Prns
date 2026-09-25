@@ -6,8 +6,9 @@ installation, reciprocal discovery and proof-backed delivery passed.
 Discovery-clear sending passed on both phones, and Android cold-launch resolution
 passed without a remote reannounce. Automatic recovery after iOS cold launch
 remains blocked by stale
-Bluetooth peer ownership, detailed below. A subsequent Apple notification repair
-is built and installed; its final physical message retry is pending device access.
+Bluetooth peer ownership, detailed below. The final Apple notification repair
+passed its retained-message retry and a fresh Saved send on September 25;
+the [follow-up below](#notification-repair-device-follow-up) records those results separately.
 Earlier [Bluetooth control acceptance](2026-09-24-local-bluetooth.md) and
 [transport feasibility](2026-09-23-ordinary-corebluetooth.md#physical-continuation-direct-unpaired-ble-messaging)
 do not qualify these new binaries. The
@@ -176,10 +177,11 @@ JavaScript SHA-256 is
 `0bc988cbe89557be994c2e928b262da3dcbf3f204ea69bd3dccda056c4eb55ff`;
 the signed executable SHA-256 is
 `b2ad83823765be3fd634b05233ce3785504c7762609ea0b127a4fa55023ca89b`.
-Its retained-data installation passed, but physical message checks below used
+Its retained-data installation passed. The September 24 physical message checks used
 the preceding iOS executable
 `638279bac07dd794b4b2ccae61cbc4950fd0eb75208947348f0f53208737d36b`
-with identical embedded JavaScript. They do not qualify the final Apple repair.
+with identical embedded JavaScript. The September 25 follow-up separately checks
+the final Apple repair.
 The contract fingerprint is
 `prns-app-native/local-node-1/8d5745f8970c48b8`.
 The final Android APK includes the same UI and the client-write serialization
@@ -245,7 +247,7 @@ failed seamless-reconnect check, not successful bilateral cold-launch acceptance
 
 Resetting Android's app Bluetooth allowed that iOS draft to resolve and enter
 the durable mailbox, but its delivery timed out. A retry after resetting both
-phones also stalled after link identification. Code review found a separate
+phones also stalled after link establishment. Code review found a separate
 Apple notification bug: a rejected `updateValue` discarded the fragment while
 the data writer returned success. The fix retains that exact fragment and waits
 for CoreBluetooth's existing ready callback, with one active fragment per session
@@ -256,9 +258,8 @@ executing cannot be retracted. The observed payload boundary is consistent with
 that bug, but a device notification-admission trace did not prove causation.
 The new iOS release package built and installed successfully. Its launch was
 denied because the phone was locked, and iPhone Mirroring timed out on two
-reconnection attempts. The final explicit retry of `iOS-C` and a fresh Saved send
-therefore remain pending. The automated notification regressions pass, but the
-physical payload stall is not yet confirmed fixed.
+reconnection attempts. That day's final explicit retry of `iOS-C` and fresh Saved
+send were blocked; both passed when device access resumed on September 25 below.
 
 | Check on the messaging builds (before the final Apple notification repair) | iOS | Android |
 | --- | --- | --- |
@@ -279,9 +280,76 @@ keyboard open at 1.5x and 2x; Send was reachable after keyboard dismissal. These
 checks do not qualify the complete messaging journey at maximum text size.
 The original text settings were restored on both phones, including Android 1.1
 and iOS's original normal-size slider position with larger accessibility sizes
-off. The iOS app Bluetooth preference remains On; the final installed app has
-not yet been relaunched. Android app Bluetooth was restored On and reports Ready
-with no connected peer while iOS is unavailable; its OS Bluetooth remains On.
+off. At the end of September 24, the iOS app Bluetooth preference was On; the
+final installed app had not yet been relaunched. Android app Bluetooth was
+restored On and reported Ready with no connected peer while iOS was unavailable;
+its OS Bluetooth remained On.
+
+## Notification repair device follow-up
+
+On September 25, the same final iOS package launched successfully. Android's
+installed APK was read back and matched the recorded final SHA-256. Both app
+Bluetooth controls were turned Off, then On, before testing. An initial Android
+duel closed two candidate connections; a subsequent connection settled and both
+phones displayed one physical peer. This was a deliberate fresh-session test,
+not seamless-restart qualification. No manual announce was issued on either phone.
+
+- At 16:36:14 EDT, explicit Retry of `iOS-C` reached Delivered in **180 ms**.
+  Android received exactly one copy with its original September 24 timestamp and
+  message ID `48a5262cf11eba3d4b1eca7b9013901855088ad46755a5790108c5a87c22d7ab`.
+  Android's conversation count increased from 13 to 14. The two previous failed
+  attempts did not create replacement records.
+- At 16:37:12 EDT, **New message → Saved → Android demo** sent `iOS-D`, which
+  reached Delivered in **240 ms**. Android received message ID
+  `e92d340ea399a9772d1d0fc3ee3c23894472b02ee881e15d4a2705deaf4a3e3f` and its
+  conversation count increased to 15, with the three older messages unchanged.
+  The recipient was chosen without entering an address or manually announcing.
+- An iOS public-record comparison preserved all 27 preceding messages,
+  identities, three contacts and one pairing, with only `iOS-D` added. The local
+  evidence is `/Volumes/wavlink/dev/prns-messaging-20260925`.
+- At 16:43:32 EDT, Android sent `AD` from Saved and reached Delivered in **58 ms**.
+  Its log contains a path request before the message exchange. iOS received
+  message ID `5fdbedd3feb083f379376e5cca820e2fff3be6f9a4dffeb34295c2d4bedc4cba`
+  with **Verified source**.
+- At 16:44:27 EDT, iOS sent `iOS-E` and reached Delivered in **175 ms**. Android
+  received message ID `2548ca654475b847641cee607e5349758d1596f3ec9c627690520abbad52bae6`
+  with **Verified source** after the reverse send's key lookup. The existing
+  `iOS-C` and `iOS-D` records retained their earlier Unknown verification state.
+
+Android's last photographed aggregate was 18 messages after `iOS-D`; the later
+observed `AD` send and `iOS-E` receipt imply 20 (17 here and three older records).
+The last iOS container capture contained 28 messages after `iOS-D`; the later
+observed `AD` receipt and `iOS-E` send imply 30 messages, but no final container
+capture was taken. The user needed to disconnect iOS before the planned
+additional cold-restart check.
+That check was not started. Both app Bluetooth settings remained On, original
+text sizes were unchanged, and the test composers were empty.
+
+These checks pass the previously blocked payload retry on the repaired package.
+They do not prove that notification backpressure was the cause of the original
+stall: no trace of the original `updateValue` rejection was captured. The
+deterministic backpressure regressions and physical result are separate evidence.
+
+Android initially marked `iOS-C` and `iOS-D`
+**Unverified — source identity unavailable**. That is separate from the
+receiver-signed delivery proof seen by iOS. The
+[LXMF verifier](../services/lxmf/src/mailbox.rs) queries an authenticated
+destination public key, binds it to the claimed LXMF source and checks the
+message signature. A saved contact contains an identity hash, not that public
+key. The direct sender establishes a Link and sends data; it currently does not
+perform explicit LinkIdentify. Earlier references to link identification must
+not be read as proof that the initiator's long-term identity was authenticated.
+
+Destination keys do persist across restart. The
+[existing retention policy](../../prns-core/src/identity/destination_identity/core.rs)
+allows never-used keys without a route to expire after six minutes; marking use
+extends their bounded lifetime to 8.75 days. LXMF currently does not mark such
+use. Key absence was observed here; its exact eviction or persistence timing was
+not captured. A narrow follow-up should mark actual use of authenticated keys
+through the [existing public retention API](../../prns-runtime/core/src/runtime/command.rs).
+First-time unknown senders and re-verification of stored Unknown records need
+separate bounded policies; a
+saved name or successful delivery must never upgrade verification by itself.
 
 ## Required Bluetooth lifecycle follow-up
 
