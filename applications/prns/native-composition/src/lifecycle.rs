@@ -39,6 +39,7 @@ use prns_interfaces_tokio::bluetooth_auto::PreparedAutoBle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
+use crate::bluetooth::BluetoothControl;
 use crate::contract::*;
 use crate::development_store::{
     DevelopmentStoreFailure, DevelopmentStoreOwner, MailboxStoreReply, StoreReply,
@@ -152,6 +153,7 @@ struct IdentityOwner {
 struct Worker {
     runtime: Arc<OnceLock<tokio::runtime::Handle>>,
     host: Arc<OnceLock<HostClient>>,
+    bluetooth: Arc<OnceLock<BluetoothControl>>,
     commands: mpsc::Sender<Command>,
     shutdown: ShutdownSignal,
     done: std_mpsc::Receiver<WorkerResult>,
@@ -856,30 +858,35 @@ fn start_configured_with_supervisor(
             };
         }
     };
-    let mailbox_submitter = match ensure_application_owner_locked(&mut state, &paths) {
-        Ok(owner) => owner.mailbox_submitter(),
-        Err(failure) => {
-            let detail = match failure {
-                DevelopmentStoreFailure::Unavailable(detail) => detail,
-                DevelopmentStoreFailure::ResetRequired(reason) => {
-                    supervisor
-                        .snapshots
-                        .set_local_host(LocalHostState::DevelopmentResetRequired {
-                            reason: reason.clone(),
-                        });
-                    reason
-                }
-            };
-            supervisor.snapshots.fail(DevelopmentNodeFailure {
-                stage: DevelopmentNodeFailureStage::Storage,
-                detail: detail.clone(),
-            });
-            return DevelopmentNodeStartOutcome::Failed {
-                stage: DevelopmentNodeFailureStage::Storage,
-                detail,
-            };
-        }
-    };
+    let (mailbox_submitter, bluetooth_enabled) =
+        match ensure_application_owner_locked(&mut state, &paths).and_then(|owner| {
+            owner
+                .read_bluetooth_blocking()
+                .map(|enabled| (owner.mailbox_submitter(), enabled))
+        }) {
+            Ok(value) => value,
+            Err(failure) => {
+                let detail = match failure {
+                    DevelopmentStoreFailure::Unavailable(detail) => detail,
+                    DevelopmentStoreFailure::ResetRequired(reason) => {
+                        supervisor.snapshots.set_local_host(
+                            LocalHostState::DevelopmentResetRequired {
+                                reason: reason.clone(),
+                            },
+                        );
+                        reason
+                    }
+                };
+                supervisor.snapshots.fail(DevelopmentNodeFailure {
+                    stage: DevelopmentNodeFailureStage::Storage,
+                    detail: detail.clone(),
+                });
+                return DevelopmentNodeStartOutcome::Failed {
+                    stage: DevelopmentNodeFailureStage::Storage,
+                    detail,
+                };
+            }
+        };
     #[cfg(all(feature = "apple", target_os = "ios"))]
     let prepared_bluetooth = match take_matching_prepared_owner(
         &mut state.pending_apple_bluetooth,
@@ -924,6 +931,9 @@ fn start_configured_with_supervisor(
     };
     supervisor.snapshots.begin_generation(primary_identity);
     supervisor
+        .snapshots
+        .update(|snapshot| snapshot.bluetooth.desired_enabled = Some(bluetooth_enabled));
+    supervisor
         .operation_admitted
         .store(false, Ordering::Release);
 
@@ -945,12 +955,16 @@ fn start_configured_with_supervisor(
     let worker_runtime = Arc::clone(&runtime);
     let host = Arc::new(OnceLock::new());
     let worker_host = Arc::clone(&host);
+    let bluetooth = Arc::new(OnceLock::new());
+    let worker_bluetooth = Arc::clone(&bluetooth);
     let join = std::thread::Builder::new()
         .name("prns-app-native".to_owned())
         .spawn(move || {
             let result = run_worker(
                 worker_runtime,
                 worker_host,
+                worker_bluetooth,
+                bluetooth_enabled,
                 paths,
                 primary_identity_secret,
                 mailbox_submitter,
@@ -983,6 +997,7 @@ fn start_configured_with_supervisor(
     state.worker = Some(Worker {
         runtime,
         host,
+        bluetooth,
         commands: command_tx,
         shutdown,
         done: done_rx,
@@ -1032,6 +1047,88 @@ fn start_configured_with_supervisor(
 /// A runtime-neutral future for the actor's full snapshot query.
 pub async fn snapshot_async() -> DevelopmentNodeSnapshot {
     snapshot_async_with_supervisor(supervisor()).await
+}
+
+pub async fn bluetooth_settings(enabled: Option<bool>) -> LocalBluetoothSettingsOutcome {
+    bluetooth_settings_with_supervisor(supervisor(), enabled).await
+}
+
+async fn bluetooth_settings_with_supervisor(
+    supervisor: &Supervisor,
+    enabled: Option<bool>,
+) -> LocalBluetoothSettingsOutcome {
+    let receive = {
+        let state = match admission::try_state(supervisor) {
+            Ok(state) => state,
+            Err(_) => return LocalBluetoothSettingsOutcome::Busy,
+        };
+        let snapshot = supervisor.snapshots.read();
+        if matches!(
+            snapshot.runtime,
+            DevelopmentNodeRuntime::Starting | DevelopmentNodeRuntime::Stopping
+        ) || supervisor.snapshots.is_explicit_stop_in_progress()
+        {
+            return LocalBluetoothSettingsOutcome::Busy;
+        }
+        let Some(owner) = state.application_owner.as_ref() else {
+            return LocalBluetoothSettingsOutcome::Unavailable {
+                detail: "Prepare native storage before changing Bluetooth settings.".into(),
+            };
+        };
+        let control = state
+            .worker
+            .as_ref()
+            .map(|worker| Arc::clone(&worker.bluetooth));
+        let snapshots = Arc::clone(&supervisor.snapshots);
+        let generation = snapshot.generation_id;
+        let (reply, receive) = oneshot::channel();
+        if let Err(failure) = owner.admit_bluetooth(enabled, move |result| {
+            let result = match result {
+                Ok(value) => {
+                    // The database owner retains this action after foreign cancellation.
+                    // Startup reads this same serialized lane before opening a successor.
+                    if enabled.is_some() {
+                        if let Some(control) = control.as_ref().and_then(|control| control.get()) {
+                            control.set_enabled(value);
+                        }
+                    }
+                    snapshots.update(|snapshot| {
+                        if snapshot.generation_id == generation {
+                            snapshot.bluetooth.desired_enabled = Some(value);
+                            if enabled.is_some()
+                                && snapshot.runtime == DevelopmentNodeRuntime::Running
+                            {
+                                snapshot.bluetooth.state = if value {
+                                    LocalBluetoothState::Starting
+                                } else {
+                                    LocalBluetoothState::Disabling
+                                };
+                            }
+                        }
+                    });
+                    LocalBluetoothSettingsOutcome::Ready { enabled: value }
+                }
+                Err(failure) => bluetooth_settings_failure(failure),
+            };
+            let _ = reply.send(result);
+        }) {
+            return bluetooth_settings_failure(failure);
+        }
+        receive
+    };
+    receive
+        .await
+        .unwrap_or_else(|_| LocalBluetoothSettingsOutcome::Unavailable {
+            detail: "The database owner stopped before confirming Bluetooth settings.".into(),
+        })
+}
+
+fn bluetooth_settings_failure(failure: DevelopmentStoreFailure) -> LocalBluetoothSettingsOutcome {
+    let detail = match failure {
+        DevelopmentStoreFailure::Unavailable(detail)
+        | DevelopmentStoreFailure::ResetRequired(detail) => detail,
+    };
+    LocalBluetoothSettingsOutcome::Unavailable { detail }
 }
 
 async fn snapshot_async_with_supervisor(supervisor: &Supervisor) -> DevelopmentNodeSnapshot {
@@ -1703,6 +1800,8 @@ fn join_finished_worker(worker: &mut Worker) {
 fn run_worker(
     published_runtime: Arc<OnceLock<tokio::runtime::Handle>>,
     published_host: Arc<OnceLock<HostClient>>,
+    bluetooth_control: Arc<OnceLock<BluetoothControl>>,
+    bluetooth_enabled: bool,
     paths: NodeStoragePaths,
     primary_identity_secret: IdentitySecretKey,
     mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
@@ -1726,6 +1825,8 @@ fn run_worker(
     let _ = published_runtime.set(runtime.handle().clone());
     runtime.block_on(run_generation(
         published_host,
+        bluetooth_control,
+        bluetooth_enabled,
         paths,
         primary_identity_secret,
         mailbox_submitter,
@@ -1743,6 +1844,8 @@ fn run_worker(
 #[allow(clippy::too_many_arguments)]
 async fn run_generation(
     published_host: Arc<OnceLock<HostClient>>,
+    bluetooth_control: Arc<OnceLock<BluetoothControl>>,
+    bluetooth_enabled: bool,
     paths: NodeStoragePaths,
     primary_identity_secret: IdentitySecretKey,
     mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
@@ -1897,6 +2000,24 @@ async fn run_generation(
     let android_bluetooth_session = Arc::new(bluetooth_preparation.android);
     #[cfg(all(feature = "android", target_os = "android"))]
     let prepared_android = android_bluetooth_session.interface(bluetooth_identity);
+    #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
+    let status = prepared_bluetooth.status();
+    #[cfg(all(feature = "android", target_os = "android"))]
+    let status = prepared_android.status();
+    #[cfg(any(
+        all(feature = "apple", any(target_os = "ios", target_os = "macos")),
+        all(feature = "android", target_os = "android")
+    ))]
+    {
+        let control = BluetoothControl::new(status);
+        control.set_enabled(bluetooth_enabled);
+        let _ = bluetooth_control.set(control);
+    }
+    #[cfg(not(any(
+        all(feature = "apple", any(target_os = "ios", target_os = "macos")),
+        all(feature = "android", target_os = "android")
+    )))]
+    let _ = bluetooth_enabled;
     let bluetooth_attached = cfg!(any(
         all(
             feature = "apple",
@@ -2002,6 +2123,7 @@ async fn run_generation(
             event_rx,
             overflowed,
             host_client.clone(),
+            bluetooth_control,
             clock,
             Arc::clone(&snapshots),
             Arc::clone(&operation_admitted),
@@ -2191,6 +2313,7 @@ async fn run_actor(
     events: mpsc::Receiver<OwnedNodeEvent>,
     overflowed: Arc<std::sync::atomic::AtomicBool>,
     host_client: HostClient,
+    bluetooth_control: Arc<OnceLock<BluetoothControl>>,
     clock: personal_rns::manifold::tokio::TokioClock,
     snapshots: Arc<SnapshotStore>,
     operation_admitted: Arc<AtomicBool>,
@@ -2207,6 +2330,7 @@ async fn run_actor(
         events,
         overflowed,
         &host_client,
+        &bluetooth_control,
         clock,
         &snapshots,
         &operation_admitted,
@@ -2236,6 +2360,7 @@ async fn run_actor_loop(
     mut events: mpsc::Receiver<OwnedNodeEvent>,
     overflowed: Arc<std::sync::atomic::AtomicBool>,
     host_client: &HostClient,
+    bluetooth_control: &OnceLock<BluetoothControl>,
     clock: personal_rns::manifold::tokio::TokioClock,
     snapshots: &SnapshotStore,
     operation_admitted: &AtomicBool,
@@ -2302,7 +2427,7 @@ async fn run_actor_loop(
         snapshot.runtime = DevelopmentNodeRuntime::Running;
         snapshot.failure = None;
     });
-    refresh_host_snapshot(host_client, snapshots).await;
+    refresh_host_snapshot(host_client, bluetooth_control, snapshots).await;
     let _ = ready.send(Ok(snapshots.read()));
 
     let mut candidate_expiry = tokio::time::interval(Duration::from_millis(500));
@@ -2392,7 +2517,7 @@ async fn run_actor_loop(
                             biased;
                             () = response.closed() => {},
                             () = refresh_host_snapshot(
-                                host_client, snapshots,
+                                host_client, bluetooth_control, snapshots,
                             ) => { let _ = response.send(snapshots.read()); }
                         }
                     }
@@ -2701,10 +2826,28 @@ async fn stop_lxmf_service_and_drain(
     stop_result.and(response_result)
 }
 
-async fn refresh_host_snapshot(host: &HostClient, snapshots: &SnapshotStore) {
-    match tokio::time::timeout(HOST_INSPECTION_TIMEOUT, host.snapshot()).await {
-        Ok(Ok(host)) => snapshots.set_local_host(LocalHostState::Running {
-            host: Box::new(host),
+async fn refresh_host_snapshot(
+    host: &HostClient,
+    control: &OnceLock<BluetoothControl>,
+    snapshots: &SnapshotStore,
+) {
+    match tokio::time::timeout(HOST_INSPECTION_TIMEOUT, host.inspection()).await {
+        Ok(Ok(inspection)) => snapshots.update(|snapshot| {
+            snapshot.bluetooth = control.get().map_or_else(
+                || LocalBluetoothSnapshot {
+                    desired_enabled: snapshot.bluetooth.desired_enabled,
+                    state: LocalBluetoothState::Unavailable {
+                        detail: "This native build has no local Bluetooth interface.".into(),
+                    },
+                    peers: Vec::new(),
+                },
+                |control| {
+                    control.project(&inspection.interfaces, snapshot.bluetooth.desired_enabled)
+                },
+            );
+            snapshot.local_host = LocalHostState::Running {
+                host: Box::new(inspection.host),
+            };
         }),
         Ok(Err(error)) => snapshots
             .set_local_host_unavailable_if_running(format!("Host inspection failed: {error:?}")),

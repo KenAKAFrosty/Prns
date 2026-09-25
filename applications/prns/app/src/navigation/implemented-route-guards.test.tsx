@@ -9,6 +9,7 @@ import ConversationRoute from "../../app/(shell)/inbox/conversation/[destination
 import InboxRoute from "../../app/(shell)/inbox/index";
 import HelpRoute from "../../app/(shell)/more/help/index";
 import MoreRoute from "../../app/(shell)/more/index";
+import ConnectionsRoute from "../../app/(shell)/more/interfaces/index";
 import AboutRoute from "../../app/(shell)/more/settings/about";
 import SettingsRoute from "../../app/(shell)/more/settings/index";
 import NodesRoute from "../../app/(shell)/nodes/index";
@@ -48,6 +49,8 @@ jest.mock("@/features/nodes/nodes-screen", () => ({
   LocalNodeScreen: () => null,
   NodesScreen: () => null,
 }));
+
+jest.mock("@/features/connections/connections-screen", () => ({ ConnectionsScreen: () => null }));
 
 jest.mock("@/features/explore/explore-screen", () => ({
   ExploreScreen: () => null,
@@ -97,6 +100,7 @@ const implementedRoutes: readonly ImplementedRouteCase[] = [
   { label: "this device", Component: LocalNodeRoute, validParams: {} },
   { label: "explore", Component: ExploreRoute, validParams: {} },
   { label: "more", Component: MoreRoute, validParams: {} },
+  { label: "connections", Component: ConnectionsRoute, validParams: {} },
   { label: "settings", Component: SettingsRoute, validParams: {} },
   { label: "about", Component: AboutRoute, validParams: {} },
   { label: "help", Component: HelpRoute, validParams: {} },

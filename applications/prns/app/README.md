@@ -12,9 +12,31 @@ The native iOS and Android providers support identity creation/import, local
 node inspection, contacts, RemoteControl pairing and connection checks, node
 address sharing, expanded node read/write controls, and a persistent mailbox for
 small direct LXMF messages.
+
+**Nodes → This phone → Connections** shows local Bluetooth state, connected
+physical peers and their traffic/details. Its stored enable/disable setting
+controls the existing Bluetooth supervisor without restarting the node or
+clearing saved data. Ready with no connected devices is distinct from a live
+connection; physical peers are not routes, contacts or board pairings. iOS uses
+the native radio state, and Android also checks platform permissions, radio and
+required location services, with recovery actions.
+
 Android also exposes service-owned Stop/Start and connection-notification
 controls. Web renders the shell with an explicitly unavailable native runtime;
 there is no browser or Tauri application provider.
+
+The [Connections checkpoint](../../checkpoints/2026-09-24-local-bluetooth.md)
+records retained-data iOS/Android installs, persisted app-off cold launches and
+reciprocal physical-peer reconnect. Android OS-radio recovery and 1.5x/2x text
+also passed. Final layout builds passed Android 2x and iOS maximum accessibility
+text checks, retained saved data and each reported one physical peer; the checkpoint
+distinguishes the checks repeated after those layout changes. iOS radio recovery,
+permission-denial trials and broader background/restoration qualification remain
+open. No new message-delivery or USB-unplugged acceptance is claimed for this
+slice. Persisted messaging names and the
+Saved/Discovered contact journey are next in the
+[two-phone demo plan](../../docs/phone-node-demo.md). Earlier transport checks do
+not qualify the new controls or broader background/restoration behavior.
 
 Pairing is authorization, not a live connection. Contacts and mailbox rows are
 local application records, not proof that their peer is reachable. Development
@@ -28,7 +50,7 @@ are available under **Show pairing details**. This is a single preset, not a
 permissions picker. Test devices may be
 reset and paired again; no deployed-pairing migration is needed.
 
-The expanded controls have host tests and limited Galaxy/E290 read/write evidence,
+The expanded controls have host tests and limited Android/board read/write evidence,
 not complete physical qualification on either platform. See the
 [settings checkpoint](../../checkpoints/2026-09-21-remote-settings-workflows.md)
 for the exact builds, checks and remaining limits.

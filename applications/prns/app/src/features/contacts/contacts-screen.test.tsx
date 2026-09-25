@@ -25,6 +25,11 @@ function snapshot(): DevelopmentNodeSnapshot {
     localHost: Bindings.LocalHostState.Stopped.new({
       lastStartFailure: undefined,
     }),
+    bluetooth: {
+      desiredEnabled: undefined,
+      state: Bindings.LocalBluetoothState.Stopped.new(),
+      peers: [],
+    },
     lxmf: { state: Bindings.LxmfHealthState.Stopped, inboundOverflowCount: 0n },
     controllerIdentityFingerprint: undefined,
     pairing: Bindings.RemoteControlPairingState.Searching.new(),
@@ -40,6 +45,10 @@ function snapshot(): DevelopmentNodeSnapshot {
 function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRuntime {
   return {
     attachHost: async () => undefined,
+    readBluetoothSettings: async () =>
+      Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled: true }),
+    setBluetoothEnabled: async (enabled: boolean) =>
+      Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled }),
     inspectDevelopmentIdentity: async () => Bindings.PrimaryIdentityState.Missing.new(),
     previewIdentityImport: async () => Bindings.IdentityImportPreviewOutcome.InvalidLength.new(),
     createGeneratedIdentity: async () => Bindings.IdentityCreationOutcome.AlreadyExists.new(),

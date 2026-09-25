@@ -702,6 +702,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_prns_app_checksum_func_preview_identity_import(
     ): Int
+    external fun uniffi_prns_app_checksum_func_read_bluetooth_settings(
+    ): Int
     external fun uniffi_prns_app_checksum_func_read_remote_node(
     ): Int
     external fun uniffi_prns_app_checksum_func_read_snapshot(
@@ -713,6 +715,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_prns_app_checksum_func_save_observed_destination(
     ): Int
     external fun uniffi_prns_app_checksum_func_send_direct_text(
+    ): Int
+    external fun uniffi_prns_app_checksum_func_set_bluetooth_enabled(
     ): Int
     external fun uniffi_prns_app_checksum_func_set_contact_alias(
     ): Int
@@ -790,6 +794,8 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_prns_app_fn_func_preview_identity_import(`identity`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
+    external fun uniffi_prns_app_fn_func_read_bluetooth_settings(
+    ): Long
     external fun uniffi_prns_app_fn_func_read_remote_node(`input`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_prns_app_fn_func_read_snapshot(
@@ -801,6 +807,8 @@ internal object UniffiLib {
     external fun uniffi_prns_app_fn_func_save_observed_destination(`input`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_prns_app_fn_func_send_direct_text(`input`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_prns_app_fn_func_set_bluetooth_enabled(`enabled`: Byte,
     ): Long
     external fun uniffi_prns_app_fn_func_set_contact_alias(`input`: RustBuffer.ByValue,
     ): Long
@@ -1010,6 +1018,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_prns_app_checksum_func_preview_identity_import() != 31445) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_prns_app_checksum_func_read_bluetooth_settings() != 48522) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_prns_app_checksum_func_read_remote_node() != 34426) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1026,6 +1037,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_send_direct_text() != 24289) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_prns_app_checksum_func_set_bluetooth_enabled() != 13413) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_set_contact_alias() != 19054) {
@@ -1811,6 +1825,8 @@ data class DevelopmentNodeSnapshot (
     ,
     var `localHost`: LocalHostState
     ,
+    var `bluetooth`: LocalBluetoothSnapshot
+    ,
     var `lxmf`: LxmfHealth
     ,
     var `controllerIdentityFingerprint`: kotlin.ByteArray?
@@ -1852,6 +1868,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterTypeDevelopmentNodeRuntime.read(buf),
             FfiConverterTypePrimaryIdentityState.read(buf),
             FfiConverterTypeLocalHostState.read(buf),
+            FfiConverterTypeLocalBluetoothSnapshot.read(buf),
             FfiConverterTypeLxmfHealth.read(buf),
             FfiConverterOptionalByteArray.read(buf),
             FfiConverterTypeRemoteControlPairingState.read(buf),
@@ -1872,6 +1889,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterTypeDevelopmentNodeRuntime.allocationSize(value.`runtime`) +
             FfiConverterTypePrimaryIdentityState.allocationSize(value.`primaryIdentity`) +
             FfiConverterTypeLocalHostState.allocationSize(value.`localHost`) +
+            FfiConverterTypeLocalBluetoothSnapshot.allocationSize(value.`bluetooth`) +
             FfiConverterTypeLxmfHealth.allocationSize(value.`lxmf`) +
             FfiConverterOptionalByteArray.allocationSize(value.`controllerIdentityFingerprint`) +
             FfiConverterTypeRemoteControlPairingState.allocationSize(value.`pairing`) +
@@ -1891,6 +1909,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterTypeDevelopmentNodeRuntime.write(value.`runtime`, buf)
             FfiConverterTypePrimaryIdentityState.write(value.`primaryIdentity`, buf)
             FfiConverterTypeLocalHostState.write(value.`localHost`, buf)
+            FfiConverterTypeLocalBluetoothSnapshot.write(value.`bluetooth`, buf)
             FfiConverterTypeLxmfHealth.write(value.`lxmf`, buf)
             FfiConverterOptionalByteArray.write(value.`controllerIdentityFingerprint`, buf)
             FfiConverterTypeRemoteControlPairingState.write(value.`pairing`, buf)
@@ -2091,6 +2110,121 @@ public object FfiConverterTypeListLxmfMessagesInput: FfiConverterRustBuffer<List
             FfiConverterOptionalTypeBytes16.write(value.`peer`, buf)
             FfiConverterOptionalULong.write(value.`before`, buf)
             FfiConverterUShort.write(value.`limit`, buf)
+    }
+}
+
+
+
+data class LocalBluetoothPeerSnapshot (
+    /**
+     * Opaque physical interface identifier; this is not an authenticated RNS identity.
+     */
+    var `interfaceId`: kotlin.ByteArray
+    ,
+    var `name`: kotlin.String?
+    ,
+    var `connected`: kotlin.Boolean
+    ,
+    var `rxBytes`: kotlin.ULong
+    ,
+    var `txBytes`: kotlin.ULong
+    ,
+    var `details`: kotlin.String?
+    ,
+    var `rssiDbm`: kotlin.Short?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalBluetoothPeerSnapshot: FfiConverterRustBuffer<LocalBluetoothPeerSnapshot> {
+    override fun read(buf: ByteBuffer): LocalBluetoothPeerSnapshot {
+        return LocalBluetoothPeerSnapshot(
+            FfiConverterByteArray.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalShort.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LocalBluetoothPeerSnapshot) = (
+            FfiConverterByteArray.allocationSize(value.`interfaceId`) +
+            FfiConverterOptionalString.allocationSize(value.`name`) +
+            FfiConverterBoolean.allocationSize(value.`connected`) +
+            FfiConverterULong.allocationSize(value.`rxBytes`) +
+            FfiConverterULong.allocationSize(value.`txBytes`) +
+            FfiConverterOptionalString.allocationSize(value.`details`) +
+            FfiConverterOptionalShort.allocationSize(value.`rssiDbm`)
+    )
+
+    override fun write(value: LocalBluetoothPeerSnapshot, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`interfaceId`, buf)
+            FfiConverterOptionalString.write(value.`name`, buf)
+            FfiConverterBoolean.write(value.`connected`, buf)
+            FfiConverterULong.write(value.`rxBytes`, buf)
+            FfiConverterULong.write(value.`txBytes`, buf)
+            FfiConverterOptionalString.write(value.`details`, buf)
+            FfiConverterOptionalShort.write(value.`rssiDbm`, buf)
+    }
+}
+
+
+
+data class LocalBluetoothSnapshot (
+    /**
+     * None until the application preference has been successfully read.
+     */
+    var `desiredEnabled`: kotlin.Boolean?
+    ,
+    var `state`: LocalBluetoothState
+    ,
+    /**
+     * Physical Bluetooth fleet members, never routes or RNS links.
+     */
+    var `peers`: List<LocalBluetoothPeerSnapshot>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalBluetoothSnapshot: FfiConverterRustBuffer<LocalBluetoothSnapshot> {
+    override fun read(buf: ByteBuffer): LocalBluetoothSnapshot {
+        return LocalBluetoothSnapshot(
+            FfiConverterOptionalBoolean.read(buf),
+            FfiConverterTypeLocalBluetoothState.read(buf),
+            FfiConverterSequenceTypeLocalBluetoothPeerSnapshot.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LocalBluetoothSnapshot) = (
+            FfiConverterOptionalBoolean.allocationSize(value.`desiredEnabled`) +
+            FfiConverterTypeLocalBluetoothState.allocationSize(value.`state`) +
+            FfiConverterSequenceTypeLocalBluetoothPeerSnapshot.allocationSize(value.`peers`)
+    )
+
+    override fun write(value: LocalBluetoothSnapshot, buf: ByteBuffer) {
+            FfiConverterOptionalBoolean.write(value.`desiredEnabled`, buf)
+            FfiConverterTypeLocalBluetoothState.write(value.`state`, buf)
+            FfiConverterSequenceTypeLocalBluetoothPeerSnapshot.write(value.`peers`, buf)
     }
 }
 
@@ -4861,6 +4995,274 @@ public object FfiConverterTypeIdentityImportPreviewOutcome : FfiConverterRustBuf
             }
             is IdentityImportPreviewOutcome.InvalidLength -> {
                 buf.putInt(2)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class LocalBluetoothSettingsOutcome {
+
+    data class Ready(
+        val `enabled`: kotlin.Boolean) : LocalBluetoothSettingsOutcome()
+
+    {
+
+
+        companion object
+    }
+
+    object Busy : LocalBluetoothSettingsOutcome()
+
+
+    data class Unavailable(
+        val `detail`: kotlin.String) : LocalBluetoothSettingsOutcome()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalBluetoothSettingsOutcome : FfiConverterRustBuffer<LocalBluetoothSettingsOutcome>{
+    override fun read(buf: ByteBuffer): LocalBluetoothSettingsOutcome {
+        return when(buf.getInt()) {
+            1 -> LocalBluetoothSettingsOutcome.Ready(
+                FfiConverterBoolean.read(buf),
+                )
+            2 -> LocalBluetoothSettingsOutcome.Busy
+            3 -> LocalBluetoothSettingsOutcome.Unavailable(
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: LocalBluetoothSettingsOutcome) = when(value) {
+        is LocalBluetoothSettingsOutcome.Ready -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterBoolean.allocationSize(value.`enabled`)
+            )
+        }
+        is LocalBluetoothSettingsOutcome.Busy -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalBluetoothSettingsOutcome.Unavailable -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+    }
+
+    override fun write(value: LocalBluetoothSettingsOutcome, buf: ByteBuffer) {
+        when(value) {
+            is LocalBluetoothSettingsOutcome.Ready -> {
+                buf.putInt(1)
+                FfiConverterBoolean.write(value.`enabled`, buf)
+                Unit
+            }
+            is LocalBluetoothSettingsOutcome.Busy -> {
+                buf.putInt(2)
+                Unit
+            }
+            is LocalBluetoothSettingsOutcome.Unavailable -> {
+                buf.putInt(3)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class LocalBluetoothState {
+
+    object Stopped : LocalBluetoothState()
+
+
+    object Starting : LocalBluetoothState()
+
+
+    object Disabled : LocalBluetoothState()
+
+
+    object Disabling : LocalBluetoothState()
+
+
+    object Connecting : LocalBluetoothState()
+
+
+    object WaitingForPeers : LocalBluetoothState()
+
+
+    object Connected : LocalBluetoothState()
+
+
+    object RadioOff : LocalBluetoothState()
+
+
+    data class Unavailable(
+        val `detail`: kotlin.String) : LocalBluetoothState()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalBluetoothState : FfiConverterRustBuffer<LocalBluetoothState>{
+    override fun read(buf: ByteBuffer): LocalBluetoothState {
+        return when(buf.getInt()) {
+            1 -> LocalBluetoothState.Stopped
+            2 -> LocalBluetoothState.Starting
+            3 -> LocalBluetoothState.Disabled
+            4 -> LocalBluetoothState.Disabling
+            5 -> LocalBluetoothState.Connecting
+            6 -> LocalBluetoothState.WaitingForPeers
+            7 -> LocalBluetoothState.Connected
+            8 -> LocalBluetoothState.RadioOff
+            9 -> LocalBluetoothState.Unavailable(
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: LocalBluetoothState) = when(value) {
+        is LocalBluetoothState.Stopped -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalBluetoothState.Starting -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalBluetoothState.Disabled -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalBluetoothState.Disabling -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalBluetoothState.Connecting -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalBluetoothState.WaitingForPeers -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalBluetoothState.Connected -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalBluetoothState.RadioOff -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalBluetoothState.Unavailable -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+    }
+
+    override fun write(value: LocalBluetoothState, buf: ByteBuffer) {
+        when(value) {
+            is LocalBluetoothState.Stopped -> {
+                buf.putInt(1)
+                Unit
+            }
+            is LocalBluetoothState.Starting -> {
+                buf.putInt(2)
+                Unit
+            }
+            is LocalBluetoothState.Disabled -> {
+                buf.putInt(3)
+                Unit
+            }
+            is LocalBluetoothState.Disabling -> {
+                buf.putInt(4)
+                Unit
+            }
+            is LocalBluetoothState.Connecting -> {
+                buf.putInt(5)
+                Unit
+            }
+            is LocalBluetoothState.WaitingForPeers -> {
+                buf.putInt(6)
+                Unit
+            }
+            is LocalBluetoothState.Connected -> {
+                buf.putInt(7)
+                Unit
+            }
+            is LocalBluetoothState.RadioOff -> {
+                buf.putInt(8)
+                Unit
+            }
+            is LocalBluetoothState.Unavailable -> {
+                buf.putInt(9)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -9436,6 +9838,38 @@ public object FfiConverterOptionalULong: FfiConverterRustBuffer<kotlin.ULong?> {
 /**
  * @suppress
  */
+public object FfiConverterOptionalBoolean: FfiConverterRustBuffer<kotlin.Boolean?> {
+    override fun read(buf: ByteBuffer): kotlin.Boolean? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterBoolean.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.Boolean?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterBoolean.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.Boolean?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterBoolean.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
     override fun read(buf: ByteBuffer): kotlin.String? {
         if (buf.get().toInt() == 0) {
@@ -9894,6 +10328,34 @@ public object FfiConverterSequenceTypeContact: FfiConverterRustBuffer<List<Conta
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeContact.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeLocalBluetoothPeerSnapshot: FfiConverterRustBuffer<List<LocalBluetoothPeerSnapshot>> {
+    override fun read(buf: ByteBuffer): List<LocalBluetoothPeerSnapshot> {
+        val len = buf.getInt()
+        return List<LocalBluetoothPeerSnapshot>(len) {
+            FfiConverterTypeLocalBluetoothPeerSnapshot.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<LocalBluetoothPeerSnapshot>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeLocalBluetoothPeerSnapshot.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<LocalBluetoothPeerSnapshot>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeLocalBluetoothPeerSnapshot.write(it, buf)
         }
     }
 }
@@ -10511,6 +10973,20 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
 
 
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `readBluetoothSettings`() : LocalBluetoothSettingsOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_read_bluetooth_settings(),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeLocalBluetoothSettingsOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
      suspend fun `readRemoteNode`(`input`: ReadRemoteNodeInput) : ReadRemoteNodeOutcome {
         return uniffiRustCallAsync(
         UniffiLib.uniffi_prns_app_fn_func_read_remote_node(FfiConverterTypeReadRemoteNodeInput.lower(`input`),),
@@ -10595,6 +11071,23 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
         { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSendDirectTextOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+        /**
+         * Persist application participation and apply it to the existing native BLE supervisor.
+         */
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `setBluetoothEnabled`(`enabled`: kotlin.Boolean) : LocalBluetoothSettingsOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_set_bluetooth_enabled(FfiConverterBoolean.lower(`enabled`),),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeLocalBluetoothSettingsOutcome.lift(it) },
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )

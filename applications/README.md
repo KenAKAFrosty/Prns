@@ -11,7 +11,7 @@ services. It consumes public core APIs; the core does not depend on this tree.
 - [React Native SDK ownership and implementation](docs/react-native-sdk-implementation.md)
 - [Implementation roadmap](docs/roadmap.md)
 - [Expanded remote-control plan](docs/remote-control-expansion.md)
-- [Proposed two-phone local-node demo](docs/phone-node-demo.md)
+- [Two-phone local-node demo plan and progress](docs/phone-node-demo.md)
 
 This guide owns setup and workspace commands. The binding and platform guides
 own their narrower boundaries; dated checkpoints preserve historical evidence,

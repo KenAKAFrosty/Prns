@@ -43,6 +43,7 @@ function encode<T>(codec: FfiConverter<Uint8Array, T>, value: T): number[] {
 }
 const snapshot = (): Bindings.DevelopmentNodeSnapshot => ({
   contractFingerprint: Bindings.NATIVE_CONTRACT_FINGERPRINT,
+  bluetooth: { desiredEnabled: true, state: Bindings.LocalBluetoothState.Stopped.new(), peers: [] },
   revision: 18_446_744_073_709_551_615n,
   generationId: 9_007_199_254_740_993n,
   runtime: Bindings.DevelopmentNodeRuntime.Stopped,
@@ -268,6 +269,23 @@ test("a first cold offline retry prepares storage before outbound admission with
   expect(api.listContacts).not.toHaveBeenCalled();
   expect(api.readSnapshot).not.toHaveBeenCalled();
   expect(native.start).not.toHaveBeenCalled();
+});
+
+test("Bluetooth preferences use prepared offline storage without starting or admitting outbound work", async () => {
+  const native = nativeModule();
+  const outcome = Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled: false });
+  const readBluetoothSettings = jest.fn(async () => outcome);
+  const setBluetoothEnabled = jest.fn(async (_enabled: boolean) => {
+    expect(native.prepareStorage).toHaveBeenCalledTimes(1);
+    return outcome;
+  });
+  const { runtime } = setup({ readBluetoothSettings, setBluetoothEnabled }, native);
+  expect(await runtime.setBluetoothEnabled(false)).toBe(outcome);
+  expect(await runtime.readBluetoothSettings()).toBe(outcome);
+  expect(setBluetoothEnabled).toHaveBeenCalledWith(false);
+  expect(native.prepareStorage).toHaveBeenCalledTimes(1);
+  expect(native.start).not.toHaveBeenCalled();
+  expect(native.prepareOutbound).not.toHaveBeenCalled();
 });
 
 test("cold retry does not refresh outbound or submit when storage preparation fails or is cancelled", async () => {

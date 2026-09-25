@@ -45,6 +45,17 @@ pub async fn read_snapshot() -> DevelopmentNodeSnapshot {
     crate::lifecycle::snapshot_async().await
 }
 
+#[uniffi::export]
+pub async fn read_bluetooth_settings() -> LocalBluetoothSettingsOutcome {
+    crate::lifecycle::bluetooth_settings(None).await
+}
+
+/// Persist application participation and apply it to the existing native BLE supervisor.
+#[uniffi::export]
+pub async fn set_bluetooth_enabled(enabled: bool) -> LocalBluetoothSettingsOutcome {
+    crate::lifecycle::bluetooth_settings(Some(enabled)).await
+}
+
 /// The same SDK host used by native services. Stop remains the app owner's operation.
 #[uniffi::export]
 pub fn shared_host() -> Option<std::sync::Arc<prns_host_uniffi::HostClientHandle>> {

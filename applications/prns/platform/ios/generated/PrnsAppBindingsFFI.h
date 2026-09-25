@@ -383,6 +383,12 @@ RustBuffer uniffi_prns_app_fn_func_native_stop(RustCallStatus *_Nonnull out_stat
 RustBuffer uniffi_prns_app_fn_func_preview_identity_import(RustBuffer identity, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_READ_BLUETOOTH_SETTINGS
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_READ_BLUETOOTH_SETTINGS
+uint64_t uniffi_prns_app_fn_func_read_bluetooth_settings(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_READ_REMOTE_NODE
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_READ_REMOTE_NODE
 uint64_t uniffi_prns_app_fn_func_read_remote_node(RustBuffer input
@@ -412,6 +418,11 @@ uint64_t uniffi_prns_app_fn_func_save_observed_destination(RustBuffer input
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SEND_DIRECT_TEXT
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SEND_DIRECT_TEXT
 uint64_t uniffi_prns_app_fn_func_send_direct_text(RustBuffer input
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SET_BLUETOOTH_ENABLED
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SET_BLUETOOTH_ENABLED
+uint64_t uniffi_prns_app_fn_func_set_bluetooth_enabled(int8_t enabled
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SET_CONTACT_ALIAS
@@ -857,6 +868,12 @@ uint16_t uniffi_prns_app_checksum_func_preview_identity_import(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_READ_BLUETOOTH_SETTINGS
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_READ_BLUETOOTH_SETTINGS
+uint16_t uniffi_prns_app_checksum_func_read_bluetooth_settings(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_READ_REMOTE_NODE
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_READ_REMOTE_NODE
 uint16_t uniffi_prns_app_checksum_func_read_remote_node(void
@@ -890,6 +907,12 @@ uint16_t uniffi_prns_app_checksum_func_save_observed_destination(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SEND_DIRECT_TEXT
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SEND_DIRECT_TEXT
 uint16_t uniffi_prns_app_checksum_func_send_direct_text(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SET_BLUETOOTH_ENABLED
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SET_BLUETOOTH_ENABLED
+uint16_t uniffi_prns_app_checksum_func_set_bluetooth_enabled(void
 
 );
 #endif

@@ -1,21 +1,28 @@
 # Two-phone local-node demo plan
 
-Status: ordinary CoreBluetooth feasibility implementation approved September 23,
-2026. The remaining messaging UX and network-inspection slices are planned, not
-implemented. The user accepts losing ASK's extra force-quit relaunch support to
-make the phone usable as its own node, without a board or per-peer authorization.
+Status: the local Connections slice passed bounded retained-data iOS/Android
+acceptance on September 24, 2026. The [checkpoint](../checkpoints/2026-09-24-local-bluetooth.md)
+records persisted app-off cold launches, retained data and reciprocal physical
+connections on both final installed binaries, plus Android radio recovery and
+larger-text checks on both platforms. iOS radio recovery, permission-denial trials
+and broader lifecycle qualification remain open.
+Persisted messaging names, Saved/Discovered contacts and the remaining
+network-inspection work are planned, not implemented. The user accepts losing
+ASK's extra force-quit relaunch support to make the phone usable as its own node,
+without a board or per-peer authorization.
 Control Center Bluetooth-toggle recovery is another documented ASK difference;
 physical results must record it separately from ordinary background operation.
 
 The [September 23 physical checkpoint](../checkpoints/2026-09-23-ordinary-corebluetooth.md#physical-continuation-direct-unpaired-ble-messaging)
-now proves automatic unpaired iPhone/Galaxy connection, reciprocal announcements,
-two-way proof-backed messages, one same-process off-screen iPhone receipt and its
-first resumed send. The transport choice is feasible; complete the UX below and
-qualify the remaining lifecycle cases. This is not full demo acceptance.
+records automatic unpaired iOS/Android connection, reciprocal announcements,
+two-way proof-backed messages, one same-process off-screen iOS receipt and its
+first resumed send on earlier binaries. That establishes transport feasibility;
+it does not substitute for the current Connections checkpoint or complete demo
+acceptance.
 
 ## Outcome
 
-Open prns on MetalbeardMobile and the Galaxy S9+, connect them, announce distinct
+Open prns on iOS and Android, connect them, announce distinct
 messaging names, discover and save each other without copying hashes, and exchange
 short LXMF messages in both directions. Each phone should explain its connection,
 what it has heard, its current routes, and the evidence behind message delivery.
@@ -38,16 +45,17 @@ The existing foundation is useful; this is not a messaging-engine rewrite.
 
 | Area | What exists | Gap for the demo |
 | --- | --- | --- |
-| Local node | One process-owned Rust runtime and stable primary identity; ordinary iOS Bluetooth admission; retained-data install passed | Permission recovery, cold retention and full physical lifecycle qualification remain |
+| Local node | One process-owned Rust runtime and stable primary identity; ordinary iOS Bluetooth admission; This phone appears before managed boards; retained-data cold launches passed on both platforms | Permission recovery and full physical lifecycle qualification remain |
 | Announcing | Inbox → Messaging options → Share messaging address calls the real LXMF announce API | Hidden, ambiguous label; hardcoded name `prns`; no useful connection/outcome context |
 | Discovery | Authenticated LXMF announce observer and latest-per-destination peer cache | Peers appear as empty Inbox conversations; no dedicated discovered-contacts or announce view; cache lacks expiry/cap |
 | Contacts | Saved/manual contacts and Save as contact in local diagnostics | No direct discovery-to-contact-to-message journey; generic destinations are not necessarily messaging addresses |
-| Bluetooth | Direct unpaired iPhone/Galaxy discovery, two-way messaging and bounded off-screen iPhone receipt passed | Recovery/long-idle qualification, local connection controls and physical-peer views remain incomplete |
+| Bluetooth | Connections shows local status, stored enable/disable and physical peers; current iOS/Android binaries passed app-off persistence and reciprocal reconnect, with Android OS-radio recovery | iOS OS-radio recovery, permission denial, background and long-idle qualification remain; current-binary message delivery was not repeated |
 | TCP (deferred) | Optional developer TCP client fixture | Not part of this milestone |
-| Inspection | Logical interfaces, counters, routes and identity associations | Raw labels/IDs/times; physical peers are folded away; current route is not historical message evidence |
+| Inspection | Logical interfaces, counters, routes and identity associations; Connections adds physical Bluetooth peers and their counters/details | Broader network views still use raw labels/IDs/times; current route is not historical message evidence |
 
 Source anchors: [Inbox](../prns/app/src/features/inbox/inbox-screen.native.tsx),
 [local-node views](../prns/app/src/features/nodes/nodes-screen.tsx),
+[Connections](../prns/app/src/features/connections/connections-screen.tsx),
 [contacts](../prns/app/src/features/contacts/contacts-screen.tsx),
 [native composition](../prns/native-composition/src/lifecycle.rs),
 [LXMF peer owner](../services/lxmf/src/direct.rs),
@@ -59,6 +67,39 @@ for Saved/Discovered contacts, local-node-first navigation, local interfaces and
 network inspection. Restore those product priorities, not its superseded bridge
 designs or speculative service registries. The tracked roadmap remains the
 current backlog; old physical results do not qualify new binaries.
+
+## Implemented Connections slice
+
+Open **Nodes → This phone → Connections** or **More → Connections**. Node state
+and Bluetooth state are separate: a running node can have Bluetooth turned off,
+and a Bluetooth connection status of Ready means no physical peers are currently
+connected. Connected counts and peer details include only connected Bluetooth
+fleet members, never routes,
+Reticulum Links, contacts or managed-board pairings. Stale peer rows are hidden
+while access is unavailable or the interface is turning off.
+
+The app stores the Bluetooth preference through its existing native database
+owner, then applies it through the shared AutoBLE supervisor. Toggling this
+interface does not restart the node or clear identity, contacts or messages.
+Startup reads the same stored preference. An unconfirmed setting result asks for
+a refresh; it does not imply that an accepted write was rolled back.
+
+The [app Bluetooth projection](../prns/native-composition/src/bluetooth.rs) uses
+physical fleet facts from the same native Host inspection capture that produces
+the canonical logical HostSnapshot. It does not duplicate that projection or
+infer physical connections from its aggregate totals. iOS status includes the
+real CoreBluetooth radio state; Android status combines supervisor facts with
+platform permission, radio and required location-service gates. Unknown or
+failed access checks do not count as ready.
+
+The [September 24 checkpoint](../checkpoints/2026-09-24-local-bluetooth.md) records
+retained-data installation, app-off cold-launch persistence and reconnect on
+both platforms, plus Android OS-radio recovery and 1.5x/2x text checks. Final
+layout builds passed Android 2x and iOS maximum-accessibility-text checks; the
+checkpoint separates those follow-up checks from the original control trials.
+iOS radio recovery, permission-denial trials and
+background/restoration qualification remain open. Messaging names and the
+Saved/Discovered journey are the next app slice.
 
 ## Transport decision: automatic connections without pairing
 
@@ -133,13 +174,13 @@ does not establish a Bluetooth connection.
 Keep existing tabs and stable routes. Add entry points to the existing local
 interface/activity routes rather than introducing another top-level tab.
 
-| Location | Proposed experience |
+| Location | Implemented / planned experience |
 | --- | --- |
-| Nodes | This phone first: messaging name, Running/Stopped, concise connection summary; Connections and Network details. Managed boards stay below and visibly separate. |
+| Nodes | Implemented: This phone first, Running/Stopped, concise Bluetooth summary and Connections; managed boards below. Messaging name and expanded Network details remain planned. |
 | Contacts | Saved / Discovered; prominent Announce yourself and a separate My address action for copying/sharing the address. |
 | Discovered contact | Announced name, short address, human-readable last heard, received-via connection/hops when known; Save contact and Message. Identity details secondary. |
 | Inbox | Actual conversations, not every heard peer. New message selects a saved/discovered recipient; manual address entry remains available. Contact detail also has Message. |
-| Connections | Automatic Bluetooth with readable state, app-level permission action, enable/disable, connected peers and connection details. No per-phone picker. Local settings never use remote-board controls. |
+| Connections | Implemented with bounded iOS/Android retained-data acceptance: automatic Bluetooth, readable state, app-level permission actions, stored enable/disable and physical peer details. Remaining recovery/lifecycle checks are listed in the checkpoint. No per-phone picker; local settings do not use remote-board controls. |
 | Network details / Activity | Physical connections, current routes, accepted announces and bounded recent connection/message events; filters and clear local history. Technical IDs remain available on demand. |
 | Conversation details | Current route availability and independently recorded delivery evidence, clearly labeled. No inferred historical path presented as fact. |
 
@@ -221,13 +262,13 @@ folds physical members into logical interfaces. Supplement it from the same raw
 capture; do not fork its projection or reconstruct physical peers from totals.
 Convert monotonic observations to ages in Rust, not phone wall-clock dates.
 
-Replace the per-accessory startup gate with explicit app-level permission/radio
-state while preserving early native restoration preparation, one owner,
-Stop/reset cancellation and Android service ownership. Permission denial must
-not hide saved data. Add the BLE interface enable/disable control and real
-readiness projection without creating a generic multi-interface configuration
-framework now. State whether a change reconnects the interface or restarts the
-node; never clear data or silently interrupt an accepted operation.
+The ordinary Bluetooth startup path uses app-level permission/radio state while
+preserving early native restoration preparation, one owner, Stop/reset
+cancellation and Android service ownership. The implemented BLE control and
+readiness projection reuse that ownership; permission denial leaves saved data
+available. Keep further transport configuration out of this slice. Disabling
+Bluetooth disconnects its physical peers without restarting the node; it is
+independent of stopping the node or resetting app data.
 
 Retain existing inbound interface, arrival and Link ID evidence instead of
 discarding it in the mailbox projection. Outbound Link ID and measured RTT can
@@ -246,21 +287,23 @@ routes or counters.
 
 ## Ordered implementation slices
 
-1. **Pair-free connection feasibility and status (transport proven; remaining qualification/status in progress).**
-   Qualify ordinary CoreBluetooth permissions and existing Prns AutoBLE roles
-   without ASK. Capture exact builds and show that neither phone needs a bond,
-   per-peer chooser or RemoteControl grant. Include permission denial, readiness,
-   interface enable/disable and truthful status. Keep native restoration support
-   and test its boundaries; stop to revise the design if the pair cannot connect
-   without per-peer setup. No board or TCP fallback.
-2. **Complete the messaging journey over BLE.** Add persisted name, accessible
+1. **Pair-free connection feasibility and status (bounded device acceptance passed).**
+   Earlier builds established automatic unpaired transport feasibility. The
+   Connections UI, stored interface control and physical-peer projection are now
+   implemented. The September 24 checkpoint records retained data, app-off cold
+   launches and reconnect on both platforms, plus Android radio recovery and
+   larger-text checks on both platforms. Complete the listed iOS radio and
+   permission-denial gaps;
+   keep background/restoration and USB-unplugged trials separately bounded and
+   recorded. This slice did not repeat message-delivery acceptance.
+2. **Complete the messaging journey over BLE (next app slice).** Add persisted name, accessible
    announce, bounded Discovered list, Save/Message actions and contact recipient
    selection. Prove reciprocal discovery and short proof-backed messages without
    typing addresses, including a fresh send to a saved contact after restart
    without manually re-announcing at the other phone. Include basic
    connection/counter evidence from slice 1.
 3. **Network explainability.** Complete announce/activity inspection, readable
-   route age/expiry and physical peer views, and conversation delivery details.
+   route age/expiry, broader connection inspection and conversation delivery details.
    Add a narrow upstream seam only where existing public evidence cannot answer
    the UI's question. Clearly separate current routes from actual message paths.
 4. **Repeatable device acceptance and recovery.** Test out-of-range, reconnect,
@@ -278,7 +321,7 @@ plan, and no historical phone test substitutes for the new two-phone journey.
 The demo passes when a user can complete the following using only the app UI:
 
 1. See each phone's distinct name and whether it has a usable connection.
-2. Connect iPhone/Galaxy automatically over BLE after app-level permission, with
+2. Connect iOS/Android automatically over BLE after app-level permission, with
    no OS bond, per-peer system picker, RemoteControl grant or board.
 3. Announce both ways, see each other under Discovered and save contacts.
 4. Send and reply; show Delivered only on the existing proof-backed result,

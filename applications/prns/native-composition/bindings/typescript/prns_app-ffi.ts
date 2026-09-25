@@ -394,6 +394,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_prns_app_fn_func_read_bluetooth_settings": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_fn_func_read_remote_node": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -421,6 +426,11 @@ const DEFINITIONS = {
     },
     "uniffi_prns_app_fn_func_send_direct_text": {
       args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_set_bluetooth_enabled": {
+      args: [FfiType.Int8],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -584,6 +594,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_checksum_func_read_bluetooth_settings": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_checksum_func_read_remote_node": {
       args: [],
       ret: FfiType.UInt16,
@@ -610,6 +625,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_checksum_func_send_direct_text": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_set_bluetooth_enabled": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -735,12 +755,14 @@ interface NativeModuleInterface {
     uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_restoration(storageRoot: Uint8Array, input: Uint8Array, centralIdentifier: Uint8Array, peripheralIdentifier: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_native_stop(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_preview_identity_import(identity: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_read_bluetooth_settings(): bigint;
     uniffi_prns_app_fn_func_read_remote_node(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_read_snapshot(): bigint;
     uniffi_prns_app_fn_func_reject_pairing(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_retry_lxmf_message(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_save_observed_destination(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_send_direct_text(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_set_bluetooth_enabled(enabled: number): bigint;
     uniffi_prns_app_fn_func_set_contact_alias(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_set_contact_pinned(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_shared_host(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -773,12 +795,14 @@ interface NativeModuleInterface {
     uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_restoration(): number;
     uniffi_prns_app_checksum_func_native_stop(): number;
     uniffi_prns_app_checksum_func_preview_identity_import(): number;
+    uniffi_prns_app_checksum_func_read_bluetooth_settings(): number;
     uniffi_prns_app_checksum_func_read_remote_node(): number;
     uniffi_prns_app_checksum_func_read_snapshot(): number;
     uniffi_prns_app_checksum_func_reject_pairing(): number;
     uniffi_prns_app_checksum_func_retry_lxmf_message(): number;
     uniffi_prns_app_checksum_func_save_observed_destination(): number;
     uniffi_prns_app_checksum_func_send_direct_text(): number;
+    uniffi_prns_app_checksum_func_set_bluetooth_enabled(): number;
     uniffi_prns_app_checksum_func_set_contact_alias(): number;
     uniffi_prns_app_checksum_func_set_contact_pinned(): number;
     uniffi_prns_app_checksum_func_shared_host(): number;

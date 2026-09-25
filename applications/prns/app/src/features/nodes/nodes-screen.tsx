@@ -22,6 +22,7 @@ import { formatBytes, formatRuntime } from "./format";
 import { AndroidBluetoothCard } from "./android-bluetooth-card";
 import { IosBluetoothCard } from "./ios-bluetooth-card";
 import { AndroidNodeControls } from "./android-node-controls";
+import { bluetoothStatus } from "@/features/connections/bluetooth-status";
 
 export function NodesScreen() {
   const runtime = useDevelopmentRuntime();
@@ -41,7 +42,68 @@ export function NodesScreen() {
   return (
     <Screen>
       <ScreenHeading>Nodes</ScreenHeading>
-      <BodyText>Manage your paired nodes and this device.</BodyText>
+      <BodyText>Manage this phone and your paired nodes.</BodyText>
+
+      <Card>
+        <CardHeader title="This phone">
+          {runtime.snapshot === null ? null : (
+            <Badge
+              tone={
+                runtime.snapshot.runtime === Bindings.DevelopmentNodeRuntime.Failed
+                  ? "warning"
+                  : "neutral"
+              }
+            >
+              {formatRuntime(runtime.snapshot.runtime)}
+            </Badge>
+          )}
+        </CardHeader>
+        <BodyText>Bluetooth: {bluetoothStatus(runtime).label}</BodyText>
+        {runtime.snapshot === null ? null : (
+          <>
+            {runtime.backgroundFailure === null ? null : (
+              <BodyText>Automatic refresh failed. Try refreshing again.</BodyText>
+            )}
+            {refreshFailure === null ? null : <BodyText>Refresh failed. Try again.</BodyText>}
+            <ActionRow>
+              <Button disabled={refreshing} onPress={() => void refresh()} tone="secondary">
+                {refreshing ? "Refreshing…" : "Refresh now"}
+              </Button>
+              <NavigationLink href="/nodes/local" accessibilityLabel="View this device">
+                View device
+              </NavigationLink>
+            </ActionRow>
+          </>
+        )}
+        <CardSection>
+          <ActionRow>
+            <NavigationLink href="/more/interfaces">Connections</NavigationLink>
+            <NavigationLink href="/nodes/local/grants">Remote access</NavigationLink>
+          </ActionRow>
+        </CardSection>
+      </Card>
+
+      <NodeRecoveryCard showDiagnosticsLink />
+      <AndroidBluetoothCard />
+      <IosBluetoothCard />
+
+      {runtime.phase === "unavailable" ? (
+        <Card>
+          <Subheading>Nodes unavailable</Subheading>
+          <Badge tone="warning">Not supported on {runtime.availability.platform}</Badge>
+          <BodyText>Node management is not available on this platform yet.</BodyText>
+        </Card>
+      ) : null}
+
+      {runtime.phase === "starting" ? (
+        <Card>
+          <Subheading>Getting ready</Subheading>
+          <Badge>Starting</Badge>
+          <BodyText muted>Loading your nodes…</BodyText>
+        </Card>
+      ) : null}
+
+      <AndroidNodeControls />
 
       <Card>
         <CardHeader title="Paired nodes">
@@ -86,64 +148,6 @@ export function NodesScreen() {
           </ActionRow>
         </CardSection>
       </Card>
-
-      <NodeRecoveryCard showDiagnosticsLink />
-
-      <Card>
-        <CardHeader title="This device">
-          {runtime.snapshot === null ? null : (
-            <Badge
-              tone={
-                runtime.snapshot.runtime === Bindings.DevelopmentNodeRuntime.Failed
-                  ? "warning"
-                  : "neutral"
-              }
-            >
-              {formatRuntime(runtime.snapshot.runtime)}
-            </Badge>
-          )}
-        </CardHeader>
-        {runtime.snapshot === null ? null : (
-          <>
-            {runtime.backgroundFailure === null ? null : (
-              <BodyText>Automatic refresh failed. Try refreshing again.</BodyText>
-            )}
-            {refreshFailure === null ? null : <BodyText>Refresh failed. Try again.</BodyText>}
-            <ActionRow>
-              <Button disabled={refreshing} onPress={() => void refresh()} tone="secondary">
-                {refreshing ? "Refreshing…" : "Refresh now"}
-              </Button>
-              <NavigationLink href="/nodes/local" accessibilityLabel="View this device">
-                View device
-              </NavigationLink>
-            </ActionRow>
-          </>
-        )}
-        <CardSection>
-          <NavigationLink href="/nodes/local/grants">Remote access</NavigationLink>
-        </CardSection>
-      </Card>
-
-      <AndroidBluetoothCard />
-      <IosBluetoothCard />
-
-      {runtime.phase === "unavailable" ? (
-        <Card>
-          <Subheading>Nodes unavailable</Subheading>
-          <Badge tone="warning">Not supported on {runtime.availability.platform}</Badge>
-          <BodyText>Node management is not available on this platform yet.</BodyText>
-        </Card>
-      ) : null}
-
-      {runtime.phase === "starting" ? (
-        <Card>
-          <Subheading>Getting ready</Subheading>
-          <Badge>Starting</Badge>
-          <BodyText muted>Loading your nodes…</BodyText>
-        </Card>
-      ) : null}
-
-      <AndroidNodeControls />
     </Screen>
   );
 }

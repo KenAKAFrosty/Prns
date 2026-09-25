@@ -79,6 +79,11 @@ function snapshot(
 ): DevelopmentNodeSnapshot {
   return {
     contractFingerprint: "test-contract",
+    bluetooth: {
+      desiredEnabled: true,
+      state: Bindings.LocalBluetoothState.WaitingForPeers.new(),
+      peers: [],
+    },
     revision,
     runtime: Bindings.DevelopmentNodeRuntime.Running,
     primaryIdentity: Bindings.PrimaryIdentityState.Present.new({
@@ -153,6 +158,10 @@ function fakeProvider(
   const initial = snapshot(2n, includeObservation, pairing, pairedTargets, pairingCandidates);
   const runtime: DevelopmentRuntime = {
     attachHost: async () => undefined,
+    readBluetoothSettings: async () =>
+      Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled: true }),
+    setBluetoothEnabled: async (enabled) =>
+      Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled }),
     inspectDevelopmentIdentity: async () => initial.primaryIdentity,
     previewIdentityImport: async () => Bindings.IdentityImportPreviewOutcome.InvalidLength.new(),
     createGeneratedIdentity: async () => Bindings.IdentityCreationOutcome.AlreadyExists.new(),
@@ -389,6 +398,69 @@ describe("Foundation 1 Nodes runtime binding", () => {
     jest
       .mocked(useLocalSearchParams)
       .mockReturnValue({ nodeId: "44444444444444444444444444444444" });
+  });
+  it("changes a stopped node's Bluetooth preference without starting the node or resetting data", async () => {
+    const fixture = androidRestartFixture();
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60000}>
+        <RuntimeViewProbe publish={publish} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].phase).toBe("ready"));
+    act(() => fixture.emit(stoppedSnapshot()));
+    const changed = {
+      ...stoppedSnapshot(4n),
+      bluetooth: {
+        desiredEnabled: false,
+        state: Bindings.LocalBluetoothState.Stopped.new(),
+        peers: [],
+      },
+    };
+    fixture.runtime.readDevelopmentNodeSnapshot.mockResolvedValue(changed);
+    const set = jest.spyOn(fixture.runtime, "setBluetoothEnabled");
+    const reset = jest.spyOn(fixture.runtime, "resetDevelopmentData");
+    await act(async () => {
+      expect(await publish.mock.calls.at(-1)?.[0].setBluetoothEnabled(false)).toEqual({
+        type: "outcome",
+        outcome: Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled: false }),
+      });
+    });
+    expect(set).toHaveBeenCalledWith(false);
+    expect(publish.mock.calls.at(-1)?.[0].snapshot).toEqual(changed);
+    expect(fixture.start).toHaveBeenCalledTimes(1);
+    expect(fixture.stop).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("admits one Bluetooth write and lets native work finish after its observer is released", async () => {
+    const fixture = androidRestartFixture();
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60000}>
+        <RuntimeViewProbe publish={publish} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].phase).toBe("ready"));
+    let finish: ((outcome: Bindings.LocalBluetoothSettingsOutcome) => void) | undefined;
+    const set = jest.spyOn(fixture.runtime, "setBluetoothEnabled").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const observed = publish.mock.calls.at(-1)?.[0];
+    if (observed === undefined) throw new Error("missing runtime view");
+    const first = observed.setBluetoothEnabled(false);
+    expect((await observed.setBluetoothEnabled(true)).type).toBe("operationFailure");
+    expect(set).toHaveBeenCalledTimes(1);
+    view.unmount();
+    const reads = fixture.runtime.readDevelopmentNodeSnapshot.mock.calls.length;
+    finish?.(Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled: false }));
+    expect((await first).type).toBe("operationFailure");
+    expect(fixture.runtime.readDevelopmentNodeSnapshot).toHaveBeenCalledTimes(reads);
+    expect(fixture.stop).not.toHaveBeenCalled();
   });
   it("explicitly retries a deferred iOS permission prompt once without resetting saved data", async () => {
     const fixture = iosRestartFixture();
@@ -920,9 +992,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
       </DevelopmentRuntimeProvider>,
     );
     await waitFor(() => expect(view.getByText(expected)).toBeTruthy());
-    expect(
-      view.queryByText("Bluetooth is available. Nearby nodes will appear when discovered."),
-    ).toBeNull();
+    expect(view.queryByText("Bluetooth access is available for nearby connections.")).toBeNull();
     expect(request).not.toHaveBeenCalled();
   });
   it("runs Android without Bluetooth permission and exposes its own explicit access flow", async () => {
@@ -984,9 +1054,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
     ).toBeTruthy();
     fireEvent.press(view.getByRole("button", { name: "Allow Bluetooth" }));
     await waitFor(() =>
-      expect(
-        view.getByText("Bluetooth is available. Nearby nodes will appear when discovered."),
-      ).toBeTruthy(),
+      expect(view.getByText("Bluetooth access is available for nearby connections.")).toBeTruthy(),
     );
     expect(request).toHaveBeenCalledTimes(1);
     expect(requestBackground).not.toHaveBeenCalled();
@@ -1001,6 +1069,8 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(routeConsumesDevelopmentSnapshot("/nodes")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/nodes/pair")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/inbox")).toBe(true);
+    expect(routeConsumesDevelopmentSnapshot("/more/interfaces")).toBe(true);
+    expect(routeConsumesDevelopmentSnapshot("/more/interfaces/ble")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/inbox/0011")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/")).toBe(false);
     expect(routeConsumesDevelopmentSnapshot("/settings")).toBe(false);

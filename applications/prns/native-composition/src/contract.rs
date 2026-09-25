@@ -24,6 +24,7 @@ pub struct DevelopmentNodeSnapshot {
     pub runtime: DevelopmentNodeRuntime,
     pub primary_identity: PrimaryIdentityState,
     pub local_host: LocalHostState,
+    pub bluetooth: LocalBluetoothSnapshot,
     pub lxmf: LxmfHealth,
     pub controller_identity_fingerprint: Option<Vec<u8>>,
     pub pairing: RemoteControlPairingState,
@@ -40,6 +41,61 @@ pub struct DevelopmentNodeSnapshot {
 #[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct DevelopmentNodeStartInput {
     pub development_tcp_target: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
+pub struct LocalBluetoothSnapshot {
+    /// None until the application preference has been successfully read.
+    pub desired_enabled: Option<bool>,
+    pub state: LocalBluetoothState,
+    /// Physical Bluetooth fleet members, never routes or RNS links.
+    pub peers: Vec<LocalBluetoothPeerSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
+pub enum LocalBluetoothState {
+    Stopped,
+    Starting,
+    Disabled,
+    Disabling,
+    Connecting,
+    WaitingForPeers,
+    Connected,
+    RadioOff,
+    Unavailable { detail: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
+pub struct LocalBluetoothPeerSnapshot {
+    /// Opaque physical interface identifier; this is not an authenticated RNS identity.
+    pub interface_id: Vec<u8>,
+    pub name: Option<String>,
+    pub connected: bool,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub details: Option<String>,
+    pub rssi_dbm: Option<i16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
+pub enum LocalBluetoothSettingsOutcome {
+    Ready { enabled: bool },
+    Busy,
+    Unavailable { detail: String },
+}
+
+impl LocalBluetoothSnapshot {
+    pub fn stopped(desired_enabled: Option<bool>) -> Self {
+        Self {
+            desired_enabled,
+            state: LocalBluetoothState::Stopped,
+            peers: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -738,6 +794,7 @@ impl DevelopmentNodeSnapshot {
             local_host: LocalHostState::Stopped {
                 last_start_failure: None,
             },
+            bluetooth: LocalBluetoothSnapshot::stopped(None),
             lxmf: LxmfHealth::stopped(),
             controller_identity_fingerprint: None,
             pairing: RemoteControlPairingState::Searching,
@@ -823,6 +880,19 @@ mod tests {
         snapshot.revision = 1_u64 << 53;
         snapshot.local_host = LocalHostState::Running {
             host: Box::new(host_fixture()),
+        };
+        snapshot.bluetooth = LocalBluetoothSnapshot {
+            desired_enabled: Some(false),
+            state: LocalBluetoothState::Disabling,
+            peers: vec![LocalBluetoothPeerSnapshot {
+                interface_id: vec![0x28; 8],
+                name: None,
+                connected: true,
+                rx_bytes: u64::MAX,
+                tx_bytes: 1_u64 << 53,
+                details: Some("CoC".into()),
+                rssi_dbm: Some(-60),
+            }],
         };
         let bytes =
             <DevelopmentNodeSnapshot as uniffi::Lower<crate::UniFfiTag>>::lower(snapshot.clone());
