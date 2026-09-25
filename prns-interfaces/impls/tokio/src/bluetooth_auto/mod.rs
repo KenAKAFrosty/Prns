@@ -3,6 +3,8 @@ mod host;
 mod linux;
 mod runtime;
 
+pub use prns_core::interfaces::bluetooth_auto::BluetoothRadioState;
+
 pub use host::{
     AttachedBle, AttachedBluetoothLe, AutoBle, AutoBluetoothLe, ConfiguredAutoBle,
     ConfiguredAutoBluetoothLe,
