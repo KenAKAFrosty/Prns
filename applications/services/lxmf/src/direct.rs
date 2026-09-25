@@ -17,14 +17,17 @@ use personal_rns::runtime::{Message, PrnsEvent};
 use prns_host::{CommandFailure, CommandOutcome, HostCommand};
 use prns_host_native::owner::{HostClient, SessionError};
 use prns_lxmf_wire::{
-    compose_basic_direct_lxmf, normalize_lxmf_display_name, parse_lxmf_announce,
-    BasicLxmfComposeError, BasicLxmfSigner, CarrierIngress, MessageView, WireLimits,
-    MAX_BASIC_LXMF_WIRE_BYTES,
+    compose_basic_direct_lxmf, BasicLxmfComposeError, BasicLxmfSigner, CarrierIngress, MessageView,
+    WireLimits, MAX_BASIC_LXMF_WIRE_BYTES,
 };
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
 
 use crate::{LxmfDeliveryState, LxmfDirection, LxmfHealth, LxmfHealthState, LxmfVerification};
+
+mod peers;
+pub(crate) use peers::{PeerCache, PeerResolver, ResolvePeerFailure};
+pub use peers::{DISCOVERED_PEER_CAPACITY, DISCOVERED_PEER_MAX_AGE, RECIPIENT_RESOLUTION_TIMEOUT};
 
 /// Number of copied direct-packet jobs retained outside Prns callbacks.
 pub const DIRECT_JOB_CAPACITY: usize = 64;
@@ -336,6 +339,10 @@ pub struct LxmfPeer {
     pub display_name: Option<String>,
     pub required_stamp_cost: Option<u64>,
     pub observed_at_millis: u64,
+    /// Monotonic age when this projection was captured; never a wall-clock date.
+    pub age_millis: u64,
+    pub source_interface: [u8; 8],
+    pub hops: u8,
     pub is_path_response: bool,
 }
 
@@ -380,6 +387,8 @@ pub enum SendDirectTextOutcome {
     },
     UnsupportedRemoteStampRequirement,
     PeerIdentityUnavailable,
+    RecipientResolutionTimedOut,
+    Busy,
     NoRoute,
     LinkFailed,
     DeliveryTimedOut,
@@ -430,6 +439,9 @@ impl LxmfCallbacks {
         if self.health.state() == LxmfHealthState::Stopped {
             return CallbackOutcome::Stopped;
         }
+        if observation.destination.as_bytes() == &self.local_destination {
+            return CallbackOutcome::Ignored;
+        }
         let identity =
             personal_rns::identity::IdentityHash::new(observation.announced_identity.into_bytes());
         let Ok(expected) = derive_single_destination_hash(
@@ -450,6 +462,9 @@ impl LxmfCallbacks {
             announced_identity: observation.announced_identity.into_bytes(),
             app_data: observation.app_data.to_vec(),
             observed_at_millis: observation.arrived_at_millis,
+            observed_at: tokio::time::Instant::now(),
+            source_interface: observation.source_interface.into_bytes(),
+            hops: observation.hops,
             is_path_response: observation.is_path_response,
         });
         self.try_enqueue(job, false)
@@ -601,6 +616,8 @@ impl PendingDirectLxmfService {
             local_destination: identity.destination(),
             identity: Arc::new(identity),
             network,
+            peers: Mutex::new(PeerCache::default()),
+            resolver: PeerResolver::default(),
             state: Mutex::new(ServiceState::default()),
             health: callbacks.health.clone(),
             refresh,
@@ -672,10 +689,16 @@ impl DirectLxmfService {
     pub async fn snapshot(&self) -> LxmfSnapshot {
         let state = self.shared.state.lock().await;
         LxmfSnapshot {
-            peers: state.peers.values().cloned().collect(),
+            peers: self.shared.peers.lock().await.discovered(),
             messages: state.messages.clone(),
             health: self.shared.health.snapshot(),
         }
+    }
+
+    /// Clear visible observations without deleting retained recipient metadata or routes.
+    pub async fn clear_discovered_peers(&self) {
+        self.shared.peers.lock().await.clear_discovered();
+        self.shared.notify();
     }
 
     pub async fn announce(&self) -> Result<(), DirectAnnounceFailure> {
@@ -696,12 +719,30 @@ impl DirectLxmfService {
         if self.shared.health.state() == LxmfHealthState::Stopped {
             return SendDirectTextOutcome::LocalNodeStopped;
         }
-        let peer = {
-            let state = self.shared.state.lock().await;
-            state.peers.get(&destination).cloned()
-        };
-        let Some(peer) = peer else {
+        if destination == self.local_destination() {
             return SendDirectTextOutcome::PeerIdentityUnavailable;
+        }
+        let peer = match self
+            .shared
+            .resolver
+            .resolve(
+                destination,
+                &self.shared.peers,
+                self.shared.network.as_ref(),
+                self.subscribe(),
+                self.lifecycle.shutdown.subscribe(),
+            )
+            .await
+        {
+            Ok(peer) => peer,
+            Err(ResolvePeerFailure::TimedOut) => {
+                return SendDirectTextOutcome::RecipientResolutionTimedOut
+            }
+            Err(ResolvePeerFailure::Stopped) => return SendDirectTextOutcome::LocalNodeStopped,
+            Err(ResolvePeerFailure::Unavailable) => {
+                return SendDirectTextOutcome::PeerIdentityUnavailable
+            }
+            Err(ResolvePeerFailure::Busy) => return SendDirectTextOutcome::Busy,
         };
         if peer.required_stamp_cost.is_some() {
             return SendDirectTextOutcome::UnsupportedRemoteStampRequirement;
@@ -728,6 +769,13 @@ impl DirectLxmfService {
         let admission = self.lifecycle.stop_lock.lock().await;
         if self.shared.health.state() == LxmfHealthState::Stopped {
             return SendDirectTextOutcome::LocalNodeStopped;
+        }
+        let current = self.shared.peers.lock().await.recipient(&destination);
+        let Some(current) = current else {
+            return SendDirectTextOutcome::PeerIdentityUnavailable;
+        };
+        if current.required_stamp_cost.is_some() {
+            return SendDirectTextOutcome::UnsupportedRemoteStampRequirement;
         }
         let local_record_id = {
             let mut state = self.shared.state.lock().await;
@@ -879,6 +927,8 @@ struct Shared {
     local_destination: [u8; 16],
     identity: Arc<LocalLxmfIdentity>,
     network: Arc<dyn DirectNetwork>,
+    peers: Mutex<PeerCache>,
+    resolver: PeerResolver,
     state: Mutex<ServiceState>,
     health: Arc<LaneHealth>,
     refresh: watch::Sender<u64>,
@@ -894,7 +944,6 @@ impl Shared {
 
 #[derive(Default)]
 struct ServiceState {
-    peers: BTreeMap<[u8; 16], LxmfPeer>,
     messages: Vec<LxmfMessage>,
     seen_message_ids: HashSet<[u8; 32]>,
     next_record_id: u64,
@@ -987,6 +1036,9 @@ pub(crate) struct PeerJob {
     pub(crate) announced_identity: [u8; 16],
     pub(crate) app_data: Vec<u8>,
     pub(crate) observed_at_millis: u64,
+    pub(crate) observed_at: tokio::time::Instant,
+    pub(crate) source_interface: [u8; 8],
+    pub(crate) hops: u8,
     pub(crate) is_path_response: bool,
 }
 
@@ -1030,30 +1082,9 @@ async fn process_job(shared: &Arc<Shared>, job: Job) {
 }
 
 async fn process_peer(shared: &Arc<Shared>, job: PeerJob) {
-    let Ok(announce) = parse_lxmf_announce(&job.app_data, MAX_DISPLAY_NAME_BYTES) else {
-        return;
-    };
-    let mut normalized_display_name = [0u8; MAX_DISPLAY_NAME_BYTES];
-    let display_name = announce.display_name.and_then(|bytes| {
-        normalize_lxmf_display_name(bytes, &mut normalized_display_name)
-            .ok()
-            .map(String::from)
-    });
-    let peer = LxmfPeer {
-        destination: job.destination,
-        announced_identity: job.announced_identity,
-        display_name,
-        required_stamp_cost: announce.required_stamp_cost,
-        observed_at_millis: job.observed_at_millis,
-        is_path_response: job.is_path_response,
-    };
-    shared
-        .state
-        .lock()
-        .await
-        .peers
-        .insert(job.destination, peer);
-    shared.notify();
+    if shared.peers.lock().await.observe(job) {
+        shared.notify();
+    }
 }
 
 async fn process_inbound(shared: &Arc<Shared>, job: InboundJob) {

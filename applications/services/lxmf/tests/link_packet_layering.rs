@@ -108,6 +108,9 @@ fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
 #[derive(Default)]
 struct WireState {
     receiver_proofs: AtomicUsize,
+    sender_path_requests: AtomicUsize,
+    receiver_path_responses: AtomicUsize,
+    receiver_unsolicited_announces: AtomicUsize,
     corrupt_next_sender_data: AtomicBool,
     last_sender_data: Mutex<Option<Vec<u8>>>,
 }
@@ -152,6 +155,12 @@ impl WireHarness {
                 tokio::select! {
                     sender_frame = sender_outbound_rx.recv() => {
                         let Some(mut frame) = sender_frame else { return };
+                        if WirePacketHeader::parse(&frame).is_ok_and(|(header, _)| {
+                            header.packet_type == PacketType::Data
+                                && header.address == personal_rns::routing::path_requests::PATH_REQUEST_DESTINATION.to_address()
+                        }) {
+                            forward_state.sender_path_requests.fetch_add(1, Ordering::AcqRel);
+                        }
                         if is_user_link_data(&frame) {
                             *forward_state.last_sender_data.lock().unwrap() = Some(frame.clone());
                             if forward_state
@@ -168,6 +177,15 @@ impl WireHarness {
                     }
                     receiver_frame = receiver_outbound_rx.recv() => {
                         let Some(frame) = receiver_frame else { return };
+                        if let Ok((header, _)) = WirePacketHeader::parse(&frame) {
+                            if header.packet_type == PacketType::Announce {
+                                if header.context == WireContext::PathResponse {
+                                    forward_state.receiver_path_responses.fetch_add(1, Ordering::AcqRel);
+                                } else {
+                                    forward_state.receiver_unsolicited_announces.fetch_add(1, Ordering::AcqRel);
+                                }
+                            }
+                        }
                         if is_link_proof(&frame) {
                             forward_state.receiver_proofs.fetch_add(1, Ordering::AcqRel);
                         }
@@ -467,4 +485,315 @@ async fn run_link_proof_packet_replay_and_lxmf_dedup_are_layered() {
     sender_owner.stop().await.unwrap();
     receiver_owner.stop().await.unwrap();
     forwarder.abort();
+}
+
+#[cfg(feature = "redb-mailbox")]
+mod recipient_resolution {
+    use super::*;
+    use prns_lxmf::direct::{LocalLxmfIdentity, LxmfCallbacks};
+    use prns_lxmf::mailbox::{
+        execute_mailbox_request, initialize_mailbox_tables, DurableDirectLxmfService,
+        DurableLxmfDeliveryState, DurableSendDirectTextOutcome, MailboxFuture, MailboxListRequest,
+        MailboxRequest, MailboxSubmitter, SystemMailboxClock,
+    };
+
+    struct TestMailbox(redb::Database);
+
+    impl MailboxSubmitter for TestMailbox {
+        fn submit(&self, request: MailboxRequest) -> MailboxFuture<'_> {
+            Box::pin(async move { execute_mailbox_request(&self.0, request) })
+        }
+    }
+
+    fn announce_data(name: &[u8]) -> Vec<u8> {
+        let mut output = [0_u8; 128];
+        let len = encode_current_lxmf_announce(name, &mut output).unwrap();
+        output[..len].to_vec()
+    }
+
+    fn all_messages() -> MailboxListRequest {
+        MailboxListRequest {
+            peer: None,
+            direction: None,
+            before: None,
+            limit: 10,
+        }
+    }
+
+    async fn open_host(
+        destination: prns_host::DestinationConfig,
+        callbacks: Arc<Mutex<LxmfCallbacks>>,
+        interface: ControlledInterface,
+    ) -> Arc<OwnedSession> {
+        let events = Arc::clone(&callbacks);
+        OwnedSession::open_with_embedding(
+            host_config(destination),
+            NativeEmbedding {
+                on_event: Some(Box::new(move |event| {
+                    events.lock().unwrap().on_prns_event(&event);
+                })),
+                accepted_announces: Some(Box::new(move |observation| {
+                    callbacks
+                        .lock()
+                        .unwrap()
+                        .on_authenticated_announce(&observation);
+                })),
+                application_events: ApplicationEventDispatch::NativeCallback,
+                prepare_interfaces: Some(Box::new(move |client| {
+                    Ok(vec![NativePreparedAttachment::Interface {
+                        attachment: client.protocols().attach(interface),
+                        kind: prns_host::InterfaceKind::Pipe,
+                    }])
+                })),
+                ..NativeEmbedding::default()
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn update_registered_name(owner: &OwnedSession, destination: [u8; 16], name: &[u8]) {
+        owner
+            .client()
+            .native_services()
+            .unwrap()
+            .protocols()
+            .set_registered_announce_app_data(personal_rns::engine::SetRegisteredAnnounceAppData {
+                destination: personal_rns::wire::DestinationHash::new(destination),
+                app_data: personal_rns::routing::announce::emit::AnnounceAppDataBytes::from_slice(
+                    &announce_data(name),
+                )
+                .unwrap(),
+            })
+            .await
+            .unwrap();
+    }
+
+    async fn wait_for_delivered(service: &DurableDirectLxmfService, expected: usize) {
+        tokio::time::timeout(WAIT, async {
+            loop {
+                let snapshot = service.snapshot(all_messages()).await.unwrap();
+                if snapshot.messages.len() == expected
+                    && snapshot.messages.iter().all(|message| {
+                        matches!(
+                            message.delivery_state,
+                            DurableLxmfDeliveryState::Delivered { .. }
+                        )
+                    })
+                {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("real Link DATA proofs settle the durable sends");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn empty_discovery_resolves_live_remote_name_without_manual_remote_announce() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let root = tempfile::tempdir().unwrap();
+                let database = redb::Database::create(root.path().join("mailbox.redb")).unwrap();
+                let write = database.begin_write().unwrap();
+                initialize_mailbox_tables(&write).unwrap();
+                write.commit().unwrap();
+                let mailbox = Arc::new(TestMailbox(database));
+                let (sender_identity, sender_destination) = prepare_local_lxmf_destination(
+                    personal_rns::identity::Zeroizing::new(SENDER_SECRET),
+                    &announce_data(b"Sender"),
+                )
+                .unwrap();
+                let (receiver_identity, receiver_destination) = prepare_local_lxmf_destination(
+                    personal_rns::identity::Zeroizing::new(RECEIVER_SECRET),
+                    &announce_data(b"Original name"),
+                )
+                .unwrap();
+                let receiver_destination_hash = receiver_identity.destination();
+                let expected_identity =
+                    *personal_rns::identity::PrivateIdentityMaterial::from_bytes(RECEIVER_SECRET)
+                        .identity_hash()
+                        .as_bytes();
+                let (pending_sender, sender_callbacks) =
+                    DurableDirectLxmfService::prepare(sender_identity);
+                let sender_dispatch = Arc::new(Mutex::new(sender_callbacks));
+                let (pending_receiver, receiver_callbacks) =
+                    DirectLxmfService::prepare(receiver_identity);
+                let WireHarness {
+                    sender,
+                    receiver,
+                    state: wire,
+                    forwarder,
+                    ..
+                } = WireHarness::new();
+                let receiver_owner = open_host(
+                    receiver_destination,
+                    Arc::new(Mutex::new(receiver_callbacks)),
+                    receiver,
+                )
+                .await;
+                let sender_owner =
+                    open_host(sender_destination, Arc::clone(&sender_dispatch), sender).await;
+                let sender_network = Arc::new(PrnsDirectNetwork::new(sender_owner.client()));
+                let receiver_service = pending_receiver
+                    .start(Arc::new(PrnsDirectNetwork::new(receiver_owner.client())))
+                    .unwrap();
+                let sender_service = pending_sender
+                    .start(
+                        sender_network.clone(),
+                        mailbox.clone(),
+                        Arc::new(SystemMailboxClock),
+                    )
+                    .await
+                    .unwrap();
+
+                // Updating registration is deliberately not AnnounceNow. The first
+                // remote announcement must be the response to our service lookup.
+                update_registered_name(
+                    &receiver_owner,
+                    receiver_destination_hash,
+                    b"Current receiver",
+                )
+                .await;
+                assert!(sender_service
+                    .snapshot(all_messages())
+                    .await
+                    .unwrap()
+                    .peers
+                    .is_empty());
+                assert!(!sender_network.has_route(receiver_destination_hash).await);
+                assert_eq!(wire.receiver_path_responses.load(Ordering::Acquire), 0);
+                assert_eq!(
+                    wire.receiver_unsolicited_announces.load(Ordering::Acquire),
+                    0
+                );
+                let first = tokio::time::timeout(
+                    WAIT,
+                    sender_service.send_direct_text_to_identity(
+                        receiver_destination_hash,
+                        Some(expected_identity),
+                        1_700_000_000_001,
+                        b"Lookup",
+                        b"First message",
+                    ),
+                )
+                .await
+                .unwrap();
+                assert_eq!(
+                    first,
+                    DurableSendDirectTextOutcome::Accepted { local_record_id: 1 }
+                );
+                wait_for_delivered(&sender_service, 1).await;
+                wait_for_message_count(&receiver_service, 1).await;
+                let first_peer = sender_service
+                    .snapshot(all_messages())
+                    .await
+                    .unwrap()
+                    .peers
+                    .remove(0);
+                assert_eq!(first_peer.display_name.as_deref(), Some("Current receiver"));
+                assert_eq!(first_peer.announced_identity, expected_identity);
+                assert_eq!(first_peer.source_interface, *SENDER_INTERFACE.as_bytes());
+                assert_eq!(first_peer.hops, 1);
+                assert!(first_peer.is_path_response);
+                assert_eq!(wire.sender_path_requests.load(Ordering::Acquire), 1);
+                assert_eq!(wire.receiver_path_responses.load(Ordering::Acquire), 1);
+
+                // Core deliberately accepts only strictly newer origin announce
+                // timebases, which use whole seconds. A same-second restart can
+                // receive a new PathResponse that remains replay-policy rejected;
+                // lookup then honestly times out and requires explicit retry.
+                // Cross that protocol boundary instead of weakening replay rules
+                // or adding automatic repeated network requests to the service.
+                tokio::time::sleep(Duration::from_millis(1_100)).await;
+
+                // Restart only the service: the host's authenticated identity and
+                // route remain cached, but none of the service metadata survives.
+                sender_service.stop().await.unwrap();
+                let (pending, callbacks) = DurableDirectLxmfService::prepare(
+                    LocalLxmfIdentity::from_secret_bytes(&SENDER_SECRET).unwrap(),
+                );
+                *sender_dispatch.lock().unwrap() = callbacks;
+                let restarted = pending
+                    .start(
+                        sender_network.clone(),
+                        mailbox,
+                        Arc::new(SystemMailboxClock),
+                    )
+                    .await
+                    .unwrap();
+                assert!(restarted
+                    .snapshot(all_messages())
+                    .await
+                    .unwrap()
+                    .peers
+                    .is_empty());
+                assert!(sender_network.has_route(receiver_destination_hash).await);
+                update_registered_name(
+                    &receiver_owner,
+                    receiver_destination_hash,
+                    b"Renamed receiver",
+                )
+                .await;
+                let second = tokio::time::timeout(
+                    WAIT,
+                    restarted.send_direct_text_to_identity(
+                        receiver_destination_hash,
+                        Some(expected_identity),
+                        1_700_000_000_002,
+                        b"Again",
+                        b"Fresh message after restart",
+                    ),
+                )
+                .await;
+                assert!(
+                    second.is_ok(),
+                    "lookup did not settle: requests={}, responses={}, unsolicited={}, peers={:?}",
+                    wire.sender_path_requests.load(Ordering::Acquire),
+                    wire.receiver_path_responses.load(Ordering::Acquire),
+                    wire.receiver_unsolicited_announces.load(Ordering::Acquire),
+                    restarted.snapshot(all_messages()).await.unwrap().peers
+                );
+                let second = second.unwrap();
+                assert_eq!(
+                    second,
+                    DurableSendDirectTextOutcome::Accepted { local_record_id: 2 }
+                );
+                wait_for_delivered(&restarted, 2).await;
+                wait_for_message_count(&receiver_service, 2).await;
+                let second_peer = restarted
+                    .snapshot(all_messages())
+                    .await
+                    .unwrap()
+                    .peers
+                    .remove(0);
+                assert_eq!(
+                    second_peer.display_name.as_deref(),
+                    Some("Renamed receiver")
+                );
+                assert!(second_peer.is_path_response);
+                assert_eq!(
+                    wire.sender_path_requests.load(Ordering::Acquire),
+                    2,
+                    "cached route must not suppress the wire request"
+                );
+                assert_eq!(wire.receiver_path_responses.load(Ordering::Acquire), 2);
+                assert_eq!(
+                    wire.receiver_unsolicited_announces.load(Ordering::Acquire),
+                    0,
+                    "neither send relied on a manual remote announce"
+                );
+                assert_eq!(
+                    receiver_service.snapshot().await.messages[1].content,
+                    b"Fresh message after restart"
+                );
+                restarted.stop().await.unwrap();
+                receiver_service.stop().await.unwrap();
+                sender_owner.stop().await.unwrap();
+                receiver_owner.stop().await.unwrap();
+                forwarder.abort();
+            })
+            .await;
+    }
 }

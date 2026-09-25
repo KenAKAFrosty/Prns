@@ -21,13 +21,13 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::direct::{
     run_single_attempt, DirectAnnounceFailure, DirectNetwork, DirectSendFailure,
-    DirectServiceStopError, Job, LaneHealth, LocalLxmfIdentity, LxmfCallbacks, LxmfPeer,
-    DIRECT_JOB_CAPACITY, MAX_DISPLAY_NAME_BYTES, STOP_JOIN_TIMEOUT,
+    DirectServiceStopError, Job, LaneHealth, LocalLxmfIdentity, LxmfCallbacks, LxmfPeer, PeerCache,
+    PeerResolver, ResolvePeerFailure, DIRECT_JOB_CAPACITY, STOP_JOIN_TIMEOUT,
 };
 use crate::{LxmfDirection, LxmfVerification};
 use prns_lxmf_wire::{
-    compose_basic_direct_lxmf, normalize_lxmf_display_name, parse_lxmf_announce,
-    BasicLxmfComposeError, CarrierIngress, MessageView, WireLimits, MAX_BASIC_LXMF_WIRE_BYTES,
+    compose_basic_direct_lxmf, BasicLxmfComposeError, CarrierIngress, MessageView, WireLimits,
+    MAX_BASIC_LXMF_WIRE_BYTES,
 };
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
@@ -1185,15 +1185,30 @@ pub struct DurableLxmfSnapshot {
 /// LXM3 submission returns after the queued transaction, before network settlement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DurableSendDirectTextOutcome {
-    Accepted { local_record_id: u64 },
-    NeedsResource { wire_bytes: usize },
-    UnsupportedRemoteStampRequirement { required_stamp_cost: u64 },
+    Accepted {
+        local_record_id: u64,
+    },
+    NeedsResource {
+        wire_bytes: usize,
+    },
+    UnsupportedRemoteStampRequirement {
+        required_stamp_cost: u64,
+    },
     PeerIdentityUnavailable,
+    PeerIdentityConflict {
+        expected: [u8; 16],
+        observed: [u8; 16],
+    },
+    RecipientResolutionTimedOut,
     LocalNodeStopped,
     Busy,
     InvalidMessage,
-    DevelopmentUnavailable { detail: String },
-    DevelopmentResetRequired { reason: String },
+    DevelopmentUnavailable {
+        detail: String,
+    },
+    DevelopmentResetRequired {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1252,7 +1267,8 @@ struct DurableShared {
     network: Arc<dyn DirectNetwork>,
     mailbox: Arc<dyn MailboxSubmitter>,
     clock: Arc<dyn MailboxClock>,
-    peers: Mutex<BTreeMap<[u8; 16], LxmfPeer>>,
+    peers: Mutex<PeerCache>,
+    resolver: PeerResolver,
     health: Arc<LaneHealth>,
     mailbox_health: StdMutex<MailboxHealthTracker>,
     late_proof_count: AtomicU64,
@@ -1407,17 +1423,52 @@ impl DurableDirectLxmfService {
         title: &[u8],
         content: &[u8],
     ) -> DurableSendDirectTextOutcome {
+        self.send_direct_text_to_identity(destination, None, timestamp_unix_ms, title, content)
+            .await
+    }
+
+    /// Resolve missing authenticated metadata before admission, then check a saved
+    /// identity association before composing or inserting any durable message.
+    pub async fn send_direct_text_to_identity(
+        &self,
+        destination: [u8; 16],
+        expected_identity: Option<[u8; 16]>,
+        timestamp_unix_ms: u64,
+        title: &[u8],
+        content: &[u8],
+    ) -> DurableSendDirectTextOutcome {
         if self.lifecycle.stopped.load(Ordering::Acquire) {
             return DurableSendDirectTextOutcome::LocalNodeStopped;
         }
-        let peer = self.shared.peers.lock().await.get(&destination).cloned();
-        let Some(peer) = peer else {
+        if destination == self.local_destination() {
             return DurableSendDirectTextOutcome::PeerIdentityUnavailable;
+        }
+        let peer = match self
+            .shared
+            .resolver
+            .resolve(
+                destination,
+                &self.shared.peers,
+                self.shared.network.as_ref(),
+                self.subscribe(),
+                self.lifecycle.shutdown.subscribe(),
+            )
+            .await
+        {
+            Ok(peer) => peer,
+            Err(ResolvePeerFailure::TimedOut) => {
+                return DurableSendDirectTextOutcome::RecipientResolutionTimedOut
+            }
+            Err(ResolvePeerFailure::Stopped) => {
+                return DurableSendDirectTextOutcome::LocalNodeStopped
+            }
+            Err(ResolvePeerFailure::Unavailable) => {
+                return DurableSendDirectTextOutcome::PeerIdentityUnavailable
+            }
+            Err(ResolvePeerFailure::Busy) => return DurableSendDirectTextOutcome::Busy,
         };
-        if let Some(required_stamp_cost) = peer.required_stamp_cost {
-            return DurableSendDirectTextOutcome::UnsupportedRemoteStampRequirement {
-                required_stamp_cost,
-            };
+        if let Some(rejected) = validate_recipient(&peer, expected_identity) {
+            return rejected;
         }
         let message = match compose_new_outbound(
             self.shared.local_destination,
@@ -1437,6 +1488,17 @@ impl DurableDirectLxmfService {
         let _transition = self.lifecycle.transition.lock().await;
         if self.lifecycle.stopped.load(Ordering::Acquire) {
             return DurableSendDirectTextOutcome::LocalNodeStopped;
+        }
+        // Another admitted database operation may have held the transition gate
+        // while a newer accepted announce changed the recipient's stamp policy.
+        let current = self.shared.peers.lock().await.recipient(&destination);
+        let Some(current) = current else {
+            // Expiry or capacity eviction while waiting cannot resurrect the
+            // earlier policy. A later explicit submission may resolve it again.
+            return DurableSendDirectTextOutcome::PeerIdentityUnavailable;
+        };
+        if let Some(rejected) = validate_recipient(&current, expected_identity) {
+            return rejected;
         }
         let reply = match self
             .shared
@@ -1463,6 +1525,13 @@ impl DurableDirectLxmfService {
         let local_record_id = message.local_record_id;
         schedule_attempt(&self.shared, &self.lifecycle, message);
         DurableSendDirectTextOutcome::Accepted { local_record_id }
+    }
+
+    /// Clear visible discovery only. Saved contacts, routes, recipient metadata,
+    /// and accepted durable work remain unchanged.
+    pub async fn clear_discovered_peers(&self) {
+        self.shared.peers.lock().await.clear_discovered();
+        self.shared.notify();
     }
 
     /// Conditionally requeue the exact stored wire with a new attempt generation.
@@ -1667,7 +1736,7 @@ impl DurableDirectLxmfService {
             }
         }
         Ok(DurableLxmfSnapshot {
-            peers: self.shared.peers.lock().await.values().cloned().collect(),
+            peers: self.shared.peers.lock().await.discovered(),
             messages,
             health: self.shared.health.snapshot(),
             mailbox_health: self.shared.mailbox_health(),
@@ -1788,7 +1857,8 @@ impl PendingDurableDirectLxmfService {
             network,
             mailbox,
             clock,
-            peers: Mutex::new(BTreeMap::new()),
+            peers: Mutex::new(PeerCache::default()),
+            resolver: PeerResolver::default(),
             health: callbacks.health.clone(),
             mailbox_health: StdMutex::new(MailboxHealthTracker::default()),
             late_proof_count: AtomicU64::new(0),
@@ -1974,6 +2044,25 @@ fn compose_new_outbound(
     })
 }
 
+fn validate_recipient(
+    peer: &LxmfPeer,
+    expected_identity: Option<[u8; 16]>,
+) -> Option<DurableSendDirectTextOutcome> {
+    if let Some(expected) = expected_identity {
+        if peer.announced_identity != expected {
+            return Some(DurableSendDirectTextOutcome::PeerIdentityConflict {
+                expected,
+                observed: peer.announced_identity,
+            });
+        }
+    }
+    peer.required_stamp_cost.map(|required_stamp_cost| {
+        DurableSendDirectTextOutcome::UnsupportedRemoteStampRequirement {
+            required_stamp_cost,
+        }
+    })
+}
+
 fn spawn_attempt(
     shared: &Arc<DurableShared>,
     lifecycle: &Arc<DurableLifecycle>,
@@ -2144,27 +2233,9 @@ async fn process_durable_job(
 ) {
     match job {
         Job::Peer(job) => {
-            let Ok(announce) = parse_lxmf_announce(&job.app_data, MAX_DISPLAY_NAME_BYTES) else {
-                return;
-            };
-            let mut normalized = [0_u8; MAX_DISPLAY_NAME_BYTES];
-            let display_name = announce.display_name.and_then(|bytes| {
-                normalize_lxmf_display_name(bytes, &mut normalized)
-                    .ok()
-                    .map(String::from)
-            });
-            shared.peers.lock().await.insert(
-                job.destination,
-                LxmfPeer {
-                    destination: job.destination,
-                    announced_identity: job.announced_identity,
-                    display_name,
-                    required_stamp_cost: announce.required_stamp_cost,
-                    observed_at_millis: job.observed_at_millis,
-                    is_path_response: job.is_path_response,
-                },
-            );
-            shared.notify();
+            if shared.peers.lock().await.observe(job) {
+                shared.notify();
+            }
         }
         Job::Inbound(job) => process_durable_inbound(shared, stopped, transition, job.wire).await,
     }
@@ -2426,6 +2497,8 @@ mod tests {
 
     struct DurableFakeNetwork {
         has_route: AtomicBool,
+        path_requests: AtomicUsize,
+        path_requested: Notify,
         results: StdMutex<VecDeque<Result<DirectDeliveryReceipt, DirectSendFailure>>>,
         public_keys: StdMutex<BTreeMap<[u8; 16], [u8; 64]>>,
         sent_wires: StdMutex<Vec<Vec<u8>>>,
@@ -2447,6 +2520,8 @@ mod tests {
         fn default() -> Self {
             Self {
                 has_route: AtomicBool::new(true),
+                path_requests: AtomicUsize::new(0),
+                path_requested: Notify::new(),
                 results: StdMutex::new(VecDeque::from([Ok(DirectDeliveryReceipt {
                     rtt_millis: 23,
                 })])),
@@ -2483,7 +2558,11 @@ mod tests {
             &self,
             _destination: [u8; 16],
         ) -> DirectNetworkFuture<'_, Result<(), DirectSendFailure>> {
-            Box::pin(async move { Ok(()) })
+            Box::pin(async move {
+                self.path_requests.fetch_add(1, Ordering::AcqRel);
+                self.path_requested.notify_one();
+                Ok(())
+            })
         }
 
         fn establish_link(
@@ -2566,6 +2645,8 @@ mod tests {
         prns_host_native::AuthenticatedAnnounce {
             destination: prns_host::DestinationHash::new(destination),
             announced_identity: prns_host::IdentityHash::new(*identity.as_bytes()),
+            source_interface: prns_host::InterfaceId::new(*TEST_INTERFACE.as_bytes()),
+            hops: 2,
             arrived_at_millis: 100,
             app_data,
             is_path_response: false,
@@ -3066,6 +3147,352 @@ mod tests {
             validate_mailbox_database(&database),
             Err(MailboxFailure::ResetRequired(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn restarted_recipient_resolves_even_with_cached_route_before_durable_admission() {
+        let (_root, _database, submitter) = shared_database();
+        let first = start_durable(Arc::new(DurableFakeNetwork::default()), submitter.clone()).await;
+        let destination = learn_durable_peer(&first).await;
+        first.stop().await.unwrap();
+        let network = Arc::new(DurableFakeNetwork::default());
+        let service = start_durable(network.clone(), submitter).await;
+        assert!(service
+            .snapshot(all_messages())
+            .await
+            .unwrap()
+            .peers
+            .is_empty());
+        let sending = service.clone();
+        let expected = *peer_facts().0.identity_hash().as_bytes();
+        let send = tokio::spawn(async move {
+            sending
+                .send_direct_text_to_identity(
+                    destination,
+                    Some(expected),
+                    1_700_000_000_000,
+                    b"",
+                    b"fresh after restart",
+                )
+                .await
+        });
+        network.path_requested.notified().await;
+        assert_eq!(network.path_requests.load(Ordering::Acquire), 1);
+        assert!(
+            !send.is_finished(),
+            "route settlement is not accepted LXMF metadata"
+        );
+        assert!(service
+            .snapshot(all_messages())
+            .await
+            .unwrap()
+            .messages
+            .is_empty());
+        learn_durable_peer(&service).await;
+        assert_eq!(
+            send.await.unwrap(),
+            DurableSendDirectTextOutcome::Accepted { local_record_id: 1 }
+        );
+        wait_for_durable_snapshot(&service, |s| {
+            matches!(
+                s.messages.first().map(|m| m.delivery_state),
+                Some(DurableLxmfDeliveryState::Delivered { .. })
+            )
+        })
+        .await;
+        assert_eq!(
+            network.path_requests.load(Ordering::Acquire),
+            1,
+            "known route did not suppress metadata lookup or cause a duplicate lookup"
+        );
+        assert_eq!(network.sent_wires.lock().unwrap().len(), 1);
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn discovery_clear_keeps_saved_recipient_sendable_and_checks_pinned_identity() {
+        let (_root, _database, submitter) = shared_database();
+        let network = Arc::new(DurableFakeNetwork::default());
+        let service = start_durable(network.clone(), submitter).await;
+        let destination = learn_durable_peer(&service).await;
+        service.clear_discovered_peers().await;
+        assert!(service
+            .snapshot(all_messages())
+            .await
+            .unwrap()
+            .peers
+            .is_empty());
+        let observed = *peer_facts().0.identity_hash().as_bytes();
+        assert_eq!(
+            service
+                .send_direct_text_to_identity(
+                    destination,
+                    Some([0xff; 16]),
+                    1_700_000_000_000,
+                    b"",
+                    b"conflict"
+                )
+                .await,
+            DurableSendDirectTextOutcome::PeerIdentityConflict {
+                expected: [0xff; 16],
+                observed
+            }
+        );
+        assert!(service
+            .snapshot(all_messages())
+            .await
+            .unwrap()
+            .messages
+            .is_empty());
+        assert!(matches!(
+            service
+                .send_direct_text_to_identity(
+                    destination,
+                    Some(observed),
+                    1_700_000_000_000,
+                    b"",
+                    b"after clear"
+                )
+                .await,
+            DurableSendDirectTextOutcome::Accepted { .. }
+        ));
+        assert_eq!(network.path_requests.load(Ordering::Acquire), 0);
+        assert!(service
+            .snapshot(all_messages())
+            .await
+            .unwrap()
+            .peers
+            .is_empty());
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn newly_resolved_stamp_requirement_is_checked_before_any_message_is_accepted() {
+        let (_root, _database, submitter) = shared_database();
+        let network = Arc::new(DurableFakeNetwork::default());
+        let service = start_durable(network.clone(), submitter).await;
+        let (peer, destination) = peer_facts();
+        let sending = service.clone();
+        let send = tokio::spawn(async move {
+            sending
+                .send_direct_text(destination, 1_700_000_000_000, b"", b"no stamp")
+                .await
+        });
+        network.path_requested.notified().await;
+        let stamp = [0x93, 0xc4, 0x04, b's', b't', b'a', b'm', 0x05, 0x90];
+        assert_eq!(
+            service
+                .callbacks()
+                .on_authenticated_announce(&authenticated_observation(
+                    destination,
+                    peer.identity_hash(),
+                    &stamp
+                )),
+            CallbackOutcome::Enqueued
+        );
+        assert_eq!(
+            send.await.unwrap(),
+            DurableSendDirectTextOutcome::UnsupportedRemoteStampRequirement {
+                required_stamp_cost: 5
+            }
+        );
+        assert!(service
+            .snapshot(all_messages())
+            .await
+            .unwrap()
+            .messages
+            .is_empty());
+        assert!(network.sent_wires.lock().unwrap().is_empty());
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn missing_recipient_lookup_times_out_without_creating_a_queued_message() {
+        let (_root, _database, submitter) = shared_database();
+        let network = Arc::new(DurableFakeNetwork::default());
+        let service = start_durable(network.clone(), submitter).await;
+        let sending = service.clone();
+        let send = tokio::spawn(async move {
+            sending
+                .send_direct_text(peer_facts().1, 1_700_000_000_000, b"", b"timeout")
+                .await
+        });
+        network.path_requested.notified().await;
+        tokio::time::advance(crate::RECIPIENT_RESOLUTION_TIMEOUT).await;
+        assert_eq!(
+            send.await.unwrap(),
+            DurableSendDirectTextOutcome::RecipientResolutionTimedOut
+        );
+        assert!(service
+            .snapshot(all_messages())
+            .await
+            .unwrap()
+            .messages
+            .is_empty());
+        assert!(network.sent_wires.lock().unwrap().is_empty());
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stamp_policy_is_rechecked_after_waiting_for_durable_admission() {
+        let (_root, _database, submitter) = shared_database();
+        let network = Arc::new(DurableFakeNetwork::default());
+        let service = start_durable(network.clone(), submitter).await;
+        let destination = learn_durable_peer(&service).await;
+        let gate = service.lifecycle.transition.lock().await;
+        let sending = service.clone();
+        let send = tokio::spawn(async move {
+            sending
+                .send_direct_text(destination, 1_700_000_000_000, b"", b"new stamp policy")
+                .await
+        });
+        tokio::task::yield_now().await;
+        let mut refresh = service.subscribe();
+        let stamp = [0x93, 0xc4, 0x04, b's', b't', b'a', b'm', 0x05, 0x90];
+        let (peer, _) = peer_facts();
+        assert_eq!(
+            service
+                .callbacks()
+                .on_authenticated_announce(&authenticated_observation(
+                    destination,
+                    peer.identity_hash(),
+                    &stamp
+                )),
+            CallbackOutcome::Enqueued
+        );
+        refresh.changed().await.unwrap();
+        drop(gate);
+        assert_eq!(
+            send.await.unwrap(),
+            DurableSendDirectTextOutcome::UnsupportedRemoteStampRequirement {
+                required_stamp_cost: 5
+            }
+        );
+        assert!(service
+            .snapshot(all_messages())
+            .await
+            .unwrap()
+            .messages
+            .is_empty());
+        assert!(network.sent_wires.lock().unwrap().is_empty());
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stopping_recipient_lookup_never_admits_a_message() {
+        let (_root, _database, submitter) = shared_database();
+        let network = Arc::new(DurableFakeNetwork::default());
+        let service = start_durable(network.clone(), submitter).await;
+        let sending = service.clone();
+        let send = tokio::spawn(async move {
+            sending
+                .send_direct_text(peer_facts().1, 1_700_000_000_000, b"", b"stop")
+                .await
+        });
+        network.path_requested.notified().await;
+        service.stop().await.unwrap();
+        assert_eq!(
+            send.await.unwrap(),
+            DurableSendDirectTextOutcome::LocalNodeStopped
+        );
+        assert!(service
+            .snapshot(all_messages())
+            .await
+            .unwrap()
+            .messages
+            .is_empty());
+        assert!(network.sent_wires.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn recipient_expiring_while_waiting_for_admission_is_not_resurrected() {
+        let (_root, _database, submitter) = shared_database();
+        let network = Arc::new(DurableFakeNetwork::default());
+        let service = start_durable(network.clone(), submitter).await;
+        let destination = learn_durable_peer(&service).await;
+        let gate = service.lifecycle.transition.lock().await;
+        let sending = service.clone();
+        let send = tokio::spawn(async move {
+            sending
+                .send_direct_text(destination, 1_700_000_000_000, b"", b"expired policy")
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!send.is_finished());
+        assert_eq!(network.path_requests.load(Ordering::Acquire), 0);
+        tokio::time::advance(crate::DISCOVERED_PEER_MAX_AGE).await;
+        drop(gate);
+        assert_eq!(
+            send.await.unwrap(),
+            DurableSendDirectTextOutcome::PeerIdentityUnavailable
+        );
+        let snapshot = service.snapshot(all_messages()).await.unwrap();
+        assert!(snapshot.peers.is_empty());
+        assert!(snapshot.messages.is_empty());
+        assert!(network.sent_wires.lock().unwrap().is_empty());
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn abandoned_recipient_lookup_cannot_send_when_a_later_announce_arrives() {
+        let (_root, _database, submitter) = shared_database();
+        let network = Arc::new(DurableFakeNetwork::default());
+        let service = start_durable(network.clone(), submitter).await;
+        let sending = service.clone();
+        let send = tokio::spawn(async move {
+            sending
+                .send_direct_text(peer_facts().1, 1_700_000_000_000, b"", b"abandoned")
+                .await
+        });
+        network.path_requested.notified().await;
+        send.abort();
+        assert!(send.await.unwrap_err().is_cancelled());
+        learn_durable_peer(&service).await;
+        assert!(service
+            .snapshot(all_messages())
+            .await
+            .unwrap()
+            .messages
+            .is_empty());
+        assert!(network.sent_wires.lock().unwrap().is_empty());
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn unresolved_recipient_waiters_are_bounded() {
+        let (_root, _database, submitter) = shared_database();
+        let network = Arc::new(DurableFakeNetwork::default());
+        let service = start_durable(network.clone(), submitter).await;
+        let mut waiting = Vec::new();
+        for _ in 0..8 {
+            let sending = service.clone();
+            waiting.push(tokio::spawn(async move {
+                sending
+                    .send_direct_text(peer_facts().1, 1_700_000_000_000, b"", b"bounded")
+                    .await
+            }));
+            network.path_requested.notified().await;
+        }
+        assert_eq!(
+            service
+                .send_direct_text(peer_facts().1, 1_700_000_000_000, b"", b"over capacity")
+                .await,
+            DurableSendDirectTextOutcome::Busy
+        );
+        assert_eq!(network.path_requests.load(Ordering::Acquire), 8);
+        service.stop().await.unwrap();
+        for send in waiting {
+            assert_eq!(
+                send.await.unwrap(),
+                DurableSendDirectTextOutcome::LocalNodeStopped
+            );
+        }
+        assert!(service
+            .snapshot(all_messages())
+            .await
+            .unwrap()
+            .messages
+            .is_empty());
     }
 
     #[tokio::test]
