@@ -3,12 +3,20 @@
 Status: the local Connections slice passed bounded retained-data iOS/Android
 acceptance on September 24, 2026. The [checkpoint](../checkpoints/2026-09-24-local-bluetooth.md)
 records persisted app-off cold launches, retained data and reciprocal physical
-connections on both final installed binaries, plus Android radio recovery and
+connections on that slice's final builds, plus Android radio recovery and
 larger-text checks on both platforms. iOS radio recovery, permission-denial trials
 and broader lifecycle qualification remain open.
-Persisted messaging names, Saved/Discovered contacts and the remaining
-network-inspection work are planned, not implemented. The user accepts losing
-ASK's extra force-quit relaunch support to make the phone usable as its own node,
+Persisted messaging names, bounded Saved/Discovered contacts, recipient selection
+and native recipient resolution are implemented. The
+[messaging checkpoint](../checkpoints/2026-09-24-messaging-discovery.md) records
+reciprocal discovery, proof-backed delivery, discovery-clear sends and Android
+cold-launch sending before the final Apple notification repair. Automatic iOS
+cold-launch recovery is blocked by a stale Bluetooth member retained by the other
+phone; fix settled link ownership before
+adding broader network inspection. The latest Apple notification repair has
+passing automated checks and a retained-data install; its physical retry is
+pending device access. The user accepts losing ASK's extra force-quit relaunch
+support to make the phone usable as its own node,
 without a board or per-peer authorization.
 Control Center Bluetooth-toggle recovery is another documented ASK difference;
 physical results must record it separately from ordinary background operation.
@@ -46,10 +54,10 @@ The existing foundation is useful; this is not a messaging-engine rewrite.
 | Area | What exists | Gap for the demo |
 | --- | --- | --- |
 | Local node | One process-owned Rust runtime and stable primary identity; ordinary iOS Bluetooth admission; This phone appears before managed boards; retained-data cold launches passed on both platforms | Permission recovery and full physical lifecycle qualification remain |
-| Announcing | Inbox → Messaging options → Share messaging address calls the real LXMF announce API | Hidden, ambiguous label; hardcoded name `prns`; no useful connection/outcome context |
-| Discovery | Authenticated LXMF announce observer and latest-per-destination peer cache | Peers appear as empty Inbox conversations; no dedicated discovered-contacts or announce view; cache lacks expiry/cap |
-| Contacts | Saved/manual contacts and Save as contact in local diagnostics | No direct discovery-to-contact-to-message journey; generic destinations are not necessarily messaging addresses |
-| Bluetooth | Connections shows local status, stored enable/disable and physical peers; current iOS/Android binaries passed app-off persistence and reciprocal reconnect, with Android OS-radio recovery | iOS OS-radio recovery, permission denial, background and long-idle qualification remain; current-binary message delivery was not repeated |
+| Announcing | Contacts exposes a persisted messaging name, explicit Announce yourself and separate My address sharing; reciprocal messaging-build discovery passed | Wider announce/activity inspection remains planned |
+| Discovery | Discovered contacts shows accepted LXMF names, age, ingress and hops; 256-entry capacity, 24-hour expiry and explicit clear | General accepted-announce activity inspection remains planned |
+| Contacts | Save / Message from discovery; saved messaging recipients, private aliases and announced names remain distinct; Inbox contains message-backed conversations; discovery-clear sends passed on both platforms | Android cold-launch send passed; iOS cold-launch send is blocked by Bluetooth recovery |
+| Bluetooth | Connections shows local status, stored enable/disable and physical peers; fresh-session reciprocal messaging passed before the latest Apple notification repair | Final notification-repair retry pending; stale settled peer after iOS restart is a confirmed blocker; iOS OS-radio recovery, permission denial, background and long-idle qualification remain |
 | TCP (deferred) | Optional developer TCP client fixture | Not part of this milestone |
 | Inspection | Logical interfaces, counters, routes and identity associations; Connections adds physical Bluetooth peers and their counters/details | Broader network views still use raw labels/IDs/times; current route is not historical message evidence |
 
@@ -99,7 +107,7 @@ layout builds passed Android 2x and iOS maximum-accessibility-text checks; the
 checkpoint separates those follow-up checks from the original control trials.
 iOS radio recovery, permission-denial trials and
 background/restoration qualification remain open. Messaging names and the
-Saved/Discovered journey are the next app slice.
+Saved/Discovered journey are implemented separately below.
 
 ## Transport decision: automatic connections without pairing
 
@@ -176,8 +184,8 @@ interface/activity routes rather than introducing another top-level tab.
 
 | Location | Implemented / planned experience |
 | --- | --- |
-| Nodes | Implemented: This phone first, Running/Stopped, concise Bluetooth summary and Connections; managed boards below. Messaging name and expanded Network details remain planned. |
-| Contacts | Saved / Discovered; prominent Announce yourself and a separate My address action for copying/sharing the address. |
+| Nodes | Implemented: This phone first, Running/Stopped, concise Bluetooth summary and Connections; managed boards below. Edit the messaging name in Contacts. Expanded Network details remain planned. |
+| Contacts | Saved / Discovered; prominent Announce yourself and a separate My address action for viewing/sharing the address. |
 | Discovered contact | Announced name, short address, human-readable last heard, received-via connection/hops when known; Save contact and Message. Identity details secondary. |
 | Inbox | Actual conversations, not every heard peer. New message selects a saved/discovered recipient; manual address entry remains available. Contact detail also has Message. |
 | Connections | Implemented with bounded iOS/Android retained-data acceptance: automatic Bluetooth, readable state, app-level permission actions, stored enable/disable and physical peer details. Remaining recovery/lifecycle checks are listed in the checkpoint. No per-phone picker; local settings do not use remote-board controls. |
@@ -221,21 +229,24 @@ untrusted display data, not verified real-world identities.
   privacy disclosure and tests; never tie broadcasts to screen renders/polling
   or add aggressive periodic announcements to make the demo pass.
 - Discovered messaging peers are deduplicated by destination, with bounded
-  capacity and age expiry; repeated observations update last heard. Keep a
-  separately bounded recent accepted-announce feed, including non-LXMF
-  destinations, for inspection. Proposed initial bounds: 256 discovered entries,
-  24-hour expiry, 200 activity rows; tune with tests rather than expose knobs.
-- Discovery/history initially live for the native process, with clear reset
+  capacity (256 entries) and monotonic age expiry (24 hours); repeated observations
+  update last heard. A separately bounded recent accepted-announce feed, including
+  non-LXMF destinations, remains planned for inspection (initial proposal: 200
+  activity rows). These are internal bounds, not user configuration.
+- Discovery lives for the current native node generation; Stop/Start or process
+  restart clears it. The planned activity history needs similarly explicit reset
   semantics. Saved contacts, names, connection settings and mailbox are durable.
   Clearing observed history must not delete contacts, revoke permissions, block
   peers or change routing. Filtering is local presentation, not a network ban.
 - Separate recent-discovery history from messaging resolution. Fresh sends
-  currently require an entry in the process-local LXMF peer cache before a path
-  request is attempted, so a saved contact can be unsendable after restart until
-  another announce arrives. Resolve saved recipients through a bounded native
-  path/announce lookup, respecting identity conflicts and current stamp
-  requirements. Show Finding contact and a useful timeout/retry result. Clearing
-  or expiring discovery rows must not itself make saved contacts unsendable.
+  use authenticated cached metadata when still valid; otherwise a native
+  path/announce lookup waits at most 15 seconds before durable acceptance. At
+  most eight lookups wait concurrently. A cached route alone is insufficient.
+  Identity conflicts, unsupported stamp requirements and metadata that expires
+  while awaiting admission reject before a message is queued. The UI shows
+  Finding contact and a retryable failure. Clearing discovery hides observations
+  while preserving bounded recipient metadata; neither clearing nor restart
+  requires a manual remote announcement to initiate lookup.
 - Offer Save/Message only for recognized messaging destinations; other accepted
   announces remain inspectable. Hide own destinations from Discovered contacts.
   Saving rechecks authenticated identity association and retains conflict rules;
@@ -296,17 +307,23 @@ routes or counters.
    permission-denial gaps;
    keep background/restoration and USB-unplugged trials separately bounded and
    recorded. This slice did not repeat message-delivery acceptance.
-2. **Complete the messaging journey over BLE (next app slice).** Add persisted name, accessible
-   announce, bounded Discovered list, Save/Message actions and contact recipient
-   selection. Prove reciprocal discovery and short proof-backed messages without
-   typing addresses, including a fresh send to a saved contact after restart
-   without manually re-announcing at the other phone. Include basic
-   connection/counter evidence from slice 1.
-3. **Network explainability.** Complete announce/activity inspection, readable
+2. **Complete the messaging journey over BLE (implemented; iOS recovery remains blocked).**
+   Persisted name, explicit announce, bounded Discovered list, Save/Message actions
+   and contact recipient selection are implemented. Reciprocal discovery and
+   proof-backed messages without typing addresses passed, as did discovery-clear
+   sending on both phones and Android cold-launch sending without a remote
+   manual announce. The messaging checkpoint records a reproducible iOS restart
+   failure and honest unqueued-draft feedback.
+3. **Settled Bluetooth link recovery (next).** Define bounded control ownership
+   after the handshake, send/cleanup ordering, graceful Off semantics and stale
+   incumbent recovery. Preserve keeper/authentication policy and late-callback
+   fencing. Prove ordinary iOS restart and one-sided app Off/On recover without
+   resetting the other phone, then repeat the saved-recipient send check.
+4. **Network explainability.** Complete announce/activity inspection, readable
    route age/expiry, broader connection inspection and conversation delivery details.
    Add a narrow upstream seam only where existing public evidence cannot answer
    the UI's question. Clearly separate current routes from actual message paths.
-4. **Repeatable device acceptance and recovery.** Test out-of-range, reconnect,
+5. **Repeatable device acceptance and recovery.** Test out-of-range, reconnect,
    restart, Stop/Start and permission denial. Follow with background/locked trials,
    ordinary restoration versus force-quit, and OS-specific limitations. Check real
    keyboards, retained data and 1.5x/2x text on both phones.
