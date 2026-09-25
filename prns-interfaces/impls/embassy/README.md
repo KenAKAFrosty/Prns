@@ -51,3 +51,16 @@ Tests use real Embassy fleet lanes to cover concurrent peer progress, shared-lan
 pressure, failure isolation, and exact accounting. This is host component evidence,
 not an emulated controller or full embedded node. Native RF behavior and firmware
 resource evidence remain separate.
+
+## Supervisor simulation
+
+The simulation package's [`embassy_ble` target](../../../validation/simulation/tests/embassy_ble/main.rs)
+runs this supervisor with virtual BLE radios, real fleet lifecycle channels, and
+coordinated manual time. It checks the exact handshake timeout boundary,
+successful peer admission, and disable teardown on both ends. These scenarios
+run in PR CI and relevant pre-push checks through `virtual-device-simulation`.
+No production clock or firmware dependency changes are required.
+
+```console
+python3 validation/run.py run --suite bluetooth-auto-embassy --suite virtual-device-simulation
+```

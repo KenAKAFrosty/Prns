@@ -389,8 +389,29 @@ forwarding is tracked independently of send completion for safe cancellation.
 This does not yet run an Embassy node on the manual fleet clock or provide
 receive tasks independent of fanout.
 
+The `embassy_ble` integration target runs the real Embassy BLE supervisor against
+the same virtual BLE backend used by Tokio. It verifies a silent peer stays
+connected at 9,999 ms and is retired at 10,000 ms for both ESP32 and nRF52 protocol
+endpoints, with exact recovery counters and no premature member admission. A
+two-supervisor scenario checks native handshake admission, member registration,
+and both ends' teardown after disabling one radio.
+
+Its private clock bridge mirrors successful medium/Tokio steps into Embassy's
+mock time driver before polling actors. The existing wake-driven runner retains
+explicit actor and poll budgets; refused ready-actor and backward-time steps
+leave all clocks unchanged. A process-wide lease serializes these scenarios and
+resets the mock timer queue only after the actors are dropped. This test fixture
+allows eight actors and uses a 64-entry timer queue; these are scenario bounds,
+not an Embassy fleet scale claim. Known runtime deadlines are supplied explicitly.
+
+The tests are included in `virtual-device-simulation`, now run alongside Embassy
+component tests in PR CI and by the relevant pre-push gate. The clock and backend
+dependencies are test-only. This is supervisor-level evidence, not full Embassy
+nodes, data-plane fanout, native HCI/Trouble execution, board firmware, or RF evidence.
+
 ```console
 cargo test --locked -p prns-core interfaces::bluetooth_auto::duplex
 cargo test --locked -p prns-simulation --test ble_peer_frames
 cargo test --locked -p prns-simulation --features controlled-time --test manual_fleet ble::
+cargo test --locked -p prns-simulation --features controlled-time --test embassy_ble
 ```

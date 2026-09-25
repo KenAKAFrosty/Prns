@@ -596,7 +596,7 @@ platform = "any"
 toolchain = "stable"
 timeout_seconds = 600
 command = ["cargo", "test", "--locked", "-p", "prns-simulation", "--features", "controlled-time"]
-inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio"]
+inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "prns-interfaces/impls/embassy"]
 artifacts = "validation-artifacts/results/virtual-device-simulation"
 
 [[suite]]

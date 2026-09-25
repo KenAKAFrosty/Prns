@@ -166,15 +166,19 @@ jobs:
       - name: clippy — prns-interfaces-embassy (all features)
         run: cargo clippy --all-features --all-targets --locked -- -D warnings
         working-directory: prns-interfaces/impls/embassy
-      - name: test — Embassy BLE components without hardware
-        run: python3 validation/run.py run --suite bluetooth-auto-embassy --expected-sha "$GITHUB_SHA"
+      - name: clippy — virtual-device simulation with controlled time
+        run: cargo clippy --locked -p prns-simulation --features controlled-time --all-targets -- -D warnings
+      - name: test — Embassy BLE components and virtual-device simulation without hardware
+        run: python3 validation/run.py run --suite bluetooth-auto-embassy --suite virtual-device-simulation --expected-sha "$GITHUB_SHA"
       - name: Upload Embassy BLE host evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: embassy-ble-host-evidence
           retention-days: 7
-          path: validation-artifacts/results/bluetooth-auto-embassy
+          path: |
+            validation-artifacts/results/bluetooth-auto-embassy
+            validation-artifacts/results/virtual-device-simulation
           if-no-files-found: ignore
       - name: doc — prns-interfaces-embassy (all features)
         run: cargo doc --locked --no-deps --document-private-items --all-features --quiet

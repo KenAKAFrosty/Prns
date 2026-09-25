@@ -88,6 +88,39 @@ class PrePushCiParityTests(unittest.TestCase):
             self.gate_names({"prns-interfaces/impls/tokio/src/bluetooth_auto/runtime.rs"}),
         )
 
+    def test_virtual_device_simulation_covers_both_runtime_lanes(self) -> None:
+        for path in (
+            "validation/simulation/tests/embassy_ble/main.rs",
+            "personal-rns/src/lib.rs",
+            "prns-core/src/interfaces/bluetooth_auto/handshake.rs",
+            "prns-runtime/impls/tokio/src/runtime/interface_store.rs",
+            "prns-runtime/impls/embassy/src/lib.rs",
+            "prns-interfaces/impls/tokio/src/bluetooth_auto/runtime.rs",
+            "prns-interfaces/impls/embassy/src/bluetooth_auto/runtime/mod.rs",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(
+                    "virtual device simulation Clippy", self.gate_names({path})
+                )
+                selected = tuple(
+                    gate
+                    for gate in parity.plan_for_paths({path}).gates
+                    if gate.name == "virtual device simulation"
+                )
+                self.assertEqual(
+                    selected,
+                    (
+                        parity.Gate(
+                            "virtual device simulation",
+                            (
+                                "python3", "validation/run.py", "run", "--suite",
+                                "virtual-device-simulation",
+                            ),
+                        ),
+                    ),
+                )
+        self.assertNotIn("virtual device simulation", self.gate_names({"README.md"}))
+
     def test_swift_binding_change_runs_contract_smoke(self) -> None:
         gates = parity.plan_for_paths(
             {"prns-host/bindings/swift/Sources/PersonalRns/Command.swift"}

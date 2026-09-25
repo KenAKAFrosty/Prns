@@ -172,6 +172,32 @@ def plan_for_paths(paths: set[str]) -> PrePushPlan:
             )
         )
 
+    if embassy_ble_surface or _has_prefix(
+        paths,
+        (
+            "validation/simulation/",
+            "personal-rns/",
+            "prns-runtime/impls/tokio/",
+            "prns-interfaces/impls/tokio/",
+        ),
+    ):
+        gates.extend(
+            (
+                Gate(
+                    "virtual device simulation Clippy",
+                    (
+                        "cargo", "clippy", "--locked", "-p", "prns-simulation",
+                        "--features", "controlled-time", "--all-targets", "--",
+                        "-D", "warnings",
+                    ),
+                ),
+                Gate(
+                    "virtual device simulation",
+                    validation_command(("virtual-device-simulation",)),
+                ),
+            )
+        )
+
     if embedded.required(Lane.RESOURCES):
         gates.append(
             Gate(
