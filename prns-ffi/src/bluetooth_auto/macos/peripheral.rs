@@ -16,7 +16,7 @@ use objc2_core_bluetooth::{
 use objc2_foundation::{
     NSArray, NSData, NSDictionary, NSError, NSObject, NSObjectProtocol, NSString,
 };
-use tokio::sync::{mpsc as tokio_mpsc, oneshot};
+use tokio::sync::{mpsc as tokio_mpsc, oneshot, watch};
 
 use prns_core::interfaces::bluetooth_auto::AdvertisingMode;
 use prns_core::interfaces::bluetooth_auto::{
@@ -26,7 +26,10 @@ use prns_core::interfaces::bluetooth_auto::{
 
 use super::backend::central_peripheral_capacity;
 use super::data_plane::{close_l2cap, l2cap_peer_id, wire_l2cap, DataPlane, PendingL2cap};
-use super::gatt_link::{ControlPlane, GattInboundReceiver, GattLink, GATT_INBOUND_BUDGET_BYTES};
+use super::gatt_link::{
+    ControlPlane, GattInboundReceiver, GattLink, GATT_INBOUND_BUDGET_BYTES, GATT_WRITE_TIMEOUT,
+};
+use super::peripheral_notify::{send_notification, NotificationAdmission, NotificationSession};
 use super::peripheral_write::{
     admit_write_batch, respond_to_write_batch, InboundProfile, WriteError, WriteRequest,
     WriteSession, WriteTarget,
@@ -34,10 +37,10 @@ use super::peripheral_write::{
 use super::{
     advertisement_data, cbuuid_eq, columba_identity_uuid, columba_rx_uuid, columba_tx_uuid,
     control_uuid, core_bluetooth_peer_id, data_uuid, service_uuid, CoreBluetoothPeerId,
-    ManagerSignalSender, SendPeripheralDelegate, SendPeripheralManager,
+    MacosBleError, ManagerSignalSender, SendPeripheralDelegate, SendPeripheralManager,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) enum ListenerCharacteristic {
     Control,
     Data,
@@ -200,6 +203,7 @@ pub(super) struct PeripheralDelegateIvars {
     queue: DispatchRetained<DispatchQueue>,
     manager: RefCell<Option<SendPeripheralManager>>,
     radio_enabled: Arc<AtomicBool>,
+    notification_ready: watch::Sender<()>,
     service_registration_requested: RefCell<bool>,
     l2cap_publication_requested: RefCell<bool>,
     session_capacity: usize,
@@ -222,6 +226,7 @@ define_class!(
             // serial dispatch queue.
             let state = unsafe { peripheral.state() };
             self.ivars().manager_signals.peripheral_state_changed(state);
+            self.ivars().notification_ready.send_replace(());
             if state == CBManagerState::PoweredOn {
                 *self.ivars().manager.borrow_mut() =
                     Some(SendPeripheralManager(peripheral.retain()));
@@ -504,6 +509,7 @@ define_class!(
                         },
                         |peer_id| {
                             self.ivars().pending_l2cap.borrow_mut().remove(&peer_id);
+                            self.ivars().notification_ready.send_replace(());
                         },
                     )
                 },
@@ -581,6 +587,7 @@ define_class!(
 
         #[unsafe(method(peripheralManagerIsReadyToUpdateSubscribers:))]
         fn is_ready_to_update(&self, _peripheral: &CBPeripheralManager) {
+            self.ivars().notification_ready.send_replace(());
             crate::diagnostic_log::debug!(
                 "bluetooth: notify queue drained — ready to update subscribers"
             );
@@ -677,6 +684,7 @@ impl PeripheralDelegate {
             queue,
             manager: RefCell::new(None),
             radio_enabled,
+            notification_ready: watch::channel(()).0,
             service_registration_requested: RefCell::new(false),
             l2cap_publication_requested: RefCell::new(false),
             session_capacity: peripheral_session_capacity(max_peers),
@@ -707,6 +715,7 @@ impl PeripheralDelegate {
             peer_identity,
             control: ControlPlane::Listener {
                 peer_id,
+                session: data_rx.notifications(),
                 delegate: SendPeripheralDelegate(self.retain()),
                 gatt_mtu,
             },
@@ -720,63 +729,114 @@ impl PeripheralDelegate {
     pub(super) fn notify(
         &self,
         peer_id: CoreBluetoothPeerId,
+        session: NotificationSession,
         target: ListenerCharacteristic,
         bytes: &[u8],
-    ) -> bool {
+    ) -> impl std::future::Future<Output = Result<(), MacosBleError>> + Send + 'static {
         let queue = self.ivars().queue.clone();
-        let this = SendPeripheralDelegate(self.retain());
-        let bytes = Box::<[u8]>::from(bytes);
-        let sent = Arc::new(AtomicBool::new(false));
-        let result = sent.clone();
-        queue.exec_sync(move || {
-            let this = this;
-            if !this.0.ivars().radio_enabled.load(Ordering::Acquire) {
-                return;
+        let delegate = SendPeripheralDelegate(self.retain());
+        // Subscribe before attempting admission: a ready callback cannot be lost while the
+        // attempt returns across the dispatch/Tokio boundary.
+        let ready = self.ivars().notification_ready.subscribe();
+        let bytes = (bytes.len() <= BLE_HW_MTU).then(|| Arc::<[u8]>::from(bytes));
+        async move {
+            let delegate = delegate;
+            let bytes = bytes.ok_or(MacosBleError::FrameTooLarge)?;
+            let expected = session.clone();
+            let result = send_notification(session, ready, GATT_WRITE_TIMEOUT, move || {
+                let (completion, received) = oneshot::channel();
+                let this = delegate.clone();
+                let expected = expected.clone();
+                let bytes = bytes.clone();
+                queue.exec_async(move || {
+                    let this = this;
+                    // Skip work still queued when the caller disappears. Cancellation cannot
+                    // retract an update already being admitted by CoreBluetooth.
+                    if completion.is_closed() {
+                        return;
+                    }
+                    let admission = this
+                        .0
+                        .try_notify_on_queue(peer_id, &expected, target, &bytes);
+                    crate::diagnostic_log::debug!(
+                        "bluetooth: {:02x?} notify {target:?} {}B {admission:?}",
+                        peer_id.address().octets(),
+                        bytes.len()
+                    );
+                    let _ = completion.send(admission);
+                });
+                async move { received.await.unwrap_or(NotificationAdmission::Closed) }
+            })
+            .await;
+            if let Err(error) = &result {
+                crate::diagnostic_log::warn!(
+                    "bluetooth: {:02x?} notify {target:?} failed: {error:?}",
+                    peer_id.address().octets()
+                );
             }
-            this.0.reap_closed_state_on_queue();
-            let Some(manager) = this
-                .0
-                .ivars()
-                .manager
-                .borrow()
-                .as_ref()
-                .map(|manager| manager.0.clone())
-            else {
-                return;
-            };
-            let Some((central, protocol)) = this
-                .0
-                .ivars()
-                .sessions
-                .borrow()
-                .get(&peer_id)
-                .map(|session| (session.central.clone(), session.protocol))
-            else {
-                return;
-            };
-            let characteristic = match (protocol, target) {
-                (PeerProtocol::Native, ListenerCharacteristic::Control) => {
-                    this.0.ivars().characteristic.borrow()
-                }
-                (PeerProtocol::Native, ListenerCharacteristic::Data) => {
-                    this.0.ivars().data_characteristic.borrow()
-                }
-                (PeerProtocol::Columba, _) => this.0.ivars().columba_tx_characteristic.borrow(),
-            };
-            let data = NSData::with_bytes(&bytes);
-            let centrals = NSArray::from_slice(&[&*central]);
-            // SAFETY: the retained mutable characteristic was published by this retained manager;
-            // CoreBluetooth receives retained data and an exact live subscribed central.
-            let accepted = unsafe {
-                manager.updateValue_forCharacteristic_onSubscribedCentrals(
-                    &data,
-                    &characteristic,
-                    Some(&centrals),
-                )
-            };
-            result.store(accepted, Ordering::Release);
-        });
-        sent.load(Ordering::Acquire)
+            result
+        }
+    }
+
+    /// Queue-confined. Every retry checks the original exact session, never just its peer ID.
+    fn try_notify_on_queue(
+        &self,
+        peer_id: CoreBluetoothPeerId,
+        expected: &NotificationSession,
+        target: ListenerCharacteristic,
+        bytes: &[u8],
+    ) -> NotificationAdmission {
+        if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+            return NotificationAdmission::Closed;
+        }
+        self.reap_closed_state_on_queue();
+        let Some(manager) = self
+            .ivars()
+            .manager
+            .borrow()
+            .as_ref()
+            .map(|manager| manager.0.clone())
+        else {
+            return NotificationAdmission::Closed;
+        };
+        // SAFETY: the retained manager is queried on its own serial delegate queue.
+        if unsafe { manager.state() } != CBManagerState::PoweredOn {
+            return NotificationAdmission::Closed;
+        }
+        let Some((central, protocol)) = self
+            .ivars()
+            .sessions
+            .borrow()
+            .get(&peer_id)
+            .filter(|session| session.data_tx.notifications().same_session(expected))
+            .map(|session| (session.central.clone(), session.protocol))
+        else {
+            return NotificationAdmission::Closed;
+        };
+        let characteristic = match (protocol, target) {
+            (PeerProtocol::Native, ListenerCharacteristic::Control) => {
+                self.ivars().characteristic.borrow()
+            }
+            (PeerProtocol::Native, ListenerCharacteristic::Data) => {
+                self.ivars().data_characteristic.borrow()
+            }
+            (PeerProtocol::Columba, _) => self.ivars().columba_tx_characteristic.borrow(),
+        };
+        let data = NSData::with_bytes(bytes);
+        let centrals = NSArray::from_slice(&[&*central]);
+        // SAFETY: the retained characteristic belongs to this manager; data and the exact live
+        // session's central remain retained throughout this queue-confined call.
+        if unsafe {
+            manager.updateValue_forCharacteristic_onSubscribedCentrals(
+                &data,
+                &characteristic,
+                Some(&centrals),
+            )
+        } {
+            NotificationAdmission::Accepted
+        } else {
+            NotificationAdmission::Backpressured
+        }
     }
 
     pub(super) fn arm_pending_channel(
@@ -877,18 +937,22 @@ impl PeripheralDelegate {
         }
         self.ivars().sessions.borrow_mut().clear();
         self.ivars().pending_l2cap.borrow_mut().clear();
+        self.ivars().notification_ready.send_replace(());
     }
 
     /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
     fn clear_closed_peer_on_queue(&self, address: BleAddress) {
         let mut sessions = self.ivars().sessions.borrow_mut();
         let mut pending = self.ivars().pending_l2cap.borrow_mut();
-        reap_closed_sessions(
+        let retired = reap_closed_sessions(
             &mut sessions,
             &mut pending,
             Some(address),
             PeripheralPeerSession::data_receiver_closed,
         );
+        if retired > 0 {
+            self.ivars().notification_ready.send_replace(());
+        }
         // Central-role waiters have no peripheral-role session. Reap only entries whose waiter or
         // delivered channel is independently known closed; never use the synthetic address as an
         // identity substitute.
@@ -899,12 +963,15 @@ impl PeripheralDelegate {
     fn reap_closed_state_on_queue(&self) {
         let mut sessions = self.ivars().sessions.borrow_mut();
         let mut pending = self.ivars().pending_l2cap.borrow_mut();
-        reap_closed_sessions(
+        let retired = reap_closed_sessions(
             &mut sessions,
             &mut pending,
             None,
             PeripheralPeerSession::data_receiver_closed,
         );
+        if retired > 0 {
+            self.ivars().notification_ready.send_replace(());
+        }
         reap_stale_pending_l2cap(&mut pending);
     }
 
@@ -912,6 +979,7 @@ impl PeripheralDelegate {
     fn clear_peer_on_queue(&self, peer_id: CoreBluetoothPeerId) {
         self.ivars().sessions.borrow_mut().remove(&peer_id);
         self.ivars().pending_l2cap.borrow_mut().remove(&peer_id);
+        self.ivars().notification_ready.send_replace(());
     }
 
     pub(super) fn clear_closed_peer(&self, address: BleAddress) {

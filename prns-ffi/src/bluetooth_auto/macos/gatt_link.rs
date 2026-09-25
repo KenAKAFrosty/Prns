@@ -15,24 +15,27 @@ use super::data_plane::DataPlane;
 use super::gatt_write::{GattWriteMode, GattWriteRequest, GattWriteTarget};
 use super::l2cap_lifecycle::{self, DataPlaneEnd, FailurePolicy, WriteHalf};
 use super::peripheral::ListenerCharacteristic;
+use super::peripheral_notify::NotificationSession;
 use super::{
     CoreBluetoothPeerId, MacosBleError, SendCentralDelegate, SendCharacteristicRef, SendPeripheral,
     SendPeripheralDelegate,
 };
 
-const GATT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const GATT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) const GATT_INBOUND_BUDGET_BYTES: usize = 128 * 1024;
 
 #[derive(Clone)]
 pub(super) struct GattInboundSender {
     sender: tokio_mpsc::UnboundedSender<Box<[u8]>>,
     queued_bytes: Arc<AtomicUsize>,
+    notifications: NotificationSession,
     budget_bytes: usize,
 }
 
 pub(super) struct GattInboundReceiver {
     receiver: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
     queued_bytes: Arc<AtomicUsize>,
+    notifications: NotificationSession,
 }
 
 /// Capacity owned by an admitted write but not yet visible to the receiver.
@@ -56,20 +59,27 @@ pub(super) fn gatt_inbound_channel_with_budget(
 ) -> (GattInboundSender, GattInboundReceiver) {
     let (sender, receiver) = tokio_mpsc::unbounded_channel();
     let queued_bytes = Arc::new(AtomicUsize::new(0));
+    let notifications = NotificationSession::default();
     (
         GattInboundSender {
             sender,
             queued_bytes: queued_bytes.clone(),
+            notifications: notifications.clone(),
             budget_bytes,
         },
         GattInboundReceiver {
             receiver,
             queued_bytes,
+            notifications,
         },
     )
 }
 
 impl GattInboundSender {
+    pub(super) fn notifications(&self) -> &NotificationSession {
+        &self.notifications
+    }
+
     pub(super) fn try_send(&self, data: Box<[u8]>) -> Result<(), GattInboundSendError> {
         self.try_reserve(data)?.publish()
     }
@@ -145,6 +155,10 @@ impl Drop for GattInboundReservation {
 }
 
 impl GattInboundReceiver {
+    pub(super) fn notifications(&self) -> NotificationSession {
+        self.notifications.clone()
+    }
+
     pub(super) async fn recv(&mut self) -> Option<Box<[u8]>> {
         let data = self.receiver.recv().await?;
         self.queued_bytes
@@ -156,6 +170,7 @@ impl GattInboundReceiver {
 pub(super) enum ControlPlane {
     Listener {
         peer_id: CoreBluetoothPeerId,
+        session: NotificationSession,
         delegate: SendPeripheralDelegate,
         gatt_mtu: usize,
     },
@@ -190,6 +205,7 @@ enum GattWriter {
     },
     Listener {
         peer_id: CoreBluetoothPeerId,
+        session: NotificationSession,
         delegate: SendPeripheralDelegate,
         fragment_mtu: usize,
     },
@@ -228,17 +244,20 @@ impl GattWriter {
                     .await?;
                 }
                 GattWriter::Listener {
-                    peer_id, delegate, ..
+                    peer_id,
+                    session,
+                    delegate,
+                    ..
                 } => {
-                    let sent =
-                        delegate
-                            .0
-                            .notify(*peer_id, ListenerCharacteristic::Data, &buf[..len]);
-                    if !sent {
-                        crate::diagnostic_log::warn!(
-                            "bluetooth: GATT-data notify queue full — fragment dropped, peer will retransmit"
-                        );
-                    }
+                    delegate
+                        .0
+                        .notify(
+                            *peer_id,
+                            session.clone(),
+                            ListenerCharacteristic::Data,
+                            &buf[..len],
+                        )
+                        .await?;
                 }
             }
         }
@@ -339,25 +358,25 @@ impl BleLink for GattLink {
         let len = msg.encode(&mut buf).ok_or(MacosBleError::ControlTooLarge)?;
         match &self.control {
             ControlPlane::Listener {
-                peer_id, delegate, ..
+                peer_id,
+                session,
+                delegate,
+                ..
             } => {
-                let sent =
-                    delegate
-                        .0
-                        .notify(*peer_id, ListenerCharacteristic::Control, &buf[..len]);
-                if sent {
-                    crate::diagnostic_log::debug!(
-                        "bluetooth: {:02x?} -> {msg:?}",
-                        self.address.octets()
-                    );
-                    Ok(())
-                } else {
-                    crate::diagnostic_log::warn!(
-                        "bluetooth: {:02x?} notify failed — control PDU did not reach the central, handshake will stall",
-                        self.address.octets()
-                    );
-                    Err(MacosBleError::NotifyFailed)
-                }
+                delegate
+                    .0
+                    .notify(
+                        *peer_id,
+                        session.clone(),
+                        ListenerCharacteristic::Control,
+                        &buf[..len],
+                    )
+                    .await?;
+                crate::diagnostic_log::debug!(
+                    "bluetooth: {:02x?} -> {msg:?}",
+                    self.address.octets()
+                );
+                Ok(())
             }
             ControlPlane::Central {
                 peer_id,
@@ -490,11 +509,13 @@ fn gatt_writer(control: &ControlPlane) -> Option<GattWriter> {
         } => None,
         ControlPlane::Listener {
             peer_id,
+            session,
             delegate,
             gatt_mtu,
             ..
         } => Some(GattWriter::Listener {
             peer_id: *peer_id,
+            session: session.clone(),
             delegate: SendPeripheralDelegate(delegate.0.clone()),
             fragment_mtu: *gatt_mtu,
         }),
