@@ -6,6 +6,7 @@ mod gatt_link;
 mod gatt_write;
 mod l2cap_lifecycle;
 mod peripheral;
+mod peripheral_notify;
 mod peripheral_write;
 
 #[cfg(test)]
@@ -276,6 +277,7 @@ struct SendCentralDelegate(Retained<CentralDelegate>);
 // dispatch queue before and after transfer.
 unsafe impl Send for SendCentralDelegate {}
 
+#[derive(Clone)]
 struct SendPeripheralDelegate(Retained<PeripheralDelegate>);
 // SAFETY: the retained delegate's RefCell-backed state is accessed only by the serial CoreBluetooth
 // dispatch queue before and after transfer.
