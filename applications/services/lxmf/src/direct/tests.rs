@@ -233,6 +233,8 @@ fn authenticated_observation<'a>(
     prns_host_native::AuthenticatedAnnounce {
         destination: prns_host::DestinationHash::new(destination),
         announced_identity: prns_host::IdentityHash::new(*announced_identity.as_bytes()),
+        source_interface: prns_host::InterfaceId::new(*TEST_INTERFACE.as_bytes()),
+        hops: 2,
         arrived_at_millis: 4_200,
         app_data,
         is_path_response: false,
@@ -439,12 +441,37 @@ async fn authenticated_observer_is_the_only_peer_discovery_lane() {
         *peer_material.identity_hash().as_bytes()
     );
     assert_eq!(snapshot.peers[0].observed_at_millis, 4_200);
+    assert_eq!(
+        snapshot.peers[0].source_interface,
+        *TEST_INTERFACE.as_bytes()
+    );
+    assert_eq!(snapshot.peers[0].hops, 2);
     assert!(!snapshot.peers[0].is_path_response);
     assert_eq!(
         snapshot.peers[0].display_name.as_deref(),
         Some("Python  peer")
     );
     service.stop().await.expect("service tasks stop promptly");
+}
+
+#[tokio::test]
+async fn own_messaging_announce_is_not_a_discovered_peer() {
+    let service =
+        DirectLxmfService::start(identity(&LOCAL_SECRET), Arc::new(FakeNetwork::default()))
+            .unwrap();
+    let local = PrivateIdentityMaterial::from_bytes(LOCAL_SECRET);
+    assert_eq!(
+        service
+            .callbacks()
+            .on_authenticated_announce(&authenticated_observation(
+                service.local_destination(),
+                local.identity_hash(),
+                &current_announce(b"own"),
+            )),
+        CallbackOutcome::Ignored
+    );
+    assert!(service.snapshot().await.peers.is_empty());
+    service.stop().await.unwrap();
 }
 
 #[tokio::test]
