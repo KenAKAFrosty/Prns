@@ -55,16 +55,16 @@ pub async fn send_frame_duplex<Source: BleSource, Sink: BleSink, Forwarder: BleF
     sink: &mut Sink,
     outbound: &[u8],
     inbound: &mut [u8],
-    forwarder: Forwarder,
+    mut forwarder: Forwarder,
 ) -> BleDuplexOutcome<Source::Error, Sink::Error, Forwarder::Error> {
     let work = pin!(sink.send_frame(outbound));
-    receive_frames_during(work, source, inbound, forwarder).await
+    receive_frames_during(work, source, inbound, &mut forwarder).await
 }
 
 /// Keep receiving until `work` settles, without cancelling a completed receive's forwarding.
 /// The work may include a send and a wait for other peers; it remains polled during ingress
 /// backpressure. Completion wins over starting another receive, and empty frames are ignored.
-/// Borrows the caller-pinned work so its state is stored once, outside this receive driver.
+/// Borrows caller-pinned work and the forwarder so their state stays outside this receive driver.
 /// The driver may complete that work; callers must not poll it again after `Finished`.
 ///
 /// Pending receives must preserve partial-frame progress on cancellation. On ingress failure
@@ -81,7 +81,7 @@ pub async fn receive_frames_during<
     mut work: Pin<&mut Work>,
     source: &mut Source,
     inbound: &mut [u8],
-    mut forwarder: Forwarder,
+    forwarder: &mut Forwarder,
 ) -> BleDuplexOutcome<Source::Error, WorkError, Forwarder::Error> {
     loop {
         let received = {

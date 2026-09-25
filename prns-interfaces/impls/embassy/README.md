@@ -33,9 +33,9 @@ its send.
 There are no extra packet buffers or spawned tasks; the mutex and per-peer future
 state still have a resource cost that firmware builds must measure.
 
-The shared driver borrows caller-pinned work rather than embedding another owned
-work future. Its receive selection also borrows pinned futures and uses the
-shared length validator directly. The [T114 layout measurement](measurements/ble-duplex-layout.md)
+The shared driver borrows caller-pinned work and the forwarder rather than
+embedding their owned state. Its receive selection also borrows pinned futures
+and uses the shared length validator directly. The [Nordic layout measurement](measurements/ble-duplex-layout.md)
 records the resulting static-memory savings without changing peer capacity,
 packet buffers, or the runtime stack reservation.
 

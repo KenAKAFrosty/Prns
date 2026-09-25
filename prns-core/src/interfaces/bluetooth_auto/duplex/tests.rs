@@ -216,14 +216,15 @@ fn receive_only_work_ignores_empty_frames_and_settles_current_forwarding_exactly
             }
         });
         let work = pin!(work);
+        let mut forwarder = Forwarder {
+            ready: &forward_ready,
+            frames: &mut frames,
+        };
         let mut running = pin!(receive_frames_during(
             work,
             &mut source,
             &mut inbound,
-            Forwarder {
-                ready: &forward_ready,
-                frames: &mut frames
-            },
+            &mut forwarder,
         ));
         let mut context = Context::from_waker(Waker::noop());
         assert!(running.as_mut().poll(&mut context).is_pending());
@@ -251,14 +252,15 @@ fn ready_work_wins_without_consuming_another_frame() {
         let forward_ready = Cell::new(true);
         {
             let work = pin!(core::future::ready(result));
+            let mut forwarder = Forwarder {
+                ready: &forward_ready,
+                frames: &mut frames,
+            };
             let mut running = pin!(receive_frames_during(
                 work,
                 &mut source,
                 &mut inbound,
-                Forwarder {
-                    ready: &forward_ready,
-                    frames: &mut frames
-                },
+                &mut forwarder,
             ));
             assert_eq!(
                 running
@@ -275,7 +277,7 @@ fn ready_work_wins_without_consuming_another_frame() {
 }
 
 #[test]
-fn receive_driver_storage_is_independent_of_borrowed_work_size() {
+fn receive_driver_storage_is_independent_of_borrowed_state_size() {
     struct WorkState<const BYTES: usize>([u8; BYTES]);
 
     impl<const BYTES: usize> Future for WorkState<BYTES> {
@@ -290,23 +292,32 @@ fn receive_driver_storage_is_independent_of_borrowed_work_size() {
         }
     }
 
-    fn driver_size<const BYTES: usize>() -> usize {
-        let work = pin!(WorkState([0; BYTES]));
+    struct ForwardState<const BYTES: usize>([u8; BYTES]);
+
+    impl<const BYTES: usize> BleFrameForwarder for ForwardState<BYTES> {
+        type Error = core::convert::Infallible;
+
+        async fn forward(&mut self, frame: &[u8]) -> Result<(), Self::Error> {
+            self.0.fill(frame.first().copied().unwrap_or(0));
+            Ok(())
+        }
+    }
+
+    fn driver_size<const WORK: usize, const FORWARD: usize>() -> usize {
+        let work = pin!(WorkState([0; WORK]));
         let mut source = Source(VecDeque::new());
         let mut inbound = [0; 2];
-        let forward_ready = Cell::new(true);
-        let mut frames = Vec::new();
-        let driver = receive_frames_during(
-            work,
-            &mut source,
-            &mut inbound,
-            Forwarder {
-                ready: &forward_ready,
-                frames: &mut frames,
-            },
-        );
+        let mut forwarder = ForwardState([0; FORWARD]);
+        let driver = receive_frames_during(work, &mut source, &mut inbound, &mut forwarder);
         core::mem::size_of_val(&driver)
     }
 
-    assert_eq!(driver_size::<1>(), driver_size::<4096>());
+    assert_eq!(
+        [
+            driver_size::<4096, 1>(),
+            driver_size::<1, 4096>(),
+            driver_size::<4096, 4096>(),
+        ],
+        [driver_size::<1, 1>(); 3]
+    );
 }

@@ -145,19 +145,13 @@ async fn send_member<
         .await
     };
     let work = pin!(work);
-    match receive_frames_during(
-        work,
-        &mut member.source,
-        inbound,
-        MemberInbound {
-            fleet,
-            id: member.id,
-            status,
-            receive: &state.receive,
-        },
-    )
-    .await
-    {
+    let mut forwarder = MemberInbound {
+        fleet,
+        id: member.id,
+        status,
+        receive: &state.receive,
+    };
+    match receive_frames_during(work, &mut member.source, inbound, &mut forwarder).await {
         BleDuplexOutcome::Finished(_) => {}
         BleDuplexOutcome::ReceiveFailed(_)
         | BleDuplexOutcome::InvalidReceiveLength(_)
