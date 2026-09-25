@@ -238,6 +238,15 @@ impl HostClient {
             .map_err(SessionError::Snapshot)
     }
 
+    /// Native-only physical and logical inspection from the same host capture.
+    pub async fn inspection(&self) -> Result<crate::NativeInspectionSnapshot, SessionError> {
+        self.shared
+            .host()?
+            .inspection_async()
+            .await
+            .map_err(SessionError::Snapshot)
+    }
+
     #[must_use]
     pub fn events(&self) -> NativeSessionEvents {
         self.shared.events.clone()
