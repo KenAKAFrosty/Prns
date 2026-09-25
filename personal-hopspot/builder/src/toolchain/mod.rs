@@ -49,7 +49,7 @@ fn rust_tool_for(directory: Option<&Path>, name: &str) -> Result<PathBuf, BuildE
         .join("rustlib")
         .join(host_triple.trim())
         .join("bin")
-        .join(name);
+        .join(rust_tool_file_name(name));
     if path.is_file() {
         Ok(path)
     } else {
@@ -57,6 +57,15 @@ fn rust_tool_for(directory: Option<&Path>, name: &str) -> Result<PathBuf, BuildE
             "Rust tool {name:?} was not found at {}",
             path.display()
         )))
+    }
+}
+
+/// Rustup installs host tools as `name.exe` on Windows; bare names fail `is_file()` there.
+fn rust_tool_file_name(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
     }
 }
 
@@ -145,6 +154,16 @@ mod tests {
             command.get_current_dir(),
             Some(Path::new("embedded-workspace"))
         );
+    }
+
+    #[test]
+    fn rust_tool_file_name_matches_the_host_executable_suffix() {
+        let name = rust_tool_file_name("rust-lld");
+        if cfg!(windows) {
+            assert_eq!(name, "rust-lld.exe");
+        } else {
+            assert_eq!(name, "rust-lld");
+        }
     }
 }
 mod evidence;
