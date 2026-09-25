@@ -201,13 +201,14 @@ fn sparse_segments(
         chip,
         XtalFrequency::_40Mhz,
     );
+    let app_partition = app_partition_name(partition_table)?;
     let image = IdfBootloaderFormat::new(
         elf,
         &flash_data,
         Some(partition_table),
         None,
         Some(PARTITION_TABLE_OFFSET),
-        Some("factory"),
+        Some(&app_partition),
     )
     .map_err(|error| BuildError::Build(format!("could not construct sparse ESP image: {error}")))?;
     Ok(ImageFormat::from(image)
@@ -259,6 +260,44 @@ fn flash_size(bytes: u32) -> Result<FlashSize, BuildError> {
     }
 }
 
+/// Single-slot tables name the application `factory`. Dual-slot tables name the first
+/// slot `ota_0`, which is where an empty boot-selection region starts.
+fn app_partition_name(partition_table: &Path) -> Result<String, BuildError> {
+    let text = fs::read_to_string(partition_table).map_err(|error| {
+        BuildError::Build(format!(
+            "could not read partition table {}: {error}",
+            partition_table.display()
+        ))
+    })?;
+    app_partition_name_from_csv(&text)
+}
+
+fn app_partition_name_from_csv(text: &str) -> Result<String, BuildError> {
+    let mut names = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split(',');
+        let name = fields.next().unwrap_or("").trim();
+        let kind = fields.next().unwrap_or("").trim();
+        if kind == "app" && !name.is_empty() {
+            names.push(name.to_string());
+        }
+    }
+    if names.iter().any(|name| name == "factory") {
+        return Ok("factory".to_string());
+    }
+    if names.iter().any(|name| name == "ota_0") {
+        return Ok("ota_0".to_string());
+    }
+    names
+        .into_iter()
+        .next()
+        .ok_or_else(|| BuildError::Build("partition table has no app partition".to_string()))
+}
+
 fn part_identity(
     address: u32,
     application_offset: u32,
@@ -297,6 +336,22 @@ mod tests {
         );
         assert!(part_identity(0x20_000, 0x10_000).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn app_partition_name_prefers_factory_then_the_first_ota_slot() {
+        assert_eq!(
+            app_partition_name_from_csv("factory,app,factory,0x10000,0xe6d000,\n").unwrap(),
+            "factory"
+        );
+        assert_eq!(
+            app_partition_name_from_csv(
+                "ota_0,app,ota_0,0x10000,0x730000,\nota_1,app,ota_1,0x740000,0x730000,\n"
+            )
+            .unwrap(),
+            "ota_0"
+        );
+        assert!(app_partition_name_from_csv("nvs,data,nvs,0x9000,0x3000,\n").is_err());
     }
 
     #[test]

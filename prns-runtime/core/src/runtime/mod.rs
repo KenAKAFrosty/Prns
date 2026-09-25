@@ -1,5 +1,6 @@
 mod command;
 mod event;
+mod firmware_update_grants;
 mod health;
 mod identity_blackhole;
 pub mod node;
@@ -42,6 +43,10 @@ pub use command::{
     SetRegisteredAnnounceAppDataError,
 };
 pub use event::{Diagnostic, Message, PrnsEvent};
+pub use firmware_update_grants::{
+    firmware_update_noted_grant, firmware_update_noted_grant_count, firmware_update_permitted,
+    note_firmware_update_grants,
+};
 pub use health::RuntimeHealth;
 pub use identity_blackhole::{
     IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,

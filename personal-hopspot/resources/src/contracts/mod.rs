@@ -10,13 +10,14 @@ use std::path::{Path, PathBuf};
 
 use personal_hopspot_memory::{
     memory_profile, EspPartitionCsvError, EspPartitionTable, MemoryProfileId,
-    ESP_16_MIB_PARTITION_TABLE, ESP_4_MIB_PARTITION_TABLE, ESP_8_MIB_PARTITION_TABLE,
+    ESP_16_MIB_AB_PARTITION_TABLE, ESP_16_MIB_PARTITION_TABLE, ESP_4_MIB_PARTITION_TABLE,
+    ESP_8_MIB_PARTITION_TABLE,
 };
 use thiserror::Error;
 
 use python::PythonContractError;
 
-const PARTITION_ARTIFACTS: [PartitionArtifact; 3] = [
+const PARTITION_ARTIFACTS: [PartitionArtifact; 4] = [
     PartitionArtifact {
         table: &ESP_4_MIB_PARTITION_TABLE,
         relative_path: "personal-hopspot/embedded/esp32/partitions-hopspot-4mb.csv",
@@ -28,6 +29,10 @@ const PARTITION_ARTIFACTS: [PartitionArtifact; 3] = [
     PartitionArtifact {
         table: &ESP_16_MIB_PARTITION_TABLE,
         relative_path: "personal-hopspot/embedded/esp32/partitions-hopspot-16mb.csv",
+    },
+    PartitionArtifact {
+        table: &ESP_16_MIB_AB_PARTITION_TABLE,
+        relative_path: "personal-hopspot/embedded/esp32/partitions-hopspot-16mb-ab.csv",
     },
 ];
 

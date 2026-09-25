@@ -56,6 +56,36 @@ impl EspFirmwareMemory {
         ]
     }
 
+    /// Where a wired flash puts the application, which is also slot A of an A/B profile.
+    #[cfg(all(target_arch = "xtensa", feature = "firmware-update"))]
+    pub(crate) const fn firmware_owned(&self) -> [u32; 2] {
+        region_bounds(self.region(RegionRole::FirmwareImage))
+    }
+
+    /// The other application slot, on a profile that declares one. `None` is not a fault: it is a
+    /// single-slot board, which has nothing to install into and nothing to confirm.
+    #[cfg(all(target_arch = "xtensa", feature = "firmware-update"))]
+    pub(crate) const fn update_slot(&self) -> Option<[u32; 2]> {
+        match self
+            .profile
+            .unique_region_for_role(RegionRole::FirmwareUpdateSlot)
+        {
+            Ok(region) => Some(region_bounds(region)),
+            Err(_) => None,
+        }
+    }
+
+    #[cfg(all(target_arch = "xtensa", feature = "firmware-update"))]
+    pub(crate) const fn boot_selection(&self) -> Option<[u32; 2]> {
+        match self
+            .profile
+            .unique_region_for_role(RegionRole::BootSelection)
+        {
+            Ok(region) => Some(region_bounds(region)),
+            Err(_) => None,
+        }
+    }
+
     #[cfg(target_arch = "xtensa")]
     pub(crate) const fn radio_profile_pages(&self) -> [u32; 2] {
         let region = self.region(RegionRole::RadioProfile);
@@ -124,6 +154,14 @@ impl EspFirmwareMemory {
         assert!(self.profile.journals.len() == 1);
         &self.profile.journals[0]
     }
+}
+
+#[cfg(all(target_arch = "xtensa", feature = "firmware-update"))]
+const fn region_bounds(region: &personal_hopspot_memory::MemoryRegion) -> [u32; 2] {
+    [
+        narrow_address(region.range.start()),
+        narrow_address(region.range.end()),
+    ]
 }
 
 const fn narrow_address(address: u64) -> u32 {

@@ -4,8 +4,8 @@ use crate::identity::IdentityHash;
 use crate::remote_control::{
     RemoteControlEndpoint, RemoteControlNodeIdentities, RemoteControlNodeIdentitySecrets,
     RemoteControlPairingAvailabilityDestination, RemoteControlPairingView,
-    REMOTE_CONTROL_APPLICATION_ASPECTS, REMOTE_CONTROL_APPLICATION_NAME,
-    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    FIRMWARE_UPDATE_APPLICATION_ASPECTS, REMOTE_CONTROL_APPLICATION_ASPECTS,
+    REMOTE_CONTROL_APPLICATION_NAME, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use crate::routing::upstream_app_destinations::{
@@ -19,6 +19,7 @@ use super::{ConfigureRemoteControlIdentitiesError, RemoteControlControllerIdenti
 pub struct RemoteControlServiceConfiguration {
     pub identity_secrets: RemoteControlNodeIdentitySecrets,
     pub maximum_request_bytes: ByteLimit,
+    pub register_firmware_update_destination: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -75,6 +76,8 @@ impl<S: StorageLayout> EngineState<S> {
         let controller_identity = identities.controller().identity_hash();
         let target_identity = identities.target().identity_hash();
         let target_endpoint = identities.target().endpoint();
+        let register_firmware_update_destination =
+            configuration.register_firmware_update_destination;
         let request_endpoint_id = RequestPathHash::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID);
         let pairing_availability_destination =
             RemoteControlPairingAvailabilityDestination::canonical();
@@ -84,6 +87,7 @@ impl<S: StorageLayout> EngineState<S> {
             target_identity,
             target_endpoint,
             pairing_availability_destination,
+            register_firmware_update_destination,
         )?;
 
         self.configure_remote_control_identities(configuration.identity_secrets)
@@ -93,6 +97,7 @@ impl<S: StorageLayout> EngineState<S> {
             target_identity,
             request_endpoint_id,
             configuration.maximum_request_bytes,
+            register_firmware_update_destination,
         );
         let configured_pairing_availability = match configured_pairing_availability {
             Ok(configured_pairing_availability) => configured_pairing_availability,
@@ -103,6 +108,7 @@ impl<S: StorageLayout> EngineState<S> {
                     target_endpoint,
                     request_endpoint_id,
                     pairing_availability_destination,
+                    register_firmware_update_destination,
                 );
                 return Err(error);
             }
@@ -122,6 +128,7 @@ impl<S: StorageLayout> EngineState<S> {
         target_identity: IdentityHash,
         target_endpoint: RemoteControlEndpoint,
         pairing_availability_destination: RemoteControlPairingAvailabilityDestination,
+        register_firmware_update_destination: bool,
     ) -> Result<(), ConfigureRemoteControlServiceError> {
         match self.remote_control_controller_identity {
             RemoteControlControllerIdentityConfiguration::Unavailable => {}
@@ -209,6 +216,13 @@ impl<S: StorageLayout> EngineState<S> {
                 ),
             ));
         }
+        if register_firmware_update_destination
+            && !self.upstream_app_destinations.has_capacity_for(3)
+        {
+            return Err(ConfigureRemoteControlServiceError::RegisterTarget(
+                RegisterDestinationError::RegistryFull,
+            ));
+        }
         if !self.request_handlers.has_capacity_for(1) {
             return Err(ConfigureRemoteControlServiceError::RegisterRequestEndpoint(
                 TablePushError::TableFull,
@@ -222,6 +236,7 @@ impl<S: StorageLayout> EngineState<S> {
         target_identity: IdentityHash,
         request_endpoint_id: RequestPathHash,
         maximum_request_bytes: ByteLimit,
+        register_firmware_update_destination: bool,
     ) -> Result<RemoteControlPairingAvailabilityDestination, ConfigureRemoteControlServiceError>
     {
         let destination = self
@@ -244,8 +259,22 @@ impl<S: StorageLayout> EngineState<S> {
             RequestPolicy::RequireIdentified,
         )
         .map_err(ConfigureRemoteControlServiceError::RegisterRequestEndpoint)?;
-        self.configure_remote_control_pairing(target_identity)
-            .map_err(ConfigureRemoteControlServiceError::ConfigurePairing)
+        let pairing = self
+            .configure_remote_control_pairing(target_identity)
+            .map_err(ConfigureRemoteControlServiceError::ConfigurePairing)?;
+        if register_firmware_update_destination {
+            self.register_single_destination(
+                &target_identity,
+                REMOTE_CONTROL_APPLICATION_NAME,
+                FIRMWARE_UPDATE_APPLICATION_ASPECTS,
+                b"",
+                ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .map_err(ConfigureRemoteControlServiceError::RegisterTarget)?;
+        }
+        Ok(pairing)
     }
 
     fn rollback_remote_control_service_configuration(
@@ -255,9 +284,18 @@ impl<S: StorageLayout> EngineState<S> {
         target_endpoint: RemoteControlEndpoint,
         request_endpoint_id: RequestPathHash,
         pairing_availability_destination: RemoteControlPairingAvailabilityDestination,
+        register_firmware_update_destination: bool,
     ) {
         self.request_handlers
             .unregister(&target_endpoint.destination_hash(), &request_endpoint_id);
+        if register_firmware_update_destination {
+            let firmware_update =
+                crate::remote_control::firmware_update_destination_hash(&target_identity);
+            match self.upstream_app_destinations.unregister(&firmware_update) {
+                UnregisterRegistrationOutcome::Unregistered { .. }
+                | UnregisterRegistrationOutcome::NotRegistered => {}
+            }
+        }
         match self
             .upstream_app_destinations
             .unregister(&pairing_availability_destination.destination_hash())
@@ -313,6 +351,7 @@ mod tests {
         RemoteControlServiceConfiguration {
             identity_secrets: identity_secrets(),
             maximum_request_bytes: ByteLimit::Maximum(512),
+            register_firmware_update_destination: false,
         }
     }
 
@@ -338,6 +377,27 @@ mod tests {
         );
         assert_eq!(engine.held_identity_hashes().len(), 2);
         assert_eq!(engine.upstream_app_destinations().count(), 2);
+    }
+
+    #[test]
+    fn firmware_update_destination_registers_beside_remote_control() {
+        let mut engine = EngineState::<EnoughStorage>::default();
+        let mut configuration = configuration();
+        configuration.register_firmware_update_destination = true;
+        let expected = configuration
+            .identity_secrets
+            .identities()
+            .target()
+            .firmware_update_destination();
+
+        engine
+            .configure_remote_control_service(configuration)
+            .unwrap();
+
+        assert_eq!(engine.upstream_app_destinations().count(), 3);
+        assert!(engine
+            .upstream_app_destinations()
+            .any(|registered| registered.destination == expected));
         assert_eq!(
             engine.remote_control_pairing_view(),
             RemoteControlPairingView::Closed

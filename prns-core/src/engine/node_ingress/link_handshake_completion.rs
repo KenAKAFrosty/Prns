@@ -20,6 +20,7 @@ impl<S: StorageLayout> EngineState<S> {
         command_id: CommandId,
         link_id: LinkId,
         rtt: RttMillis,
+        destination: crate::wire::DestinationHash,
         target: InterfaceId,
         written: &[u8],
         sink: &mut impl FnMut(EngineReaction<'_, Work>),
@@ -34,6 +35,7 @@ impl<S: StorageLayout> EngineState<S> {
             Settlement::EstablishLink(Ok(LinkEstablished {
                 link_id,
                 rtt_millis: rtt.millis(),
+                destination,
             })),
         );
     }
@@ -56,6 +58,10 @@ impl<S: StorageLayout> EngineState<S> {
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
         fill_random(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
+        let destination = self
+            .links
+            .destination_of(&owed.link_id)
+            .unwrap_or(crate::wire::DestinationHash::new([0; 16]));
         if let Ok(written) = self.write_owed_link_rtt(
             &owed.link_id,
             &owed.responder_encryption,
@@ -74,6 +80,7 @@ impl<S: StorageLayout> EngineState<S> {
                 owed.command_id,
                 owed.link_id,
                 owed.rtt,
+                destination,
                 source,
                 &buf[..written],
                 sink,
@@ -101,6 +108,10 @@ impl<S: StorageLayout> EngineState<S> {
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
         fill_random(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
+        let destination = self
+            .links
+            .destination_of(&owed.link_id)
+            .unwrap_or(crate::wire::DestinationHash::new([0; 16]));
         if let Ok(written) = self.write_owed_link_rtt_with_shared_observed(
             &owed.link_id,
             &shared,
@@ -122,6 +133,7 @@ impl<S: StorageLayout> EngineState<S> {
                 owed.command_id,
                 owed.link_id,
                 owed.rtt,
+                destination,
                 source,
                 &buf[..written],
                 sink,

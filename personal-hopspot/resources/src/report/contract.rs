@@ -241,6 +241,8 @@ const fn region_role(value: RegionRole) -> &'static str {
         RegionRole::RecoveryBootloader => "recovery-bootloader",
         RegionRole::FactoryReserved => "factory-reserved",
         RegionRole::Reserved => "reserved",
+        RegionRole::BootSelection => "boot-selection",
+        RegionRole::FirmwareUpdateSlot => "firmware-update-slot",
     }
 }
 

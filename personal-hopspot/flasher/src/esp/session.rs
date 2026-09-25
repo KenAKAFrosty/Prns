@@ -21,6 +21,8 @@ pub(super) struct DeviceIdentity {
 pub(super) struct SparsePart {
     pub(super) offset: u32,
     pub(super) bytes: Vec<u8>,
+    /// Vacant FlashVault identity pages need a true NOR sector erase first.
+    pub(super) erase_before_write: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,6 +220,19 @@ impl EspSession for EspflashSession {
             operation_total: total,
             reported_bytes: None,
         };
+        // Explicitly sector-erase otadata / identity pages before FlashBegin so a
+        // vacant NOR slot is truly all-0xFF (NOR cannot set bits by write).
+        for part in parts {
+            if !part.erase_before_write {
+                continue;
+            }
+            if is_cancelled() {
+                return Err(SessionError::Cancelled);
+            }
+            flasher
+                .erase_region(part.offset, erase_span_bytes(part.bytes.len()))
+                .map_err(map_write_error)?;
+        }
         let mut target = chip.flash_target(SpiAttachParams::default(), use_stub, true, false);
         target
             .begin(flasher.connection())
@@ -295,6 +310,15 @@ fn map_write_error(error: espflash::Error) -> SessionError {
         | espflash::Error::CorruptData(_, _) => SessionError::DeviceLost(error.to_string()),
         _ => SessionError::Write(error.to_string()),
     }
+}
+
+/// ESP flash sector size. Vacant FlashVault slots require a true erase.
+const FLASH_SECTOR_BYTES: u32 = 0x1000;
+
+fn erase_span_bytes(len: usize) -> u32 {
+    let len = u32::try_from(len).unwrap_or(u32::MAX);
+    len.div_ceil(FLASH_SECTOR_BYTES)
+        .saturating_mul(FLASH_SECTOR_BYTES)
 }
 
 struct FlashProgress<'a> {

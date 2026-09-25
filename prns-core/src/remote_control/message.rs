@@ -30,7 +30,7 @@ const MESSAGE_HEADER_ENCODED_LEN: usize = 2;
 const DESCRIPTION_COUNT_ENCODED_LEN: usize = 1;
 const PROTOCOL_ERROR_KIND_ENCODED_LEN: usize = 1;
 const PROTOCOL_ERROR_DETAIL_ENCODED_LEN: usize = 1;
-// V1 request kinds occupy the contiguous wire range 0x01..=0x1e. Unknown values are rejected
+// V1 request kinds occupy the contiguous wire range 0x01..=0x1f. Unknown values are rejected
 // before a request can enter this typed set, so four bytes represent the complete domain.
 const REQUEST_KIND_BITMAP_LEN: usize = 4;
 
@@ -87,6 +87,10 @@ prns_macros::iterable_enum! {
         InspectWifiTransaction = 0x1C,
         InventoryInterfaceDiscoveryGroups = 0x1D,
         ReplaceInterfaceDiscoveryGroups = 0x1E,
+        /// Permission to stream an image to the install destination. It is not a
+        /// remote-control request the node answers. Managing grants receive it through
+        /// `effective_requests` when it was added after the grant was stored.
+        FirmwareUpdate = 0x1F,
     }
 }
 
@@ -213,6 +217,8 @@ impl RemoteControlRequestKind {
                     RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
                 ))
             }
+            Self::FirmwareUpdate => MESSAGE_HEADER_ENCODED_LEN
+                .saturating_add(RemoteControlProtocolError::MAX_ENCODED_BODY_LEN),
         }
     }
 }
@@ -598,6 +604,9 @@ impl RemoteControlRequest {
             }
             RemoteControlRequestKind::InspectWifiTransaction if body.is_empty() => {
                 Ok(Self::InspectWifiTransaction)
+            }
+            RemoteControlRequestKind::FirmwareUpdate => {
+                Err(RemoteControlRequestParseError::Malformed)
             }
             RemoteControlRequestKind::SetInterfacePower => parse_set_interface_power(body),
             RemoteControlRequestKind::SetInterfaceMode => parse_set_interface_mode(body),

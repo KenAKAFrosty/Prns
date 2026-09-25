@@ -160,6 +160,7 @@ async fn a_daemon_timing_oracle_reaches_normal_path_link_and_single_packet_comma
     let established = LinkEstablished {
         link_id: LinkId::new([0x42; 16]),
         rtt_millis: 11,
+        destination: crate::wire::DestinationHash::new([0; 16]),
     };
     completion
         .send(Settlement::EstablishLink(Ok(established)))
@@ -414,6 +415,7 @@ async fn establish_link_resolves_the_link_id_from_the_settlement() {
                 .send(Settlement::EstablishLink(Ok(LinkEstablished {
                     link_id: LinkId::new([0x42; 16]),
                     rtt_millis: 11,
+                    destination: crate::wire::DestinationHash::new([0; 16]),
                 })))
                 .expect("the awaiter is still parked");
         }
@@ -436,6 +438,7 @@ async fn establish_link_with_rtt_preserves_the_full_settlement() {
     let established = LinkEstablished {
         link_id: LinkId::new([0x42; 16]),
         rtt_millis: 11,
+        destination: crate::wire::DestinationHash::new([0; 16]),
     };
 
     match command_rx.recv().await.expect("the command was issued") {

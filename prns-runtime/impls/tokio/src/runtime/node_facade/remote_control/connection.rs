@@ -62,6 +62,19 @@ impl PrnsNodeHandle {
             connection,
         })
     }
+
+    pub async fn connect_remote_control_target_resolved(
+        &self,
+        resolved: crate::runtime::ResolvedRemoteControlTarget,
+    ) -> Result<RemoteControlTargetHandle<'_>, ConnectRemoteControlTargetError> {
+        let connection = self
+            .establish_remote_control_target_resolved(resolved)
+            .await?;
+        Ok(RemoteControlTargetHandle {
+            remote_control: self.remote_control(connection.link_id()),
+            connection,
+        })
+    }
 }
 
 impl RemoteControlTargetConnectionTransport for PrnsNodeHandle {
@@ -561,6 +574,7 @@ mod tests {
                 .send(Settlement::EstablishLink(Ok(LinkEstablished {
                     link_id,
                     rtt_millis: 17,
+                    destination: crate::wire::DestinationHash::new([0; 16]),
                 })))
                 .is_ok());
 
@@ -624,6 +638,7 @@ mod tests {
                 .send(Settlement::EstablishLink(Ok(LinkEstablished {
                     link_id,
                     rtt_millis: 18,
+                    destination: crate::wire::DestinationHash::new([0; 16]),
                 })))
                 .is_ok());
 

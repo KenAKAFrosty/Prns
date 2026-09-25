@@ -13,12 +13,14 @@ use personal_hopspot_core::{
 use personal_rns::identity::vault::{FlashVault, FlashVaultError};
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::remote_control::{
-    RemoteControlNodeIdentityBootstrap, RemoteControlNodeIdentityBootstrapError,
-    REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
+    load_factory_controller_grant, RemoteControlControllerGrant, RemoteControlControllerGrants,
+    RemoteControlInitialControllerGrants, RemoteControlNodeIdentityBootstrap,
+    RemoteControlNodeIdentityBootstrapError, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
 };
 #[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use portable_atomic::{AtomicU8, Ordering};
 use prns_core::entropy::{EntropySource, RuntimeEntropy};
+use static_cell::StaticCell;
 
 use crate::flash::{EspRomFlash, EspRomFlashError};
 use crate::memory::EspFirmwareMemory;
@@ -31,9 +33,28 @@ pub(crate) type Error = FlashIdentityError<EspRomFlashError>;
 pub(crate) type RemoteControlIdentityBootstrapError =
     RemoteControlNodeIdentityBootstrapError<FlashVaultError<EspRomFlashError>>;
 
+pub(crate) struct RemoteControlIdentityLoad {
+    pub(crate) bootstrap: RemoteControlNodeIdentityBootstrap,
+    pub(crate) factory_grant: Option<RemoteControlControllerGrant>,
+}
+
 pub(crate) struct RemoteControlIdentityFlash {
     flash_capacity: usize,
     offset: u32,
+}
+
+pub(crate) fn factory_or_fallback_grants(
+    factory: Option<RemoteControlControllerGrant>,
+) -> RemoteControlInitialControllerGrants<'static> {
+    let Some(grant) = factory else {
+        return RemoteControlInitialControllerGrants::Nobody;
+    };
+    static FACTORY: StaticCell<[RemoteControlControllerGrant; 1]> = StaticCell::new();
+    let grants = FACTORY.init([grant]);
+    RemoteControlInitialControllerGrants::Grants(
+        RemoteControlControllerGrants::try_from(grants.as_slice())
+            .expect("the factory controller grant is a single distinct entry"),
+    )
 }
 
 impl RemoteControlIdentityFlash {
@@ -47,14 +68,19 @@ impl RemoteControlIdentityFlash {
     pub(crate) fn load_or_generate_with_runtime_entropy<S: EntropySource>(
         self,
         entropy: &mut RuntimeEntropy<S>,
-    ) -> Result<RemoteControlNodeIdentityBootstrap, RemoteControlIdentityBootstrapError> {
+    ) -> Result<RemoteControlIdentityLoad, RemoteControlIdentityBootstrapError> {
         let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(
             EspRomFlash::new(self.flash_capacity),
             self.offset,
         );
-        RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+        let bootstrap = RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
             &mut vault, entropy,
-        )
+        )?;
+        let factory_grant = load_factory_controller_grant(&vault).unwrap_or(None);
+        Ok(RemoteControlIdentityLoad {
+            bootstrap,
+            factory_grant,
+        })
     }
 }
 
@@ -71,7 +97,7 @@ const IDENTITY_TASK_STACK_BYTES: usize = 40 * 1024;
 pub(crate) struct S3IdentityBootstraps {
     pub(crate) node: IdentityBootstrap<HopspotNodeIdentity, Error>,
     pub(crate) remote_control:
-        Result<RemoteControlNodeIdentityBootstrap, RemoteControlIdentityBootstrapError>,
+        Result<RemoteControlIdentityLoad, RemoteControlIdentityBootstrapError>,
     pub(crate) ble: IdentityBootstrap<BleIdentity, Error>,
     pub(crate) destination_hashes: personal_hopspot_core::HopspotDestinationHashes,
 }

@@ -265,6 +265,61 @@ const ESP_16_MIB_REGIONS: [MemoryRegion; 12] = [
     ),
 ];
 
+/// The dual-slot variant of [`ESP_16_MIB_REGIONS`]. Every region a provisioned board cares about
+/// keeps its single-slot address: only the one 0xE6D000-byte `firmware` region is re-carved, into
+/// two equal 0x730000-byte slots, the 0x2000 boot selection the bootloader reads, and 0xB000 left
+/// over. That remainder is named rather than left blank, because an unnamed gap in a flash map
+/// gets claimed by the next person who needs a few sectors.
+const ESP_16_MIB_AB_REGIONS: [MemoryRegion; 15] = [
+    ESP_COMMON_PREFIX[0],
+    ESP_COMMON_PREFIX[1],
+    ESP_COMMON_PREFIX[2],
+    ESP_COMMON_PREFIX[3],
+    ESP_COMMON_PREFIX[4],
+    ESP_COMMON_PREFIX[5],
+    ESP_COMMON_PREFIX[6],
+    region(
+        "firmware",
+        FLASH,
+        0x10000,
+        0x740000,
+        RegionOwner::FirmwareImage,
+        RegionRetention::ReplaceWithFirmware,
+        RegionRole::FirmwareImage,
+    ),
+    region(
+        "firmware-update",
+        FLASH,
+        0x740000,
+        0xE70000,
+        RegionOwner::FirmwareImage,
+        RegionRetention::ReplaceWithFirmware,
+        RegionRole::FirmwareUpdateSlot,
+    ),
+    region(
+        "otadata",
+        FLASH,
+        0xE70000,
+        0xE72000,
+        RegionOwner::Platform,
+        RegionRetention::ReplaceWithFirmware,
+        RegionRole::BootSelection,
+    ),
+    region(
+        "firmware-slack",
+        FLASH,
+        0xE72000,
+        0xE7D000,
+        RegionOwner::Platform,
+        RegionRetention::Immutable,
+        RegionRole::Reserved,
+    ),
+    ESP_16_MIB_REGIONS[8],
+    ESP_16_MIB_REGIONS[9],
+    ESP_16_MIB_REGIONS[10],
+    ESP_16_MIB_REGIONS[11],
+];
+
 const ESP_8_MIB_REGIONS: [MemoryRegion; 12] = [
     ESP_COMMON_PREFIX[0],
     ESP_COMMON_PREFIX[1],
@@ -451,6 +506,16 @@ pub const HELTEC_V4_R8: MemoryProfile = MemoryProfile {
     runtime_reservations: &S3_RUNTIME_RESERVATIONS,
 };
 
+pub const HELTEC_V4_R8_AB: MemoryProfile = MemoryProfile {
+    id: MemoryProfileId("heltec-v4-r8-ab"),
+    architecture: ProcessorArchitecture::XtensaEsp32S3,
+    address_spaces: &ESP32S3_16_MIB_FIXED_PSRAM_SPACES,
+    regions: &ESP_16_MIB_AB_REGIONS,
+    firmware: firmware_placement(0x10000, 0x740000, 0x740000),
+    journals: &ESP_16_MIB_JOURNALS,
+    runtime_reservations: &S3_RUNTIME_RESERVATIONS,
+};
+
 pub const HELTEC_E290: MemoryProfile = MemoryProfile {
     id: MemoryProfileId("heltec-e290"),
     architecture: ProcessorArchitecture::XtensaEsp32S3,
@@ -561,6 +626,29 @@ const ESP_16_MIB_PARTITIONS: [EspPartitionBinding; 10] = [
     ),
 ];
 
+const ESP_16_MIB_AB_PARTITIONS: [EspPartitionBinding; 12] = [
+    ESP_COMMON_PARTITIONS[0],
+    ESP_COMMON_PARTITIONS[1],
+    ESP_COMMON_PARTITIONS[2],
+    ESP_COMMON_PARTITIONS[3],
+    ESP_COMMON_PARTITIONS[4],
+    esp_binding(
+        "firmware",
+        "ota_0",
+        EspPartitionKind::OtaApplication { slot: 0 },
+    ),
+    esp_binding(
+        "firmware-update",
+        "ota_1",
+        EspPartitionKind::OtaApplication { slot: 1 },
+    ),
+    esp_binding("otadata", "otadata", EspPartitionKind::OtaData),
+    ESP_16_MIB_PARTITIONS[6],
+    ESP_16_MIB_PARTITIONS[7],
+    ESP_16_MIB_PARTITIONS[8],
+    ESP_16_MIB_PARTITIONS[9],
+];
+
 const ESP_8_MIB_PARTITIONS: [EspPartitionBinding; 10] = ESP_16_MIB_PARTITIONS;
 
 const ESP_4_MIB_PARTITIONS: [EspPartitionBinding; 9] = [
@@ -576,6 +664,7 @@ const ESP_4_MIB_PARTITIONS: [EspPartitionBinding; 9] = [
 ];
 
 const ESP_16_MIB_PROFILES: [MemoryProfileId; 3] = [HELTEC_V4.id, HELTEC_V4_R8.id, HELTEC_E290.id];
+const ESP_16_MIB_AB_PROFILES: [MemoryProfileId; 1] = [HELTEC_V4_R8_AB.id];
 const ESP_8_MIB_PROFILES: [MemoryProfileId; 2] =
     [T_BEAM_SUPREME.id, HELTEC_WIRELESS_STICK_LITE_V3.id];
 const ESP_4_MIB_PROFILES: [MemoryProfileId; 1] = [XIAO_ESP32_C6.id];
@@ -583,6 +672,11 @@ const ESP_4_MIB_PROFILES: [MemoryProfileId; 1] = [XIAO_ESP32_C6.id];
 pub const ESP_16_MIB_PARTITION_TABLE: EspPartitionTable = EspPartitionTable {
     profiles: &ESP_16_MIB_PROFILES,
     partitions: &ESP_16_MIB_PARTITIONS,
+};
+
+pub const ESP_16_MIB_AB_PARTITION_TABLE: EspPartitionTable = EspPartitionTable {
+    profiles: &ESP_16_MIB_AB_PROFILES,
+    partitions: &ESP_16_MIB_AB_PARTITIONS,
 };
 
 pub const ESP_8_MIB_PARTITION_TABLE: EspPartitionTable = EspPartitionTable {
@@ -601,6 +695,7 @@ pub fn esp_partition_table(id: MemoryProfileId) -> Option<&'static EspPartitionT
         &ESP_16_MIB_PARTITION_TABLE,
         &ESP_8_MIB_PARTITION_TABLE,
         &ESP_4_MIB_PARTITION_TABLE,
+        &ESP_16_MIB_AB_PARTITION_TABLE,
     ]
     .into_iter()
     .find(|table| table.supports(id))

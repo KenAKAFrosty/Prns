@@ -10,10 +10,20 @@ pub const REMOTE_CONTROL_APPLICATION_ASPECTS: &[&str] = &[
     REMOTE_CONTROL_NAMESPACE_ASPECT,
     REMOTE_CONTROL_SERVICE_ASPECT,
 ];
+pub const FIRMWARE_UPDATE_SERVICE_ASPECT: &str = "ota";
+pub const FIRMWARE_UPDATE_APPLICATION_ASPECTS: &[&str] = &[
+    REMOTE_CONTROL_NAMESPACE_ASPECT,
+    FIRMWARE_UPDATE_SERVICE_ASPECT,
+];
 
 /// Pre-computed and saved here statically to avoid unnecessary hashing at runtime for what is a stable hash on these well-known app name & aspects
 const REMOTE_CONTROL_DOTTED_NAME_HASH: DottedNameHash =
     DottedNameHash::new([0xfc, 0xce, 0x4e, 0xf8, 0x4b, 0x57, 0xc8, 0xe9, 0xb2, 0xe3]);
+
+/// `reticulum.remote.ota`, pinned the same way as the control name so a paired controller can
+/// derive the install destination from the target identity alone.
+const FIRMWARE_UPDATE_DOTTED_NAME_HASH: DottedNameHash =
+    DottedNameHash::new([0x01, 0xfc, 0x00, 0x81, 0x61, 0x20, 0xbb, 0x7c, 0x72, 0x14]);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlEndpoint {
@@ -60,6 +70,19 @@ impl RemoteControlTargetIdentity {
     pub fn endpoint(&self) -> RemoteControlEndpoint {
         self.into()
     }
+
+    /// The always-on install destination. A path to the remote-control address is not a path here.
+    #[must_use]
+    pub fn firmware_update_destination(&self) -> DestinationHash {
+        firmware_update_destination_hash(&self.identity_hash())
+    }
+}
+
+#[must_use]
+pub fn firmware_update_destination_hash(
+    identity: &crate::identity::IdentityHash,
+) -> DestinationHash {
+    derive_destination_hash(identity, &FIRMWARE_UPDATE_DOTTED_NAME_HASH)
 }
 
 impl RemoteControlControllerIdentity {
@@ -77,6 +100,17 @@ mod tests {
         IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey,
     };
     use crate::routing::announce::expand_name;
+
+    #[test]
+    fn pinned_firmware_update_dotted_name_hash_matches_sha256_of_the_canonical_name() {
+        assert_eq!(
+            expand_name(
+                REMOTE_CONTROL_APPLICATION_NAME,
+                FIRMWARE_UPDATE_APPLICATION_ASPECTS,
+            ),
+            Ok(FIRMWARE_UPDATE_DOTTED_NAME_HASH),
+        );
+    }
 
     #[test]
     fn pinned_remote_control_dotted_name_hash_matches_sha256_of_the_canonical_name() {

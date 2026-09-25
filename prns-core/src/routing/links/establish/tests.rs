@@ -1292,6 +1292,7 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
             Settlement::EstablishLink(Ok(LinkEstablished {
                 link_id: dispatch.link_id,
                 rtt_millis: 250,
+                destination: peer_destination(),
             })),
         )],
     );
@@ -1407,6 +1408,7 @@ fn the_full_handshake_activates_both_ends() {
             Settlement::EstablishLink(Ok(LinkEstablished {
                 link_id,
                 rtt_millis: 250,
+                destination: peer_destination(),
             })),
         )],
         "the command settles established with the measured round trip",
@@ -1437,6 +1439,7 @@ fn the_full_handshake_activates_both_ends() {
             Settlement::EstablishLink(Ok(LinkEstablished {
                 link_id,
                 rtt_millis: 500,
+                destination: peer_destination(),
             })),
         )],
         "the responder journals the link up at max(measured, reported)",
@@ -1697,6 +1700,7 @@ fn assert_numeric_lrrtt_activates(case: &AuthenticatedNumericLrrttCase) {
             Settlement::EstablishLink(Ok(LinkEstablished {
                 link_id: dispatch.link_id,
                 rtt_millis: case.expected_rtt_millis,
+                destination: peer_destination(),
             })),
         )],
     );

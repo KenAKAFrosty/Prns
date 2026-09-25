@@ -75,6 +75,9 @@ pub enum CloseLinkRejection {
 pub struct LinkEstablished {
     pub link_id: LinkId,
     pub rtt_millis: u64,
+    /// Destination the link serves. Responder links carry the local app destination. Initiator
+    /// links carry the destination that was requested.
+    pub destination: crate::wire::DestinationHash,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,10 +285,12 @@ mod tests {
             EstablishLink::from_settlement(Settlement::EstablishLink(Ok(LinkEstablished {
                 link_id: LinkId::new([0x22; 16]),
                 rtt_millis: 250,
+                destination: DestinationHash::new([0x11; 16]),
             }))),
             Some(Ok(LinkEstablished {
                 link_id: LinkId::new([0x22; 16]),
                 rtt_millis: 250,
+                destination: DestinationHash::new([0x11; 16]),
             })),
         );
         assert_eq!(

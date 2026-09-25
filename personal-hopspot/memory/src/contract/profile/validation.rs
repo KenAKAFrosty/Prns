@@ -74,6 +74,19 @@ pub enum ValidationError {
     RedundantLegacyTransportEnvelope {
         region: MemoryRegionId,
     },
+    InvalidUpdateSlot {
+        region: MemoryRegionId,
+    },
+    UpdateSlotSmallerThanFirmware {
+        slot: MemoryRegionId,
+        firmware_owned: MemoryRegionId,
+    },
+    MissingBootSelection {
+        slot: MemoryRegionId,
+    },
+    InvalidBootSelection {
+        region: MemoryRegionId,
+    },
     UnknownJournalRegion {
         region: MemoryRegionId,
     },
@@ -119,6 +132,7 @@ impl MemoryProfile {
         self.validate_spaces_and_regions()?;
         self.validate_region_overlaps()?;
         self.validate_firmware_placement()?;
+        self.validate_update_slots()?;
         self.validate_journals()?;
         self.validate_reservations()
     }
@@ -306,6 +320,54 @@ impl MemoryProfile {
             }
             _ => Ok(()),
         }
+    }
+
+    /// An update slot holds a firmware image the running one can be replaced by, so it answers to
+    /// the same owner and retention as the firmware-owned region and is never smaller than it.
+    /// That size rule is what lets `validate_firmware_image` keep binding to the firmware-owned
+    /// region alone: an image that fits the region it is built for fits every slot it can be
+    /// installed into.
+    fn validate_update_slots(&self) -> Result<(), ValidationError> {
+        let Some(firmware_owned) = self.region(self.firmware.firmware_owned_region) else {
+            return Err(ValidationError::UnknownFirmwareRegion {
+                region: self.firmware.firmware_owned_region,
+            });
+        };
+        for region in self.regions {
+            if region.role != RegionRole::BootSelection {
+                continue;
+            }
+            if region.owner != RegionOwner::Platform
+                || region.retention != RegionRetention::ReplaceWithFirmware
+            {
+                return Err(ValidationError::InvalidBootSelection { region: region.id });
+            }
+        }
+        for slot in self.regions {
+            if slot.role != RegionRole::FirmwareUpdateSlot {
+                continue;
+            }
+            if slot.address_space != self.firmware.address_space
+                || slot.owner != RegionOwner::FirmwareImage
+                || slot.retention != RegionRetention::ReplaceWithFirmware
+                || !slot.range.is_aligned(firmware_owned.alignment)
+            {
+                return Err(ValidationError::InvalidUpdateSlot { region: slot.id });
+            }
+            if slot.range.byte_len() < firmware_owned.range.byte_len() {
+                return Err(ValidationError::UpdateSlotSmallerThanFirmware {
+                    slot: slot.id,
+                    firmware_owned: firmware_owned.id,
+                });
+            }
+            if !self.regions.iter().any(|region| {
+                region.role == RegionRole::BootSelection
+                    && region.address_space == slot.address_space
+            }) {
+                return Err(ValidationError::MissingBootSelection { slot: slot.id });
+            }
+        }
+        Ok(())
     }
 
     fn validate_journals(&self) -> Result<(), ValidationError> {

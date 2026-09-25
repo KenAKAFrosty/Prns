@@ -38,6 +38,8 @@ pub enum RegionRole {
     RecoveryBootloader,
     FactoryReserved,
     Reserved,
+    BootSelection,
+    FirmwareUpdateSlot,
 }
 
 impl RegionRole {
@@ -59,6 +61,8 @@ impl RegionRole {
             Self::RecoveryBootloader => matches!(other, Self::RecoveryBootloader),
             Self::FactoryReserved => matches!(other, Self::FactoryReserved),
             Self::Reserved => matches!(other, Self::Reserved),
+            Self::BootSelection => matches!(other, Self::BootSelection),
+            Self::FirmwareUpdateSlot => matches!(other, Self::FirmwareUpdateSlot),
         }
     }
 }

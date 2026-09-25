@@ -27,9 +27,9 @@
       }
     },
     {
-      "id": "heltec-v4-r8",
+      "id": "heltec-v4-r8-ab",
       "display_name": "Heltec LoRa 32 V4 (S3R8)",
-      "memory_profile": "heltec-v4-r8",
+      "memory_profile": "heltec-v4-r8-ab",
       "architecture": "xtensa-esp32s3",
       "rust_target": "xtensa-esp32s3-none-elf",
       "architecture_adapter": "xtensa-esp32s3-gnu-ld",
@@ -38,12 +38,12 @@
         "evidence": {
           "source": {
             "kind": "clean-commit",
-            "commit": "6d583e785f2977f0dc4adb56cac93a3475e41c10"
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
           },
-          "report_fingerprint": "e7c905f20596dce58e0e8dc0bccb11c2b01ea0c60a0ab86e1568dd91c2f4a9d6",
+          "report_fingerprint": "84baba2befdfafce21d46660b0b623383209921fc6462c0f69c5afeb8d31b73a",
           "build_fingerprint": "ba2f94fb2ac21174b5b1ab62e95ab8f14ea426e8b8dd923c8505fdeaec644ce4",
           "toolchain_fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
-          "memory_contract_fingerprint": "1892468145b17702bed6ff0d1fac7859c083bff8467db188a183b1561f39ad44"
+          "memory_contract_fingerprint": "c930afd418ee1f5545285a77d1547bfbe4d5a74d245edf1270937ad8f81b1ed3"
         }
       }
     },
