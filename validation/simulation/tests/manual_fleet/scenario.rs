@@ -6,6 +6,7 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, InstantMillis, PrnsCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::InterfaceId;
 use personal_rns::manifold::tokio::TokioClock;
 use personal_rns::request_endpoints;
 use personal_rns::routing::links::LinkId;
@@ -50,6 +51,24 @@ pub enum Completion {
         node: usize,
         elapsed: DurationMillis,
     },
+    Route {
+        node: usize,
+        hops: u8,
+        interface: InterfaceId,
+    },
+}
+
+pub enum NodeRole {
+    Endpoint,
+    Transport,
+}
+
+pub struct NodeSpec {
+    pub index: usize,
+    pub role: NodeRole,
+    pub interfaces: Vec<VirtualInterface>,
+    pub heard: Rc<RefCell<Vec<DestinationHash>>>,
+    pub heard_capacity: NonZeroUsize,
 }
 
 pub struct NodeControl {
@@ -96,17 +115,29 @@ pub fn destination(index: usize) -> PreConfiguredDestination<'static> {
 
 pub fn add_node(
     runner: &mut ManualTaskRunner<'_, Completion>,
-    index: usize,
-    interface: VirtualInterface,
-    heard: Rc<RefCell<Vec<DestinationHash>>>,
+    spec: NodeSpec,
 ) -> (ManualTaskId, oneshot::Receiver<NodeControl>) {
+    let NodeSpec {
+        index,
+        role,
+        interfaces,
+        heard,
+        heard_capacity,
+    } = spec;
     let (ready, control) = oneshot::channel();
     let (shutdown, stopping) = oneshot::channel();
     let task = runner
         .insert(async move {
             let node = PrnsNode::new(PrnsNodeRecipe {
                 remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
-                transport_identity: None,
+                transport_identity: match role {
+                    NodeRole::Endpoint => None,
+                    NodeRole::Transport => {
+                        let mut secret = [0xB8; IDENTITY_SECRET_KEY_LEN];
+                        secret[..8].copy_from_slice(&(index as u64).to_be_bytes());
+                        Some(Zeroizing::new(secret))
+                    }
+                },
                 pre_configured_destinations: [destination(index)],
                 app_state: NoRemoteControlHostControls,
                 storage: GrowableHeap,
@@ -118,14 +149,19 @@ pub fn add_node(
                     {
                         let mut heard = heard.borrow_mut();
                         if !heard.contains(&destination) {
-                            assert!(heard.len() < 2, "only ring neighbors may be heard");
+                            assert!(
+                                heard.len() < heard_capacity.get(),
+                                "announce inventory must stay bounded"
+                            );
                             heard.push(destination);
                             heard.sort_by_key(|destination| *destination.as_bytes());
                         }
                     }
                 },
                 interfaces: move |handle: &PrnsNodeHandle| {
-                    let _attached = handle.add_interface(interface);
+                    for interface in interfaces {
+                        let _attached = handle.add_interface(interface);
+                    }
                 },
                 persistence: NoPersistence,
             })

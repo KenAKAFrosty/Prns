@@ -239,6 +239,41 @@ coverage, total per-node memory cost, throughput, or a maximum fleet size.
 cargo test --locked -p prns-simulation --features controlled-time --test manual_fleet
 ```
 
+### Routed multi-hop coordination
+
+The same test target also runs a 20-node transport topology: 16 clients, two
+servers, and two forwarding nodes. Each client has an isolated point-to-point
+segment to the first transport, each server has one to the second, and a single
+segment joins the transports. The 19 segments use 38 virtual interfaces with
+one permitted neighbor each. They share the lab's frame clock, not a broadcast
+domain; there is no direct client-to-server delivery path.
+
+The test retains production forwarding and ingress policies and the existing
+inline-crypto mode. Both server announcements must reach every client. The
+production route inventory must report three hops and the correct ingress
+interface for each client's chosen server. Sixteen concurrent links then carry
+exact request/response payloads across both transports.
+
+Cutting the transport connection leaves all 16 cross-segment requests pending
+until their explicit 50-millisecond timeouts, while both servers can still form
+links and exchange requests through their local transport. Restoring the
+connection permits requests on all existing cross-segment links. Orderly
+shutdown must complete every node, detach all 38 interfaces exactly once, and
+leave no actors or delayed deliveries. The bounded medium trace must remain
+complete and show no receive-queue or delivery drops.
+
+Discovery uses a bounded 10-second simulated window with one-millisecond steps;
+its exact completion time is not fixed because production rebroadcast jitter
+still uses OS entropy. This scenario announces only two destinations and does
+not stress the default ingress guard's held-announce burst release. It covers a
+tree and restoration of the same transport connection, not alternate-route
+selection, transport restarts, thousands of routed nodes, or performance limits.
+No shipping policy, runtime, or wire behavior changes are needed for this test.
+
+```console
+cargo test --locked -p prns-simulation --features controlled-time --test manual_fleet routing
+```
+
 ## Large-fleet design requirements
 
 Both media require an explicit topology choice: fully connected, or sparse with
@@ -290,7 +325,8 @@ observations, not permission to establish a connection.
 
 Many-node scenarios are a first-class target, not a sequence of isolated
 two-node tests. The coordinated ring establishes a 128-node correctness baseline;
-thousands of production nodes remain a scale-test milestone, not demonstrated
+the 20-node transport scenario adds routed multi-hop and partition recovery.
+Thousands of production nodes remain a scale-test milestone, not demonstrated
 capacity or a promised limit. The BLE full-node capstone still covers two nodes.
 
 - Run production nodes on a shared asynchronous runner, without requiring a

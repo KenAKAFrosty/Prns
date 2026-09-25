@@ -15,9 +15,11 @@ use prns_simulation::{
     TransmissionOrdinal, TransmissionRule, VirtualMedium, VirtualMediumConfig,
 };
 
+mod routing;
 mod scenario;
 use scenario::{
-    add_node, announce, destination, nonzero, request, settle, Completion, NODE_COUNT, QUERY_PATH,
+    add_node, announce, destination, nonzero, request, settle, Completion, NodeRole, NodeSpec,
+    NODE_COUNT, QUERY_PATH,
 };
 
 const REQUEST_TIMEOUT_MILLIS: u64 = 50;
@@ -93,7 +95,18 @@ fn full_nodes_exchange_in_a_sparse_ring_then_survive_a_partition_and_shut_down()
     let (node_tasks, pending_controls): (Vec<_>, Vec<_>) = interfaces
         .into_iter()
         .enumerate()
-        .map(|(index, interface)| add_node(&mut runner, index, interface, heard[index].clone()))
+        .map(|(index, interface)| {
+            add_node(
+                &mut runner,
+                NodeSpec {
+                    index,
+                    role: NodeRole::Endpoint,
+                    interfaces: vec![interface],
+                    heard: heard[index].clone(),
+                    heard_capacity: nonzero(2),
+                },
+            )
+        })
         .unzip();
     assert!(settle(&mut runner).is_empty());
     let controls: Vec<_> = pending_controls
