@@ -10162,7 +10162,8 @@
     {
       "graphs": {
         "esp32-s3-heltec-r8": [
-          "default"
+          "default",
+          "firmware-update"
         ]
       },
       "name": "hopspot-heltec-v4-r8",
@@ -15636,6 +15637,7 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "firmware-update",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
@@ -15650,6 +15652,7 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "firmware-update",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
@@ -15664,6 +15667,7 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "firmware-update",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
@@ -15678,6 +15682,7 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "firmware-update",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
@@ -15692,6 +15697,7 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "firmware-update",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
@@ -15706,6 +15712,7 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "firmware-update",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
