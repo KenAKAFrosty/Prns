@@ -158,6 +158,14 @@ function fakeProvider(
   const initial = snapshot(2n, includeObservation, pairing, pairedTargets, pairingCandidates);
   const runtime: DevelopmentRuntime = {
     attachHost: async () => undefined,
+    readMessagingProfile: async () =>
+      Bindings.LocalMessagingProfileOutcome.Ready.new({
+        profile: { displayName: "prns", destination: undefined },
+      }),
+    setMessagingName: async (displayName) =>
+      Bindings.LocalMessagingProfileOutcome.Ready.new({
+        profile: { displayName, destination: undefined },
+      }),
     readBluetoothSettings: async () =>
       Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled: true }),
     setBluetoothEnabled: async (enabled) =>
@@ -183,6 +191,8 @@ function fakeProvider(
     startRemoteWifiTrial: async () => Bindings.RemoteWifiCommandOutcome.Busy.new(),
     inspectRemoteWifiTrial: async () => Bindings.RemoteWifiCommandOutcome.Busy.new(),
     finishRemoteWifiTrial: async () => Bindings.RemoteWifiCommandOutcome.Busy.new(),
+    saveDiscoveredContact: async () => Bindings.ContactMutationOutcome.NotObserved.new(),
+    clearLxmfDiscovery: async () => Bindings.LxmfDiscoveryClearOutcome.Cleared,
     saveObservedDestination: async () => Bindings.ContactMutationOutcome.NotObserved.new(),
     createManualContact: async () => Bindings.ContactMutationOutcome.NotFound.new(),
     setContactAlias: async () => Bindings.ContactMutationOutcome.NotFound.new(),
@@ -203,7 +213,7 @@ function fakeProvider(
       }),
     retryLxmfMessage: async () => Bindings.RetryLxmfMessageOutcome.NotFound.new(),
     cancelLxmfMessage: async () => Bindings.CancelLxmfMessageOutcome.NotFound.new(),
-    announceLxmf: async () => Bindings.AnnounceLxmfOutcome.Announced,
+    announceLxmf: async () => Bindings.AnnounceLxmfOutcome.Requested,
     measureLxmfText: async () =>
       Bindings.MeasureLxmfTextOutcome.Measured.new({
         wireBytes: 113,
@@ -482,6 +492,8 @@ describe("Foundation 1 Nodes runtime binding", () => {
       destination: observedDestination,
       identity: undefined,
       alias: "Saved contact",
+      announcedName: undefined,
+      isMessaging: false,
       pinned: true,
     };
     jest
@@ -1069,6 +1081,8 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(routeConsumesDevelopmentSnapshot("/nodes")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/nodes/pair")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/inbox")).toBe(true);
+    expect(routeConsumesDevelopmentSnapshot("/contacts")).toBe(true);
+    expect(routeConsumesDevelopmentSnapshot("/contacts/0011")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/more/interfaces")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/more/interfaces/ble")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/inbox/0011")).toBe(true);
@@ -1307,6 +1321,8 @@ describe("Foundation 1 Nodes runtime binding", () => {
             destination: observedDestination,
             identity: undefined,
             alias: "Offline contact",
+            announcedName: undefined,
+            isMessaging: false,
             pinned: true,
           },
         ],
@@ -1476,6 +1492,43 @@ describe("Foundation 1 Nodes runtime binding", () => {
       detail: "App data must be reset before it can be opened. Open Recovery in Settings.",
       storagePreparation,
     });
+  });
+  it("keeps messaging profile settings available after startup fails without announcing", async () => {
+    const stop = jest.fn();
+    const profile = { displayName: "Offline name", destination: observedDestination };
+    const readMessagingProfile = jest.fn(async () =>
+      Bindings.LocalMessagingProfileOutcome.Ready.new({ profile }),
+    );
+    const setMessagingName = jest.fn(async (displayName: string) =>
+      Bindings.LocalMessagingProfileOutcome.Ready.new({ profile: { ...profile, displayName } }),
+    );
+    const announceLxmf = jest.fn(async () => Bindings.AnnounceLxmfOutcome.Requested);
+    const base = fakeProvider(stop, { readMessagingProfile, setMessagingName, announceLxmf });
+    if (!("runtime" in base)) throw new Error("expected native runtime");
+    const acquire = jest.fn(() => Effect.die("startup failed"));
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={{ ...base, acquire }}>
+        <RuntimeViewProbe publish={publish} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].phase).toBe("failed"));
+    const failed = publish.mock.calls.at(-1)?.[0];
+    expect(await failed?.readMessagingProfile()).toEqual({
+      type: "outcome",
+      outcome: Bindings.LocalMessagingProfileOutcome.Ready.new({ profile }),
+    });
+    expect(await failed?.setMessagingName("New offline name")).toEqual({
+      type: "outcome",
+      outcome: Bindings.LocalMessagingProfileOutcome.Ready.new({
+        profile: { ...profile, displayName: "New offline name" },
+      }),
+    });
+    expect(setMessagingName).toHaveBeenCalledWith("New offline name");
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(announceLxmf).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+    view.unmount();
   });
   it("holds one scoped runtime across the Nodes surface and stops it on layout release", async () => {
     const stop = jest.fn();
@@ -2335,6 +2388,8 @@ describe("Foundation 1 Nodes runtime binding", () => {
           destination: observedDestination,
           identity: observedIdentity,
           alias: undefined,
+          announcedName: undefined,
+          isMessaging: true,
           pinned: false,
         },
       }),

@@ -17,6 +17,10 @@ const mockReplace = jest.fn();
 const mockDestination = destinationHash(Uint8Array.from({ length: 16 }, (_, index) => index));
 const mockPeer: LxmfPeerSummary = {
   destination: mockDestination,
+  identity: new Uint8Array(16).fill(0x11),
+  sourceInterface: new Uint8Array(8).fill(0x22),
+  hops: 1,
+  isPathResponse: false,
   displayName: "Announced peer",
   requiredStampCost: undefined,
   lastObservedAgeMillis: 25n,
@@ -71,6 +75,8 @@ const mockContact: Contact = {
   destination: mockDestination,
   identity: undefined,
   alias: "Saved alias",
+  announcedName: "Remembered peer",
+  isMessaging: true,
   pinned: false,
 };
 const waitingBluetoothAuthorization: Bindings.BluetoothAuthorizationStatus = {
@@ -152,7 +158,7 @@ const mockRefreshSnapshot = jest.fn(async () => ({
 }));
 const mockAnnounceLxmf = jest.fn(async () => ({
   type: "outcome" as const,
-  outcome: Bindings.AnnounceLxmfOutcome.Announced,
+  outcome: Bindings.AnnounceLxmfOutcome.Requested,
 }));
 const mockListContacts = jest.fn(async () =>
   Bindings.ContactListOutcome.Listed.new({
@@ -198,6 +204,9 @@ beforeEach(() => {
   mockActiveSnapshot = mockSnapshot;
   mockBluetoothAuthorization = null;
   mockLifecycleFailure = null;
+  mockListContacts.mockResolvedValue(
+    Bindings.ContactListOutcome.Listed.new({ contacts: [mockContact] }),
+  );
   mockListLxmfPeers.mockResolvedValue({
     type: "outcome",
     outcome: Bindings.LxmfPeerListOutcome.Listed.new({
@@ -237,25 +246,13 @@ beforeEach(() => {
   });
 });
 describe("durable LXMF screens", () => {
-  test("states messaging limits and address sharing in user language", async () => {
+  test("keeps the Inbox focused on conversations with no network announce action", async () => {
     const screen = render(<InboxScreen />);
     expect(await screen.findByText("Saved alias")).toBeTruthy();
     expect(screen.getByText("Keep prns open for reliable message delivery.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Messaging options" })).toBeNull();
     expect(screen.queryByText("Share messaging address")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Messaging options" }).props.accessibilityState.expanded,
-    ).toBe(false);
-    fireEvent.press(screen.getByRole("button", { name: "Messaging options" }));
-    expect(
-      screen.getByText(
-        /Share this device's messaging address before exchanging messages with a new contact/u,
-      ),
-    ).toBeTruthy();
     expect(mockAnnounceLxmf).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByRole("button", { name: "Share messaging address" }));
-    await waitFor(() => expect(mockAnnounceLxmf).toHaveBeenCalledTimes(1));
-    fireEvent.press(screen.getByRole("button", { name: "Hide messaging options" }));
-    expect(screen.queryByText("Share messaging address")).toBeNull();
   });
   test("describes degraded messaging health without implementation details", async () => {
     mockActiveSnapshot = {
@@ -420,7 +417,11 @@ describe("durable LXMF screens", () => {
       expect(screen.getByText("140 bytes used · 291 bytes available")).toBeTruthy();
     });
     fireEvent.press(screen.getByText("Send message"));
-    expect(await screen.findByText("This address is not ready to receive messages.")).toBeTruthy();
+    expect(
+      await screen.findByText(
+        "This contact could not be found. Check your connection and try again. Your message has not been queued.",
+      ),
+    ).toBeTruthy();
     expect(screen.getByText("Compose")).toBeTruthy();
     expect(mockReplace).not.toHaveBeenCalled();
   });
@@ -585,4 +586,200 @@ test("retains the native storage reset outcome through an offline mailbox read",
   expect(screen.queryByText(/private storage detail|storage bootstrap failed/)).toBeNull();
   expect(screen.queryByText("No conversations")).toBeNull();
   expect(screen.queryByText("No messages are saved on this device.")).toBeNull();
+});
+
+describe("messaging recipient journey", () => {
+  test("does not create a conversation for an announce-only peer", async () => {
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.LxmfMessageListOutcome.Listed.new({ messages: [] }),
+    });
+    const view = render(<InboxScreen />);
+    expect(await view.findByText("No conversations")).toBeTruthy();
+    expect(view.queryByRole("link", { name: "Open conversation" })).toBeNull();
+    expect(view.queryByText("Saved alias")).toBeNull();
+  });
+  test("selects saved messaging recipients by name and excludes nonmessaging contacts", async () => {
+    mockListContacts.mockResolvedValue(
+      Bindings.ContactListOutcome.Listed.new({
+        contacts: [
+          mockContact,
+          {
+            ...mockContact,
+            destination: new Uint8Array(16).fill(0xcc),
+            alias: "Managed board",
+            isMessaging: false,
+          },
+        ],
+      }),
+    );
+    const view = render(<ComposeScreen initialDestination={null} />);
+    expect(await view.findByRole("button", { name: "Choose Saved alias" })).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Choose Managed board" })).toBeNull();
+    expect(view.queryByLabelText("Recipient")).toBeNull();
+    fireEvent.press(view.getByRole("button", { name: "Choose Saved alias" }));
+    expect(view.getByLabelText("Message")).toBeTruthy();
+    await view.findByText("140 bytes used · 291 bytes available");
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+  });
+  test("selects a discovered recipient without saving or announcing", async () => {
+    mockListContacts.mockResolvedValue(Bindings.ContactListOutcome.Listed.new({ contacts: [] }));
+    const view = render(<ComposeScreen initialDestination={null} />);
+    fireEvent.press(view.getByRole("button", { name: "Discovered" }));
+    fireEvent.press(await view.findByRole("button", { name: "Choose Announced peer" }));
+    expect(view.getByLabelText("Message")).toBeTruthy();
+    await view.findByText("140 bytes used · 291 bytes available");
+    expect(mockAnnounceLxmf).not.toHaveBeenCalled();
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+  });
+  test("retains manual address entry as a secondary path", async () => {
+    const view = render(<ComposeScreen initialDestination={null} />);
+    fireEvent.press(view.getByRole("button", { name: "Enter address" }));
+    fireEvent.changeText(view.getByLabelText("Recipient"), "bad");
+    expect(view.getByText("Enter exactly 32 hexadecimal characters.")).toBeTruthy();
+    expect(view.queryByLabelText("Message")).toBeNull();
+    fireEvent.changeText(view.getByLabelText("Recipient"), "00".repeat(16));
+    expect(view.getByLabelText("Message")).toBeTruthy();
+    await waitFor(() => expect(mockMeasureLxmfText).toHaveBeenCalled());
+  });
+  test("shows Finding contact and holds the recipient and draft until durable acceptance", async () => {
+    let finish: ((result: RuntimeCommandResult<SendDirectTextOutcome>) => void) | undefined;
+    mockSendDirectText.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const view = render(<ComposeScreen initialDestination={"000102030405060708090a0b0c0d0e0f"} />);
+    fireEvent.changeText(view.getByLabelText("Message"), "Keep my draft");
+    await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+    fireEvent.press(view.getByRole("button", { name: "Send message" }));
+    expect(view.getByRole("button", { name: "Finding contact…" })).toBeDisabled();
+    expect(view.getByRole("button", { name: "Change recipient" })).toBeDisabled();
+    expect(view.getByLabelText("Message").props.editable).toBe(false);
+    expect(mockReplace).not.toHaveBeenCalled();
+    await act(async () =>
+      finish?.({
+        type: "outcome",
+        outcome: Bindings.SendDirectTextOutcome.RecipientUnavailable.new({
+          detail: "private routing detail",
+        }),
+      }),
+    );
+    expect(view.getByLabelText("Message").props.value).toBe("Keep my draft");
+    expect(view.getByRole("button", { name: "Send message" })).toBeEnabled();
+    expect(view.queryByText("private routing detail")).toBeNull();
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+  test("shows identity conflict without losing the unsent draft", async () => {
+    mockSendDirectText.mockResolvedValueOnce({
+      type: "outcome",
+      outcome: Bindings.SendDirectTextOutcome.IdentityConflict.new({
+        expected: new Uint8Array(16).fill(1),
+        observed: new Uint8Array(16).fill(2),
+      }),
+    });
+    const view = render(<ComposeScreen initialDestination={"000102030405060708090a0b0c0d0e0f"} />);
+    fireEvent.changeText(view.getByLabelText("Message"), "Check identity first");
+    await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+    fireEvent.press(view.getByRole("button", { name: "Send message" }));
+    expect(
+      await view.findByText(/This contact's identity differs from the one you saved/),
+    ).toBeTruthy();
+    expect(view.getByLabelText("Message").props.value).toBe("Check identity first");
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+  test("does not navigate a departed composer when native work finishes", async () => {
+    let finish: ((result: RuntimeCommandResult<SendDirectTextOutcome>) => void) | undefined;
+    mockSendDirectText.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const view = render(<ComposeScreen initialDestination={"000102030405060708090a0b0c0d0e0f"} />);
+    fireEvent.changeText(view.getByLabelText("Message"), "Native owns the accepted write");
+    await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+    fireEvent.press(view.getByRole("button", { name: "Send message" }));
+    view.unmount();
+    await act(async () =>
+      finish?.({
+        type: "outcome",
+        outcome: Bindings.SendDirectTextOutcome.Accepted.new({ localRecordId: 99n }),
+      }),
+    );
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+});
+
+test("a reused compose route selects its new recipient and ignores the old send completion", async () => {
+  let finish: ((result: RuntimeCommandResult<SendDirectTextOutcome>) => void) | undefined;
+  mockSendDirectText.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const view = render(<ComposeScreen initialDestination={"000102030405060708090a0b0c0d0e0f"} />);
+  fireEvent.changeText(view.getByLabelText("Message"), "First recipient");
+  await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+  fireEvent.press(view.getByRole("button", { name: "Send message" }));
+  view.rerender(<ComposeScreen initialDestination={"cc".repeat(16)} />);
+  expect(view.getByText("cc".repeat(16))).toBeTruthy();
+  expect(view.getByRole("button", { name: "Change recipient" })).toBeEnabled();
+  fireEvent.changeText(view.getByLabelText("Message"), "Second recipient");
+  await act(async () =>
+    finish?.({
+      type: "outcome",
+      outcome: Bindings.SendDirectTextOutcome.Accepted.new({ localRecordId: 91n }),
+    }),
+  );
+  expect(mockReplace).not.toHaveBeenCalled();
+  expect(view.getByLabelText("Message").props.value).toBe("Second recipient");
+  await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+  fireEvent.press(view.getByRole("button", { name: "Send message" }));
+  await waitFor(() =>
+    expect(mockSendDirectText).toHaveBeenLastCalledWith({
+      destination: new Uint8Array(16).fill(0xcc),
+      title: "",
+      content: "Second recipient",
+    }),
+  );
+  await waitFor(() =>
+    expect(mockReplace).toHaveBeenCalledWith({
+      pathname: "/inbox/conversation/[destination]",
+      params: { destination: "cc".repeat(16) },
+    }),
+  );
+});
+
+test("stopping during a lookup releases recipient controls on restart without reusing old completion", async () => {
+  let finish: ((result: RuntimeCommandResult<SendDirectTextOutcome>) => void) | undefined;
+  mockSendDirectText.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const initialDestination = "000102030405060708090a0b0c0d0e0f";
+  const view = render(<ComposeScreen initialDestination={initialDestination} />);
+  fireEvent.changeText(view.getByLabelText("Message"), "Old generation");
+  await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+  fireEvent.press(view.getByRole("button", { name: "Send message" }));
+  mockActiveSnapshot = { ...mockSnapshot, runtime: Bindings.DevelopmentNodeRuntime.Stopped };
+  view.rerender(<ComposeScreen initialDestination={initialDestination} />);
+  expect(view.queryByLabelText("Message")).toBeNull();
+  mockActiveSnapshot = { ...mockSnapshot, generationId: 2n };
+  view.rerender(<ComposeScreen initialDestination={initialDestination} />);
+  expect(view.getByRole("button", { name: "Change recipient" })).toBeEnabled();
+  fireEvent.changeText(view.getByLabelText("Message"), "New generation draft");
+  await act(async () =>
+    finish?.({
+      type: "outcome",
+      outcome: Bindings.SendDirectTextOutcome.RecipientUnavailable.new({ detail: "stopped" }),
+    }),
+  );
+  expect(view.getByLabelText("Message").props.value).toBe("New generation draft");
+  expect(mockReplace).not.toHaveBeenCalled();
+  expect(view.queryByText(/This contact could not be found/)).toBeNull();
 });

@@ -1,7 +1,8 @@
 import * as Bindings from "@prns-internal/expo";
 import type { LxmfDeliveryState, LxmfMessage } from "@prns-internal/expo";
 import { destinationHash } from "personal-rns/contract";
-import { deliveryLabel } from "./format";
+import { deliveryLabel, peerLabel } from "./format";
+import { lastHeardLabel } from "@/features/contacts/messaging-directory";
 const source = destinationHash(new Uint8Array(16).fill(0x11));
 const destination = destinationHash(new Uint8Array(16).fill(0x22));
 function message(deliveryState: LxmfDeliveryState): LxmfMessage {
@@ -93,4 +94,41 @@ describe("durable LXMF delivery presentation", () => {
       ),
     ).toMatch(/^Cancelled /u);
   });
+});
+
+test("retains private and durable announced names before ephemeral discovery names", () => {
+  const peer: Bindings.LxmfPeerSummary = {
+    destination,
+    identity: source,
+    displayName: "Live name",
+    requiredStampCost: undefined,
+    sourceInterface: new Uint8Array(16),
+    hops: 1,
+    isPathResponse: false,
+    lastObservedAgeMillis: 0n,
+  };
+  const contact: Bindings.Contact = {
+    destination,
+    identity: source,
+    alias: "Private name",
+    announcedName: "Saved announced name",
+    pinned: false,
+    isMessaging: true,
+  };
+  expect(peerLabel(destination, [peer], [contact])).toBe("Private name");
+  expect(peerLabel(destination, [], [{ ...contact, alias: undefined }])).toBe(
+    "Saved announced name",
+  );
+  expect(peerLabel(destination, [peer], [])).toBe("Live name");
+});
+
+test.each([
+  [0n, "Heard just now"],
+  [59_999n, "Heard just now"],
+  [60_000n, "Heard 1 minute ago"],
+  [120_000n, "Heard 2 minutes ago"],
+  [3_600_000n, "Heard 1 hour ago"],
+  [7_200_000n, "Heard 2 hours ago"],
+] as const)("renders a human readable discovery age %#", (age, label) => {
+  expect(lastHeardLabel(age)).toBe(label);
 });

@@ -1,8 +1,10 @@
 import * as Bindings from "@prns-internal/expo";
 import type { DevelopmentNodeSnapshot, DevelopmentRuntime } from "@prns-internal/expo";
-import { fireEvent, render, waitFor } from "@testing-library/react-native";
-import { destinationHash, identityHash } from "personal-rns/contract";
+import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
+import { destinationHash, identityHash, interfaceId } from "personal-rns/contract";
 import type { ReactNode } from "react";
+import { Share } from "react-native";
+import type { RuntimeCommandResult } from "@/native/development-runtime-context";
 import {
   AddContactScreen,
   ContactDetailScreen,
@@ -16,6 +18,109 @@ jest.mock("expo-router", () => ({
 }));
 const destination = destinationHash(Uint8Array.from({ length: 16 }, (_, index) => index));
 const identity = identityHash(Uint8Array.from({ length: 16 }, (_, index) => index + 16));
+const mockProfile = { displayName: "prns", destination: new Uint8Array(16).fill(0xaa) };
+const mockReadProfile = jest.fn<
+  Promise<RuntimeCommandResult<Bindings.LocalMessagingProfileOutcome>>,
+  []
+>();
+const mockSetName = jest.fn<
+  Promise<RuntimeCommandResult<Bindings.LocalMessagingProfileOutcome>>,
+  [string]
+>();
+const mockListPeers = jest.fn<Promise<RuntimeCommandResult<Bindings.LxmfPeerListOutcome>>, []>();
+const mockAnnounce = jest.fn<Promise<RuntimeCommandResult<Bindings.AnnounceLxmfOutcome>>, []>();
+const mockSaveDiscovered = jest.fn<
+  Promise<RuntimeCommandResult<Bindings.ContactMutationOutcome>>,
+  [Bindings.ContactDestinationInput]
+>();
+const mockClearDiscovery = jest.fn<
+  Promise<RuntimeCommandResult<Bindings.LxmfDiscoveryClearOutcome>>,
+  []
+>();
+const mockNodeRuntime = Bindings.DevelopmentNodeRuntime;
+let mockRunning = false;
+let mockRevision = 0n;
+let mockFontScale = 1;
+let mockWidth = 390;
+let mockLocalHost: DevelopmentNodeSnapshot["localHost"] = snapshot().localHost;
+let mockPhysicalPeers: DevelopmentNodeSnapshot["bluetooth"]["peers"] = [];
+jest.mock("react-native/Libraries/Utilities/useWindowDimensions", () => ({
+  __esModule: true,
+  default: () => ({ width: mockWidth, height: 844, scale: 3, fontScale: mockFontScale }),
+}));
+const discovered: Bindings.LxmfPeerSummary = {
+  destination,
+  identity,
+  displayName: "Announced Alice",
+  requiredStampCost: undefined,
+  sourceInterface: new Uint8Array(8).fill(0xbb),
+  hops: 2,
+  isPathResponse: false,
+  lastObservedAgeMillis: 120_000n,
+};
+jest.mock("@/native/development-runtime-context", () => ({
+  useDevelopmentRuntime: () => ({
+    availability: { type: "available", platform: "ios" },
+    phase: "ready",
+    snapshot: {
+      generationId: 1n,
+      revision: mockRevision,
+      localHost: mockLocalHost,
+      bluetooth: { peers: mockPhysicalPeers },
+      runtime: mockRunning ? mockNodeRuntime.Running : mockNodeRuntime.Stopped,
+    },
+    readMessagingProfile: mockReadProfile,
+    setMessagingName: mockSetName,
+    listLxmfPeers: mockListPeers,
+    announceLxmf: mockAnnounce,
+    saveDiscoveredContact: mockSaveDiscovered,
+    clearLxmfDiscovery: mockClearDiscovery,
+  }),
+}));
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockRunning = false;
+  mockRevision = 0n;
+  mockFontScale = 1;
+  mockWidth = 390;
+  mockLocalHost = snapshot().localHost;
+  mockPhysicalPeers = [];
+  mockReadProfile.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.LocalMessagingProfileOutcome.Ready.new({ profile: mockProfile }),
+  });
+  mockSetName.mockImplementation(async (displayName) => ({
+    type: "outcome",
+    outcome: Bindings.LocalMessagingProfileOutcome.Ready.new({
+      profile: { ...mockProfile, displayName: displayName.trim() },
+    }),
+  }));
+  mockListPeers.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.LxmfPeerListOutcome.Listed.new({ peers: [discovered] }),
+  });
+  mockAnnounce.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.AnnounceLxmfOutcome.Requested,
+  });
+  mockSaveDiscovered.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.ContactMutationOutcome.Saved.new({
+      contact: {
+        destination,
+        identity,
+        alias: undefined,
+        announcedName: "Announced Alice",
+        isMessaging: true,
+        pinned: false,
+      },
+    }),
+  });
+  mockClearDiscovery.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.LxmfDiscoveryClearOutcome.Cleared,
+  });
+});
 function snapshot(): DevelopmentNodeSnapshot {
   return {
     contractFingerprint: "test",
@@ -45,6 +150,12 @@ function snapshot(): DevelopmentNodeSnapshot {
 function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRuntime {
   return {
     attachHost: async () => undefined,
+    readMessagingProfile: async () =>
+      Bindings.LocalMessagingProfileOutcome.Ready.new({ profile: mockProfile }),
+    setMessagingName: async (displayName) =>
+      Bindings.LocalMessagingProfileOutcome.Ready.new({ profile: { ...mockProfile, displayName } }),
+    saveDiscoveredContact: async () => Bindings.ContactMutationOutcome.NotObserved.new(),
+    clearLxmfDiscovery: async () => Bindings.LxmfDiscoveryClearOutcome.Cleared,
     readBluetoothSettings: async () =>
       Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled: true }),
     setBluetoothEnabled: async (enabled: boolean) =>
@@ -89,7 +200,7 @@ function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRu
       }),
     retryLxmfMessage: async () => Bindings.RetryLxmfMessageOutcome.NotFound.new(),
     cancelLxmfMessage: async () => Bindings.CancelLxmfMessageOutcome.NotFound.new(),
-    announceLxmf: async () => Bindings.AnnounceLxmfOutcome.Announced,
+    announceLxmf: async () => Bindings.AnnounceLxmfOutcome.Requested,
     measureLxmfText: async () =>
       Bindings.MeasureLxmfTextOutcome.Measured.new({
         wireBytes: 113,
@@ -120,7 +231,16 @@ describe("contact screens", () => {
   it("renders persisted contacts returned by the direct native facade", async () => {
     const listContacts = jest.fn(async () =>
       Bindings.ContactListOutcome.Listed.new({
-        contacts: [{ destination, identity, alias: "Alice", pinned: true }],
+        contacts: [
+          {
+            destination,
+            identity,
+            alias: "Alice",
+            announcedName: undefined,
+            isMessaging: true,
+            pinned: true,
+          },
+        ],
       }),
     );
     const view = withRuntime(fakeRuntime({ listContacts }), <ContactsScreen />);
@@ -136,13 +256,24 @@ describe("contact screens", () => {
   it("shows an unnamed contact's destination once without redundant saved labels", async () => {
     const listContacts = jest.fn(async () =>
       Bindings.ContactListOutcome.Listed.new({
-        contacts: [{ destination, identity, alias: undefined, pinned: false }],
+        contacts: [
+          {
+            destination,
+            identity,
+            alias: undefined,
+            announcedName: undefined,
+            isMessaging: false,
+            pinned: false,
+          },
+        ],
       }),
     );
     const view = withRuntime(fakeRuntime({ listContacts }), <ContactsScreen />);
     expect(await view.findByText("000102030405060708090a0b0c0d0e0f")).toBeTruthy();
     expect(view.getAllByText("000102030405060708090a0b0c0d0e0f")).toHaveLength(1);
-    expect(view.queryByText("Saved")).toBeNull();
+    expect(view.getByRole("button", { name: "Saved" }).props.accessibilityState.selected).toBe(
+      true,
+    );
     expect(view.getByRole("link", { name: "Open contact" })).toBeTruthy();
   });
   it("does not expose native contact-list failure details", async () => {
@@ -161,7 +292,14 @@ describe("contact screens", () => {
   it("passes explicit optional manual fields and routes by destination hash", async () => {
     const createManualContact = jest.fn(async () =>
       Bindings.ContactMutationOutcome.Saved.new({
-        contact: { destination, identity: undefined, alias: "Alice", pinned: false },
+        contact: {
+          destination,
+          identity: undefined,
+          alias: "Alice",
+          announcedName: undefined,
+          isMessaging: true,
+          pinned: false,
+        },
       }),
     );
     const view = withRuntime(fakeRuntime({ createManualContact }), <AddContactScreen />);
@@ -179,7 +317,14 @@ describe("contact screens", () => {
   it("loads a destination-addressed detail and reports pin rejection honestly", async () => {
     const getContact = jest.fn(async () =>
       Bindings.ContactLookupOutcome.Found.new({
-        contact: { destination, identity: undefined, alias: "Manual", pinned: false },
+        contact: {
+          destination,
+          identity: undefined,
+          alias: "Manual",
+          announcedName: undefined,
+          isMessaging: false,
+          pinned: false,
+        },
       }),
     );
     const setContactPinned = jest.fn(async () =>
@@ -242,4 +387,395 @@ test.each([
   fireEvent.press(view.getByRole("button", { name: "Refresh contacts" }));
   expect(await view.findByText("No saved contacts")).toBeTruthy();
   expect(view.queryByText(title)).toBeNull();
+});
+
+describe("messaging discovery and local profile", () => {
+  test("keeps the profile editable while stopped and never announces on load or save", async () => {
+    const view = withRuntime(fakeRuntime(), <ContactsScreen />);
+    expect(await view.findByText("prns")).toBeTruthy();
+    expect(view.queryByLabelText("Messaging name")).toBeNull();
+    expect(view.getByRole("button", { name: "Announce yourself" })).toBeDisabled();
+    fireEvent.press(view.getByRole("button", { name: "Edit messaging name" }));
+    fireEvent.changeText(view.getByLabelText("Messaging name"), "  Trail friend  ");
+    fireEvent.press(view.getByRole("button", { name: "Save messaging name" }));
+    expect(await view.findByText("Trail friend")).toBeTruthy();
+    expect(mockSetName).toHaveBeenCalledWith("  Trail friend  ");
+    expect(view.queryByLabelText("Messaging name")).toBeNull();
+    expect(mockAnnounce).not.toHaveBeenCalled();
+    expect(mockListPeers).not.toHaveBeenCalled();
+  });
+
+  test("shares the native LXMF address separately from network announcing", async () => {
+    const share = jest.spyOn(Share, "share").mockResolvedValue({ action: Share.sharedAction });
+    const view = withRuntime(fakeRuntime(), <ContactsScreen />);
+    await view.findByText("prns");
+    fireEvent.press(view.getByRole("button", { name: "My address" }));
+    expect(view.getByText("aa".repeat(16))).toBeTruthy();
+    fireEvent.press(view.getByRole("button", { name: "Share address" }));
+    await waitFor(() => expect(share).toHaveBeenCalledWith({ message: "aa".repeat(16) }));
+    expect(mockAnnounce).not.toHaveBeenCalled();
+    share.mockRestore();
+  });
+
+  test.each([
+    [
+      Bindings.AnnounceLxmfOutcome.Requested,
+      "Announcement requested. Other devices may hear it on connected networks.",
+    ],
+    [
+      Bindings.AnnounceLxmfOutcome.NoUsableConnection,
+      "No usable connection. Open Connections to connect, then announce again.",
+    ],
+    [Bindings.AnnounceLxmfOutcome.Busy, "Another messaging action is in progress. Try again."],
+  ])("announces only on explicit action with honest outcome %#", async (outcome, expected) => {
+    mockRunning = true;
+    mockAnnounce.mockResolvedValue({ type: "outcome", outcome });
+    const runtime = fakeRuntime();
+    const view = withRuntime(runtime, <ContactsScreen />);
+    await view.findByText("prns");
+    mockRevision += 1n;
+    view.rerender(
+      <ContactRuntimeProvider
+        provider={{ availability: { type: "available", platform: "ios" }, runtime }}
+      >
+        <ContactsScreen />
+      </ContactRuntimeProvider>,
+    );
+    expect(mockAnnounce).not.toHaveBeenCalled();
+    fireEvent.press(view.getByRole("button", { name: "Announce yourself" }));
+    expect(await view.findByText(expected)).toBeTruthy();
+    expect(mockAnnounce).toHaveBeenCalledTimes(1);
+    expect(view.queryByText("Messaging address shared.")).toBeNull();
+  });
+
+  test("shows discovery age and saves through the authenticated native command", async () => {
+    mockRunning = true;
+    let saved = false;
+    const runtime = fakeRuntime({
+      listContacts: async () =>
+        Bindings.ContactListOutcome.Listed.new({
+          contacts: saved
+            ? [
+                {
+                  destination,
+                  identity,
+                  alias: "Private Alice",
+                  announcedName: "Announced Alice",
+                  isMessaging: true,
+                  pinned: true,
+                },
+              ]
+            : [],
+        }),
+    });
+    mockSaveDiscovered.mockImplementation(async () => {
+      saved = true;
+      return {
+        type: "outcome",
+        outcome: Bindings.ContactMutationOutcome.Saved.new({
+          contact: {
+            destination,
+            identity,
+            alias: "Private Alice",
+            announcedName: "Announced Alice",
+            isMessaging: true,
+            pinned: true,
+          },
+        }),
+      };
+    });
+    const view = withRuntime(runtime, <ContactsScreen />);
+    await view.findByText("prns");
+    fireEvent.press(view.getByRole("button", { name: "Discovered" }));
+    expect(await view.findByText("Announced Alice")).toBeTruthy();
+    expect(view.getByText(/Heard 2 minutes ago/)).toBeTruthy();
+    fireEvent.press(view.getByRole("button", { name: "Save contact Announced Alice" }));
+    expect(await view.findByText("Private Alice")).toBeTruthy();
+    expect(mockSaveDiscovered).toHaveBeenCalledWith({ destination });
+    expect(view.getByRole("link", { name: "Message Private Alice" })).toBeTruthy();
+    expect(view.getByText("Saved contact")).toBeTruthy();
+    fireEvent.press(view.getByRole("button", { name: "Saved" }));
+    expect(view.getByText("Private Alice")).toBeTruthy();
+    expect(view.getByText("Pinned")).toBeTruthy();
+  });
+
+  test("preserves identity conflict feedback and leaves a discovered contact unsaved", async () => {
+    mockRunning = true;
+    mockSaveDiscovered.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.ContactMutationOutcome.IdentityConflict.new({
+        existing: identity,
+        attempted: new Uint8Array(16).fill(0xee),
+      }),
+    });
+    const view = withRuntime(fakeRuntime(), <ContactsScreen />);
+    await view.findByText("prns");
+    fireEvent.press(view.getByRole("button", { name: "Discovered" }));
+    fireEvent.press(await view.findByRole("button", { name: "Save contact Announced Alice" }));
+    expect(
+      await view.findByText("The saved identity differs from the verified network identity."),
+    ).toBeTruthy();
+    expect(view.queryByText("Contact saved.")).toBeNull();
+  });
+
+  test("clears only discovery, with saved contacts still available", async () => {
+    mockRunning = true;
+    const runtime = fakeRuntime({
+      listContacts: async () =>
+        Bindings.ContactListOutcome.Listed.new({
+          contacts: [
+            {
+              destination,
+              identity,
+              alias: "Private Alice",
+              announcedName: undefined,
+              isMessaging: true,
+              pinned: false,
+            },
+          ],
+        }),
+    });
+    const view = withRuntime(runtime, <ContactsScreen />);
+    await view.findByText("Private Alice");
+    fireEvent.press(view.getByRole("button", { name: "Discovered" }));
+    await view.findByText("Saved contact");
+    mockListPeers.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.LxmfPeerListOutcome.Listed.new({ peers: [] }),
+    });
+    fireEvent.press(view.getByRole("button", { name: "Clear discovered contacts" }));
+    expect(await view.findByText("No discovered contacts")).toBeTruthy();
+    expect(mockClearDiscovery).toHaveBeenCalledTimes(1);
+    fireEvent.press(view.getByRole("button", { name: "Saved" }));
+    expect(view.getByText("Private Alice")).toBeTruthy();
+  });
+
+  test("does not display a delayed discovery result from a stopped generation", async () => {
+    mockRunning = true;
+    let finish: ((result: RuntimeCommandResult<Bindings.LxmfPeerListOutcome>) => void) | undefined;
+    mockListPeers.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const runtime = fakeRuntime();
+    const view = withRuntime(runtime, <ContactsScreen />);
+    await view.findByText("prns");
+    fireEvent.press(view.getByRole("button", { name: "Discovered" }));
+    mockRunning = false;
+    view.rerender(
+      <ContactRuntimeProvider
+        provider={{ availability: { type: "available", platform: "ios" }, runtime }}
+      >
+        <ContactsScreen />
+      </ContactRuntimeProvider>,
+    );
+    await act(async () =>
+      finish?.({
+        type: "outcome",
+        outcome: Bindings.LxmfPeerListOutcome.Listed.new({ peers: [discovered] }),
+      }),
+    );
+    expect(view.queryByText("Announced Alice")).toBeNull();
+  });
+
+  test.each([
+    [
+      Bindings.LocalMessagingProfileOutcome.InvalidInput.new({
+        detail: "private validation detail",
+      }),
+      "Choose a shorter name without line breaks or special control characters.",
+    ],
+    [
+      Bindings.LocalMessagingProfileOutcome.Unavailable.new({ detail: "private disk detail" }),
+      "The messaging name could not be confirmed. Refresh to check it, then try again.",
+    ],
+    [
+      Bindings.LocalMessagingProfileOutcome.SavedButNotApplied.new({
+        profile: { ...mockProfile, displayName: "New name" },
+        detail: "private runtime detail",
+      }),
+      "Name saved. It could not be applied to the running node yet. Try saving it again before announcing.",
+    ],
+  ])(
+    "handles profile validation and uncertain application honestly %#",
+    async (outcome, expected) => {
+      mockSetName.mockResolvedValue({ type: "outcome", outcome });
+      const view = withRuntime(fakeRuntime(), <ContactsScreen />);
+      await view.findByText("prns");
+      fireEvent.press(view.getByRole("button", { name: "Edit messaging name" }));
+      fireEvent.changeText(view.getByLabelText("Messaging name"), "New name");
+      fireEvent.press(view.getByRole("button", { name: "Save messaging name" }));
+      expect(await view.findByText(expected)).toBeTruthy();
+      expect(view.queryByText(/private .* detail/)).toBeNull();
+      expect(mockAnnounce).not.toHaveBeenCalled();
+    },
+  );
+
+  test("offers Message only for a native-recognized saved messaging destination", async () => {
+    const runtime = fakeRuntime({
+      getContact: async () =>
+        Bindings.ContactLookupOutcome.Found.new({
+          contact: {
+            destination,
+            identity,
+            alias: undefined,
+            announcedName: "Remembered Alice",
+            isMessaging: true,
+            pinned: false,
+          },
+        }),
+    });
+    const view = withRuntime(runtime, <ContactDetailScreen destination={destination} />);
+    expect(await view.findByText("Remembered Alice")).toBeTruthy();
+    expect(view.getByRole("link", { name: "Message" })).toBeTruthy();
+    view.unmount();
+    const other = withRuntime(
+      fakeRuntime({
+        getContact: async () =>
+          Bindings.ContactLookupOutcome.Found.new({
+            contact: {
+              destination,
+              identity,
+              alias: "Board",
+              announcedName: undefined,
+              isMessaging: false,
+              pinned: false,
+            },
+          }),
+      }),
+      <ContactDetailScreen destination={destination} />,
+    );
+    await other.findByText("Board");
+    expect(other.queryByRole("link", { name: "Message" })).toBeNull();
+  });
+});
+
+test.each([1.5, 2])(
+  "keeps profile editing and exact discovery provenance accessible at %sx text",
+  async (fontScale) => {
+    mockRunning = true;
+    mockFontScale = fontScale;
+    mockWidth = 320;
+    const view = withRuntime(fakeRuntime(), <ContactsScreen />);
+    await view.findByText("prns");
+    fireEvent.press(view.getByRole("button", { name: "Edit messaging name" }));
+    fireEvent.changeText(view.getByLabelText("Messaging name"), "An accessible messaging name");
+    fireEvent.press(view.getByRole("button", { name: "Save messaging name" }));
+    expect(await view.findByText("An accessible messaging name")).toBeTruthy();
+    fireEvent.press(view.getByRole("button", { name: "Discovered" }));
+    expect(await view.findByText("Announced Alice")).toBeTruthy();
+    expect(view.queryByText("Connection ID")).toBeNull();
+    fireEvent.press(
+      view.getByRole("button", { name: "Show discovery details for Announced Alice" }),
+    );
+    expect(view.getByText("Hop count")).toBeTruthy();
+    expect(view.getByText("2")).toBeTruthy();
+    expect(view.getByText("bb".repeat(8))).toBeTruthy();
+    expect(view.getByText("101112131415161718191a1b1c1d1e1f")).toBeTruthy();
+    expect(view.getByText("Announce")).toBeTruthy();
+    expect(view.getByText("Connection no longer listed")).toBeTruthy();
+    expect(view.queryByText("Automatic Bluetooth")).toBeNull();
+    expect(view.getByRole("link", { name: "Message Announced Alice" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Save contact Announced Alice" })).toBeEnabled();
+  },
+);
+
+test("prevents announcing the previous name while a profile save is pending", async () => {
+  mockRunning = true;
+  let finish:
+    | ((result: RuntimeCommandResult<Bindings.LocalMessagingProfileOutcome>) => void)
+    | undefined;
+  mockSetName.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const view = withRuntime(fakeRuntime(), <ContactsScreen />);
+  await view.findByText("prns");
+  fireEvent.press(view.getByRole("button", { name: "Edit messaging name" }));
+  fireEvent.changeText(view.getByLabelText("Messaging name"), "New name");
+  fireEvent.press(view.getByRole("button", { name: "Save messaging name" }));
+  expect(view.getByRole("button", { name: "Announce yourself" })).toBeDisabled();
+  fireEvent.press(view.getByRole("button", { name: "Announce yourself" }));
+  expect(mockAnnounce).not.toHaveBeenCalled();
+  await act(async () =>
+    finish?.({
+      type: "outcome",
+      outcome: Bindings.LocalMessagingProfileOutcome.Ready.new({
+        profile: { ...mockProfile, displayName: "New name" },
+      }),
+    }),
+  );
+  expect(view.getByRole("button", { name: "Announce yourself" })).toBeEnabled();
+  fireEvent.press(view.getByRole("button", { name: "Announce yourself" }));
+  await waitFor(() => expect(mockAnnounce).toHaveBeenCalledTimes(1));
+});
+
+test("resolves recorded Bluetooth ingress by exact physical peer ID despite a folded host inventory", async () => {
+  mockRunning = true;
+  mockPhysicalPeers = [
+    {
+      interfaceId: discovered.sourceInterface,
+      name: "Connected peer",
+      connected: true,
+      rxBytes: 0n,
+      txBytes: 0n,
+      details: undefined,
+      rssiDbm: undefined,
+    },
+  ];
+  mockLocalHost = Bindings.LocalHostState.Running.new({
+    host: {
+      revision: 1n,
+      backend: {
+        backend: "Native",
+        capabilities: ["Bluetooth"],
+        interfaceKinds: ["AutomaticBluetoothLe"],
+      },
+      interfaces: [
+        {
+          interfaceId: interfaceId(new Uint8Array(8).fill(0xcc)),
+          name: "Bluetooth supervisor",
+          kind: "AutomaticBluetoothLe",
+          health: "Connected",
+          rxBytes: 0n,
+          txBytes: 0n,
+          routeCount: 0,
+          linkCount: 0,
+          transportedLinkCount: 0,
+        },
+      ],
+      routes: [],
+      activeLinkCount: 0,
+      destinationIdentities: [],
+      runtime: {
+        running: true,
+        uptimeMillis: 1,
+        interfaceCount: 1,
+        onlineInterfaceCount: 1,
+        routeCount: 0,
+        linkCount: 0,
+        transportedLinkCount: 0,
+        rxBytes: 0n,
+        txBytes: 0n,
+        rxBps: 0,
+        txBps: 0,
+      },
+      persistence: { persistent: true, restored: false },
+    },
+  });
+  const view = withRuntime(fakeRuntime(), <ContactsScreen />);
+  await view.findByText("prns");
+  fireEvent.press(view.getByRole("button", { name: "Discovered" }));
+  fireEvent.press(
+    await view.findByRole("button", { name: "Show discovery details for Announced Alice" }),
+  );
+  expect(view.getByText("Connected peer")).toBeTruthy();
+  expect(view.getByText("bb".repeat(8))).toBeTruthy();
+  expect(view.queryByText("Connection no longer listed")).toBeNull();
+  expect(view.queryByText("Bluetooth supervisor")).toBeNull();
+  expect(view.getByText(/not the route a future message will take/)).toBeTruthy();
 });
