@@ -192,3 +192,82 @@ impl BleFrameForwarder for Forwarder<'_> {
         Ok(())
     }
 }
+
+#[test]
+fn receive_only_work_ignores_empty_frames_and_settles_current_forwarding_exactly_once() {
+    let work_ready = Cell::new(false);
+    let forward_ready = Cell::new(false);
+    let completions = Cell::new(0);
+    let mut source = Source(VecDeque::from([Ok(0), Ok(2), Ok(1)]));
+    let mut inbound = [0; 2];
+    let mut frames = Vec::new();
+    {
+        let work = poll_fn(|_| {
+            assert_eq!(
+                completions.get(),
+                0,
+                "completed work must not be polled again"
+            );
+            if work_ready.get() {
+                completions.set(1);
+                Poll::Ready(Ok::<_, Closed>(()))
+            } else {
+                Poll::Pending
+            }
+        });
+        let mut running = pin!(receive_frames_during(
+            work,
+            &mut source,
+            &mut inbound,
+            Forwarder {
+                ready: &forward_ready,
+                frames: &mut frames
+            },
+        ));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(running.as_mut().poll(&mut context).is_pending());
+        work_ready.set(true);
+        assert!(running.as_mut().poll(&mut context).is_pending());
+        assert_eq!(completions.get(), 1);
+        forward_ready.set(true);
+        assert_eq!(
+            running.as_mut().poll(&mut context),
+            Poll::Ready(BleDuplexOutcome::Finished(Ok(())))
+        );
+    }
+    assert_eq!(
+        (frames, source.0, completions.get()),
+        (vec![vec![7, 7]], VecDeque::from([Ok(1)]), 1)
+    );
+}
+
+#[test]
+fn ready_work_wins_without_consuming_another_frame() {
+    for result in [Ok(()), Err(Closed)] {
+        let mut source = Source(VecDeque::from([Ok(2)]));
+        let mut inbound = [0; 2];
+        let mut frames = Vec::new();
+        let forward_ready = Cell::new(true);
+        {
+            let mut running = pin!(receive_frames_during(
+                core::future::ready(result),
+                &mut source,
+                &mut inbound,
+                Forwarder {
+                    ready: &forward_ready,
+                    frames: &mut frames
+                },
+            ));
+            assert_eq!(
+                running
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(BleDuplexOutcome::Finished(result))
+            );
+        }
+        assert_eq!(
+            (source.0, inbound, frames),
+            (VecDeque::from([Ok(2)]), [0; 2], vec![])
+        );
+    }
+}

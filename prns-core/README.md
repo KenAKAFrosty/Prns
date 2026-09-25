@@ -22,7 +22,14 @@ safe; cancelling the operation or encountering a receive failure requires retiri
 the transport because its send may be partial. Adapters own custody, accounting,
 timeouts, and teardown. Forwarders return a typed result; forwarding failure retires
 the transport even if its send has already settled. Tokio uses an infallible seam,
-while Embassy preserves shared-lane delivery errors and accounts TX at its sink.
+while Embassy preserves shared-lane delivery errors and accounts TX immediately
+after the sink settles.
+
+`receive_frames_during` owns the underlying receive/forward loop for a fallible
+work future. Embassy keeps that work alive until the other fanout sends settle,
+so unselected and already-finished peers can also receive. Completion wins over a
+new receive but still awaits forwarding of an already-received frame. Adapters
+track unsettled forwarding separately from send completion for safe cancellation.
 
 ## Portable host capabilities
 

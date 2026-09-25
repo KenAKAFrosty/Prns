@@ -14,29 +14,29 @@ pub trait BleFrameForwarder {
     async fn forward(&mut self, frame: &[u8]) -> Result<(), Self::Error>;
 }
 
-/// A settled send, or an ingress failure that requires retiring the possibly partial transport.
+/// Settled work, or an ingress failure that requires retiring the possibly partial transport.
 #[derive(Debug, PartialEq, Eq)]
-pub enum BleDuplexOutcome<ReceiveError, SendError, ForwardError> {
-    Finished(Result<(), SendError>),
+pub enum BleDuplexOutcome<ReceiveError, WorkError, ForwardError> {
+    Finished(Result<(), WorkError>),
     ReceiveFailed(ReceiveError),
     InvalidReceiveLength(usize),
-    /// Sending may already have settled; adapters needing exact TX accounting record it at the sink.
+    /// Work may already have settled; adapters needing exact TX accounting record it at the sink.
     ForwardFailed(ForwardError),
 }
 
-enum Progress<S, R> {
-    Sent(S),
+enum Progress<W, R> {
+    Finished(W),
     Received(R),
 }
 
-async fn prefer_send<S: Future, R: Future>(
-    mut send: Pin<&mut S>,
+async fn prefer_work<W: Future, R: Future>(
+    mut work: Pin<&mut W>,
     receive: R,
-) -> Progress<S::Output, R::Output> {
+) -> Progress<W::Output, R::Output> {
     let mut receive = pin!(receive);
     poll_fn(|context| {
-        if let Poll::Ready(result) = send.as_mut().poll(context) {
-            return Poll::Ready(Progress::Sent(result));
+        if let Poll::Ready(result) = work.as_mut().poll(context) {
+            return Poll::Ready(Progress::Finished(result));
         }
         receive.as_mut().poll(context).map(Progress::Received)
     })
@@ -56,12 +56,34 @@ pub async fn send_frame_duplex<Source: BleSource, Sink: BleSink, Forwarder: BleF
     sink: &mut Sink,
     outbound: &[u8],
     inbound: &mut [u8],
-    mut forwarder: Forwarder,
+    forwarder: Forwarder,
 ) -> BleDuplexOutcome<Source::Error, Sink::Error, Forwarder::Error> {
-    let mut send = pin!(sink.send_frame(outbound));
+    receive_frames_during(sink.send_frame(outbound), source, inbound, forwarder).await
+}
+
+/// Keep receiving until `work` settles, without cancelling a completed receive's forwarding.
+/// The work may include a send and a wait for other peers; it remains polled during ingress
+/// backpressure. Completion wins over starting another receive, and empty frames are ignored.
+///
+/// Pending receives must preserve partial-frame progress on cancellation. Ingress failure
+/// cancels the work, so callers must retire any possibly partial transport. External cancellation
+/// can also abandon forwarding; adapters must track that boundary when deciding which peers to
+/// retire. Uses caller-owned storage and requires no executor, allocator, clock, or queue.
+pub async fn receive_frames_during<
+    Work: Future<Output = Result<(), WorkError>>,
+    WorkError,
+    Source: BleSource,
+    Forwarder: BleFrameForwarder,
+>(
+    work: Work,
+    source: &mut Source,
+    inbound: &mut [u8],
+    mut forwarder: Forwarder,
+) -> BleDuplexOutcome<Source::Error, WorkError, Forwarder::Error> {
+    let mut work = pin!(work);
     loop {
-        let frame = match prefer_send(send.as_mut(), receive_frame(source, inbound)).await {
-            Progress::Sent(result) => return BleDuplexOutcome::Finished(result),
+        let frame = match prefer_work(work.as_mut(), receive_frame(source, inbound)).await {
+            Progress::Finished(result) => return BleDuplexOutcome::Finished(result),
             Progress::Received(Ok([])) => continue,
             Progress::Received(Ok(frame)) => frame,
             Progress::Received(Err(BleFrameReceiveError::Length(
@@ -74,8 +96,8 @@ pub async fn send_frame_duplex<Source: BleSource, Sink: BleSink, Forwarder: BleF
             }
         };
         let mut forwarding = pin!(forwarder.forward(frame));
-        match prefer_send(send.as_mut(), forwarding.as_mut()).await {
-            Progress::Sent(result) => {
+        match prefer_work(work.as_mut(), forwarding.as_mut()).await {
+            Progress::Finished(result) => {
                 if let Err(error) = forwarding.await {
                     return BleDuplexOutcome::ForwardFailed(error);
                 }

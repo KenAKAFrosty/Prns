@@ -29,7 +29,7 @@ use prns_runtime::manifold::grant::FrameTarget;
 use prns_runtime::runtime::{EmbassyFleet as Fleet, OutboundFrame};
 
 mod duplex;
-use duplex::send_members;
+use duplex::{send_members, MemberSelection, MemberTransferState};
 
 const DIAL_TRACK: usize = 6;
 
@@ -682,14 +682,6 @@ struct HandshakeDone<L: BleLink> {
 enum HandshakeStep<L: BleLink> {
     Advanced,
     Done(HandshakeDone<L>),
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SendState {
-    NotSelected,
-    Pending,
-    Sent,
-    Failed,
 }
 
 enum SupervisorStep<L: BleLink> {
@@ -1535,11 +1527,13 @@ async fn send_outbound<
     if frame.is_empty() {
         return;
     }
-    let mut states = ::core::array::from_fn(|slot| match members[slot].as_ref() {
-        Some(member) if selected(member, frame.target()) => SendState::Pending,
-        _ => SendState::NotSelected,
+    let states = ::core::array::from_fn(|slot| {
+        MemberTransferState::new(match members[slot].as_ref() {
+            Some(member) if selected(member, frame.target()) => MemberSelection::Send,
+            _ => MemberSelection::ReceiveOnly,
+        })
     });
-    let sends = send_members(members, &mut states, frame.bytes(), inbufs, fleet, status);
+    let sends = send_members(members, &states, frame.bytes(), inbufs, fleet, status);
     match select(
         status.wait_until_disabled(),
         with_timeout(OUTBOUND_TIMEOUT, sends),
@@ -1550,13 +1544,9 @@ async fn send_outbound<
         Either::Second(_) => {}
     }
     for (slot, state) in states.into_iter().enumerate() {
-        match state {
-            SendState::NotSelected => {}
-            SendState::Sent => {}
-            SendState::Pending | SendState::Failed => {
-                status.note_transport_closure();
-                close_member(slot, manager, pending, status, fleet, backend, members).await;
-            }
+        if state.needs_retirement() {
+            status.note_transport_closure();
+            close_member(slot, manager, pending, status, fleet, backend, members).await;
         }
     }
 }

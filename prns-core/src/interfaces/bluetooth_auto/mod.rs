@@ -24,7 +24,7 @@ pub use backend::{
     AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
     RadioMode, ScanningMode,
 };
-pub use duplex::{send_frame_duplex, BleDuplexOutcome, BleFrameForwarder};
+pub use duplex::{receive_frames_during, send_frame_duplex, BleDuplexOutcome, BleFrameForwarder};
 pub use framing::{
     encode_stream_frame, fragments_of, Fragment, FragmentKind, Reassembler, StreamDeframer,
     BLE_HW_MTU, BLE_WIRE_FRAME_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,

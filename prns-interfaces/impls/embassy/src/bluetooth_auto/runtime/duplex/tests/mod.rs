@@ -61,6 +61,7 @@ enum Sending {
     AfterReceive,
     Blocked,
     Failed,
+    Gated(Rc<Cell<bool>>),
 }
 
 struct Sink {
@@ -75,11 +76,18 @@ impl BleSink for Sink {
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Closed> {
         assert_eq!(frame, b"send");
         self.starts.set(self.starts.get() + 1);
-        poll_fn(|_| match self.mode {
+        poll_fn(|_| match &self.mode {
             Sending::Ready => Poll::Ready(Ok(())),
             Sending::AfterReceive if self.received.get() => Poll::Ready(Ok(())),
             Sending::AfterReceive | Sending::Blocked => Poll::Pending,
             Sending::Failed => Poll::Ready(Err(Closed)),
+            Sending::Gated(ready) => {
+                if ready.get() {
+                    Poll::Ready(Ok(()))
+                } else {
+                    Poll::Pending
+                }
+            }
         })
         .await
     }
@@ -158,7 +166,7 @@ fn fixture() -> (
 }
 
 #[test]
-fn fanout_drains_both_receivers_without_restarting_sends_or_touching_unselected_peers() {
+fn fanout_sends_once_and_stops_receiving_after_the_last_send() {
     let (mut fleet, status, notify) = fixture();
     let mut members = [
         Some(member(
@@ -173,16 +181,17 @@ fn fanout_drains_both_receivers_without_restarting_sends_or_touching_unselected_
         )),
         Some(member(2, Incoming::Frame(vec![6]), Sending::Ready)),
     ];
-    let mut states = [
-        SendState::Pending,
-        SendState::Pending,
-        SendState::NotSelected,
-    ];
+    let states = [
+        MemberSelection::Send,
+        MemberSelection::Send,
+        MemberSelection::ReceiveOnly,
+    ]
+    .map(MemberTransferState::new);
     let mut bufs = [[0; BLE_HW_MTU]; PEERS];
     {
         let mut send = pin!(send_members(
             &mut members,
-            &mut states,
+            &states,
             b"send",
             &mut bufs,
             &mut fleet,
@@ -194,7 +203,7 @@ fn fanout_drains_both_receivers_without_restarting_sends_or_touching_unselected_
             .is_ready());
     }
     assert!(matches!(
-        states,
+        states.each_ref().map(|state| state.send.get()),
         [SendState::Sent, SendState::Sent, SendState::NotSelected]
     ));
     assert_eq!(
@@ -236,16 +245,17 @@ fn blocked_peer_does_not_hide_completed_fanout_and_cancellation_retains_exact_tx
         Some(member(1, Incoming::Pending, Sending::Blocked)),
         None,
     ];
-    let mut states = [
-        SendState::Pending,
-        SendState::Pending,
-        SendState::NotSelected,
-    ];
+    let states = [
+        MemberSelection::Send,
+        MemberSelection::Send,
+        MemberSelection::ReceiveOnly,
+    ]
+    .map(MemberTransferState::new);
     let mut bufs = [[0; BLE_HW_MTU]; PEERS];
     {
         let mut send = pin!(send_members(
             &mut members,
-            &mut states,
+            &states,
             b"send",
             &mut bufs,
             &mut fleet,
@@ -257,7 +267,7 @@ fn blocked_peer_does_not_hide_completed_fanout_and_cancellation_retains_exact_tx
             .is_pending());
     }
     assert!(matches!(
-        states,
+        states.each_ref().map(|state| state.send.get()),
         [SendState::Sent, SendState::Pending, SendState::NotSelected]
     ));
     assert_eq!(
@@ -284,16 +294,17 @@ fn failed_receives_sends_and_forwarding_are_isolated_from_other_selected_peers()
             )),
             None,
         ];
-        let mut states = [
-            SendState::Pending,
-            SendState::Pending,
-            SendState::NotSelected,
-        ];
+        let states = [
+            MemberSelection::Send,
+            MemberSelection::Send,
+            MemberSelection::ReceiveOnly,
+        ]
+        .map(MemberTransferState::new);
         let mut bufs = [[0; BLE_HW_MTU]; PEERS];
         {
             let mut send = pin!(send_members(
                 &mut members,
-                &mut states,
+                &states,
                 b"send",
                 &mut bufs,
                 &mut fleet,
@@ -305,7 +316,7 @@ fn failed_receives_sends_and_forwarding_are_isolated_from_other_selected_peers()
                 .is_ready());
         }
         assert!(matches!(
-            states,
+            states.each_ref().map(|state| state.send.get()),
             [SendState::Failed, SendState::Sent, SendState::NotSelected]
         ));
         assert_eq!(
@@ -333,16 +344,17 @@ fn shared_lane_pressure_preserves_received_frames_and_already_completed_sends() 
         Some(member(1, Incoming::Frame(vec![2]), Sending::AfterReceive)),
         None,
     ];
-    let mut states = [
-        SendState::Pending,
-        SendState::Pending,
-        SendState::NotSelected,
-    ];
+    let states = [
+        MemberSelection::Send,
+        MemberSelection::Send,
+        MemberSelection::ReceiveOnly,
+    ]
+    .map(MemberTransferState::new);
     let mut bufs = [[0; BLE_HW_MTU]; PEERS];
     {
         let mut send = pin!(send_members(
             &mut members,
-            &mut states,
+            &states,
             b"send",
             &mut bufs,
             &mut fleet,
@@ -364,7 +376,7 @@ fn shared_lane_pressure_preserves_received_frames_and_already_completed_sends() 
         assert!(send.as_mut().poll(&mut context).is_ready());
     }
     assert!(matches!(
-        states,
+        states.each_ref().map(|state| state.send.get()),
         [SendState::Sent, SendState::Sent, SendState::NotSelected]
     ));
     assert_eq!(
@@ -391,16 +403,17 @@ fn cancellation_during_forwarding_keeps_confirmed_tx_without_reporting_rx_comple
         .iter()
         .map(|member| member.as_ref().unwrap().sink.starts.clone())
         .collect::<Vec<_>>();
-    let mut states = [
-        SendState::Pending,
-        SendState::Pending,
-        SendState::NotSelected,
-    ];
+    let states = [
+        MemberSelection::Send,
+        MemberSelection::Send,
+        MemberSelection::ReceiveOnly,
+    ]
+    .map(MemberTransferState::new);
     let mut bufs = [[0; BLE_HW_MTU]; PEERS];
     {
         let mut send = pin!(send_members(
             &mut members,
-            &mut states,
+            &states,
             b"send",
             &mut bufs,
             &mut fleet,
@@ -412,12 +425,8 @@ fn cancellation_during_forwarding_keeps_confirmed_tx_without_reporting_rx_comple
             .is_pending());
     }
     assert!(matches!(
-        states,
-        [
-            SendState::Pending,
-            SendState::Pending,
-            SendState::NotSelected
-        ]
+        states.each_ref().map(|state| state.send.get()),
+        [SendState::Sent, SendState::Sent, SendState::NotSelected]
     ));
     assert_eq!(
         starts.iter().map(|starts| starts.get()).collect::<Vec<_>>(),
@@ -431,6 +440,12 @@ fn cancellation_during_forwarding_keeps_confirmed_tx_without_reporting_rx_comple
         (status.member(0).rx_bytes(), status.member(1).rx_bytes()),
         (0, 0)
     );
-    // Pending members must be retired, not retried on their partly consumed transports.
+    assert_eq!(
+        states.each_ref().map(MemberTransferState::needs_retirement),
+        [true, true, false]
+    );
+    // Unsettled forwarding must retire the transport even though both sends succeeded.
     drop(members);
 }
+
+mod receive_progress;
