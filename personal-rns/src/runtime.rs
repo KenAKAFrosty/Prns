@@ -1,8 +1,7 @@
 pub use prns_runtime::runtime::{
     assemble_node, configure_preconfigured_destination, firmware_update_noted_grant,
     firmware_update_noted_grant_count, firmware_update_permitted, note_firmware_update_grants,
-    request_endpoints, AnnounceNowError,
-    ApproveRemoteControlControllerPairingControlError,
+    request_endpoints, AnnounceNowError, ApproveRemoteControlControllerPairingControlError,
     ApproveRemoteControlControllerPairingControlFailure,
     ApproveRemoteControlTargetPairingControlError, AssembledNode, AuthorizedRemoteControlTarget,
     BeginRemoteControlControllerPairingControlError,
