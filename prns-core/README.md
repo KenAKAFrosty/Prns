@@ -20,7 +20,9 @@ supply both buffers, transport halves, and a `BleFrameForwarder`. The helper
 uses no allocation or runtime dependency. Pending receives must be cancellation
 safe; cancelling the operation or encountering a receive failure requires retiring
 the transport because its send may be partial. Adapters own custody, accounting,
-timeouts, and teardown. Embassy fanout integration remains separate work.
+timeouts, and teardown. Forwarders return a typed result; forwarding failure retires
+the transport even if its send has already settled. Tokio uses an infallible seam,
+while Embassy preserves shared-lane delivery errors and accounts TX at its sink.
 
 ## Portable host capabilities
 

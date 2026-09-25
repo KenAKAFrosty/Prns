@@ -125,13 +125,70 @@ struct Forwarder<'a> {
     frames: &'a mut Vec<Vec<u8>>,
 }
 
+struct RefusingForwarder<'a> {
+    ready: &'a Cell<bool>,
+}
+
+impl BleFrameForwarder for RefusingForwarder<'_> {
+    type Error = Closed;
+
+    async fn forward(&mut self, _: &[u8]) -> Result<(), Self::Error> {
+        poll_fn(|_| {
+            if self.ready.get() {
+                Poll::Ready(Err(Closed))
+            } else {
+                Poll::Pending
+            }
+        })
+        .await
+    }
+}
+
+#[test]
+fn forwarding_failure_is_preserved_before_or_after_send_settlement() {
+    for finish_send in [false, true] {
+        let send_ready = Cell::new(false);
+        let forward_ready = Cell::new(false);
+        let starts = Cell::new(0);
+        let mut source = Source(VecDeque::from([Ok(2)]));
+        let mut sink = Sink {
+            ready: &send_ready,
+            starts: &starts,
+            result: Ok(()),
+        };
+        let mut inbound = [0; 2];
+        let mut running = pin!(send_frame_duplex(
+            &mut source,
+            &mut sink,
+            &[1],
+            &mut inbound,
+            RefusingForwarder {
+                ready: &forward_ready
+            },
+        ));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(running.as_mut().poll(&mut context).is_pending());
+        send_ready.set(finish_send);
+        assert!(running.as_mut().poll(&mut context).is_pending());
+        forward_ready.set(true);
+        assert_eq!(
+            running.as_mut().poll(&mut context),
+            Poll::Ready(BleDuplexOutcome::ForwardFailed(Closed))
+        );
+        assert_eq!(starts.get(), 1);
+    }
+}
+
 impl BleFrameForwarder for Forwarder<'_> {
-    async fn forward(&mut self, frame: &[u8]) {
+    type Error = core::convert::Infallible;
+
+    async fn forward(&mut self, frame: &[u8]) -> Result<(), Self::Error> {
         poll_fn(|_| match self.ready.get() {
             true => Poll::Ready(()),
             false => Poll::Pending,
         })
         .await;
         self.frames.push(frame.to_vec());
+        Ok(())
     }
 }

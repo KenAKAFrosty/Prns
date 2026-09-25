@@ -11,8 +11,8 @@ frames while keeping one send alive. This avoids mutual stalls when fragmented
 sends fill bounded queues in both directions. The adapter retains one additional
 `BLE_WIRE_FRAME_LEN` outbound buffer (currently 564 bytes), accepting custody only
 after copying the whole frame; completion and TX accounting follow the send result.
-The wire format is unchanged. This integration covers Tokio backends; Embassy's
-separate fanout/pump arrangement is not changed by this slice.
+The wire format is unchanged. Embassy's fanout uses the same core sender with
+serialized access to its shared inbound lane.
 
 Normal and in-flight-send reception both use the core's checked `receive_frame`
 boundary. Invalid reported lengths close the peer without forwarding or counting

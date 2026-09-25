@@ -380,8 +380,11 @@ The separate `bluetooth-auto-embassy` PR suite runs actual Embassy BLE component
 tests on the host, including checked receive fan-in and Trouble's bounded pools
 and queues. Tokio, Embassy, and the duplex core share the same checked receive
 boundary; a faulty backend cannot dispatch an out-of-buffer reported length.
-This does not yet run an Embassy node on the manual fleet clock or apply the
-duplex sender to Embassy's shared-lane fanout.
+Embassy fanout now uses the same duplex sender for selected members, serializing
+forwarding into its shared lane with an async mutex. Component tests exercise
+concurrent receive/send progress, forwarding pressure, failure isolation, and
+accounting through real Embassy fleet lanes. This does not yet run an Embassy
+node on the manual fleet clock or independently pump unselected members.
 
 ```console
 cargo test --locked -p prns-core interfaces::bluetooth_auto::duplex

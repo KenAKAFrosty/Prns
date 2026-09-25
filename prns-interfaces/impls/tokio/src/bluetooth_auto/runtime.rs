@@ -45,9 +45,12 @@ struct PeerInbound<'a, Seam> {
 }
 
 impl<Seam: InterfaceSeam> BleFrameForwarder for PeerInbound<'_, Seam> {
-    async fn forward(&mut self, frame: &[u8]) {
+    type Error = core::convert::Infallible;
+
+    async fn forward(&mut self, frame: &[u8]) -> Result<(), Self::Error> {
         self.status.add_rx(frame.len() as u64);
         self.seam.next_inbound(frame).await;
+        Ok(())
     }
 }
 
@@ -179,6 +182,7 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                         PeerInbound { seam: &mut seam, status: &self.status },
                     ).await {
                         BleDuplexOutcome::Finished(result) => result,
+                        BleDuplexOutcome::ForwardFailed(never) => match never {},
                         BleDuplexOutcome::ReceiveFailed(error) => {
                             seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
                             crate::diagnostic_log::warn!(

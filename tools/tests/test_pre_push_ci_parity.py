@@ -55,7 +55,7 @@ class PrePushCiParityTests(unittest.TestCase):
             "Cargo.toml",
             "Cargo.lock",
             "prns-core/src/interfaces/bluetooth_auto/receive/mod.rs",
-            "prns-interfaces/impls/embassy/src/bluetooth_auto/runtime.rs",
+            "prns-interfaces/impls/embassy/src/bluetooth_auto/runtime/duplex/mod.rs",
             "prns-interfaces/impls/embassy/Cargo.lock",
             "prns-runtime/core/src/runtime/mod.rs",
             "prns-runtime/impls/embassy/src/lib.rs",

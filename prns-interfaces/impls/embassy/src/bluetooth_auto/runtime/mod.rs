@@ -1,6 +1,5 @@
 use ::core::cell::{Cell, RefCell};
 
-use embassy_futures::join::join_array;
 use embassy_futures::select::{select, select6, select_array, Either, Either6};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
@@ -18,8 +17,8 @@ use prns_core::interfaces::bluetooth_auto::{
     role_for, ConnectionPolicy, PolicyAction, PolicyInput,
 };
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
-    RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSource, DialOutcome, Origin, RadioMode,
+    ScanningMode,
 };
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, DiscoveryGroupApplyOutcome, InterfaceId, InterfaceKind,
@@ -28,6 +27,9 @@ use prns_core::interfaces::{
 use prns_runtime::atomic::AtomicU64;
 use prns_runtime::manifold::grant::FrameTarget;
 use prns_runtime::runtime::{EmbassyFleet as Fleet, OutboundFrame};
+
+mod duplex;
+use duplex::send_members;
 
 const DIAL_TRACK: usize = 6;
 
@@ -1027,6 +1029,7 @@ where
                             &mut fleet,
                             &mut backend,
                             &mut members,
+                            &mut inbufs,
                         )
                         .await;
                     }
@@ -1506,42 +1509,10 @@ fn selected<L: BleLink>(member: &Active<L>, target: FrameTarget) -> bool {
     }
 }
 
-async fn send_member<L: BleLink>(
-    member: &mut Option<Active<L>>,
-    state: &mut SendState,
-    frame: &[u8],
-) {
-    if *state != SendState::Pending {
-        return;
-    }
-    let Some(member) = member.as_mut() else {
-        *state = SendState::Failed;
-        return;
-    };
-    *state = if member.sink.send_frame(frame).await.is_ok() {
-        SendState::Sent
-    } else {
-        SendState::Failed
-    };
-}
-
 #[expect(
-    clippy::expect_used,
-    reason = "from_fn runs exactly MEMBERS times over a zip of two [_; MEMBERS] arrays, so the iterator cannot run dry; the disjoint-borrow trick has no panic-free spelling without unsafe"
+    clippy::too_many_arguments,
+    reason = "fanout borrows the supervisor's existing receive storage"
 )]
-async fn send_members<L: BleLink, const MEMBERS: usize>(
-    members: &mut [Option<Active<L>>; MEMBERS],
-    states: &mut [SendState; MEMBERS],
-    frame: &[u8],
-) {
-    let mut pairs = members.iter_mut().zip(states.iter_mut());
-    let futures: [_; MEMBERS] = ::core::array::from_fn(|_| {
-        let (member, state) = pairs.next().expect("one pair per member slot");
-        send_member(member, state, frame)
-    });
-    join_array(futures).await;
-}
-
 async fn send_outbound<
     B,
     M: RawMutex + 'static,
@@ -1557,6 +1528,7 @@ async fn send_outbound<
     fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     backend: &mut B,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
+    inbufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],
 ) where
     B: BleBackend<MEMBERS>,
 {
@@ -1567,7 +1539,7 @@ async fn send_outbound<
         Some(member) if selected(member, frame.target()) => SendState::Pending,
         _ => SendState::NotSelected,
     });
-    let sends = send_members(members, &mut states, frame.bytes());
+    let sends = send_members(members, &mut states, frame.bytes(), inbufs, fleet, status);
     match select(
         status.wait_until_disabled(),
         with_timeout(OUTBOUND_TIMEOUT, sends),
@@ -1580,7 +1552,7 @@ async fn send_outbound<
     for (slot, state) in states.into_iter().enumerate() {
         match state {
             SendState::NotSelected => {}
-            SendState::Sent => status.member(slot).add_tx(frame.len() as u64),
+            SendState::Sent => {}
             SendState::Pending | SendState::Failed => {
                 status.note_transport_closure();
                 close_member(slot, manager, pending, status, fleet, backend, members).await;
@@ -1778,21 +1750,13 @@ mod tests {
     #[derive(Debug, PartialEq, Eq)]
     struct MockError;
 
-    #[derive(Clone, Copy)]
-    enum MockSinkMode {
-        Ready,
-        Blocked,
-    }
-
     enum MockSource {
         Pending,
         ReportedLength(usize),
         Closed,
     }
 
-    struct MockSink {
-        mode: MockSinkMode,
-    }
+    struct MockSink;
 
     struct MockLink {
         address: BleAddress,
@@ -1849,12 +1813,7 @@ mod tests {
         }
 
         fn into_data(self) -> (MockSource, MockSink) {
-            (
-                MockSource::Pending,
-                MockSink {
-                    mode: MockSinkMode::Ready,
-                },
-            )
+            (MockSource::Pending, MockSink)
         }
     }
 
@@ -1873,14 +1832,11 @@ mod tests {
         }
     }
 
-    impl BleSink for MockSink {
+    impl contract::BleSink for MockSink {
         type Error = MockError;
 
         async fn send_frame(&mut self, _frame: &[u8]) -> Result<(), MockError> {
-            match self.mode {
-                MockSinkMode::Ready => Ok(()),
-                MockSinkMode::Blocked => ::core::future::pending().await,
-            }
+            Ok(())
         }
     }
 
@@ -1903,14 +1859,14 @@ mod tests {
         }
     }
 
-    fn active(id: u8, mode: MockSinkMode) -> Active<MockLink> {
+    fn active(id: u8) -> Active<MockLink> {
         Active {
             identity: BleIdentity::new([id; 16]),
             id: InterfaceId::new([id; 8]),
             slot: usize::from(id),
             address: BleAddress::new([id; 6]),
             source: MockSource::Pending,
-            sink: MockSink { mode },
+            sink: MockSink,
         }
     }
 
@@ -1923,9 +1879,9 @@ mod tests {
             contract::BLE_HW_MTU + 1,
             usize::MAX,
         ] {
-            let mut member = active(1, MockSinkMode::Ready);
+            let mut member = active(1);
             member.source = MockSource::ReportedLength(length);
-            let mut members = [Some(active(0, MockSinkMode::Ready)), Some(member), None];
+            let mut members = [Some(active(0)), Some(member), None];
             let mut buffers = [[0; contract::BLE_HW_MTU]; 3];
             let (slot, received) = block_on(recv_any(&mut members, &mut buffers));
             let expected = if length <= contract::BLE_HW_MTU {
@@ -1948,7 +1904,7 @@ mod tests {
                 ]
             );
         }
-        let mut member = active(0, MockSinkMode::Ready);
+        let mut member = active(0);
         member.source = MockSource::Closed;
         assert_eq!(
             block_on(recv_or_pending(
@@ -2027,24 +1983,6 @@ mod tests {
         handshakes[0] = None;
 
         assert_eq!(DROPS.load(AtomicOrdering::Relaxed), 1);
-    }
-
-    #[test]
-    fn blocked_peer_does_not_hide_completed_fanout() {
-        let mut members = [
-            Some(active(0, MockSinkMode::Ready)),
-            Some(active(1, MockSinkMode::Blocked)),
-        ];
-        let mut states = [SendState::Pending, SendState::Pending];
-
-        block_on(async {
-            assert!(matches!(
-                select(send_members(&mut members, &mut states, b"frame"), async {}).await,
-                Either::Second(())
-            ));
-        });
-
-        assert!(matches!(states, [SendState::Sent, SendState::Pending]));
     }
 
     #[test]
