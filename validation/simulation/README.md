@@ -327,7 +327,7 @@ Many-node scenarios are a first-class target, not a sequence of isolated
 two-node tests. The coordinated ring establishes a 128-node correctness baseline;
 the 20-node transport scenario adds routed multi-hop and partition recovery.
 Thousands of production nodes remain a scale-test milestone, not demonstrated
-capacity or a promised limit. The BLE full-node capstone still covers two nodes.
+capacity or a promised limit. BLE now also has a coordinated 16-node ring.
 
 - Run production nodes on a shared asynchronous runner, without requiring a
   hardware-emulator process per node or substituting simplified protocol nodes.
@@ -351,10 +351,29 @@ The transport-sized BLE receive buffer removes one known large allocation, not
 all of those costs. Native queues, scheduler storage, and larger production-node
 scales still need evidence.
 
-A larger BLE ring probe exposed an interface-inventory lifetime race during
+A 16-node BLE ring exposed an interface-inventory lifetime race during
 same-ID peer replacement. The Tokio runtime now retains the departing attachment's
 own status registration, preserving replacement inventory and retiring only the
 old traffic counters. Its [focused lifecycle regression](../../prns-runtime/impls/tokio/README.md#interface-replacement)
-fails against the prior implementation. This repair does not yet establish the
-larger BLE ring as a passing capstone; simultaneous peer replacement and full-ring
-traffic/recovery remain follow-up work.
+fails against the prior implementation. The ring additionally exposed a mutual
+send stall under bounded GATT backpressure. The no-std BLE core now owns
+`send_frame_duplex`, keeping one send alive while receiving and forwarding whole
+frames; Tokio uses it with one additional bounded 564-byte outbound buffer.
+Focused tests cover simultaneous fragmented sends, exact custody/completion,
+receive failures, invalid lengths, and send completion during forwarding pressure.
+
+The passing ring uses 16 production nodes, sparse two-neighbor reachability,
+four-entry GATT queues, and 20-byte data values. All nodes discover and announce,
+establish links, and concurrently exchange 256-byte echo requests. Disabling one
+radio preserves unaffected exchanges; re-enabling it restores exact neighbor
+inventory and traffic on all existing links. Shutdown leaves no actors or links,
+and the complete bounded trace records each radio's detach exactly once.
+Discovery has a 60-second simulated deadline; OS entropy still prevents exact replay.
+Alternating Apple/BlueZ protocol endpoints exercise shared handshake decisions,
+not native OS Bluetooth APIs, controllers, L2CAP, or Embassy firmware.
+
+```console
+cargo test --locked -p prns-core interfaces::bluetooth_auto::duplex
+cargo test --locked -p prns-simulation --test ble_peer_frames
+cargo test --locked -p prns-simulation --features controlled-time --test manual_fleet ble::
+```

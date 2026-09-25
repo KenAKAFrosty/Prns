@@ -23,7 +23,7 @@ use personal_rns::runtime::{
 use personal_rns::storage::GrowableHeap;
 use personal_rns::units::DurationMillis;
 use personal_rns::wire::DestinationHash;
-use prns_simulation::{ManualTaskId, ManualTaskPoll, ManualTaskRunner, VirtualInterface};
+use prns_simulation::{ManualTaskId, ManualTaskPoll, ManualTaskRunner};
 use tokio::sync::oneshot;
 
 pub const NODE_COUNT: usize = 128;
@@ -63,10 +63,10 @@ pub enum NodeRole {
     Transport,
 }
 
-pub struct NodeSpec {
+pub struct NodeSpec<F> {
     pub index: usize,
     pub role: NodeRole,
-    pub interfaces: Vec<VirtualInterface>,
+    pub attach_interfaces: F,
     pub heard: Rc<RefCell<Vec<DestinationHash>>>,
     pub heard_capacity: NonZeroUsize,
 }
@@ -113,14 +113,14 @@ pub fn destination(index: usize) -> PreConfiguredDestination<'static> {
     }
 }
 
-pub fn add_node(
+pub fn add_node<F: FnOnce(&PrnsNodeHandle) + 'static>(
     runner: &mut ManualTaskRunner<'_, Completion>,
-    spec: NodeSpec,
+    spec: NodeSpec<F>,
 ) -> (ManualTaskId, oneshot::Receiver<NodeControl>) {
     let NodeSpec {
         index,
         role,
-        interfaces,
+        attach_interfaces,
         heard,
         heard_capacity,
     } = spec;
@@ -158,11 +158,7 @@ pub fn add_node(
                         }
                     }
                 },
-                interfaces: move |handle: &PrnsNodeHandle| {
-                    for interface in interfaces {
-                        let _attached = handle.add_interface(interface);
-                    }
-                },
+                interfaces: attach_interfaces,
                 persistence: NoPersistence,
             })
             .with_crypto_pool(CryptoPoolConfig::Inline);

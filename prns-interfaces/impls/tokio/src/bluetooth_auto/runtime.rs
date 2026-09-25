@@ -32,8 +32,24 @@ use prns_core::interfaces::{
     TransferRates, DEFAULT_DISCOVERY_GROUP_HASH,
 };
 use prns_runtime::manifold::driver::TokioInterfaceStatus;
-use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam};
+use prns_runtime::manifold::interface_seam::{
+    Interface, InterfaceSeam, OutboundDisposition, OutboundDropReason,
+};
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
+
+use contract::{send_frame_duplex, BleDuplexOutcome, BleFrameForwarder};
+
+struct PeerInbound<'a, Seam> {
+    seam: &'a mut Seam,
+    status: &'a TokioInterfaceStatus,
+}
+
+impl<Seam: InterfaceSeam> BleFrameForwarder for PeerInbound<'_, Seam> {
+    async fn forward(&mut self, frame: &[u8]) {
+        self.status.add_rx(frame.len() as u64);
+        self.seam.next_inbound(frame).await;
+    }
+}
 
 struct ClosedSignal {
     identity: BleIdentity,
@@ -126,6 +142,7 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
         let mut buf = [0u8; contract::BLE_WIRE_FRAME_LEN];
+        let mut pending_outbound = [0u8; contract::BLE_WIRE_FRAME_LEN];
         loop {
             tokio::select! {
                 received = self.source.recv_frame(&mut buf) => {
@@ -157,7 +174,37 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                         continue;
                     }
                     let outbound_len = outbound.len();
-                    if let Err(error) = self.sink.send_frame(outbound).await {
+                    if outbound_len > pending_outbound.len() {
+                        seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::Rejected));
+                        break;
+                    }
+                    pending_outbound[..outbound_len].copy_from_slice(outbound);
+                    seam.accept_outbound_custody();
+                    let result = match send_frame_duplex(
+                        &mut self.source, &mut self.sink,
+                        &pending_outbound[..outbound_len], &mut buf,
+                        PeerInbound { seam: &mut seam, status: &self.status },
+                    ).await {
+                        BleDuplexOutcome::Finished(result) => result,
+                        BleDuplexOutcome::ReceiveFailed(error) => {
+                            seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
+                            crate::diagnostic_log::warn!(
+                                "bluetooth: peer {:?} receive closed during send: {error:?}",
+                                self.identity
+                            );
+                            break;
+                        }
+                        BleDuplexOutcome::InvalidReceiveLength(length) => {
+                            seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
+                            crate::diagnostic_log::warn!(
+                                "bluetooth: peer {:?} reported invalid receive length {length} during send",
+                                self.identity
+                            );
+                            break;
+                        }
+                    };
+                    if let Err(error) = result {
+                        seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
                         crate::diagnostic_log::warn!(
                             "bluetooth: peer {:?} send closed: {error:?}",
                             self.identity
@@ -165,6 +212,7 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                         break;
                     }
                     self.status.add_tx(outbound_len as u64);
+                    seam.complete_outbound(OutboundDisposition::Sent);
                 }
             }
         }

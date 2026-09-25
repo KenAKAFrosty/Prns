@@ -104,7 +104,11 @@ fn routed_requests_cross_two_transports_and_recover_after_bridge_loss() {
                 NodeSpec {
                     index,
                     role,
-                    interfaces,
+                    attach_interfaces: move |handle: &personal_rns::runtime::PrnsNodeHandle| {
+                        for interface in interfaces {
+                            let _attached = handle.add_interface(interface);
+                        }
+                    },
                     heard: heard[index].clone(),
                     heard_capacity: nonzero(SERVER_COUNT),
                 },

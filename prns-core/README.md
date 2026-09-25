@@ -4,6 +4,16 @@ This crate is one package in the Personal RNS public Rust graph. Quick overviews
 
 All public packages use the same engine, release version, and dual MIT/Apache-2.0 license.
 
+## BLE duplex transfers
+
+`interfaces::bluetooth_auto::send_frame_duplex` owns executor-neutral progress for
+one send alongside whole-frame reception and asynchronous forwarding. Callers
+supply both buffers, transport halves, and a `BleFrameForwarder`. The helper
+uses no allocation or runtime dependency. Pending receives must be cancellation
+safe; cancelling the operation or encountering a receive failure requires retiring
+the transport because its send may be partial. Adapters own custody, accounting,
+timeouts, and teardown. Embassy fanout integration remains separate work.
+
 ## Portable host capabilities
 
 `prns-core::capabilities` defines optional, platform-neutral observations that applications and

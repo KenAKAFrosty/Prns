@@ -15,6 +15,7 @@ use prns_simulation::{
     TransmissionOrdinal, TransmissionRule, VirtualMedium, VirtualMediumConfig,
 };
 
+mod ble;
 mod routing;
 mod scenario;
 use scenario::{
@@ -101,7 +102,9 @@ fn full_nodes_exchange_in_a_sparse_ring_then_survive_a_partition_and_shut_down()
                 NodeSpec {
                     index,
                     role: NodeRole::Endpoint,
-                    interfaces: vec![interface],
+                    attach_interfaces: move |handle: &personal_rns::runtime::PrnsNodeHandle| {
+                        let _attached = handle.add_interface(interface);
+                    },
                     heard: heard[index].clone(),
                     heard_capacity: nonzero(2),
                 },
