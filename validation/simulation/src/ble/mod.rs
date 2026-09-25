@@ -4,6 +4,7 @@ mod advertisement;
 mod backend;
 mod config;
 mod connection;
+mod gatt;
 mod medium;
 mod trace;
 
@@ -14,9 +15,10 @@ pub use advertisement::{
 pub use backend::{
     VirtualBleBackend, VirtualBleBackendConfig, VirtualBleBackendConfigError,
     VirtualBleDisconnectReport, VirtualBleError, VirtualBleLab, VirtualBleLink,
-    VirtualBleLinkConfig, VirtualBleSink, VirtualBleSource,
+    VirtualBleLinkConfig,
 };
 pub use config::{BleCapacityField, BleMediumConfig, BleMediumConfigError};
+pub use gatt::{VirtualBleSink, VirtualBleSource, VirtualGattConfig, VirtualGattConfigError};
 pub use medium::{
     BleAdvanceError, BleAdvanceReport, BleObservation, BleRadioId, BleRadioMutation,
     BleSimulationError, VirtualBleMedium,

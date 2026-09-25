@@ -6,6 +6,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::bluetooth_auto::{
     AppleHost, BleAddress, BleIdentity, BleRoleCapabilities, BlueZHost, Endpoint, LinkCapabilities,
+    BLE_HW_MTU, CONTROL_MAX_LEN,
 };
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::request_endpoints;
@@ -23,6 +24,7 @@ use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::bluetooth_auto::BluetoothAuto;
 use prns_simulation::ble::{
     BleMediumConfig, VirtualBleBackendConfig, VirtualBleLab, VirtualBleLinkConfig,
+    VirtualGattConfig,
 };
 use prns_simulation::{SimulationDurationInTicks, SimulationTick};
 
@@ -53,7 +55,9 @@ async fn round_trip(node: &PrnsNodeHandle, link: LinkId, message: &[u8]) {
 }
 
 fn backend_config(address: u8, rssi: i8) -> VirtualBleBackendConfig {
-    let link = VirtualBleLinkConfig::new(4, 4, 2_048)
+    let gatt = VirtualGattConfig::new(CONTROL_MAX_LEN, 20)
+        .unwrap_or_else(|error| unreachable!("test GATT limits are valid: {error}"));
+    let link = VirtualBleLinkConfig::new(4, 4, BLE_HW_MTU, gatt)
         .unwrap_or_else(|error| unreachable!("test link configuration is valid: {error}"));
     VirtualBleBackendConfig::new(
         BleAddress::new([address; 6]),
@@ -180,7 +184,7 @@ async fn production_nodes_exchange_requests_after_link_and_radio_loss() {
             .establish_link(destination)
             .await
             .unwrap_or_else(|error| unreachable!("BLE link must establish: {error:?}"));
-        round_trip(&initiator, link, b"before-disconnect").await;
+        round_trip(&initiator, link, &[0xA5; 256]).await;
         let disconnected = lab.disconnect_between(BleAddress::new([1; 6]), BleAddress::new([2; 6]));
         assert!(disconnected.connections_closed > 0);
 
@@ -215,7 +219,7 @@ async fn production_nodes_exchange_requests_after_link_and_radio_loss() {
             }
         }
         assert!(reconnected, "both production supervisors must reconnect");
-        round_trip(&initiator, link, b"after-link-loss").await;
+        round_trip(&initiator, link, &[0xB6; 256]).await;
 
         first_status.disable();
         let mut disabled = false;
@@ -242,7 +246,7 @@ async fn production_nodes_exchange_requests_after_link_and_radio_loss() {
             if first_status.connection() == ConnectionState::Connected
                 && second_status.connection() == ConnectionState::Connected
             {
-                round_trip(&initiator, link, b"after-radio-restart").await;
+                round_trip(&initiator, link, &[0xC7; 256]).await;
                 return;
             }
         }

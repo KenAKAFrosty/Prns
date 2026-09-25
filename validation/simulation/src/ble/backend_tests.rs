@@ -1,13 +1,19 @@
 use personal_rns::interfaces::bluetooth_auto::{
     AdvertisingMode, AppleHost, BleBackend, BleEvent, BleIdentity, BleLink, BleSink, BleSource,
     BlueZHost, DialOutcome, DiscoveryGroupSet, Endpoint, Handshake, HandshakeOutcome,
-    HandshakeRole, LinkCapabilities, LocalPeer, Origin, RadioMode, ScanningMode,
+    HandshakeRole, LinkCapabilities, LocalPeer, Origin, RadioMode, ScanningMode, BLE_HW_MTU,
+    CONTROL_MAX_LEN,
 };
 
 use super::*;
 use crate::{SimulationDurationInTicks, SimulationTick};
 
 const MAX_PEERS: usize = 4;
+
+fn gatt_config() -> VirtualGattConfig {
+    VirtualGattConfig::new(CONTROL_MAX_LEN, 20)
+        .unwrap_or_else(|error| unreachable!("test GATT limits are valid: {error}"))
+}
 
 fn lab(radios: usize) -> VirtualBleLab {
     let config = BleMediumConfig::new(radios, 8, 32, 128)
@@ -20,7 +26,7 @@ fn backend_config(
     received_signal_strength_dbm: i8,
     maximum_frame_length: usize,
 ) -> VirtualBleBackendConfig {
-    let link = VirtualBleLinkConfig::new(4, 4, maximum_frame_length)
+    let link = VirtualBleLinkConfig::new(4, 4, maximum_frame_length, gatt_config())
         .unwrap_or_else(|error| unreachable!("test link is valid: {error}"));
     VirtualBleBackendConfig::new(
         BleAddress::new([address_byte; 6]),
@@ -56,18 +62,28 @@ async fn set_scanning(backend: &mut VirtualBleBackend, mode: ScanningMode) {
 fn backend_configuration_rejects_each_zero_capacity_as_a_whole_value() {
     for (capacities, expected) in [
         ((0, 1, 1), VirtualBleBackendConfigError::ZeroControlCapacity),
-        ((1, 0, 1), VirtualBleBackendConfigError::ZeroDataCapacity),
+        (
+            (1, 0, 1),
+            VirtualBleBackendConfigError::ZeroDataFragmentCapacity,
+        ),
         (
             (1, 1, 0),
             VirtualBleBackendConfigError::ZeroMaximumFrameLength,
         ),
     ] {
         assert_eq!(
-            VirtualBleLinkConfig::new(capacities.0, capacities.1, capacities.2),
+            VirtualBleLinkConfig::new(capacities.0, capacities.1, capacities.2, gatt_config()),
             Err(expected),
         );
     }
-    let link = VirtualBleLinkConfig::new(1, 1, 1)
+    assert_eq!(
+        VirtualBleLinkConfig::new(1, 1, BLE_HW_MTU + 1, gatt_config()),
+        Err(VirtualBleBackendConfigError::FrameLimitTooLarge {
+            requested: BLE_HW_MTU + 1,
+            maximum: BLE_HW_MTU
+        })
+    );
+    let link = VirtualBleLinkConfig::new(1, 1, 1, gatt_config())
         .unwrap_or_else(|error| unreachable!("test link is valid: {error}"));
     assert_eq!(
         VirtualBleBackendConfig::new(
@@ -312,6 +328,20 @@ async fn dialing_requires_power_and_a_real_sighting() {
     let _second = lab
         .attach_backend(backend_config(2, -52, 8))
         .unwrap_or_else(|error| unreachable!("second backend attaches: {error}"));
+    assert_eq!(
+        BleBackend::<MAX_PEERS>::local_capabilities(
+            &mut first,
+            LinkCapabilities {
+                l2cap: personal_rns::interfaces::bluetooth_auto::Psm::new(0x80),
+                link_mtu: BLE_HW_MTU as u16,
+            }
+        )
+        .await,
+        Ok(LinkCapabilities {
+            l2cap: None,
+            link_mtu: 8
+        })
+    );
     assert_eq!(
         BleBackend::<MAX_PEERS>::dial(&mut first, second_address).await,
         DialOutcome::RadioOff,

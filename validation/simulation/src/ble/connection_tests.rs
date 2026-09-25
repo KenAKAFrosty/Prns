@@ -4,7 +4,7 @@ use std::task::Poll;
 
 use personal_rns::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, CloseReason, Control,
-    DialOutcome, RadioMode, ScanningMode,
+    DialOutcome, RadioMode, ScanningMode, CONTROL_MAX_LEN,
 };
 
 use super::*;
@@ -22,6 +22,7 @@ struct Pair {
 impl Pair {
     async fn new(first_capacity: usize, second_capacity: usize) -> Result<Self, Box<dyn Error>> {
         let lab = VirtualBleLab::new(BleMediumConfig::new(2, 4, 4, 32)?);
+        let gatt = VirtualGattConfig::new(CONTROL_MAX_LEN, 20)?;
         let config = |address, capacity| {
             VirtualBleBackendConfig::new(
                 BleAddress::new([address; 6]),
@@ -30,7 +31,7 @@ impl Pair {
                 SimulationDurationInTicks::from_ticks(1),
                 1,
                 capacity,
-                VirtualBleLinkConfig::new(1, 1, 8)?,
+                VirtualBleLinkConfig::new(1, 1, 8, gatt)?,
             )
         };
         let mut first = lab.attach_backend(config(1, first_capacity)?)?;

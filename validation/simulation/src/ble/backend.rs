@@ -3,12 +3,14 @@ use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use personal_rns::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Control, DialOutcome,
-    L2capPlan, Origin, PeerProtocol, RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, Control, ControlParseError, DialOutcome,
+    L2capPlan, LinkCapabilities, Origin, PeerProtocol, RadioMode, ScanningMode, BLE_HW_MTU,
+    CONTROL_MAX_LEN,
 };
 use tokio::sync::{mpsc, watch};
 
 use super::connection::{Connection, ConnectionEndpoint};
+use super::gatt::{ControlValue, VirtualBleSink, VirtualBleSource, VirtualGattConfig};
 use super::{
     BleAddress, BleAdvanceError, BleAdvanceReport, BleAdvertisement, BleAdvertisementError,
     BleAdvertisingParameters, BleMediumConfig, BleRadioId, BleRoleCapabilities, BleSimulationError,
@@ -23,8 +25,9 @@ pub enum VirtualBleBackendConfigError {
     ZeroInboundLinkCapacity,
     ZeroConnectionCapacity,
     ZeroControlCapacity,
-    ZeroDataCapacity,
+    ZeroDataFragmentCapacity,
     ZeroMaximumFrameLength,
+    FrameLimitTooLarge { requested: usize, maximum: usize },
 }
 
 impl fmt::Display for VirtualBleBackendConfigError {
@@ -43,10 +46,16 @@ impl fmt::Display for VirtualBleBackendConfigError {
             Self::ZeroControlCapacity => {
                 formatter.write_str("control message capacity must be nonzero")
             }
-            Self::ZeroDataCapacity => formatter.write_str("data frame capacity must be nonzero"),
+            Self::ZeroDataFragmentCapacity => {
+                formatter.write_str("data fragment capacity must be nonzero")
+            }
             Self::ZeroMaximumFrameLength => {
                 formatter.write_str("maximum frame length must be nonzero")
             }
+            Self::FrameLimitTooLarge { requested, maximum } => write!(
+                formatter,
+                "frame limit {requested} exceeds the BLE reassembly capacity {maximum}"
+            ),
         }
     }
 }
@@ -100,15 +109,17 @@ impl VirtualBleBackendConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtualBleLinkConfig {
     control_capacity: usize,
-    data_capacity: usize,
+    data_fragment_capacity: usize,
     maximum_frame_length: usize,
+    gatt: VirtualGattConfig,
 }
 
 impl VirtualBleLinkConfig {
     pub fn new(
         control_capacity: usize,
-        data_capacity: usize,
+        data_fragment_capacity: usize,
         maximum_frame_length: usize,
+        gatt: VirtualGattConfig,
     ) -> Result<Self, VirtualBleBackendConfigError> {
         for (capacity, error) in [
             (
@@ -116,8 +127,8 @@ impl VirtualBleLinkConfig {
                 VirtualBleBackendConfigError::ZeroControlCapacity,
             ),
             (
-                data_capacity,
-                VirtualBleBackendConfigError::ZeroDataCapacity,
+                data_fragment_capacity,
+                VirtualBleBackendConfigError::ZeroDataFragmentCapacity,
             ),
             (
                 maximum_frame_length,
@@ -128,10 +139,17 @@ impl VirtualBleLinkConfig {
                 return Err(error);
             }
         }
+        if maximum_frame_length > BLE_HW_MTU {
+            return Err(VirtualBleBackendConfigError::FrameLimitTooLarge {
+                requested: maximum_frame_length,
+                maximum: BLE_HW_MTU,
+            });
+        }
         Ok(Self {
             control_capacity,
-            data_capacity,
+            data_fragment_capacity,
             maximum_frame_length,
+            gatt,
         })
     }
 }
@@ -140,6 +158,12 @@ impl VirtualBleLinkConfig {
 pub enum VirtualBleError {
     Simulation(BleSimulationError),
     LinkClosed,
+    EmptyFrame,
+    ControlEncodingFailed,
+    FragmentEncodingFailed,
+    ControlValueTooLong { length: usize, maximum: usize },
+    ControlParse(ControlParseError),
+    L2capUnavailable,
     FrameTooLong { length: usize, maximum: usize },
     ReceiveBufferTooSmall { frame: usize, buffer: usize },
 }
@@ -155,6 +179,17 @@ impl fmt::Display for VirtualBleError {
         match self {
             Self::Simulation(error) => error.fmt(formatter),
             Self::LinkClosed => formatter.write_str("virtual BLE link is closed"),
+            Self::EmptyFrame => formatter.write_str("BLE data frame must be nonempty"),
+            Self::ControlEncodingFailed => formatter.write_str("BLE control encoding failed"),
+            Self::FragmentEncodingFailed => formatter.write_str("BLE fragment encoding failed"),
+            Self::ControlValueTooLong { length, maximum } => write!(
+                formatter,
+                "control value is {length} bytes; maximum is {maximum}"
+            ),
+            Self::ControlParse(error) => write!(formatter, "BLE control parse failed: {error:?}"),
+            Self::L2capUnavailable => {
+                formatter.write_str("virtual BLE models GATT; L2CAP is unavailable")
+            }
             Self::FrameTooLong { length, maximum } => {
                 write!(
                     formatter,
@@ -323,6 +358,18 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
     type Error = VirtualBleError;
     type Link = VirtualBleLink;
 
+    async fn local_capabilities(
+        &mut self,
+        configured: LinkCapabilities,
+    ) -> Result<LinkCapabilities, Self::Error> {
+        Ok(LinkCapabilities {
+            l2cap: None,
+            link_mtu: configured
+                .link_mtu
+                .min(self.config.link.maximum_frame_length as u16),
+        })
+    }
+
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Self::Error> {
         let _network = self
             .network
@@ -472,11 +519,12 @@ impl Drop for VirtualBleBackend {
 
 pub struct VirtualBleLink {
     peer_address: BleAddress,
-    control_tx: mpsc::Sender<Control>,
-    control_rx: mpsc::Receiver<Control>,
+    control_tx: mpsc::Sender<ControlValue>,
+    control_rx: mpsc::Receiver<ControlValue>,
     data_tx: mpsc::Sender<Vec<u8>>,
     data_rx: mpsc::Receiver<Vec<u8>>,
     maximum_frame_length: usize,
+    gatt: VirtualGattConfig,
     peer_signal_strength_dbm: i8,
     endpoint: Arc<ConnectionEndpoint>,
 }
@@ -488,6 +536,20 @@ impl VirtualBleLink {
 
     fn closed(&self) -> watch::Receiver<bool> {
         self.endpoint.connection.subscribe()
+    }
+
+    /// Sends one bounded wire value, including malformed PDUs for parser-refusal scenarios.
+    pub async fn send_control_value(&mut self, bytes: &[u8]) -> Result<(), VirtualBleError> {
+        let value = ControlValue::new(bytes, self.gatt.control_value_limit)?;
+        let mut closed = self.closed();
+        if *closed.borrow_and_update() {
+            return Err(VirtualBleError::LinkClosed);
+        }
+        tokio::select! {
+            biased;
+            _ = closed.changed() => Err(VirtualBleError::LinkClosed),
+            result = self.control_tx.send(value) => result.map_err(|_| VirtualBleError::LinkClosed),
+        }
     }
 }
 
@@ -505,17 +567,11 @@ impl BleLink for VirtualBleLink {
     }
 
     async fn control_send(&mut self, message: &Control) -> Result<(), Self::Error> {
-        let mut closed = self.closed();
-        if *closed.borrow_and_update() {
-            return Err(VirtualBleError::LinkClosed);
-        }
-        tokio::select! {
-            biased;
-            _ = closed.changed() => Err(VirtualBleError::LinkClosed),
-            result = self.control_tx.send(*message) => {
-                result.map_err(|_| VirtualBleError::LinkClosed)
-            }
-        }
+        let mut value = [0; CONTROL_MAX_LEN];
+        let len = message
+            .encode(&mut value)
+            .ok_or(VirtualBleError::ControlEncodingFailed)?;
+        self.send_control_value(&value[..len]).await
     }
 
     async fn control_recv(&mut self) -> Result<Control, Self::Error> {
@@ -526,89 +582,36 @@ impl BleLink for VirtualBleLink {
         tokio::select! {
             biased;
             _ = closed.changed() => Err(VirtualBleError::LinkClosed),
-            message = self.control_rx.recv() => message.ok_or(VirtualBleError::LinkClosed),
+            value = self.control_rx.recv() => {
+                let value = value.ok_or(VirtualBleError::LinkClosed)?;
+                Control::try_decode(value.as_bytes()).map_err(VirtualBleError::ControlParse)
+            },
         }
     }
 
-    async fn upgrade(&mut self, _plan: &L2capPlan) -> Result<(), Self::Error> {
+    async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), Self::Error> {
         if self.endpoint.connection.is_closed() {
             Err(VirtualBleError::LinkClosed)
         } else {
-            Ok(())
+            match plan {
+                L2capPlan::None => Ok(()),
+                L2capPlan::Open { .. } | L2capPlan::Accept => {
+                    Err(VirtualBleError::L2capUnavailable)
+                }
+            }
         }
     }
 
     fn into_data(self) -> (Self::Source, Self::Sink) {
         (
-            VirtualBleSource {
-                receiver: self.data_rx,
-                endpoint: self.endpoint.clone(),
-            },
-            VirtualBleSink {
-                sender: self.data_tx,
-                maximum_frame_length: self.maximum_frame_length,
-                endpoint: self.endpoint,
-            },
+            VirtualBleSource::new(self.data_rx, self.endpoint.clone()),
+            VirtualBleSink::new(
+                self.data_tx,
+                self.maximum_frame_length,
+                self.gatt.data_value_limit,
+                self.endpoint,
+            ),
         )
-    }
-}
-
-pub struct VirtualBleSource {
-    receiver: mpsc::Receiver<Vec<u8>>,
-    endpoint: Arc<ConnectionEndpoint>,
-}
-
-impl BleSource for VirtualBleSource {
-    type Error = VirtualBleError;
-
-    async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, Self::Error> {
-        let mut closed = self.endpoint.connection.subscribe();
-        if *closed.borrow_and_update() {
-            return Err(VirtualBleError::LinkClosed);
-        }
-        let frame = tokio::select! {
-            biased;
-            _ = closed.changed() => return Err(VirtualBleError::LinkClosed),
-            frame = self.receiver.recv() => frame.ok_or(VirtualBleError::LinkClosed)?,
-        };
-        if frame.len() > out.len() {
-            return Err(VirtualBleError::ReceiveBufferTooSmall {
-                frame: frame.len(),
-                buffer: out.len(),
-            });
-        }
-        out[..frame.len()].copy_from_slice(&frame);
-        Ok(frame.len())
-    }
-}
-
-pub struct VirtualBleSink {
-    sender: mpsc::Sender<Vec<u8>>,
-    maximum_frame_length: usize,
-    endpoint: Arc<ConnectionEndpoint>,
-}
-
-impl BleSink for VirtualBleSink {
-    type Error = VirtualBleError;
-
-    async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Self::Error> {
-        if frame.len() > self.maximum_frame_length {
-            return Err(VirtualBleError::FrameTooLong {
-                length: frame.len(),
-                maximum: self.maximum_frame_length,
-            });
-        }
-        let mut closed = self.endpoint.connection.subscribe();
-        if *closed.borrow_and_update() {
-            return Err(VirtualBleError::LinkClosed);
-        }
-        tokio::select! {
-            biased;
-            _ = closed.changed() => Err(VirtualBleError::LinkClosed),
-            result = self.sender.send(frame.to_vec()) => {
-                result.map_err(|_| VirtualBleError::LinkClosed)
-            }
-        }
     }
 }
 
@@ -622,7 +625,10 @@ fn link_pair(
     lifecycle: Arc<Connection>,
 ) -> (VirtualBleLink, VirtualBleLink) {
     let control_capacity = config_a.control_capacity.min(config_b.control_capacity);
-    let data_capacity = config_a.data_capacity.min(config_b.data_capacity);
+    let data_capacity = config_a
+        .data_fragment_capacity
+        .min(config_b.data_fragment_capacity);
+    let gatt = config_a.gatt.negotiated(config_b.gatt);
     let maximum_frame_length = config_a
         .maximum_frame_length
         .min(config_b.maximum_frame_length);
@@ -638,6 +644,7 @@ fn link_pair(
             data_tx: data_a_tx,
             data_rx: data_b_rx,
             maximum_frame_length,
+            gatt,
             peer_signal_strength_dbm: signal_strength_b,
             endpoint: Arc::new(ConnectionEndpoint {
                 connection: lifecycle.clone(),
@@ -650,6 +657,7 @@ fn link_pair(
             data_tx: data_b_tx,
             data_rx: data_a_rx,
             maximum_frame_length,
+            gatt,
             peer_signal_strength_dbm: signal_strength_a,
             endpoint: Arc::new(ConnectionEndpoint {
                 connection: lifecycle,
@@ -674,6 +682,139 @@ fn close_connections(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use personal_rns::interfaces::bluetooth_auto::{
+        AppleHost, BleIdentity, BleSink, CloseReason, DiscoveryGroupId, DiscoveryGroupSet,
+        Endpoint, PeerDiscoveryGroups,
+    };
+
+    fn wire_links(
+        first: VirtualGattConfig,
+        second: VirtualGattConfig,
+    ) -> Result<(VirtualBleLink, VirtualBleLink), VirtualBleBackendConfigError> {
+        let first_address = BleAddress::new([1; 6]);
+        let second_address = BleAddress::new([2; 6]);
+        Ok(link_pair(
+            first_address,
+            second_address,
+            VirtualBleLinkConfig::new(1, 1, BLE_HW_MTU, first)?,
+            VirtualBleLinkConfig::new(1, 1, BLE_HW_MTU, second)?,
+            -40,
+            -50,
+            Arc::new(Connection::new(first_address, second_address)),
+        ))
+    }
+
+    #[tokio::test]
+    async fn control_pdus_cross_the_wire_and_maximum_greetings_round_trip(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let gatt = VirtualGattConfig::new(CONTROL_MAX_LEN, 20)?;
+        let (mut first, mut second) = wire_links(gatt, gatt)?;
+        let close = Control::Close {
+            reason: CloseReason::Incompatible,
+        };
+        first.control_send(&close).await?;
+        let value = second
+            .control_rx
+            .recv()
+            .await
+            .ok_or(VirtualBleError::LinkClosed)?;
+        assert_eq!(value.as_bytes(), &[3, 3]);
+        let ids = ["alpha", "beta", "gamma", "delta"].map(|name| {
+            DiscoveryGroupId::parse(name)
+                .unwrap_or_else(|error| unreachable!("valid group: {error:?}"))
+        });
+        let groups = DiscoveryGroupSet::try_from_slice(&ids)
+            .unwrap_or_else(|error| unreachable!("valid set: {error:?}"));
+        let hello = Control::Hello {
+            identity: BleIdentity::new([7; 16]),
+            endpoint: Endpoint::CoreBluetooth(AppleHost::MacOs),
+            capabilities: LinkCapabilities {
+                l2cap: None,
+                link_mtu: BLE_HW_MTU as u16,
+            },
+            peer_rssi: Some(-40),
+            discovery_groups: PeerDiscoveryGroups::Explicit(groups.hashes()),
+        };
+        assert_eq!(
+            hello.encode(&mut [0; CONTROL_MAX_LEN]),
+            Some(CONTROL_MAX_LEN)
+        );
+        first.control_send(&hello).await?;
+        assert_eq!(second.control_recv().await, Ok(hello));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn negotiated_control_limit_and_parser_refusals_are_exact(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (mut first, mut second) = wire_links(
+            VirtualGattConfig::new(CONTROL_MAX_LEN, 20)?,
+            VirtualGattConfig::new(20, 20)?,
+        )?;
+        assert_eq!(
+            first.send_control_value(&[0; 21]).await,
+            Err(VirtualBleError::ControlValueTooLong {
+                length: 21,
+                maximum: 20
+            })
+        );
+        assert!(matches!(
+            second.control_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        for (bytes, expected) in [
+            (&[][..], ControlParseError::Empty),
+            (&[255][..], ControlParseError::UnknownKind(255)),
+            (&[3, 255][..], ControlParseError::InvalidCloseReason),
+            (&[3, 0, 0][..], ControlParseError::InvalidLength),
+        ] {
+            first.send_control_value(bytes).await?;
+            assert_eq!(
+                second.control_recv().await,
+                Err(VirtualBleError::ControlParse(expected))
+            );
+        }
+        let close = Control::Close {
+            reason: CloseReason::Incompatible,
+        };
+        first.control_send(&close).await?;
+        assert_eq!(second.control_recv().await, Ok(close));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn data_uses_the_peers_smaller_value_limit_and_l2cap_is_unavailable(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (mut first, mut second) = wire_links(
+            VirtualGattConfig::new(CONTROL_MAX_LEN, 20)?,
+            VirtualGattConfig::new(CONTROL_MAX_LEN, 10)?,
+        )?;
+        assert_eq!(
+            first.upgrade(&L2capPlan::Accept).await,
+            Err(VirtualBleError::L2capUnavailable)
+        );
+        assert_eq!(first.upgrade(&L2capPlan::None).await, Ok(()));
+        let (_source, mut sink) = first.into_data();
+        let (sent, values) = tokio::join!(sink.send_frame(b"hello-world"), async {
+            let mut values = Vec::new();
+            for _ in 0..3 {
+                values.push(
+                    second
+                        .data_rx
+                        .recv()
+                        .await
+                        .ok_or(VirtualBleError::LinkClosed)?,
+                );
+            }
+            Ok::<_, VirtualBleError>(values)
+        });
+        sent?;
+        assert_eq!(
+            values?.iter().map(Vec::len).collect::<Vec<_>>(),
+            vec![10, 10, 6]
+        );
+        Ok(())
+    }
 
     #[test]
     fn endpoint_teardown_during_disconnect_does_not_relock_the_registry() {

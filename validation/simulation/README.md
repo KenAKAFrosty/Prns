@@ -25,8 +25,47 @@ the budget; closing either endpoint releases its reservation. The BLE capstone
 runs two production nodes and exchanges requests before loss, after forced
 disconnect, and after radio disable/re-enable.
 
+Control messages cross bounded characteristic queues as encoded bytes and use
+the production parser on receipt. Data uses the production GATT fragmenter and
+reassembler, with explicit limits on complete characteristic values and queued
+fragments. Each peer's smaller value limit applies to the connection, and the
+production BLE frame ceiling bounds reassembly. Tests cover exact fragment bytes,
+maximum frames, cancellation, backpressure, malformed control values, and
+disconnect during a fragmented send. The full-node capstone transfers 256-byte
+requests through 20-byte data values before and after recovery.
+
 The logical clock owns media delivery and advertisement scheduling. Production
 runtime deadlines still use real time, so full runtime replay is not yet
-deterministic. BLE control messages and frames cross the backend trait seam;
-native controller behavior, GATT framing, and L2CAP upgrades are not modeled.
+deterministic. This models the characteristic-value boundary, not native
+controller scheduling or OS Bluetooth APIs. L2CAP is explicitly unavailable;
+capability advertisement reports GATT support and the configured frame limit.
 Wi-Fi, flash, reset, sleep, and unified runtime time remain future work.
+
+## Large-fleet design requirements
+
+Many-node scenarios are a first-class target, not a sequence of isolated
+two-node tests. Hundreds and then thousands of production nodes are scale-test
+milestones, not demonstrated capacity or a promised limit. The current full-node
+capstones establish two-node correctness only.
+
+- Run production nodes on a shared asynchronous runner, without requiring a
+  hardware-emulator process per node or substituting simplified protocol nodes.
+- Model explicit, sparse reachability for chains, clusters, bridges, and network
+  partitions. Discovery and delivery should visit reachable neighbors rather
+  than the whole fleet. Deliberately dense scenarios still incur the cost of
+  their actual interactions; they are a separate stress case.
+- Advance directly to due events with explicit work budgets, including delivery
+  fanout. Bring production deadlines under controlled time before claiming
+  deterministic full-fleet replay or accelerated long-duration scenarios.
+- Bound queues, active links, discovery history, and diagnostics. Index live
+  connections per radio and support repeated node churn without exhausting
+  lifetime identifiers. Use aggregate counters alongside selective bounded traces.
+- Measure memory per node and active peer, event throughput, and wall time per
+  simulated interval. Scale runs must retain correctness assertions for delivery,
+  recovery, backpressure, and cleanup, not merely demonstrate that nodes start.
+
+Current obstacles include all-to-all medium fanout, global connection scans, and
+real-time runtime deadlines. The production BLE peer receive buffer also uses
+the global maximum wire-frame size (524,352 bytes), despite its smaller transport
+MTU. Audit transport-specific bounds and measure against the existing runtime
+before changing allocation policy; do not conceal that cost in the simulator.
