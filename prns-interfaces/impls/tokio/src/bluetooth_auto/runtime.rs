@@ -803,7 +803,8 @@ where
     }
 }
 
-pub(super) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(super) const HANDSHAKE_TIMEOUT: Duration =
+    Duration::from_millis(contract::HANDSHAKE_TIMEOUT_MS);
 
 async fn prepare_radio<B, const MAX_PEERS: usize>(
     backend: &mut B,

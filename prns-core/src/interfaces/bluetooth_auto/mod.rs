@@ -48,8 +48,8 @@ pub type BluetoothLeIdentity = BleIdentity;
 pub use policy::{
     defaults_for_bitrate, descriptor, role_for, ConnectionPolicy, HandshakeFailureKind,
     PolicyAction, PolicyInput, BLE_BITRATE_GUESS_BPS, DIAL_FAILED_RETRY_TTL_MS, DIAL_PAUSE_MS,
-    DIAL_RETRY_TTL_MS, GROUP_MISMATCH_RETRY_TTL_MS, HANDSHAKE_SLACK, KEEPER_DUEL_WINDOW_MS,
-    SUPPRESS_TTL_MS,
+    DIAL_RETRY_TTL_MS, GROUP_MISMATCH_RETRY_TTL_MS, HANDSHAKE_SLACK, HANDSHAKE_TIMEOUT_MS,
+    KEEPER_DUEL_WINDOW_MS, SUPPRESS_TTL_MS,
 };
 
 #[cfg(test)]

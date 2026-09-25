@@ -2,8 +2,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use personal_rns::interfaces::bluetooth_auto::{
-    fragments_of, BleSink, BleSource, Fragment, Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN,
-    FRAGMENT_HEADER_LEN,
+    copy_received_frame, fragments_of, BleReceiveError, BleSink, BleSource, Fragment, Reassembler,
+    BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
 };
 use tokio::sync::mpsc;
 
@@ -132,14 +132,14 @@ impl BleSource for VirtualBleSource {
             let Some(frame) = self.reassembler.absorb(&fragment) else {
                 continue;
             };
-            if frame.len() > out.len() {
-                return Err(VirtualBleError::ReceiveBufferTooSmall {
-                    frame: frame.len(),
-                    buffer: out.len(),
-                });
-            }
-            out[..frame.len()].copy_from_slice(frame);
-            return Ok(frame.len());
+            return copy_received_frame(frame, out).map_err(|error| match error {
+                BleReceiveError::BufferTooSmall { length, capacity } => {
+                    VirtualBleError::ReceiveBufferTooSmall {
+                        frame: length,
+                        buffer: capacity,
+                    }
+                }
+            });
         }
     }
 }

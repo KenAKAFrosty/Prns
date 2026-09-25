@@ -96,6 +96,43 @@ async fn maximum_frame_reassembles_at_minimum_and_typical_value_limits(
 }
 
 #[tokio::test]
+async fn whole_frame_copy_checks_capacity_and_keeps_the_next_frame_after_refusal(
+) -> Result<(), Box<dyn Error>> {
+    const CANARY: u8 = 0xCC;
+    let frame = [0x17; BLE_HW_MTU];
+    for capacity in [0, 1, BLE_HW_MTU - 1, BLE_HW_MTU, BLE_HW_MTU + 1] {
+        let (mut sink, mut source) = data_pair(20);
+        let mut output = [CANARY; BLE_HW_MTU + 1];
+        let (sent, received) = tokio::join!(
+            sink.send_frame(&frame),
+            source.recv_frame(&mut output[..capacity])
+        );
+        sent?;
+        let mut expected_output = [CANARY; BLE_HW_MTU + 1];
+        let expected = if capacity < frame.len() {
+            Err(VirtualBleError::ReceiveBufferTooSmall {
+                frame: frame.len(),
+                buffer: capacity,
+            })
+        } else {
+            expected_output[..frame.len()].copy_from_slice(&frame);
+            Ok(frame.len())
+        };
+        assert_eq!((received, output), (expected, expected_output));
+
+        let mut next = [CANARY; 6];
+        let (sent, received) =
+            tokio::join!(sink.send_frame(b"fresh"), source.recv_frame(&mut next));
+        sent?;
+        assert_eq!(
+            (received, next),
+            (Ok(5), [b'f', b'r', b'e', b's', b'h', CANARY])
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn cancelling_receive_preserves_partial_reassembly() -> Result<(), Box<dyn Error>> {
     let (mut sink, mut source) = data_pair(10);
     let mut sending = std::pin::pin!(sink.send_frame(b"hello-world"));

@@ -43,7 +43,9 @@ without resetting eviction statistics. Stopping scanning alone retains history.
 Control messages cross bounded characteristic queues as encoded bytes and use
 the production parser on receipt. Data uses the production GATT fragmenter and
 reassembler, with explicit limits on complete characteristic values and queued
-fragments. Each peer's smaller value limit applies to the connection, and the
+fragments. Completed frames use the same core whole-frame copy check as native
+BLE sources; the simulator only maps the typed error into its own diagnostics.
+Each peer's smaller value limit applies to the connection, and the
 production BLE frame ceiling bounds reassembly. Tests cover exact fragment bytes,
 maximum frames, cancellation, backpressure, malformed control values, and
 disconnect during a fragmented send. The full-node capstone transfers 256-byte
@@ -59,7 +61,9 @@ claim.
 
 The logical medium clock owns delivery and advertisement scheduling. Tokio BLE
 supervisor cooldowns, handshake timeouts, and recent-member status grace use
-Tokio time, matching the manifold's monotonic clock. Tests can pause that clock
+Tokio time, matching the manifold's monotonic clock. The shared BLE policy owns
+the 10-second greeting budget used by both Tokio and Embassy; adapters own the
+clock and timeout mechanism. Tests can pause the Tokio clock
 and advance directly to a deadline without a wall-time wait. Test-only Tokio
 clock controls are not enabled by this package's normal dependency features.
 

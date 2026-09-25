@@ -33,7 +33,7 @@ const DIAL_TRACK: usize = 6;
 
 const ACTION_CAP: usize = 6;
 
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(contract::HANDSHAKE_TIMEOUT_MS);
 const HANDSHAKE_LANES: usize = 2;
 const OUTBOUND_TIMEOUT: Duration = Duration::from_secs(2);
 
