@@ -76,13 +76,13 @@ cargo test --locked -p prns-simulation --test ble_timing
 cargo test --locked --manifest-path prns-interfaces/impls/tokio/Cargo.toml --features bluetooth-auto-runtime --lib bluetooth_auto
 ```
 
-Medium ticks and runtime time are still advanced independently; these tests do
-not define a tick duration or a combined event-ordering policy. Full runtime
+The `ble_timing` tests advance medium ticks and runtime time independently; the
+opt-in manual bridge below coordinates them for hand-polled scenarios. Full runtime
 replay is not yet deterministic, and wall-clock boot timestamps and OS entropy
 remain outside this control. This models the characteristic-value boundary, not
 native controller scheduling or OS Bluetooth APIs. L2CAP is explicitly
 unavailable; capability advertisement reports GATT support and the configured
-frame limit. Wi-Fi, flash, reset, sleep, and a unified time driver remain future
+frame limit. Wi-Fi, flash, reset, sleep, and full-node time coordination remain future
 work.
 
 ## Event-aware stepping
@@ -107,13 +107,52 @@ Frame lookup uses the ordered pending-delivery map. BLE lookup currently scans
 attached radios without retaining another schedule index. This establishes
 semantics, not a many-node scheduling throughput claim.
 
-This is the medium-side prerequisite for a unified time driver: it does not yet
-advance Tokio time, choose ordering between a timer and a medium event at the
-same instant, or establish task quiescence. The caller still owns those steps
-and the total scenario work budget.
+These medium APIs alone do not advance Tokio time or establish task quiescence.
+The caller still owns coordination and the total scenario work budget.
 
 ```console
 cargo test --locked -p prns-simulation --lib stepping
+```
+
+## Manual coordinated time
+
+The opt-in `controlled-time` feature provides `ManualTimeDriver`, which owns one
+paused, current-thread Tokio runtime for an explicitly polled scenario. It binds
+either a frame medium or a BLE lab to an explicit nonzero whole-millisecond tick
+duration. Nonzero medium origins are supported. Merely polling a pending future
+never advances time; snapshots validate both clocks instead of silently
+resynchronizing them.
+
+An advance stops at the next medium event or the caller's boundary. Medium
+effects settle first, then Tokio time moves to that same instant, before the
+caller next polls its futures. Emission-budget, backward-time, and clock-range
+refusals leave both clocks unchanged. Timers must be constructed inside the
+polled futures, and creation, use, and destruction of the driver are synchronous
+operations outside any other Tokio runtime.
+
+The boundary must account for the caller's known runtime deadlines: the driver
+does not inspect Tokio's timer queue. Advancing past an earlier deadline would
+still coalesce timers. It also does not poll timers to completion, infer
+quiescence, order branches within a future, or automatically run a scenario.
+Poll and step budgets remain explicit responsibilities of the scenario.
+
+Live spawned async tasks are refused because their execution is not controlled
+by this polling API. Blocking work, exported runtime handles, independently
+advanced clocks, and concurrent medium mutation are unsupported. Detected clock
+drift is a typed error; discard that driver. An error discovered after polling
+does not undo the polled future's effects.
+
+Tests cover a frame delivery coinciding with a production `TokioClock` deadline,
+the production BLE supervisor's exact 10-second handshake timeout through
+`Fleet::detached`, and emission-budget refusal followed by retry. They also cover
+nonzero origins, duration validation, clock overflow, external drift, and spawned
+task rejection. This is not yet a multi-medium or full-node executor and does
+not change shipping runtime behavior. The registered simulation suite enables
+the feature; focused commands are:
+
+```console
+cargo test --locked -p prns-simulation --features controlled-time --lib manual_time
+cargo test --locked -p prns-simulation --features controlled-time --test manual_time
 ```
 
 ## Large-fleet design requirements
@@ -186,7 +225,7 @@ capstones establish two-node correctness only.
   simulated interval. Scale runs must retain correctness assertions for delivery,
   recovery, backpressure, and cleanup, not merely demonstrate that nodes start.
 
-Remaining obstacles include coordinated medium/runtime time advancement and a
+Remaining obstacles include full-node and multi-medium time coordination and a
 measured accounting of total per-node and per-peer allocation. The transport-sized
 BLE receive buffer removes one known large allocation, not all of those costs. Native
 queues, scheduler storage, and full production-node scale still need evidence.

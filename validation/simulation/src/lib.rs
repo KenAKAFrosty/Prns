@@ -5,6 +5,8 @@
 mod config;
 mod fault;
 mod interface;
+#[cfg(feature = "controlled-time")]
+mod manual_time;
 mod medium;
 mod seeded;
 mod stepping;
@@ -19,6 +21,10 @@ pub use fault::{
     FaultPlan, FaultPlanError, TransmissionAction, TransmissionOrdinal, TransmissionRule,
 };
 pub use interface::VirtualInterface;
+#[cfg(feature = "controlled-time")]
+pub use manual_time::{
+    ManualAdvance, ManualMedium, ManualTimeDriver, ManualTimeError, ManualTimeSnapshot,
+};
 pub use medium::{AttachError, EndpointId, VirtualMedium};
 pub use seeded::{
     RatePerMillion, RatePerMillionError, SeededFaultProfile, SeededFaultProfileError,

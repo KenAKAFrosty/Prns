@@ -9,6 +9,9 @@ rust-version.workspace = true
 description = "Deterministic, host-native virtual device validation for Personal Reticulum"
 publish = false
 
+[features]
+controlled-time = ["tokio/test-util"]
+
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host"] }
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }

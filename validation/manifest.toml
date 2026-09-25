@@ -595,7 +595,7 @@ tiers = ["pr", "release", "scheduled"]
 platform = "any"
 toolchain = "stable"
 timeout_seconds = 600
-command = ["cargo", "test", "--locked", "-p", "prns-simulation"]
+command = ["cargo", "test", "--locked", "-p", "prns-simulation", "--features", "controlled-time"]
 inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio"]
 artifacts = "validation-artifacts/results/virtual-device-simulation"
 
