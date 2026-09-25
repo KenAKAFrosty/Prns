@@ -5,8 +5,9 @@ host-native models of the hardware and media around it. It does not reimplement
 Reticulum behavior.
 
 The foundation provides a deterministic, bounded frame medium and a production
-`Interface` adapter. Its capstone runs two real `PrnsNode`s through announce,
-link establishment, and request/response without sockets or physical hardware.
+`Interface` adapter. Capstones run real `PrnsNode`s through announce, link
+establishment, and request/response without sockets or physical hardware,
+including a 128-node sparse ring on a manually controlled runtime clock.
 
 The medium intentionally makes its limits and faults explicit:
 
@@ -82,8 +83,8 @@ replay is not yet deterministic, and wall-clock boot timestamps and OS entropy
 remain outside this control. This models the characteristic-value boundary, not
 native controller scheduling or OS Bluetooth APIs. L2CAP is explicitly
 unavailable; capability advertisement reports GATT support and the configured
-frame limit. Wi-Fi, flash, reset, sleep, and full-node time coordination remain future
-work.
+frame limit. Wi-Fi, flash, reset, sleep, automatic deadline discovery, and
+multi-medium time coordination remain future work.
 
 ## Event-aware stepping
 
@@ -146,8 +147,9 @@ Tests cover a frame delivery coinciding with a production `TokioClock` deadline,
 the production BLE supervisor's exact 10-second handshake timeout through
 `Fleet::detached`, and emission-budget refusal followed by retry. They also cover
 nonzero origins, duration validation, clock overflow, external drift, and spawned
-task rejection. This is not yet a multi-medium or full-node executor and does
-not change shipping runtime behavior. The registered simulation suite enables
+task rejection. This is not a general-purpose full-node executor: nodes must use
+paths that do not spawn background work. It does not coordinate multiple media
+or change shipping runtime behavior. The registered simulation suite enables
 the feature; focused commands are:
 
 ```console
@@ -201,6 +203,42 @@ Shipping runtime behavior is unchanged.
 cargo test --locked -p prns-simulation --features controlled-time --lib manual_time::tasks
 ```
 
+### Full-node coordinated ring
+
+The `manual_fleet` capstone runs 128 production `PrnsNode`s concurrently on one
+manual task runner and an explicitly connected ring. Every node owns a real
+engine, manifold, interface driver, and request router. Each uses the existing
+`CryptoPoolConfig::Inline` mode, no persistence, no transport forwarding, and
+packet-sized echo responses. This keeps the exercised path inside the manually
+polled actors without modifying production behavior or starting background crypto
+workers. It does not cover pooled crypto, compression workers, large Resources,
+or persistence workers.
+
+All nodes boot in the private runtime's timer context. The first 128
+transmissions are delayed one tick: no node hears an announcement before the
+advance, and afterwards every node has heard exactly its two neighbors. All 128
+nodes then establish links to their next neighbor and exchange exact echo
+payloads. Removing one edge leaves the other 127 exchanges working while the
+affected request remains pending until its explicit 50-millisecond timeout.
+Restoring the edge permits a fresh request on the existing link. The test checks
+every node's elapsed production clock against medium and runtime time, then
+requests orderly shutdown and verifies all actors complete successfully, every
+interface detaches exactly once, and no delayed frames or actors remain. The
+bounded trace must be complete and free of receive-queue or delivery drops.
+
+The scenario has explicit endpoint, neighbor, receive-queue, pending-delivery,
+trace, actor, and per-settlement poll limits. Its timed section advances one
+millisecond at a time, draining ready actors between steps. This is short-horizon
+full-node coordination with known time resolution, not automatic discovery of
+all production deadlines or arbitrary event-jump safety. Node boot origins and
+OS entropy still vary; no byte-for-byte replay claim is made. This establishes
+128-node correctness for a direct-neighbor workload, not routed multi-hop
+coverage, total per-node memory cost, throughput, or a maximum fleet size.
+
+```console
+cargo test --locked -p prns-simulation --features controlled-time --test manual_fleet
+```
+
 ## Large-fleet design requirements
 
 Both media require an explicit topology choice: fully connected, or sparse with
@@ -251,9 +289,9 @@ until reachability is restored. Previously queued sightings remain historical
 observations, not permission to establish a connection.
 
 Many-node scenarios are a first-class target, not a sequence of isolated
-two-node tests. Hundreds and then thousands of production nodes are scale-test
-milestones, not demonstrated capacity or a promised limit. The current full-node
-capstones establish two-node correctness only.
+two-node tests. The coordinated ring establishes a 128-node correctness baseline;
+thousands of production nodes remain a scale-test milestone, not demonstrated
+capacity or a promised limit. The BLE full-node capstone still covers two nodes.
 
 - Run production nodes on a shared asynchronous runner, without requiring a
   hardware-emulator process per node or substituting simplified protocol nodes.
@@ -271,7 +309,8 @@ capstones establish two-node correctness only.
   simulated interval. Scale runs must retain correctness assertions for delivery,
   recovery, backpressure, and cleanup, not merely demonstrate that nodes start.
 
-Remaining obstacles include full-node and multi-medium time coordination and a
-measured accounting of total per-node and per-peer allocation. The transport-sized
-BLE receive buffer removes one known large allocation, not all of those costs. Native
-queues, scheduler storage, and full production-node scale still need evidence.
+Remaining obstacles include full-node deadline discovery, background-worker and
+multi-medium coordination, and measured total per-node and per-peer allocation.
+The transport-sized BLE receive buffer removes one known large allocation, not
+all of those costs. Native queues, scheduler storage, and larger production-node
+scales still need evidence.

@@ -66,7 +66,7 @@ pub struct ManualTimeSnapshot {
 /// A private paused runtime for explicitly polled futures and one medium.
 /// The caller supplies known runtime deadlines as advancement boundaries and owns poll/work budgets.
 /// Futures must not spawn tasks, perform blocking work, export runtime handles, or alter Tokio time.
-/// Medium handles must not be mutated concurrently. This is not a full-node executor.
+/// Medium handles must not be mutated concurrently. This is not a general-purpose Tokio executor.
 /// Create, drive, and drop this owner outside Tokio; construct timer state inside the polled futures.
 pub struct ManualTimeDriver {
     runtime: Runtime,
