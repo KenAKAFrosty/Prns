@@ -23045,6 +23045,7 @@
           "rt",
           "rt-multi-thread",
           "sync",
+          "test-util",
           "time",
           "tokio-macros"
         ],
