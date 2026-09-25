@@ -16,6 +16,9 @@ use crate::directory::{self, DirectoryRequest, DirectoryResponse};
 pub(crate) const DEVELOPMENT_META: TableDefinition<&str, u64> =
     TableDefinition::new("development_meta");
 pub(crate) const CONTACTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("contacts");
+const APPLICATION_SETTINGS: TableDefinition<&str, &str> =
+    TableDefinition::new("application_settings");
+const MESSAGING_NAME_KEY: &str = "messaging_name";
 
 const DEVELOPMENT_FORMAT_KEY: &str = "format";
 const DEVELOPMENT_FORMAT: u64 = 2;
@@ -42,6 +45,10 @@ impl DevelopmentStoreFailure {
 }
 
 enum StoreJob {
+    MessagingName {
+        name: Option<String>,
+        completion: Box<dyn FnOnce(Result<String, DevelopmentStoreFailure>) + Send>,
+    },
     Bluetooth {
         enabled: Option<bool>,
         completion: Box<dyn FnOnce(Result<bool, DevelopmentStoreFailure>) + Send>,
@@ -112,6 +119,35 @@ pub(crate) struct DevelopmentStoreOwner {
 }
 
 impl DevelopmentStoreOwner {
+    pub(crate) fn admit_messaging_name(
+        &self,
+        name: Option<String>,
+        completion: impl FnOnce(Result<String, DevelopmentStoreFailure>) + Send + 'static,
+    ) -> Result<(), DevelopmentStoreFailure> {
+        self.jobs()?
+            .try_send(StoreJob::MessagingName {
+                name,
+                completion: Box::new(completion),
+            })
+            .map_err(|_| {
+                DevelopmentStoreFailure::unavailable(
+                    "the development database lane is full or closed",
+                )
+            })
+    }
+
+    pub(crate) fn read_messaging_name_blocking(&self) -> Result<String, DevelopmentStoreFailure> {
+        let (reply, receive) = mpsc::sync_channel(1);
+        self.admit_messaging_name(None, move |result| {
+            let _ = reply.send(result);
+        })?;
+        receive.recv().map_err(|_| {
+            DevelopmentStoreFailure::unavailable(
+                "the development database owner stopped before reading the messaging name",
+            )
+        })?
+    }
+
     pub(crate) fn admit_bluetooth(
         &self,
         enabled: Option<bool>,
@@ -283,6 +319,9 @@ impl Drop for DevelopmentStoreOwner {
 fn run_owner(database: &Database, jobs: &Receiver<StoreJob>) {
     while let Ok(job) = jobs.recv() {
         match job {
+            StoreJob::MessagingName { name, completion } => {
+                completion(messaging_name(database, name));
+            }
             StoreJob::Bluetooth {
                 enabled,
                 completion,
@@ -303,6 +342,57 @@ fn run_owner(database: &Database, jobs: &Receiver<StoreJob>) {
                 let _ = release.recv();
             }
         }
+    }
+}
+
+fn messaging_name(
+    database: &Database,
+    name: Option<String>,
+) -> Result<String, DevelopmentStoreFailure> {
+    if let Some(name) = name {
+        let name = crate::messaging_profile::normalize_name(&name)
+            .map_err(DevelopmentStoreFailure::unavailable)?;
+        let write = database
+            .begin_write()
+            .map_err(|error| classify_redb_error(error.into(), "write messaging name"))?;
+        {
+            let mut settings = write
+                .open_table(APPLICATION_SETTINGS)
+                .map_err(|error| classify_redb_error(error.into(), "open application settings"))?;
+            settings
+                .insert(MESSAGING_NAME_KEY, name.as_str())
+                .map_err(|error| classify_redb_error(error.into(), "save messaging name"))?;
+        }
+        write
+            .commit()
+            .map_err(|error| classify_redb_error(error.into(), "commit messaging name"))?;
+        return Ok(name);
+    }
+    let read = database
+        .begin_read()
+        .map_err(|error| classify_redb_error(error.into(), "read messaging name"))?;
+    let settings = match read.open_table(APPLICATION_SETTINGS) {
+        Ok(settings) => settings,
+        Err(redb::TableError::TableDoesNotExist(_)) => {
+            return Ok(crate::messaging_profile::DEFAULT_MESSAGING_NAME.to_owned());
+        }
+        Err(error) => {
+            return Err(classify_redb_error(
+                error.into(),
+                "open application settings",
+            ))
+        }
+    };
+    let stored = settings
+        .get(MESSAGING_NAME_KEY)
+        .map_err(|error| classify_redb_error(error.into(), "load messaging name"))?
+        .map(|name| name.value().to_owned())
+        .unwrap_or_else(|| crate::messaging_profile::DEFAULT_MESSAGING_NAME.to_owned());
+    match crate::messaging_profile::normalize_name(&stored) {
+        Ok(normalized) if normalized == stored => Ok(stored),
+        _ => Err(DevelopmentStoreFailure::reset_required(
+            "the stored messaging name is not in canonical form",
+        )),
     }
 }
 
@@ -483,6 +573,40 @@ mod tests {
     use super::*;
     use crate::contract::{ContactListOutcome, ContactMutationOutcome};
     use crate::directory::DirectoryRequest;
+
+    #[test]
+    fn messaging_name_adds_to_existing_database_without_changing_mail() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("application.redb");
+        let database = open_database(&path).unwrap();
+        assert_eq!(messaging_name(&database, None).unwrap(), "prns");
+        execute_mailbox_request(
+            &database,
+            MailboxRequest::InsertOutbound(outbound_message()),
+        )
+        .unwrap();
+        assert_eq!(
+            messaging_name(&database, Some("  My phone  ".into())).unwrap(),
+            "My phone"
+        );
+        drop(database);
+        let database = open_database(&path).unwrap();
+        assert_eq!(messaging_name(&database, None).unwrap(), "My phone");
+        assert!(
+            matches!(execute_mailbox_request(&database, mailbox_list()).unwrap(), MailboxReply::Listed { messages, .. } if messages.len() == 1)
+        );
+        let write = database.begin_write().unwrap();
+        write
+            .open_table(APPLICATION_SETTINGS)
+            .unwrap()
+            .insert(MESSAGING_NAME_KEY, "\ninvalid\n")
+            .unwrap();
+        write.commit().unwrap();
+        assert!(matches!(
+            messaging_name(&database, None),
+            Err(DevelopmentStoreFailure::ResetRequired(_))
+        ));
+    }
 
     #[test]
     fn bluetooth_preference_commits_and_reopens_without_touching_mail() {

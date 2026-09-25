@@ -148,8 +148,39 @@ pub enum IdentityCreationOutcome {
 pub struct Contact {
     pub destination: [u8; 16],
     pub alias: Option<String>,
+    pub announced_name: Option<String>,
     pub identity: Option<[u8; 16]>,
     pub pinned: bool,
+    pub is_messaging: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
+pub struct LocalMessagingProfile {
+    pub display_name: String,
+    pub destination: Option<[u8; 16]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
+pub enum LocalMessagingProfileOutcome {
+    Ready {
+        profile: LocalMessagingProfile,
+    },
+    SavedButNotApplied {
+        profile: LocalMessagingProfile,
+        detail: String,
+    },
+    InvalidInput {
+        detail: String,
+    },
+    Busy,
+    Unavailable {
+        detail: String,
+    },
+    DevelopmentResetRequired {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,9 +271,13 @@ pub enum LxmfText {
 #[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct LxmfPeerSummary {
     pub destination: [u8; 16],
+    pub identity: [u8; 16],
     pub display_name: Option<String>,
     pub required_stamp_cost: Option<u64>,
     pub last_observed_age_millis: u64,
+    pub source_interface: Vec<u8>,
+    pub hops: u8,
+    pub is_path_response: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -387,7 +422,8 @@ pub enum LxmfMessageListOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum AnnounceLxmfOutcome {
-    Announced,
+    Requested,
+    NoUsableConnection,
     LocalNodeStopped,
     Busy,
     Failed,
@@ -395,13 +431,38 @@ pub enum AnnounceLxmfOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
+pub enum LxmfDiscoveryClearOutcome {
+    Cleared,
+    LocalNodeStopped,
+    Busy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum SendDirectTextOutcome {
-    Accepted { local_record_id: u64 },
-    NeedsResource { wire_bytes: u32 },
-    UnsupportedRemoteStampRequirement { required_stamp_cost: u64 },
+    Accepted {
+        local_record_id: u64,
+    },
+    NeedsResource {
+        wire_bytes: u32,
+    },
+    UnsupportedRemoteStampRequirement {
+        required_stamp_cost: u64,
+    },
     PeerIdentityUnavailable,
-    DevelopmentUnavailable { detail: String },
-    DevelopmentResetRequired { reason: String },
+    IdentityConflict {
+        expected: [u8; 16],
+        observed: [u8; 16],
+    },
+    RecipientUnavailable {
+        detail: String,
+    },
+    DevelopmentUnavailable {
+        detail: String,
+    },
+    DevelopmentResetRequired {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

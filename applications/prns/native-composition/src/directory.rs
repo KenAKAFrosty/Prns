@@ -12,6 +12,11 @@ pub(crate) enum DirectoryRequest {
         destination: [u8; 16],
         identity: [u8; 16],
     },
+    SaveDiscovered {
+        destination: [u8; 16],
+        identity: [u8; 16],
+        announced_name: Option<String>,
+    },
     CreateManual {
         destination: [u8; 16],
         identity: Option<[u8; 16]>,
@@ -46,6 +51,8 @@ pub(crate) enum DirectoryResponse {
 struct ContactRecord {
     #[serde(deserialize_with = "deserialize_required_nullable")]
     alias: Option<String>,
+    #[serde(default)]
+    announced_name: Option<String>,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     identity: Option<[u8; 16]>,
     pinned: bool,
@@ -73,7 +80,12 @@ pub(crate) fn execute(database: &Database, request: DirectoryRequest) -> StoreRe
         DirectoryRequest::SaveObserved {
             destination,
             identity,
-        } => save_observed(database, destination, identity),
+        } => save_observed(database, destination, identity, None),
+        DirectoryRequest::SaveDiscovered {
+            destination,
+            identity,
+            announced_name,
+        } => save_observed(database, destination, identity, announced_name),
         DirectoryRequest::CreateManual {
             destination,
             identity,
@@ -137,6 +149,7 @@ fn create_manual(
         } else {
             let record = ContactRecord {
                 alias: normalize_alias(alias),
+                announced_name: None,
                 identity,
                 pinned: false,
             };
@@ -152,7 +165,12 @@ fn create_manual(
     Ok(DirectoryResponse::Mutation(outcome))
 }
 
-fn save_observed(database: &Database, destination: [u8; 16], identity: [u8; 16]) -> StoreReply {
+fn save_observed(
+    database: &Database,
+    destination: [u8; 16],
+    identity: [u8; 16],
+    announced_name: Option<String>,
+) -> StoreReply {
     let write = begin_write(database, "save observed contact")?;
     let outcome;
     let mut changed = false;
@@ -163,13 +181,27 @@ fn save_observed(database: &Database, destination: [u8; 16], identity: [u8; 16])
             outcome = match existing.identity {
                 None => {
                     existing.identity = Some(identity);
+                    existing.is_messaging =
+                        crate::messaging_profile::messaging_destination(identity)
+                            == Some(destination);
+                    if announced_name.is_some() {
+                        existing.announced_name = announced_name;
+                    }
                     let record = ContactRecord::from(&existing);
                     insert_record(&mut table, &destination, &record)?;
                     changed = true;
                     ContactMutationOutcome::Updated { contact: existing }
                 }
                 Some(existing_identity) if existing_identity == identity => {
-                    ContactMutationOutcome::Existing { contact: existing }
+                    if announced_name.is_some() && existing.announced_name != announced_name {
+                        existing.announced_name = announced_name;
+                        let record = ContactRecord::from(&existing);
+                        insert_record(&mut table, &destination, &record)?;
+                        changed = true;
+                        ContactMutationOutcome::Updated { contact: existing }
+                    } else {
+                        ContactMutationOutcome::Existing { contact: existing }
+                    }
                 }
                 Some(existing_identity) => ContactMutationOutcome::IdentityConflict {
                     existing: existing_identity,
@@ -179,6 +211,7 @@ fn save_observed(database: &Database, destination: [u8; 16], identity: [u8; 16])
         } else {
             let record = ContactRecord {
                 alias: None,
+                announced_name,
                 identity: Some(identity),
                 pinned: false,
             };
@@ -358,8 +391,13 @@ fn contact(destination: [u8; 16], record: ContactRecord) -> Contact {
     Contact {
         destination,
         alias: record.alias,
+        announced_name: record.announced_name,
         identity: record.identity,
         pinned: record.pinned,
+        is_messaging: record
+            .identity
+            .and_then(crate::messaging_profile::messaging_destination)
+            == Some(destination),
     }
 }
 
@@ -367,6 +405,7 @@ impl From<&Contact> for ContactRecord {
     fn from(contact: &Contact) -> Self {
         Self {
             alias: contact.alias.clone(),
+            announced_name: contact.announced_name.clone(),
             identity: contact.identity,
             pinned: contact.pinned,
         }
@@ -385,6 +424,74 @@ mod tests {
             .blocking_recv()
             .unwrap()
             .unwrap()
+    }
+
+    #[test]
+    fn discovered_contacts_preserve_alias_and_identity_across_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("application.redb");
+        let identity = [0x31; 16];
+        let destination = crate::messaging_profile::messaging_destination(identity).unwrap();
+        let owner = DevelopmentStoreOwner::open(root.path(), &path).unwrap();
+        let saved = call(
+            &owner,
+            DirectoryRequest::SaveDiscovered {
+                destination,
+                identity,
+                announced_name: Some("Their name".into()),
+            },
+        );
+        assert!(
+            matches!(saved, DirectoryResponse::Mutation(ContactMutationOutcome::Saved { contact })
+            if contact.is_messaging && contact.alias.is_none() && contact.announced_name.as_deref() == Some("Their name"))
+        );
+        call(
+            &owner,
+            DirectoryRequest::SetAlias {
+                destination,
+                alias: Some("Private alias".into()),
+            },
+        );
+        call(
+            &owner,
+            DirectoryRequest::SetPinned {
+                destination,
+                pinned: true,
+            },
+        );
+        call(
+            &owner,
+            DirectoryRequest::SaveDiscovered {
+                destination,
+                identity,
+                announced_name: Some("Updated name".into()),
+            },
+        );
+        assert!(matches!(
+            call(
+                &owner,
+                DirectoryRequest::SaveDiscovered {
+                    destination,
+                    identity: [0x32; 16],
+                    announced_name: Some("Conflicting".into())
+                }
+            ),
+            DirectoryResponse::Mutation(ContactMutationOutcome::IdentityConflict { .. })
+        ));
+        owner.close().unwrap();
+        let owner = DevelopmentStoreOwner::open(root.path(), &path).unwrap();
+        assert!(
+            matches!(call(&owner, DirectoryRequest::Get { destination }), DirectoryResponse::Lookup(ContactLookupOutcome::Found { contact })
+            if contact.is_messaging && contact.pinned && contact.identity == Some(identity)
+                && contact.alias.as_deref() == Some("Private alias") && contact.announced_name.as_deref() == Some("Updated name"))
+        );
+        let old = decode_contact(
+            &[2; 16],
+            br#"{"alias":null,"identity":null,"pinned":false}"#,
+        )
+        .unwrap();
+        assert!(old.announced_name.is_none());
+        assert!(!old.is_messaging);
     }
 
     #[test]

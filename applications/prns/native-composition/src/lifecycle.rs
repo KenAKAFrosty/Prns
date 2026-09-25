@@ -1,4 +1,5 @@
 pub(crate) mod admission;
+pub(crate) mod profile;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -199,8 +200,14 @@ enum Command {
         Reply<RemoteControlPairingCommandOutcome>,
     ),
     Describe(DescribeCommand),
-    ObservedIdentity([u8; 16], Reply<Result<Option<[u8; 16]>, String>>),
+    ObservedIdentity(
+        [u8; 16],
+        bool,
+        Reply<Result<Option<ObservedContact>, String>>,
+    ),
     ListLxmfPeers(Reply<LxmfPeerListOutcome>),
+    ClearLxmfDiscovery(Reply<LxmfDiscoveryClearOutcome>),
+    SetMessagingProfile(profile::ProfileApplyReply),
     ListLxmfMessages(
         prns_lxmf::mailbox::MailboxListRequest,
         Reply<LxmfMessageListOutcome>,
@@ -209,7 +216,17 @@ enum Command {
     CancelLxmfMessage(u64, u64, Reply<CancelLxmfMessageOutcome>),
     MeasureLxmfText(MeasureLxmfTextInput, Reply<MeasureLxmfTextOutcome>),
     AnnounceLxmf(Reply<AnnounceLxmfOutcome>),
-    SendDirectText(SendDirectTextInput, Reply<SendDirectTextOutcome>),
+    SendDirectText(
+        SendDirectTextInput,
+        Option<[u8; 16]>,
+        Reply<SendDirectTextOutcome>,
+    ),
+}
+
+#[derive(Debug)]
+struct ObservedContact {
+    identity: [u8; 16],
+    announced_name: Option<String>,
 }
 
 struct DescribeCommand {
@@ -858,11 +875,13 @@ fn start_configured_with_supervisor(
             };
         }
     };
-    let (mailbox_submitter, bluetooth_enabled) =
+    let (mailbox_submitter, bluetooth_enabled, messaging_name) =
         match ensure_application_owner_locked(&mut state, &paths).and_then(|owner| {
-            owner
-                .read_bluetooth_blocking()
-                .map(|enabled| (owner.mailbox_submitter(), enabled))
+            owner.read_bluetooth_blocking().and_then(|enabled| {
+                owner
+                    .read_messaging_name_blocking()
+                    .map(|name| (owner.mailbox_submitter(), enabled, name))
+            })
         }) {
             Ok(value) => value,
             Err(failure) => {
@@ -965,6 +984,7 @@ fn start_configured_with_supervisor(
                 worker_host,
                 worker_bluetooth,
                 bluetooth_enabled,
+                messaging_name,
                 paths,
                 primary_identity_secret,
                 mailbox_submitter,
@@ -1387,6 +1407,7 @@ fn dispatch_lxmf_send(
     service: &prns_lxmf::mailbox::DurableDirectLxmfService,
     send_tasks: &mut JoinSet<()>,
     input: SendDirectTextInput,
+    expected_identity: Option<[u8; 16]>,
     response: Reply<SendDirectTextOutcome>,
     timestamp: u64,
 ) {
@@ -1405,8 +1426,9 @@ fn dispatch_lxmf_send(
     let service = service.clone();
     send_tasks.spawn(async move {
         let outcome = service
-            .send_direct_text(
+            .send_direct_text_to_identity(
                 input.destination,
+                expected_identity,
                 timestamp,
                 input.title.as_bytes(),
                 input.content.as_bytes(),
@@ -1802,6 +1824,7 @@ fn run_worker(
     published_host: Arc<OnceLock<HostClient>>,
     bluetooth_control: Arc<OnceLock<BluetoothControl>>,
     bluetooth_enabled: bool,
+    messaging_name: String,
     paths: NodeStoragePaths,
     primary_identity_secret: IdentitySecretKey,
     mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
@@ -1827,6 +1850,7 @@ fn run_worker(
         published_host,
         bluetooth_control,
         bluetooth_enabled,
+        messaging_name,
         paths,
         primary_identity_secret,
         mailbox_submitter,
@@ -1846,6 +1870,7 @@ async fn run_generation(
     published_host: Arc<OnceLock<HostClient>>,
     bluetooth_control: Arc<OnceLock<BluetoothControl>>,
     bluetooth_enabled: bool,
+    messaging_name: String,
     paths: NodeStoragePaths,
     primary_identity_secret: IdentitySecretKey,
     mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
@@ -1954,21 +1979,18 @@ async fn run_generation(
         RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     );
-    let mut announce_app_data = [0_u8; 64];
-    let announce_len =
-        prns_lxmf::wire::encode_current_lxmf_announce(b"prns", &mut announce_app_data).map_err(
-            |error| {
-                boot_failure(
-                    &ready,
-                    &snapshots,
-                    DevelopmentNodeFailureStage::Contract,
-                    format!("could not encode the built-in LXMF announce: {error:?}"),
-                )
-            },
-        )?;
+    let announce_app_data =
+        crate::messaging_profile::announce_data(&messaging_name).map_err(|error| {
+            boot_failure(
+                &ready,
+                &snapshots,
+                DevelopmentNodeFailureStage::Contract,
+                format!("could not encode the built-in LXMF announce: {error:?}"),
+            )
+        })?;
     let (lxmf_identity, lxmf_destination) = prns_lxmf::direct::prepare_host_lxmf_destination(
         &primary_identity_secret,
-        &announce_app_data[..announce_len],
+        &announce_app_data,
     )
     .map_err(|error| {
         boot_failure(
@@ -2605,7 +2627,7 @@ async fn run_actor_loop(
                         return Ok(());
                     }
                 }
-                Some(Command::ObservedIdentity(destination, response)) => {
+                Some(Command::ObservedIdentity(destination, messaging_only, response)) => {
                     let identity = tokio::time::timeout(
                         HOST_INSPECTION_TIMEOUT,
                         handle.destination_identity(DestinationIdentityQuery::Destination(
@@ -2618,7 +2640,28 @@ async fn run_actor_loop(
                         "The local destination-identity query exceeded its bounded wait."
                             .to_owned()
                     });
+                    let identity = match identity {
+                        Ok(Some(identity)) if messaging_only => {
+                            match lxmf_service.snapshot(prns_lxmf::mailbox::MailboxListRequest {
+                                peer: None, direction: None, before: None, limit: 1,
+                            }).await {
+                                Ok(snapshot) => Ok(snapshot.peers.into_iter()
+                                    .find(|peer| peer.destination == destination && peer.announced_identity == identity)
+                                    .map(|peer| ObservedContact { identity, announced_name: peer.display_name })),
+                                Err(_) => Err("The discovered-contact query is unavailable.".into()),
+                            }
+                        }
+                        Ok(identity) => Ok(identity.map(|identity| ObservedContact { identity, announced_name: None })),
+                        Err(detail) => Err(detail),
+                    };
                     let _ = response.send(identity);
+                }
+                Some(Command::SetMessagingProfile(reply)) => {
+                    profile::apply_profile(handle, lxmf_service.local_destination(), reply).await;
+                }
+                Some(Command::ClearLxmfDiscovery(response)) => {
+                    lxmf_service.clear_discovered_peers().await;
+                    let _ = response.send(LxmfDiscoveryClearOutcome::Cleared);
                 }
                 Some(Command::ListLxmfPeers(response)) => {
                     let outcome = match lxmf_service
@@ -2656,17 +2699,30 @@ async fn run_actor_loop(
                     let _ = response.send(crate::lxmf::measure_text(&input));
                 }
                 Some(Command::AnnounceLxmf(response)) => {
-                    let outcome = match lxmf_service.announce().await {
-                        Ok(()) => AnnounceLxmfOutcome::Announced,
-                        Err(_) => AnnounceLxmfOutcome::Failed,
+                    let inventory = handle.interface_inventory();
+                    let current = snapshots.read();
+                    let bluetooth_ready = bluetooth_control.get().is_some_and(|control| {
+                        matches!(control.project(&inventory, current.bluetooth.desired_enabled).state, LocalBluetoothState::Connected)
+                    });
+                    let usable = crate::lxmf::has_usable_announce_connection(
+                        &handle.interface_timing_inventory(), bluetooth_ready,
+                    );
+                    let outcome = if !usable {
+                        AnnounceLxmfOutcome::NoUsableConnection
+                    } else {
+                        match lxmf_service.announce().await {
+                            Ok(()) => AnnounceLxmfOutcome::Requested,
+                            Err(_) => AnnounceLxmfOutcome::Failed,
+                        }
                     };
                     let _ = response.send(outcome);
                 }
-                Some(Command::SendDirectText(input, response)) => {
+                Some(Command::SendDirectText(input, expected_identity, response)) => {
                     dispatch_lxmf_send(
                         lxmf_service,
                         send_tasks,
                         input,
+                        expected_identity,
                         response,
                         wall_clock_millis(),
                     );

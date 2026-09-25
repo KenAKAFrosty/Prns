@@ -275,6 +275,12 @@ uint64_t uniffi_prns_app_fn_func_cancel_lxmf_message(RustBuffer input
 uint64_t uniffi_prns_app_fn_func_change_remote_node(RustBuffer input
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CLEAR_LXMF_DISCOVERY
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CLEAR_LXMF_DISCOVERY
+uint64_t uniffi_prns_app_fn_func_clear_lxmf_discovery(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CREATE_MANUAL_CONTACT
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CREATE_MANUAL_CONTACT
 uint64_t uniffi_prns_app_fn_func_create_manual_contact(RustBuffer input
@@ -389,6 +395,12 @@ uint64_t uniffi_prns_app_fn_func_read_bluetooth_settings(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_READ_MESSAGING_PROFILE
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_READ_MESSAGING_PROFILE
+uint64_t uniffi_prns_app_fn_func_read_messaging_profile(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_READ_REMOTE_NODE
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_READ_REMOTE_NODE
 uint64_t uniffi_prns_app_fn_func_read_remote_node(RustBuffer input
@@ -408,6 +420,11 @@ uint64_t uniffi_prns_app_fn_func_reject_pairing(RustBuffer input
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_RETRY_LXMF_MESSAGE
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_RETRY_LXMF_MESSAGE
 uint64_t uniffi_prns_app_fn_func_retry_lxmf_message(RustBuffer input
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SAVE_DISCOVERED_CONTACT
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SAVE_DISCOVERED_CONTACT
+uint64_t uniffi_prns_app_fn_func_save_discovered_contact(RustBuffer input
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SAVE_OBSERVED_DESTINATION
@@ -433,6 +450,11 @@ uint64_t uniffi_prns_app_fn_func_set_contact_alias(RustBuffer input
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SET_CONTACT_PINNED
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SET_CONTACT_PINNED
 uint64_t uniffi_prns_app_fn_func_set_contact_pinned(RustBuffer input
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SET_MESSAGING_NAME
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SET_MESSAGING_NAME
+uint64_t uniffi_prns_app_fn_func_set_messaging_name(RustBuffer name
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SHARED_HOST
@@ -742,6 +764,12 @@ uint16_t uniffi_prns_app_checksum_func_change_remote_node(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CLEAR_LXMF_DISCOVERY
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CLEAR_LXMF_DISCOVERY
+uint16_t uniffi_prns_app_checksum_func_clear_lxmf_discovery(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CREATE_MANUAL_CONTACT
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CREATE_MANUAL_CONTACT
 uint16_t uniffi_prns_app_checksum_func_create_manual_contact(void
@@ -874,6 +902,12 @@ uint16_t uniffi_prns_app_checksum_func_read_bluetooth_settings(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_READ_MESSAGING_PROFILE
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_READ_MESSAGING_PROFILE
+uint16_t uniffi_prns_app_checksum_func_read_messaging_profile(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_READ_REMOTE_NODE
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_READ_REMOTE_NODE
 uint16_t uniffi_prns_app_checksum_func_read_remote_node(void
@@ -895,6 +929,12 @@ uint16_t uniffi_prns_app_checksum_func_reject_pairing(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_RETRY_LXMF_MESSAGE
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_RETRY_LXMF_MESSAGE
 uint16_t uniffi_prns_app_checksum_func_retry_lxmf_message(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SAVE_DISCOVERED_CONTACT
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SAVE_DISCOVERED_CONTACT
+uint16_t uniffi_prns_app_checksum_func_save_discovered_contact(void
 
 );
 #endif
@@ -925,6 +965,12 @@ uint16_t uniffi_prns_app_checksum_func_set_contact_alias(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SET_CONTACT_PINNED
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SET_CONTACT_PINNED
 uint16_t uniffi_prns_app_checksum_func_set_contact_pinned(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SET_MESSAGING_NAME
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SET_MESSAGING_NAME
+uint16_t uniffi_prns_app_checksum_func_set_messaging_name(void
 
 );
 #endif

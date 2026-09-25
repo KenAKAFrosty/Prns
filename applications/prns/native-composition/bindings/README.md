@@ -94,10 +94,20 @@ stopping the native node.
 Describe cancellation drops its app-owned network future and releases admission;
 its deadline and priority Stop also bound the operation. Cancellation cannot undo
 upstream work already issued before a Link handle is available. Accepted contact
-and mailbox mutations, sends and retained announcement operations remain owned
+and mailbox mutations, messaging-name writes, sends and retained announcement
+operations remain owned
 by their native lanes after the caller departs. Stop drains admitted durable
 work. A rejected caller promise therefore does not prove that an accepted write
 was rolled back and must not trigger an automatic retry.
+
+Messaging profile reads/writes prepare local storage without starting the node or
+announcing. A saved name updates the registered LXMF announce data of a running
+node; `SavedButNotApplied` explicitly separates a committed preference from an
+unconfirmed live update. `AnnounceLxmfOutcome.Requested` means fan-out admission,
+not proof that another device heard it. Discovery clearing affects visibility,
+not durable contacts or routing. A fresh send resolves missing authenticated
+recipient metadata before durable mailbox acceptance; the UI may still be waiting
+while the native send lane owns that work.
 
 Async admission uses bounded lanes and nonblocking supervisor access. It performs
 no path resolution, database opening, synchronous response wait or worker join

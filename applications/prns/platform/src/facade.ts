@@ -146,6 +146,9 @@ export function createDevelopmentRuntime(
     readBluetoothSettings: () => call((api) => api.readBluetoothSettings(), undefined, "storage"),
     setBluetoothEnabled: (enabled: boolean) =>
       call((api) => api.setBluetoothEnabled(enabled), undefined, "storage"),
+    readMessagingProfile: () => call((api) => api.readMessagingProfile(), undefined, "storage"),
+    setMessagingName: (name: string) =>
+      call((api) => api.setMessagingName(name), undefined, "storage"),
     /** Borrow the app's retained host; releasing this view cannot stop services. */
     attachHost: async () => {
       const api = await bindings();
@@ -220,6 +223,10 @@ export function createDevelopmentRuntime(
       call((api) => api.listContacts(asyncOptions(signal)), signal, "storage"),
     listLxmfPeers: (signal?: AbortSignal) =>
       call((api) => api.listLxmfPeers(asyncOptions(signal)), signal),
+    saveDiscoveredContact: (input: Bindings.ContactDestinationInput, signal?: AbortSignal) =>
+      call((api) => api.saveDiscoveredContact(input, asyncOptions(signal)), signal, "storage"),
+    clearLxmfDiscovery: (signal?: AbortSignal) =>
+      call((api) => api.clearLxmfDiscovery(asyncOptions(signal)), signal),
     listLxmfMessages: (input: Bindings.ListLxmfMessagesInput, signal?: AbortSignal) =>
       call((api) => api.listLxmfMessages(input, asyncOptions(signal)), signal, "storage"),
     retryLxmfMessage: (localRecordId: bigint, signal?: AbortSignal) =>
