@@ -115,16 +115,27 @@ export function Card({
 /** A title and its status/actions share space, but wrap rather than truncate. */
 export function CardHeader({ title, children }: PropsWithChildren<{ readonly title: string }>) {
   const palette = useAppPalette();
+  const { fontScale } = useWindowDimensions();
+  const stacked = fontScale >= 1.4;
   return (
     <View style={styles.cardHeader}>
       <Text
         accessibilityRole="header"
         aria-level={2}
-        style={[styles.subheading, styles.cardHeaderTitle, { color: palette.text }]}
+        style={[
+          styles.subheading,
+          styles.cardHeaderTitle,
+          stacked ? styles.cardHeaderTitleStacked : null,
+          { color: palette.text },
+        ]}
       >
         {title}
       </Text>
-      {children == null ? null : <View style={styles.headerActions}>{children}</View>}
+      {children == null ? null : (
+        <View style={[styles.headerActions, stacked ? styles.headerActionsStacked : null]}>
+          {children}
+        </View>
+      )}
     </View>
   );
 }
@@ -269,8 +280,16 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: space.sm,
   },
-  cardHeaderTitle: { flexBasis: 120, flexGrow: 1, flexShrink: 1, minWidth: 0 },
+  cardHeaderTitle: {
+    flexBasis: "auto",
+    flexGrow: 1,
+    flexShrink: 0,
+    minWidth: 0,
+    maxWidth: "100%",
+  },
+  cardHeaderTitleStacked: { width: "100%", flexGrow: 0 },
   headerActions: { flexDirection: "row", flexWrap: "wrap", gap: space.sm, maxWidth: "100%" },
+  headerActionsStacked: { width: "100%" },
   cardSection: {
     borderTopWidth: StyleSheet.hairlineWidth,
     gap: space.sm,
@@ -278,7 +297,7 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: space.sm, minWidth: 0 },
-  actionItem: { flexBasis: 144, flexGrow: 1, minWidth: 0 },
+  actionItem: { flexBasis: "auto", flexGrow: 1, minWidth: 144, maxWidth: "100%" },
   actionItemStacked: { flexBasis: "100%" },
   button: {
     alignItems: "center",

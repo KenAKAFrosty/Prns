@@ -80,7 +80,7 @@ describe("compact grouped primitives", () => {
     expect(
       view
         .UNSAFE_getAllByType(View)
-        .filter((node) => StyleSheet.flatten(node.props.style)?.flexBasis === 144),
+        .filter((node) => StyleSheet.flatten(node.props.style)?.minWidth === 144),
     ).toHaveLength(2);
     expect(StyleSheet.flatten(buttons[0]?.props.style).minHeight).toBeGreaterThanOrEqual(48);
     fireEvent.press(view.getByRole("button", { name: "Refresh" }));
