@@ -20,13 +20,34 @@ pub(super) fn prepare_native_storage_with_supervisor(
     reap_completed_worker_locked(supervisor, &mut state);
     let prepared = prepare_storage(storage_root)
         .map_err(DevelopmentStoreFailure::unavailable)
-        .and_then(|paths| ensure_application_owner_locked(&mut state, &paths).map(|_| ()));
+        .and_then(|paths| {
+            ensure_application_owner_locked(&mut state, &paths)?.read_bluetooth_blocking()
+        });
     match prepared {
-        Ok(()) => NativeStoragePreparationOutcome::Prepared,
+        Ok(enabled) => {
+            if supervisor.snapshots.read().bluetooth.desired_enabled != Some(enabled) {
+                supervisor
+                    .snapshots
+                    .update(|snapshot| snapshot.bluetooth.desired_enabled = Some(enabled));
+            }
+            NativeStoragePreparationOutcome::Prepared
+        }
         Err(DevelopmentStoreFailure::Unavailable(detail)) => {
+            supervisor.snapshots.update(|snapshot| {
+                snapshot.bluetooth.desired_enabled = None;
+                snapshot.bluetooth.state = LocalBluetoothState::Unavailable {
+                    detail: detail.clone(),
+                };
+            });
             NativeStoragePreparationOutcome::Unavailable { detail }
         }
         Err(DevelopmentStoreFailure::ResetRequired(reason)) => {
+            supervisor.snapshots.update(|snapshot| {
+                snapshot.bluetooth.desired_enabled = None;
+                snapshot.bluetooth.state = LocalBluetoothState::Unavailable {
+                    detail: reason.clone(),
+                };
+            });
             NativeStoragePreparationOutcome::DevelopmentResetRequired { reason }
         }
     }

@@ -3,9 +3,9 @@ use std::sync::{Mutex, MutexGuard};
 
 use crate::contract::{
     DevelopmentNodeFailure, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
-    DevelopmentNodeRuntime, DevelopmentNodeSnapshot, LocalHostState, LxmfHealth, LxmfHealthState,
-    PrimaryIdentityState, RemoteChangeOperation, RemoteChangeStatus,
-    RemoteControlAnnounceOperation, RemoteControlAnnounceStatus,
+    DevelopmentNodeRuntime, DevelopmentNodeSnapshot, LocalBluetoothSnapshot, LocalBluetoothState,
+    LocalHostState, LxmfHealth, LxmfHealthState, PrimaryIdentityState, RemoteChangeOperation,
+    RemoteChangeStatus, RemoteControlAnnounceOperation, RemoteControlAnnounceStatus,
     RemoteControlAnnounceUnknownReason, RemoteWifiOperation, RemoteWifiStatus,
 };
 
@@ -75,6 +75,10 @@ impl SnapshotStore {
             return;
         }
         let next = snapshot.revision.saturating_add(1);
+        snapshot.bluetooth.state = LocalBluetoothState::Unavailable {
+            detail: "Local Bluetooth inspection is unavailable.".into(),
+        };
+        snapshot.bluetooth.peers.clear();
         snapshot.local_host = local_host;
         snapshot.revision = next;
     }
@@ -89,6 +93,10 @@ impl SnapshotStore {
             return;
         }
         snapshot.local_host = LocalHostState::Unavailable { detail };
+        snapshot.bluetooth.state = LocalBluetoothState::Unavailable {
+            detail: "Local Bluetooth inspection is unavailable.".into(),
+        };
+        snapshot.bluetooth.peers.clear();
         snapshot.revision = snapshot.revision.saturating_add(1);
     }
 
@@ -119,6 +127,8 @@ impl SnapshotStore {
             let explicit_stop_in_progress = self.explicit_stop_in_progress.load(Ordering::Acquire);
             if !explicit_stop_in_progress {
                 snapshot.runtime = DevelopmentNodeRuntime::Failed;
+                snapshot.bluetooth =
+                    LocalBluetoothSnapshot::stopped(snapshot.bluetooth.desired_enabled);
                 if !matches!(
                     &snapshot.local_host,
                     LocalHostState::DevelopmentResetRequired { .. }
@@ -141,6 +151,8 @@ impl SnapshotStore {
             interrupt_change(&mut snapshot.last_remote_change);
             interrupt_wifi(&mut snapshot.last_remote_wifi);
             snapshot.runtime = DevelopmentNodeRuntime::Failed;
+            snapshot.bluetooth =
+                LocalBluetoothSnapshot::stopped(snapshot.bluetooth.desired_enabled);
             if !matches!(
                 &snapshot.local_host,
                 LocalHostState::DevelopmentResetRequired { .. }
@@ -188,6 +200,8 @@ impl SnapshotStore {
             .store(false, Ordering::Release);
         self.update(|snapshot| {
             let mut next = DevelopmentNodeSnapshot::stopped();
+            next.bluetooth.desired_enabled = snapshot.bluetooth.desired_enabled;
+            next.bluetooth.state = LocalBluetoothState::Starting;
             next.generation_id = snapshot.revision.saturating_add(1);
             next.last_announcement = snapshot.last_announcement.clone();
             interrupt_announcement(&mut next.last_announcement);
@@ -206,6 +220,7 @@ impl SnapshotStore {
             .store(false, Ordering::Release);
         self.update(|snapshot| {
             let primary_identity = snapshot.primary_identity.clone();
+            let bluetooth_enabled = snapshot.bluetooth.desired_enabled;
             let generation_id = snapshot.generation_id;
             let mut last_announcement = snapshot.last_announcement.clone();
             interrupt_announcement(&mut last_announcement);
@@ -214,6 +229,7 @@ impl SnapshotStore {
             let mut last_remote_wifi = snapshot.last_remote_wifi.clone();
             interrupt_wifi(&mut last_remote_wifi);
             *snapshot = DevelopmentNodeSnapshot::stopped();
+            snapshot.bluetooth.desired_enabled = bluetooth_enabled;
             snapshot.primary_identity = primary_identity;
             snapshot.generation_id = generation_id;
             snapshot.last_announcement = last_announcement;

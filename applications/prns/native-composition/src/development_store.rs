@@ -19,6 +19,7 @@ pub(crate) const CONTACTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new(
 
 const DEVELOPMENT_FORMAT_KEY: &str = "format";
 const DEVELOPMENT_FORMAT: u64 = 2;
+const BLUETOOTH_ENABLED_KEY: &str = "bluetooth_enabled";
 const STORE_LANE_CAPACITY: usize = 8;
 
 pub(crate) type StoreReply = Result<DirectoryResponse, DevelopmentStoreFailure>;
@@ -41,6 +42,10 @@ impl DevelopmentStoreFailure {
 }
 
 enum StoreJob {
+    Bluetooth {
+        enabled: Option<bool>,
+        completion: Box<dyn FnOnce(Result<bool, DevelopmentStoreFailure>) + Send>,
+    },
     DirectoryAsync {
         request: DirectoryRequest,
         response: oneshot::Sender<StoreReply>,
@@ -107,6 +112,36 @@ pub(crate) struct DevelopmentStoreOwner {
 }
 
 impl DevelopmentStoreOwner {
+    pub(crate) fn admit_bluetooth(
+        &self,
+        enabled: Option<bool>,
+        completion: impl FnOnce(Result<bool, DevelopmentStoreFailure>) + Send + 'static,
+    ) -> Result<(), DevelopmentStoreFailure> {
+        self.jobs()?
+            .try_send(StoreJob::Bluetooth {
+                enabled,
+                completion: Box::new(completion),
+            })
+            .map_err(|_| {
+                DevelopmentStoreFailure::unavailable(
+                    "the development database lane is full or closed",
+                )
+            })
+    }
+
+    /// Native lifecycle queue only; startup must observe prior admitted preference commits.
+    pub(crate) fn read_bluetooth_blocking(&self) -> Result<bool, DevelopmentStoreFailure> {
+        let (reply, receive) = mpsc::sync_channel(1);
+        self.admit_bluetooth(None, move |result| {
+            let _ = reply.send(result);
+        })?;
+        receive.recv().map_err(|_| {
+            DevelopmentStoreFailure::unavailable(
+                "the development database owner stopped before reading Bluetooth settings",
+            )
+        })?
+    }
+
     pub(crate) fn open(root: &Path, database_path: &Path) -> Result<Self, DevelopmentStoreFailure> {
         let (jobs_tx, jobs_rx) = mpsc::sync_channel(STORE_LANE_CAPACITY);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
@@ -248,6 +283,12 @@ impl Drop for DevelopmentStoreOwner {
 fn run_owner(database: &Database, jobs: &Receiver<StoreJob>) {
     while let Ok(job) = jobs.recv() {
         match job {
+            StoreJob::Bluetooth {
+                enabled,
+                completion,
+            } => {
+                completion(bluetooth_settings(database, enabled));
+            }
             StoreJob::DirectoryAsync { request, response } => {
                 // Admission owns a mutation through commit even if its caller
                 // has dropped the receiving future.
@@ -262,6 +303,45 @@ fn run_owner(database: &Database, jobs: &Receiver<StoreJob>) {
                 let _ = release.recv();
             }
         }
+    }
+}
+
+fn bluetooth_settings(
+    database: &Database,
+    enabled: Option<bool>,
+) -> Result<bool, DevelopmentStoreFailure> {
+    if let Some(enabled) = enabled {
+        let write = database
+            .begin_write()
+            .map_err(|error| classify_redb_error(error.into(), "write Bluetooth preference"))?;
+        {
+            let mut meta = write
+                .open_table(DEVELOPMENT_META)
+                .map_err(|error| classify_redb_error(error.into(), "open Bluetooth preference"))?;
+            meta.insert(BLUETOOTH_ENABLED_KEY, u64::from(enabled))
+                .map_err(|error| classify_redb_error(error.into(), "save Bluetooth preference"))?;
+        }
+        write
+            .commit()
+            .map_err(|error| classify_redb_error(error.into(), "commit Bluetooth preference"))?;
+        return Ok(enabled);
+    }
+    let read = database
+        .begin_read()
+        .map_err(|error| classify_redb_error(error.into(), "read Bluetooth preference"))?;
+    let meta = read
+        .open_table(DEVELOPMENT_META)
+        .map_err(|error| classify_redb_error(error.into(), "open Bluetooth preference"))?;
+    match meta
+        .get(BLUETOOTH_ENABLED_KEY)
+        .map_err(|error| classify_redb_error(error.into(), "load Bluetooth preference"))?
+        .map(|value| value.value())
+    {
+        None | Some(1) => Ok(true),
+        Some(0) => Ok(false),
+        Some(_) => Err(DevelopmentStoreFailure::unavailable(
+            "the stored Bluetooth preference is invalid",
+        )),
     }
 }
 
@@ -403,6 +483,42 @@ mod tests {
     use super::*;
     use crate::contract::{ContactListOutcome, ContactMutationOutcome};
     use crate::directory::DirectoryRequest;
+
+    #[test]
+    fn bluetooth_preference_commits_and_reopens_without_touching_mail() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("application.redb");
+        let database = open_database(&path).unwrap();
+        assert!(bluetooth_settings(&database, None).unwrap());
+        let message = outbound_message();
+        assert!(
+            execute_mailbox_request(&database, MailboxRequest::InsertOutbound(message)).is_ok()
+        );
+        assert!(!bluetooth_settings(&database, Some(false)).unwrap());
+        drop(database);
+        let database = open_database(&path).unwrap();
+        assert!(!bluetooth_settings(&database, None).unwrap());
+        let listed = execute_mailbox_request(&database, mailbox_list()).unwrap();
+        assert!(matches!(listed, MailboxReply::Listed { messages, .. } if messages.len() == 1));
+        assert!(bluetooth_settings(&database, Some(true)).unwrap());
+    }
+
+    #[test]
+    fn corrupt_bluetooth_preference_is_explicit_and_never_defaults_on() {
+        let temporary = tempfile::tempdir().unwrap();
+        let database = open_database(&temporary.path().join("application.redb")).unwrap();
+        let write = database.begin_write().unwrap();
+        write
+            .open_table(DEVELOPMENT_META)
+            .unwrap()
+            .insert(BLUETOOTH_ENABLED_KEY, 4)
+            .unwrap();
+        write.commit().unwrap();
+        assert!(matches!(
+            bluetooth_settings(&database, None),
+            Err(DevelopmentStoreFailure::Unavailable(_))
+        ));
+    }
 
     fn mailbox_list() -> MailboxRequest {
         MailboxRequest::List(prns_lxmf::mailbox::MailboxListRequest {

@@ -143,6 +143,9 @@ export function createDevelopmentRuntime(
     },
     readDevelopmentNodeSnapshot: (signal?: AbortSignal) =>
       call((api) => api.readSnapshot(asyncOptions(signal)), signal),
+    readBluetoothSettings: () => call((api) => api.readBluetoothSettings(), undefined, "storage"),
+    setBluetoothEnabled: (enabled: boolean) =>
+      call((api) => api.setBluetoothEnabled(enabled), undefined, "storage"),
     /** Borrow the app's retained host; releasing this view cannot stop services. */
     attachHost: async () => {
       const api = await bindings();

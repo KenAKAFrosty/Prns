@@ -53,6 +53,14 @@ function snapshot(
     runtime,
     primaryIdentity: Bindings.PrimaryIdentityState.Missing.new(),
     localHost: Bindings.LocalHostState.Stopped.new({ lastStartFailure: undefined }),
+    bluetooth: {
+      desiredEnabled: runtime === Bindings.DevelopmentNodeRuntime.Running ? true : undefined,
+      state:
+        runtime === Bindings.DevelopmentNodeRuntime.Running
+          ? Bindings.LocalBluetoothState.WaitingForPeers.new()
+          : Bindings.LocalBluetoothState.Stopped.new(),
+      peers: [],
+    },
     lxmf: { state: Bindings.LxmfHealthState.Ready, inboundOverflowCount: 0n },
     controllerIdentityFingerprint: undefined,
     pairing: Bindings.RemoteControlPairingState.Searching.new(),
@@ -106,12 +114,16 @@ beforeEach(() => {
   };
 });
 
-test("puts paired nodes and their actions before local status and controls", () => {
+test("puts this phone, its connections and controls before paired nodes", () => {
   const view = render(<NodesScreen />);
   const headings = view.getAllByRole("header").map((heading) => heading.props.children);
-  expect(headings.indexOf("Paired nodes")).toBeLessThan(headings.indexOf("This device"));
-  expect(headings.indexOf("Paired nodes")).toBeLessThan(headings.indexOf("Bluetooth access"));
-  expect(headings.indexOf("Paired nodes")).toBeLessThan(headings.indexOf("Node controls"));
+  expect(headings.slice(0, 2)).toEqual(["Nodes", "This phone"]);
+  expect(headings.indexOf("Bluetooth access")).toBeLessThan(headings.indexOf("Paired nodes"));
+  expect(headings.indexOf("Node controls")).toBeLessThan(headings.indexOf("Paired nodes"));
+  expect(view.getByRole("link", { name: "Connections" })).toBeTruthy();
+  expect(view.UNSAFE_getAllByType(Link).map((link) => link.props.href)).toContain(
+    "/more/interfaces",
+  );
   expect(view.getByText("Paired")).toBeTruthy();
   expect(view.queryByText("Connected")).toBeNull();
   expect(view.getByRole("link", { name: "Manage node" })).toBeTruthy();
@@ -155,9 +167,13 @@ test("keeps stopped nodes unavailable rather than describing them as an empty pa
   expect(view.getByRole("button", { name: "Start node" })).toBeEnabled();
   expect(view.getByRole("button", { name: "Stop node" })).toBeDisabled();
   const headings = view.getAllByRole("header").map((heading) => heading.props.children);
-  expect(headings.indexOf("This device's node is stopped")).toBeLessThan(
-    headings.indexOf("This device"),
+  expect(headings.indexOf("This phone")).toBeLessThan(
+    headings.indexOf("This device's node is stopped"),
   );
+  expect(headings.indexOf("This device's node is stopped")).toBeLessThan(
+    headings.indexOf("Paired nodes"),
+  );
+  expect(view.getByRole("link", { name: "Connections" })).toBeTruthy();
   fireEvent.press(view.getByRole("button", { name: "Start node" }));
   expect(mockRuntime.startNode).toHaveBeenCalledTimes(1);
 });
@@ -210,6 +226,7 @@ test("retains startup diagnostics and recovery when no snapshot is available", (
   expect(view.getByText("This device's node failed to start")).toBeTruthy();
   expect(view.getByRole("button", { name: "Start node" })).toBeEnabled();
   expect(view.getByRole("link", { name: "View diagnostics" })).toBeTruthy();
+  expect(view.getByRole("link", { name: "Connections" })).toBeTruthy();
   expect(view.getByRole("link", { name: "Pair a node" })).toBeTruthy();
   expect(view.getByRole("link", { name: "Remote access" })).toBeTruthy();
   expect(view.queryByRole("button", { name: "Refresh now" })).toBeNull();

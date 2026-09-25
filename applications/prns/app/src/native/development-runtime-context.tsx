@@ -11,6 +11,7 @@ import type {
   AnnounceRemoteControlTargetInput,
   RemoteControlAnnounceOutcome,
   BluetoothAuthorizationStatus,
+  LocalBluetoothSettingsOutcome,
   AnnounceLxmfOutcome,
   ContactMutationOutcome,
   CancelLxmfMessageOutcome,
@@ -92,6 +93,9 @@ export type DevelopmentRuntimeView = {
   readonly stopFailure: string | null;
   readonly stopNode: () => Promise<void>;
   readonly refreshSnapshot: () => Promise<RuntimeCommandResult<DevelopmentNodeSnapshot>>;
+  readonly setBluetoothEnabled: (
+    enabled: boolean,
+  ) => Promise<RuntimeCommandResult<LocalBluetoothSettingsOutcome>>;
   readonly initiatePairing: (
     input: InitiateRemoteControlPairingInput,
   ) => Promise<RuntimeCommandResult<RemoteControlPairingCommandOutcome>>;
@@ -160,7 +164,7 @@ export function DevelopmentRuntimeProvider({
   const [stoppingNode, setStoppingNode] = useState(false);
   const [stopFailure, setStopFailure] = useState<string | null>(null);
   const stopOwner = useRef<object | null>(null);
-  const stopProvider = useRef<RuntimeProvider | null>(null);
+  const activeProvider = useRef<RuntimeProvider | null>(null);
   const stopRevision = useRef(0);
   const acquisitionPending = useRef(true);
   const previousRelease = useRef(Promise.resolve());
@@ -216,12 +220,12 @@ export function DevelopmentRuntimeProvider({
   }, []);
 
   useEffect(() => {
-    stopProvider.current = selectedProvider;
+    activeProvider.current = selectedProvider;
     stopOwner.current = null;
     setStoppingNode(false);
     setStopFailure(null);
     return () => {
-      stopProvider.current = null;
+      activeProvider.current = null;
       stopOwner.current = null;
     };
   }, [selectedProvider]);
@@ -229,7 +233,7 @@ export function DevelopmentRuntimeProvider({
   const stopNode = useCallback(async () => {
     if (
       !stopAllowed.current ||
-      stopProvider.current !== selectedProvider ||
+      activeProvider.current !== selectedProvider ||
       acquisitionPending.current ||
       stopOwner.current !== null ||
       !("runtime" in selectedProvider)
@@ -267,6 +271,7 @@ export function DevelopmentRuntimeProvider({
     }
   }, [androidRuntime.refresh, cancelReads, publishSnapshot, selectedProvider]);
 
+  const refreshBluetoothAuthorization = useRef<(() => Promise<void>) | null>(null);
   useEffect(() => {
     setBluetoothAuthorization(null);
     setBluetoothAuthorizationFailure(null);
@@ -290,18 +295,20 @@ export function DevelopmentRuntimeProvider({
     const subscription = setup.addStatusListener((next) => {
       publishBluetoothAuthorization(next);
     });
-    void setup.readStatus().then(
-      (next) => {
-        publishBluetoothAuthorization(next);
-      },
-      (failure: unknown) => {
+    const refresh = async () => {
+      try {
+        publishBluetoothAuthorization(await setup.readStatus());
+      } catch (failure) {
         if (mounted && latestStatusRevision === null) {
           setBluetoothAuthorizationFailure(formatFailure(failure));
         }
-      },
-    );
+      }
+    };
+    refreshBluetoothAuthorization.current = refresh;
+    void refresh();
     return () => {
       mounted = false;
+      refreshBluetoothAuthorization.current = null;
       subscription.remove();
     };
   }, [selectedProvider]);
@@ -447,12 +454,60 @@ export function DevelopmentRuntimeProvider({
   );
 
   const refreshSnapshot = useCallback(async () => {
+    await refreshBluetoothAuthorization.current?.();
     const result = await runRead((active) => active.runtime.readDevelopmentNodeSnapshot);
     if (result.type === "outcome") {
       publishSnapshot(result.outcome);
     }
     return result;
   }, [publishSnapshot, runRead]);
+
+  const bluetoothChange = useRef(false);
+  const setBluetoothEnabled = useCallback(
+    async (enabled: boolean): Promise<RuntimeCommandResult<LocalBluetoothSettingsOutcome>> => {
+      if (
+        !("runtime" in selectedProvider) ||
+        activeProvider.current !== selectedProvider ||
+        bluetoothChange.current ||
+        acquisitionPending.current ||
+        stopOwner.current !== null
+      ) {
+        return unavailableResult();
+      }
+      const owner = selectedProvider;
+      const revision = stopRevision.current;
+      bluetoothChange.current = true;
+      try {
+        // This is a native-owned settings write, including while the node is
+        // stopped. Closing a React observer must not cancel an admitted write.
+        const outcome = await owner.runtime.setBluetoothEnabled(enabled);
+        if (
+          activeProvider.current !== owner ||
+          acquisitionPending.current ||
+          stopRevision.current !== revision
+        ) {
+          return {
+            type: "operationFailure",
+            detail: "This phone's node changed. Refresh Connections to check Bluetooth.",
+          };
+        }
+        const next = await owner.runtime.readDevelopmentNodeSnapshot();
+        if (
+          activeProvider.current === owner &&
+          !acquisitionPending.current &&
+          stopRevision.current === revision
+        ) {
+          publishSnapshot(next);
+        }
+        return { type: "outcome", outcome };
+      } catch (failure) {
+        return commandFailure(failure);
+      } finally {
+        bluetoothChange.current = false;
+      }
+    },
+    [selectedProvider, publishSnapshot, unavailableResult],
+  );
 
   const initiatePairing = useCallback(
     async (input: InitiateRemoteControlPairingInput) => {
@@ -652,6 +707,7 @@ export function DevelopmentRuntimeProvider({
       stopFailure,
       stopNode,
       refreshSnapshot,
+      setBluetoothEnabled,
       initiatePairing,
       approvePairing,
       rejectPairing,
@@ -695,6 +751,7 @@ export function DevelopmentRuntimeProvider({
       lifecycleFailure,
       phase,
       refreshSnapshot,
+      setBluetoothEnabled,
       rejectPairing,
       saveObservedDestination,
       listLxmfPeers,
@@ -720,6 +777,8 @@ export function routeConsumesDevelopmentSnapshot(pathname: string): boolean {
   return (
     pathname === "/nodes" ||
     pathname.startsWith("/nodes/") ||
+    pathname === "/more/interfaces" ||
+    pathname.startsWith("/more/interfaces/") ||
     pathname === "/inbox" ||
     pathname.startsWith("/inbox/")
   );

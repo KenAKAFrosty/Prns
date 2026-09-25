@@ -18,7 +18,7 @@ export function AndroidBluetoothCard() {
       await operation();
     } catch {
       setSettingsFailure(
-        "Settings could not open. Open this app's permissions in Android Settings.",
+        "Settings could not open. Open Android Settings to check Bluetooth and app permissions.",
       );
     } finally {
       setPending(false);
@@ -76,20 +76,38 @@ export function AndroidBluetoothCard() {
         </>
       ) : null}
       {supported && status?.bluetoothRadio === "off" ? (
-        <BodyText>Turn on Bluetooth in Android Settings, then return to prns.</BodyText>
+        <>
+          <BodyText>Turn on Bluetooth in Android Settings, then return to prns.</BodyText>
+          <Button
+            disabled={pending}
+            onPress={() =>
+              void request(() => Linking.sendIntent("android.settings.BLUETOOTH_SETTINGS"))
+            }
+          >
+            Open Bluetooth settings
+          </Button>
+        </>
       ) : null}
       {supported && status?.bluetoothRadio === "unknown" ? (
         <BodyText>Bluetooth availability has not been confirmed yet.</BodyText>
       ) : null}
       {supported && status?.locationServices === "off" ? (
-        <BodyText>
-          Turn on Location in Android Settings to let this version of Android discover nearby
-          Bluetooth nodes.
-        </BodyText>
+        <>
+          <BodyText>
+            Turn on Location in Android Settings to let this version of Android discover nearby
+            Bluetooth nodes.
+          </BodyText>
+          <Button
+            disabled={pending}
+            onPress={() =>
+              void request(() => Linking.sendIntent("android.settings.LOCATION_SOURCE_SETTINGS"))
+            }
+          >
+            Open Location settings
+          </Button>
+        </>
       ) : null}
-      {ready ? (
-        <BodyText>Bluetooth is available. Nearby nodes will appear when discovered.</BodyText>
-      ) : null}
+      {ready ? <BodyText>Bluetooth access is available for nearby connections.</BodyText> : null}
       {supported &&
       status?.bluetoothPermission === "granted" &&
       status.backgroundDiscovery === "notGranted" ? (

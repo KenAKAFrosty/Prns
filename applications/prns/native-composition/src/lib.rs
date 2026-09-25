@@ -2,6 +2,7 @@
 
 #[cfg(all(feature = "android", target_os = "android"))]
 use prns_host_native::platform::android;
+mod bluetooth;
 pub mod contract;
 mod development_store;
 mod directory;

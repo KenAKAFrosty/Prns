@@ -3,6 +3,131 @@ use crate::test_support::foreign_block_on;
 use prns_host::{BackendInfo, BackendKind, Capability, PersistenceSnapshot};
 
 #[test]
+fn stopped_bluetooth_settings_persist_and_remain_visible_after_shutdown() {
+    let temporary = tempfile::tempdir().unwrap();
+    let storage = temporary.path().join("prns/development");
+    let supervisor = Supervisor {
+        snapshots: Arc::new(SnapshotStore::new()),
+        operation_admitted: Arc::new(AtomicBool::new(false)),
+        state: Mutex::new(SupervisorState::default()),
+    };
+    assert!(matches!(
+        foreign_block_on(bluetooth_settings_with_supervisor(&supervisor, None)),
+        LocalBluetoothSettingsOutcome::Unavailable { .. }
+    ));
+    assert_eq!(
+        admission::prepare_native_storage_with_supervisor(&supervisor, &storage),
+        NativeStoragePreparationOutcome::Prepared
+    );
+    assert_eq!(
+        supervisor.snapshots.read().bluetooth.desired_enabled,
+        Some(true)
+    );
+    assert_eq!(
+        foreign_block_on(bluetooth_settings_with_supervisor(&supervisor, Some(false))),
+        LocalBluetoothSettingsOutcome::Ready { enabled: false }
+    );
+    supervisor.snapshots.stopped();
+    assert_eq!(
+        supervisor.snapshots.read().bluetooth.desired_enabled,
+        Some(false)
+    );
+    supervisor
+        .lock_state()
+        .application_owner
+        .take()
+        .unwrap()
+        .close()
+        .unwrap();
+    assert_eq!(
+        admission::prepare_native_storage_with_supervisor(&supervisor, &storage),
+        NativeStoragePreparationOutcome::Prepared
+    );
+    assert_eq!(
+        foreign_block_on(bluetooth_settings_with_supervisor(&supervisor, None)),
+        LocalBluetoothSettingsOutcome::Ready { enabled: false }
+    );
+    assert_eq!(
+        supervisor.snapshots.read().runtime,
+        DevelopmentNodeRuntime::Stopped
+    );
+}
+
+#[test]
+fn admitted_bluetooth_disable_survives_cancellation_without_stopping_node() {
+    use std::future::Future;
+    let temporary = tempfile::tempdir().unwrap();
+    let storage = temporary.path().join("prns/development");
+    let supervisor = Supervisor {
+        snapshots: Arc::new(SnapshotStore::new()),
+        operation_admitted: Arc::new(AtomicBool::new(false)),
+        state: Mutex::new(SupervisorState::default()),
+    };
+    assert_eq!(
+        admission::prepare_native_storage_with_supervisor(&supervisor, &storage),
+        NativeStoragePreparationOutcome::Prepared
+    );
+    let (commands, _commands) = mpsc::channel(1);
+    let (shutdown, _shutdown) = watch::channel(false);
+    let (_done, done) = std_mpsc::sync_channel(1);
+    let requested = Arc::new(AtomicBool::new(false));
+    let worker = test_worker(
+        commands,
+        ShutdownSignal {
+            sender: shutdown,
+            requested: requested.clone(),
+        },
+        done,
+        None,
+        storage,
+    );
+    let enabled = Arc::new(AtomicBool::new(true));
+    let observed = enabled.clone();
+    assert!(worker
+        .bluetooth
+        .set(BluetoothControl::for_test(move |value| {
+            observed.store(value, Ordering::Release);
+        }))
+        .is_ok());
+    supervisor.lock_state().worker = Some(worker);
+    supervisor
+        .snapshots
+        .set_runtime(DevelopmentNodeRuntime::Running);
+    let generation = supervisor.snapshots.read().generation_id;
+    let (entered, wait_entered) = std_mpsc::sync_channel(1);
+    let (release, wait_release) = std_mpsc::sync_channel(1);
+    supervisor
+        .lock_state()
+        .application_owner
+        .as_ref()
+        .unwrap()
+        .admit_test_barrier(entered, wait_release)
+        .unwrap();
+    wait_entered.recv().unwrap();
+    let mut mutation = Box::pin(bluetooth_settings_with_supervisor(&supervisor, Some(false)));
+    assert!(mutation
+        .as_mut()
+        .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+        .is_pending());
+    drop(mutation);
+    release.send(()).unwrap();
+    assert!(!supervisor
+        .lock_state()
+        .application_owner
+        .as_ref()
+        .unwrap()
+        .read_bluetooth_blocking()
+        .unwrap());
+    assert!(!enabled.load(Ordering::Acquire));
+    assert!(!requested.load(Ordering::Acquire));
+    let snapshot = supervisor.snapshots.read();
+    assert_eq!(snapshot.generation_id, generation);
+    assert_eq!(snapshot.runtime, DevelopmentNodeRuntime::Running);
+    assert_eq!(snapshot.bluetooth.desired_enabled, Some(false));
+    assert_eq!(snapshot.bluetooth.state, LocalBluetoothState::Disabling);
+}
+
+#[test]
 fn shared_host_persistence_failure_retains_app_reset_protection() {
     let error =
         prns_host_native::owner::SessionError::Stop(prns_host_native::NativeStopError::NodeFailed(
@@ -451,6 +576,7 @@ pub(super) fn test_worker(
     Worker {
         runtime: Arc::new(OnceLock::new()),
         host: Arc::new(OnceLock::new()),
+        bluetooth: Arc::new(OnceLock::new()),
         commands,
         shutdown,
         done,
@@ -1511,6 +1637,10 @@ fn terminal_failed_worker_keeps_native_reap_authority_during_offline_mailbox_acc
     };
     let destination = [0x42; 16];
     seed_failed_outbound_message(&supervisor, &paths, destination);
+    assert_eq!(
+        admission::prepare_native_storage_with_supervisor(&supervisor, &storage),
+        NativeStoragePreparationOutcome::Prepared
+    );
 
     supervisor
         .snapshots
@@ -1880,6 +2010,7 @@ async fn initial_mailbox_refresh_failure_stops_the_paused_service() {
             events,
             Arc::new(AtomicBool::new(false)),
             client,
+            Arc::new(OnceLock::new()),
             native.clock(),
             snapshots.clone(),
             Arc::new(AtomicBool::new(false)),

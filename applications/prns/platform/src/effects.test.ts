@@ -18,6 +18,11 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
     localHost: Bindings.LocalHostState.Stopped.new({
       lastStartFailure: undefined,
     }),
+    bluetooth: {
+      desiredEnabled: undefined,
+      state: Bindings.LocalBluetoothState.Stopped.new(),
+      peers: [],
+    },
     lxmf: { state: Bindings.LxmfHealthState.Stopped, inboundOverflowCount: 0n },
     controllerIdentityFingerprint: undefined,
     pairing: Bindings.RemoteControlPairingState.Searching.new(),
@@ -33,6 +38,12 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
 function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRuntime {
   return {
     attachHost: async () => undefined,
+    readBluetoothSettings: jest.fn(async () =>
+      Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled: true }),
+    ),
+    setBluetoothEnabled: jest.fn(async (enabled: boolean) =>
+      Bindings.LocalBluetoothSettingsOutcome.Ready.new({ enabled }),
+    ),
     inspectDevelopmentIdentity: jest.fn(async () => Bindings.PrimaryIdentityState.Missing.new()),
     previewIdentityImport: jest.fn(async () =>
       Bindings.IdentityImportPreviewOutcome.InvalidLength.new(),

@@ -876,6 +876,46 @@ export function previewIdentityImport(identity: Uint8Array): IdentityImportPrevi
     }
     }
 
+export async function readBluetoothSettings(asyncOpts_?: { signal: AbortSignal }): Promise<LocalBluetoothSettingsOutcome> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_prns_app_fn_func_read_bluetooth_settings(
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_prns_app_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_prns_app_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_prns_app_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_prns_app_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeLocalBluetoothSettingsOutcome.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
 export async function readRemoteNode(input: ReadRemoteNodeInput, asyncOpts_?: { signal: AbortSignal }): Promise<ReadRemoteNodeOutcome> {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -1106,6 +1146,49 @@ export async function sendDirectText(input: SendDirectTextInput, asyncOpts_?: { 
             /*liftFunc:*/ (__rb) => {
                 try {
                     return FfiConverterTypeSendDirectTextOutcome.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Persist application participation and apply it to the existing native BLE supervisor.
+ */
+export async function setBluetoothEnabled(enabled: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<LocalBluetoothSettingsOutcome> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_prns_app_fn_func_set_bluetooth_enabled(FfiConverterBool.lower(enabled, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_prns_app_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_prns_app_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_prns_app_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_prns_app_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeLocalBluetoothSettingsOutcome.lift(__rb);
                 } finally {
                     nativeModule().rustbuffer_free(__rb);
                 }
@@ -3221,6 +3304,487 @@ const FfiConverterTypeLocalHostState = (() => {
             }
         }
     }
+    return new FFIConverter();
+})();
+
+
+// Enum: LocalBluetoothState
+export enum LocalBluetoothState_Tags {
+    Stopped = "Stopped",
+    Starting = "Starting",
+    Disabled = "Disabled",
+    Disabling = "Disabling",
+    Connecting = "Connecting",
+    WaitingForPeers = "WaitingForPeers",
+    Connected = "Connected",
+    RadioOff = "RadioOff",
+    Unavailable = "Unavailable"
+}
+export const LocalBluetoothState = (() => {
+
+    type Stopped__interface = {
+        tag: LocalBluetoothState_Tags.Stopped
+    };
+    class Stopped_ extends UniffiEnum implements Stopped__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothState";
+        readonly tag = LocalBluetoothState_Tags.Stopped;
+        constructor() {
+            super("LocalBluetoothState", "Stopped");
+        }
+
+        static new(): Stopped_ {
+            return new Stopped_();
+        }
+
+        static instanceOf(obj: any): obj is Stopped_ {
+            return obj.tag === LocalBluetoothState_Tags.Stopped;
+        }
+
+    }
+
+    type Starting__interface = {
+        tag: LocalBluetoothState_Tags.Starting
+    };
+    class Starting_ extends UniffiEnum implements Starting__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothState";
+        readonly tag = LocalBluetoothState_Tags.Starting;
+        constructor() {
+            super("LocalBluetoothState", "Starting");
+        }
+
+        static new(): Starting_ {
+            return new Starting_();
+        }
+
+        static instanceOf(obj: any): obj is Starting_ {
+            return obj.tag === LocalBluetoothState_Tags.Starting;
+        }
+
+    }
+
+    type Disabled__interface = {
+        tag: LocalBluetoothState_Tags.Disabled
+    };
+    class Disabled_ extends UniffiEnum implements Disabled__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothState";
+        readonly tag = LocalBluetoothState_Tags.Disabled;
+        constructor() {
+            super("LocalBluetoothState", "Disabled");
+        }
+
+        static new(): Disabled_ {
+            return new Disabled_();
+        }
+
+        static instanceOf(obj: any): obj is Disabled_ {
+            return obj.tag === LocalBluetoothState_Tags.Disabled;
+        }
+
+    }
+
+    type Disabling__interface = {
+        tag: LocalBluetoothState_Tags.Disabling
+    };
+    class Disabling_ extends UniffiEnum implements Disabling__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothState";
+        readonly tag = LocalBluetoothState_Tags.Disabling;
+        constructor() {
+            super("LocalBluetoothState", "Disabling");
+        }
+
+        static new(): Disabling_ {
+            return new Disabling_();
+        }
+
+        static instanceOf(obj: any): obj is Disabling_ {
+            return obj.tag === LocalBluetoothState_Tags.Disabling;
+        }
+
+    }
+
+    type Connecting__interface = {
+        tag: LocalBluetoothState_Tags.Connecting
+    };
+    class Connecting_ extends UniffiEnum implements Connecting__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothState";
+        readonly tag = LocalBluetoothState_Tags.Connecting;
+        constructor() {
+            super("LocalBluetoothState", "Connecting");
+        }
+
+        static new(): Connecting_ {
+            return new Connecting_();
+        }
+
+        static instanceOf(obj: any): obj is Connecting_ {
+            return obj.tag === LocalBluetoothState_Tags.Connecting;
+        }
+
+    }
+
+    type WaitingForPeers__interface = {
+        tag: LocalBluetoothState_Tags.WaitingForPeers
+    };
+    class WaitingForPeers_ extends UniffiEnum implements WaitingForPeers__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothState";
+        readonly tag = LocalBluetoothState_Tags.WaitingForPeers;
+        constructor() {
+            super("LocalBluetoothState", "WaitingForPeers");
+        }
+
+        static new(): WaitingForPeers_ {
+            return new WaitingForPeers_();
+        }
+
+        static instanceOf(obj: any): obj is WaitingForPeers_ {
+            return obj.tag === LocalBluetoothState_Tags.WaitingForPeers;
+        }
+
+    }
+
+    type Connected__interface = {
+        tag: LocalBluetoothState_Tags.Connected
+    };
+    class Connected_ extends UniffiEnum implements Connected__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothState";
+        readonly tag = LocalBluetoothState_Tags.Connected;
+        constructor() {
+            super("LocalBluetoothState", "Connected");
+        }
+
+        static new(): Connected_ {
+            return new Connected_();
+        }
+
+        static instanceOf(obj: any): obj is Connected_ {
+            return obj.tag === LocalBluetoothState_Tags.Connected;
+        }
+
+    }
+
+    type RadioOff__interface = {
+        tag: LocalBluetoothState_Tags.RadioOff
+    };
+    class RadioOff_ extends UniffiEnum implements RadioOff__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothState";
+        readonly tag = LocalBluetoothState_Tags.RadioOff;
+        constructor() {
+            super("LocalBluetoothState", "RadioOff");
+        }
+
+        static new(): RadioOff_ {
+            return new RadioOff_();
+        }
+
+        static instanceOf(obj: any): obj is RadioOff_ {
+            return obj.tag === LocalBluetoothState_Tags.RadioOff;
+        }
+
+    }
+
+    type Unavailable__interface = {
+        tag: LocalBluetoothState_Tags.Unavailable;
+        inner:
+Readonly<{detail: string}>
+    };
+    class Unavailable_ extends UniffiEnum implements Unavailable__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothState";
+        readonly tag = LocalBluetoothState_Tags.Unavailable;
+        readonly inner:
+Readonly<{detail: string}>;
+        constructor(
+inner: {detail: string }) {
+            super("LocalBluetoothState", "Unavailable");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {detail: string }): Unavailable_ {
+            return new Unavailable_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Unavailable_ {
+            return obj.tag === LocalBluetoothState_Tags.Unavailable;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is LocalBluetoothState {
+        return obj[uniffiTypeNameSymbol] === "LocalBluetoothState";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Stopped: Stopped_,
+  Starting: Starting_,
+  Disabled: Disabled_,
+  Disabling: Disabling_,
+  Connecting: Connecting_,
+  WaitingForPeers: WaitingForPeers_,
+  Connected: Connected_,
+  RadioOff: RadioOff_,
+  Unavailable: Unavailable_
+    });
+
+})();
+export type LocalBluetoothState = InstanceType<
+    typeof LocalBluetoothState['Stopped' | 'Starting' | 'Disabled' | 'Disabling' | 'Connecting' | 'WaitingForPeers' | 'Connected' | 'RadioOff' | 'Unavailable']
+>;
+
+// FfiConverter for enum LocalBluetoothState
+const FfiConverterTypeLocalBluetoothState = (() => {
+    type TypeName = LocalBluetoothState;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new LocalBluetoothState.Stopped();
+                case 2: return new LocalBluetoothState.Starting();
+                case 3: return new LocalBluetoothState.Disabled();
+                case 4: return new LocalBluetoothState.Disabling();
+                case 5: return new LocalBluetoothState.Connecting();
+                case 6: return new LocalBluetoothState.WaitingForPeers();
+                case 7: return new LocalBluetoothState.Connected();
+                case 8: return new LocalBluetoothState.RadioOff();
+                case 9: return new LocalBluetoothState.Unavailable({detail: FfiConverterString.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case LocalBluetoothState_Tags.Stopped: {
+                    c.writeI32(1);
+                    return;
+                }
+                case LocalBluetoothState_Tags.Starting: {
+                    c.writeI32(2);
+                    return;
+                }
+                case LocalBluetoothState_Tags.Disabled: {
+                    c.writeI32(3);
+                    return;
+                }
+                case LocalBluetoothState_Tags.Disabling: {
+                    c.writeI32(4);
+                    return;
+                }
+                case LocalBluetoothState_Tags.Connecting: {
+                    c.writeI32(5);
+                    return;
+                }
+                case LocalBluetoothState_Tags.WaitingForPeers: {
+                    c.writeI32(6);
+                    return;
+                }
+                case LocalBluetoothState_Tags.Connected: {
+                    c.writeI32(7);
+                    return;
+                }
+                case LocalBluetoothState_Tags.RadioOff: {
+                    c.writeI32(8);
+                    return;
+                }
+                case LocalBluetoothState_Tags.Unavailable: {
+                    c.writeI32(9);
+                    const inner = value.inner;
+                    FfiConverterString.writeIntoCursor(inner.detail, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that LocalBluetoothState_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case LocalBluetoothState_Tags.Stopped: {
+                    return 4;
+                }
+                case LocalBluetoothState_Tags.Starting: {
+                    return 4;
+                }
+                case LocalBluetoothState_Tags.Disabled: {
+                    return 4;
+                }
+                case LocalBluetoothState_Tags.Disabling: {
+                    return 4;
+                }
+                case LocalBluetoothState_Tags.Connecting: {
+                    return 4;
+                }
+                case LocalBluetoothState_Tags.WaitingForPeers: {
+                    return 4;
+                }
+                case LocalBluetoothState_Tags.Connected: {
+                    return 4;
+                }
+                case LocalBluetoothState_Tags.RadioOff: {
+                    return 4;
+                }
+                case LocalBluetoothState_Tags.Unavailable: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterString.allocationSize(inner.detail);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type LocalBluetoothPeerSnapshot = {
+    /**
+     * Opaque physical interface identifier; this is not an authenticated RNS identity.
+     */
+    interfaceId: Uint8Array,
+    name?: string | undefined,
+    connected: boolean,
+    rxBytes: bigint,
+    txBytes: bigint,
+    details?: string | undefined,
+    rssiDbm?: number | undefined
+}
+
+/**
+ * Generated factory for {@link LocalBluetoothPeerSnapshot} record objects.
+ */
+export const LocalBluetoothPeerSnapshot = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<LocalBluetoothPeerSnapshot, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<LocalBluetoothPeerSnapshot>,
+    });
+})();
+
+const FfiConverterTypeLocalBluetoothPeerSnapshot = (() => {
+    type TypeName = LocalBluetoothPeerSnapshot;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                interfaceId: FfiConverterUint8Array.readFromCursor(c),
+                name: FfiConverterOptionalString.readFromCursor(c),
+                connected: FfiConverterBool.readFromCursor(c),
+                rxBytes: FfiConverterUInt64.readFromCursor(c),
+                txBytes: FfiConverterUInt64.readFromCursor(c),
+                details: FfiConverterOptionalString.readFromCursor(c),
+                rssiDbm: FfiConverterOptionalInt16.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterUint8Array.writeIntoCursor(value.interfaceId, c);
+            FfiConverterOptionalString.writeIntoCursor(value.name, c);
+            FfiConverterBool.writeIntoCursor(value.connected, c);
+            FfiConverterUInt64.writeIntoCursor(value.rxBytes, c);
+            FfiConverterUInt64.writeIntoCursor(value.txBytes, c);
+            FfiConverterOptionalString.writeIntoCursor(value.details, c);
+            FfiConverterOptionalInt16.writeIntoCursor(value.rssiDbm, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUint8Array.allocationSize(value.interfaceId) +
+             FfiConverterOptionalString.allocationSize(value.name) +
+             FfiConverterBool.allocationSize(value.connected) +
+             FfiConverterUInt64.allocationSize(value.rxBytes) +
+             FfiConverterUInt64.allocationSize(value.txBytes) +
+             FfiConverterOptionalString.allocationSize(value.details) +
+             FfiConverterOptionalInt16.allocationSize(value.rssiDbm);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type LocalBluetoothSnapshot = {
+    /**
+     * None until the application preference has been successfully read.
+     */
+    desiredEnabled?: boolean | undefined,
+    state: LocalBluetoothState,
+    /**
+     * Physical Bluetooth fleet members, never routes or RNS links.
+     */
+    peers: Array<LocalBluetoothPeerSnapshot>
+}
+
+/**
+ * Generated factory for {@link LocalBluetoothSnapshot} record objects.
+ */
+export const LocalBluetoothSnapshot = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<LocalBluetoothSnapshot, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<LocalBluetoothSnapshot>,
+    });
+})();
+
+const FfiConverterTypeLocalBluetoothSnapshot = (() => {
+    type TypeName = LocalBluetoothSnapshot;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                desiredEnabled: FfiConverterOptionalBoolean.readFromCursor(c),
+                state: FfiConverterTypeLocalBluetoothState.readFromCursor(c),
+                peers: FfiConverterSequenceTypeLocalBluetoothPeerSnapshot.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterOptionalBoolean.writeIntoCursor(value.desiredEnabled, c);
+            FfiConverterTypeLocalBluetoothState.writeIntoCursor(value.state, c);
+            FfiConverterSequenceTypeLocalBluetoothPeerSnapshot.writeIntoCursor(value.peers, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalBoolean.allocationSize(value.desiredEnabled) +
+             FfiConverterTypeLocalBluetoothState.allocationSize(value.state) +
+             FfiConverterSequenceTypeLocalBluetoothPeerSnapshot.allocationSize(value.peers);
+
+        }
+    };
     return new FFIConverter();
 })();
 
@@ -5566,6 +6130,7 @@ export type DevelopmentNodeSnapshot = {
     runtime: DevelopmentNodeRuntime,
     primaryIdentity: PrimaryIdentityState,
     localHost: LocalHostState,
+    bluetooth: LocalBluetoothSnapshot,
     lxmf: LxmfHealth,
     controllerIdentityFingerprint?: Uint8Array | undefined,
     pairing: RemoteControlPairingState,
@@ -5605,6 +6170,7 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
                 runtime: FfiConverterTypeDevelopmentNodeRuntime.readFromCursor(c),
                 primaryIdentity: FfiConverterTypePrimaryIdentityState.readFromCursor(c),
                 localHost: FfiConverterTypeLocalHostState.readFromCursor(c),
+                bluetooth: FfiConverterTypeLocalBluetoothSnapshot.readFromCursor(c),
                 lxmf: FfiConverterTypeLxmfHealth.readFromCursor(c),
                 controllerIdentityFingerprint: FfiConverterOptionalBytes.readFromCursor(c),
                 pairing: FfiConverterTypeRemoteControlPairingState.readFromCursor(c),
@@ -5624,6 +6190,7 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
             FfiConverterTypeDevelopmentNodeRuntime.writeIntoCursor(value.runtime, c);
             FfiConverterTypePrimaryIdentityState.writeIntoCursor(value.primaryIdentity, c);
             FfiConverterTypeLocalHostState.writeIntoCursor(value.localHost, c);
+            FfiConverterTypeLocalBluetoothSnapshot.writeIntoCursor(value.bluetooth, c);
             FfiConverterTypeLxmfHealth.writeIntoCursor(value.lxmf, c);
             FfiConverterOptionalBytes.writeIntoCursor(value.controllerIdentityFingerprint, c);
             FfiConverterTypeRemoteControlPairingState.writeIntoCursor(value.pairing, c);
@@ -5642,6 +6209,7 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
              FfiConverterTypeDevelopmentNodeRuntime.allocationSize(value.runtime) +
              FfiConverterTypePrimaryIdentityState.allocationSize(value.primaryIdentity) +
              FfiConverterTypeLocalHostState.allocationSize(value.localHost) +
+             FfiConverterTypeLocalBluetoothSnapshot.allocationSize(value.bluetooth) +
              FfiConverterTypeLxmfHealth.allocationSize(value.lxmf) +
              FfiConverterOptionalBytes.allocationSize(value.controllerIdentityFingerprint) +
              FfiConverterTypeRemoteControlPairingState.allocationSize(value.pairing) +
@@ -10777,6 +11345,176 @@ const FfiConverterTypeIdentityImportPreviewOutcome = (() => {
 })();
 
 
+// Enum: LocalBluetoothSettingsOutcome
+export enum LocalBluetoothSettingsOutcome_Tags {
+    Ready = "Ready",
+    Busy = "Busy",
+    Unavailable = "Unavailable"
+}
+export const LocalBluetoothSettingsOutcome = (() => {
+
+    type Ready__interface = {
+        tag: LocalBluetoothSettingsOutcome_Tags.Ready;
+        inner:
+Readonly<{enabled: boolean}>
+    };
+    class Ready_ extends UniffiEnum implements Ready__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothSettingsOutcome";
+        readonly tag = LocalBluetoothSettingsOutcome_Tags.Ready;
+        readonly inner:
+Readonly<{enabled: boolean}>;
+        constructor(
+inner: {enabled: boolean }) {
+            super("LocalBluetoothSettingsOutcome", "Ready");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {enabled: boolean }): Ready_ {
+            return new Ready_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Ready_ {
+            return obj.tag === LocalBluetoothSettingsOutcome_Tags.Ready;
+        }
+
+    }
+
+    type Busy__interface = {
+        tag: LocalBluetoothSettingsOutcome_Tags.Busy
+    };
+    class Busy_ extends UniffiEnum implements Busy__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothSettingsOutcome";
+        readonly tag = LocalBluetoothSettingsOutcome_Tags.Busy;
+        constructor() {
+            super("LocalBluetoothSettingsOutcome", "Busy");
+        }
+
+        static new(): Busy_ {
+            return new Busy_();
+        }
+
+        static instanceOf(obj: any): obj is Busy_ {
+            return obj.tag === LocalBluetoothSettingsOutcome_Tags.Busy;
+        }
+
+    }
+
+    type Unavailable__interface = {
+        tag: LocalBluetoothSettingsOutcome_Tags.Unavailable;
+        inner:
+Readonly<{detail: string}>
+    };
+    class Unavailable_ extends UniffiEnum implements Unavailable__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalBluetoothSettingsOutcome";
+        readonly tag = LocalBluetoothSettingsOutcome_Tags.Unavailable;
+        readonly inner:
+Readonly<{detail: string}>;
+        constructor(
+inner: {detail: string }) {
+            super("LocalBluetoothSettingsOutcome", "Unavailable");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {detail: string }): Unavailable_ {
+            return new Unavailable_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Unavailable_ {
+            return obj.tag === LocalBluetoothSettingsOutcome_Tags.Unavailable;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is LocalBluetoothSettingsOutcome {
+        return obj[uniffiTypeNameSymbol] === "LocalBluetoothSettingsOutcome";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Ready: Ready_,
+  Busy: Busy_,
+  Unavailable: Unavailable_
+    });
+
+})();
+export type LocalBluetoothSettingsOutcome = InstanceType<
+    typeof LocalBluetoothSettingsOutcome['Ready' | 'Busy' | 'Unavailable']
+>;
+
+// FfiConverter for enum LocalBluetoothSettingsOutcome
+const FfiConverterTypeLocalBluetoothSettingsOutcome = (() => {
+    type TypeName = LocalBluetoothSettingsOutcome;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new LocalBluetoothSettingsOutcome.Ready({enabled: FfiConverterBool.readFromCursor(c) });
+                case 2: return new LocalBluetoothSettingsOutcome.Busy();
+                case 3: return new LocalBluetoothSettingsOutcome.Unavailable({detail: FfiConverterString.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case LocalBluetoothSettingsOutcome_Tags.Ready: {
+                    c.writeI32(1);
+                    const inner = value.inner;
+                    FfiConverterBool.writeIntoCursor(inner.enabled, c);
+                    return;
+                }
+                case LocalBluetoothSettingsOutcome_Tags.Busy: {
+                    c.writeI32(2);
+                    return;
+                }
+                case LocalBluetoothSettingsOutcome_Tags.Unavailable: {
+                    c.writeI32(3);
+                    const inner = value.inner;
+                    FfiConverterString.writeIntoCursor(inner.detail, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that LocalBluetoothSettingsOutcome_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case LocalBluetoothSettingsOutcome_Tags.Ready: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterBool.allocationSize(inner.enabled);
+                    return size;
+                }
+                case LocalBluetoothSettingsOutcome_Tags.Busy: {
+                    return 4;
+                }
+                case LocalBluetoothSettingsOutcome_Tags.Unavailable: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterString.allocationSize(inner.detail);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
 // Enum: LxmfMessageListOutcome
 export enum LxmfMessageListOutcome_Tags {
     Listed = "Listed",
@@ -13358,6 +14096,15 @@ const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 // FfiConverter for Bytes16 | undefined
 const FfiConverterOptionalTypeBytes16 = new FfiConverterOptional(FfiConverterTypeBytes16);
 
+// FfiConverter for boolean | undefined
+const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
+
+// FfiConverter for number | undefined
+const FfiConverterOptionalInt16 = new FfiConverterOptional(FfiConverterInt16);
+
+// FfiConverter for Array<LocalBluetoothPeerSnapshot>
+const FfiConverterSequenceTypeLocalBluetoothPeerSnapshot = new FfiConverterArray(FfiConverterTypeLocalBluetoothPeerSnapshot);
+
 // FfiConverter for Uint8Array | undefined
 const FfiConverterOptionalBytes = new FfiConverterOptional(FfiConverterUint8Array);
 
@@ -13408,9 +14155,6 @@ const FfiConverterOptionalTypeRemoteNodePower = new FfiConverterOptional(FfiConv
 
 // FfiConverter for RemoteInterfacePage | undefined
 const FfiConverterOptionalTypeRemoteInterfacePage = new FfiConverterOptional(FfiConverterTypeRemoteInterfacePage);
-
-// FfiConverter for number | undefined
-const FfiConverterOptionalInt16 = new FfiConverterOptional(FfiConverterInt16);
 
 // FfiConverter for number | undefined
 const FfiConverterOptionalUInt16 = new FfiConverterOptional(FfiConverterUInt16);
@@ -13530,6 +14274,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_prns_app_checksum_func_preview_identity_import() !== 31445) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_preview_identity_import");
     }
+    if (nativeModule().uniffi_prns_app_checksum_func_read_bluetooth_settings() !== 48522) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_read_bluetooth_settings");
+    }
     if (nativeModule().uniffi_prns_app_checksum_func_read_remote_node() !== 34426) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_read_remote_node");
     }
@@ -13547,6 +14294,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_prns_app_checksum_func_send_direct_text() !== 24289) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_send_direct_text");
+    }
+    if (nativeModule().uniffi_prns_app_checksum_func_set_bluetooth_enabled() !== 13413) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_set_bluetooth_enabled");
     }
     if (nativeModule().uniffi_prns_app_checksum_func_set_contact_alias() !== 19054) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_set_contact_alias");
@@ -13601,6 +14351,10 @@ export default Object.freeze({
     FfiConverterTypeInitiateRemoteControlPairingInput,
     FfiConverterTypeInspectRemoteWifiTrialInput,
     FfiConverterTypeListLxmfMessagesInput,
+    FfiConverterTypeLocalBluetoothPeerSnapshot,
+    FfiConverterTypeLocalBluetoothSettingsOutcome,
+    FfiConverterTypeLocalBluetoothSnapshot,
+    FfiConverterTypeLocalBluetoothState,
     FfiConverterTypeLocalHostState,
     FfiConverterTypeLxmfDeliveryFailure,
     FfiConverterTypeLxmfDeliveryState,

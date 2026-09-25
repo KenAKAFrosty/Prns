@@ -1,7 +1,12 @@
 // route-id: interfaces.index
 
-import { CatalogPlaceholderRoute } from "@/features/placeholder-screen";
+import { ConnectionsScreen } from "@/features/connections/connections-screen";
+import { CatalogRouteGuard } from "@/features/placeholder-screen";
 
 export default function InterfacesRoute() {
-  return <CatalogPlaceholderRoute screenId="interfaces.index" />;
+  return (
+    <CatalogRouteGuard screenId="interfaces.index">
+      <ConnectionsScreen />
+    </CatalogRouteGuard>
+  );
 }

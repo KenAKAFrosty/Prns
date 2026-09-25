@@ -19,8 +19,8 @@ export function HelpScreen() {
           <BodyText>
             Create or import an identity, pair and check nearby nodes, save contacts, exchange
             direct messages, change a paired node&apos;s supported settings, set up its Wi-Fi,
-            review and remove other devices&apos; access, inspect this device&apos;s network status,
-            and reset preview data.
+            review and remove other devices&apos; access, inspect this phone&apos;s Bluetooth
+            connections, turn them on or off without stopping its node, and reset preview data.
           </BodyText>
         ) : (
           <BodyText>
@@ -33,9 +33,10 @@ export function HelpScreen() {
         <Subheading>Coming later</Subheading>
         {availability.type === "available" ? (
           <BodyText>
-            Contact merging, identity and connection management, inviting other devices, NomadNet,
-            location, notifications, background delivery, storage details, recovery tools, activity
-            history, and support for more platforms.
+            Messaging names, Saved and Discovered contacts, contact merging, identity management,
+            other transport settings, inviting other devices, NomadNet, location, notifications,
+            background delivery, storage details, recovery tools, activity history, and support for
+            more platforms.
           </BodyText>
         ) : (
           <BodyText>

@@ -54,13 +54,16 @@ describe("preview capability copy", () => {
     ).toBeTruthy();
     expect(
       help.getByText(
-        /Contact merging, identity and connection management, inviting other devices/u,
+        /Messaging names, Saved and Discovered contacts, contact merging, identity management/u,
       ),
     ).toBeTruthy();
     expect(
       help.getByText(/change a paired node's supported settings, set up its Wi-Fi/u),
     ).toBeTruthy();
     expect(help.getByText(/review and remove other devices' access/u)).toBeTruthy();
+    expect(
+      help.getByText(/Bluetooth connections, turn them on or off without stopping its node/u),
+    ).toBeTruthy();
     expect(help.queryByText(/remote-access controls/u)).toBeNull();
     expect(JSON.stringify(help.toJSON())).not.toMatch(
       /E290|signed availability|upstream RemoteControl/iu,

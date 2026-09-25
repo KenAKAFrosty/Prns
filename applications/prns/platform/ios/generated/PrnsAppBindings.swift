@@ -1148,6 +1148,7 @@ public struct DevelopmentNodeSnapshot: Equatable, Hashable {
     public var runtime: DevelopmentNodeRuntime
     public var primaryIdentity: PrimaryIdentityState
     public var localHost: LocalHostState
+    public var bluetooth: LocalBluetoothSnapshot
     public var lxmf: LxmfHealth
     public var controllerIdentityFingerprint: Data?
     public var pairing: RemoteControlPairingState
@@ -1161,13 +1162,14 @@ public struct DevelopmentNodeSnapshot: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(contractFingerprint: String, revision: UInt64, generationId: UInt64, runtime: DevelopmentNodeRuntime, primaryIdentity: PrimaryIdentityState, localHost: LocalHostState, lxmf: LxmfHealth, controllerIdentityFingerprint: Data?, pairing: RemoteControlPairingState, pairingCandidates: [RemoteControlPairingCandidate], pairedTargets: [RemoteControlTargetSnapshot], lastAnnouncement: RemoteControlAnnounceOperation?, lastRemoteChange: RemoteChangeOperation?, lastRemoteWifi: RemoteWifiOperation?, activeOperation: DevelopmentNodeOperation?, failure: DevelopmentNodeFailure?) {
+    public init(contractFingerprint: String, revision: UInt64, generationId: UInt64, runtime: DevelopmentNodeRuntime, primaryIdentity: PrimaryIdentityState, localHost: LocalHostState, bluetooth: LocalBluetoothSnapshot, lxmf: LxmfHealth, controllerIdentityFingerprint: Data?, pairing: RemoteControlPairingState, pairingCandidates: [RemoteControlPairingCandidate], pairedTargets: [RemoteControlTargetSnapshot], lastAnnouncement: RemoteControlAnnounceOperation?, lastRemoteChange: RemoteChangeOperation?, lastRemoteWifi: RemoteWifiOperation?, activeOperation: DevelopmentNodeOperation?, failure: DevelopmentNodeFailure?) {
         self.contractFingerprint = contractFingerprint
         self.revision = revision
         self.generationId = generationId
         self.runtime = runtime
         self.primaryIdentity = primaryIdentity
         self.localHost = localHost
+        self.bluetooth = bluetooth
         self.lxmf = lxmf
         self.controllerIdentityFingerprint = controllerIdentityFingerprint
         self.pairing = pairing
@@ -1202,6 +1204,7 @@ public struct FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer {
                 runtime: FfiConverterTypeDevelopmentNodeRuntime.read(from: &buf),
                 primaryIdentity: FfiConverterTypePrimaryIdentityState.read(from: &buf),
                 localHost: FfiConverterTypeLocalHostState.read(from: &buf),
+                bluetooth: FfiConverterTypeLocalBluetoothSnapshot.read(from: &buf),
                 lxmf: FfiConverterTypeLxmfHealth.read(from: &buf),
                 controllerIdentityFingerprint: FfiConverterOptionData.read(from: &buf),
                 pairing: FfiConverterTypeRemoteControlPairingState.read(from: &buf),
@@ -1222,6 +1225,7 @@ public struct FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer {
         FfiConverterTypeDevelopmentNodeRuntime.write(value.runtime, into: &buf)
         FfiConverterTypePrimaryIdentityState.write(value.primaryIdentity, into: &buf)
         FfiConverterTypeLocalHostState.write(value.localHost, into: &buf)
+        FfiConverterTypeLocalBluetoothSnapshot.write(value.bluetooth, into: &buf)
         FfiConverterTypeLxmfHealth.write(value.lxmf, into: &buf)
         FfiConverterOptionData.write(value.controllerIdentityFingerprint, into: &buf)
         FfiConverterTypeRemoteControlPairingState.write(value.pairing, into: &buf)
@@ -1518,6 +1522,156 @@ public func FfiConverterTypeListLxmfMessagesInput_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeListLxmfMessagesInput_lower(_ value: ListLxmfMessagesInput) -> RustBuffer {
     return FfiConverterTypeListLxmfMessagesInput.lower(value)
+}
+
+
+public struct LocalBluetoothPeerSnapshot: Equatable, Hashable {
+    /**
+     * Opaque physical interface identifier; this is not an authenticated RNS identity.
+     */
+    public var interfaceId: Data
+    public var name: String?
+    public var connected: Bool
+    public var rxBytes: UInt64
+    public var txBytes: UInt64
+    public var details: String?
+    public var rssiDbm: Int16?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Opaque physical interface identifier; this is not an authenticated RNS identity.
+         */interfaceId: Data, name: String?, connected: Bool, rxBytes: UInt64, txBytes: UInt64, details: String?, rssiDbm: Int16?) {
+        self.interfaceId = interfaceId
+        self.name = name
+        self.connected = connected
+        self.rxBytes = rxBytes
+        self.txBytes = txBytes
+        self.details = details
+        self.rssiDbm = rssiDbm
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LocalBluetoothPeerSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLocalBluetoothPeerSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LocalBluetoothPeerSnapshot {
+        return
+            try LocalBluetoothPeerSnapshot(
+                interfaceId: FfiConverterData.read(from: &buf),
+                name: FfiConverterOptionString.read(from: &buf),
+                connected: FfiConverterBool.read(from: &buf),
+                rxBytes: FfiConverterUInt64.read(from: &buf),
+                txBytes: FfiConverterUInt64.read(from: &buf),
+                details: FfiConverterOptionString.read(from: &buf),
+                rssiDbm: FfiConverterOptionInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LocalBluetoothPeerSnapshot, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.interfaceId, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.connected, into: &buf)
+        FfiConverterUInt64.write(value.rxBytes, into: &buf)
+        FfiConverterUInt64.write(value.txBytes, into: &buf)
+        FfiConverterOptionString.write(value.details, into: &buf)
+        FfiConverterOptionInt16.write(value.rssiDbm, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalBluetoothPeerSnapshot_lift(_ buf: RustBuffer) throws -> LocalBluetoothPeerSnapshot {
+    return try FfiConverterTypeLocalBluetoothPeerSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalBluetoothPeerSnapshot_lower(_ value: LocalBluetoothPeerSnapshot) -> RustBuffer {
+    return FfiConverterTypeLocalBluetoothPeerSnapshot.lower(value)
+}
+
+
+public struct LocalBluetoothSnapshot: Equatable, Hashable {
+    /**
+     * None until the application preference has been successfully read.
+     */
+    public var desiredEnabled: Bool?
+    public var state: LocalBluetoothState
+    /**
+     * Physical Bluetooth fleet members, never routes or RNS links.
+     */
+    public var peers: [LocalBluetoothPeerSnapshot]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * None until the application preference has been successfully read.
+         */desiredEnabled: Bool?, state: LocalBluetoothState,
+        /**
+         * Physical Bluetooth fleet members, never routes or RNS links.
+         */peers: [LocalBluetoothPeerSnapshot]) {
+        self.desiredEnabled = desiredEnabled
+        self.state = state
+        self.peers = peers
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LocalBluetoothSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLocalBluetoothSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LocalBluetoothSnapshot {
+        return
+            try LocalBluetoothSnapshot(
+                desiredEnabled: FfiConverterOptionBool.read(from: &buf),
+                state: FfiConverterTypeLocalBluetoothState.read(from: &buf),
+                peers: FfiConverterSequenceTypeLocalBluetoothPeerSnapshot.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LocalBluetoothSnapshot, into buf: inout [UInt8]) {
+        FfiConverterOptionBool.write(value.desiredEnabled, into: &buf)
+        FfiConverterTypeLocalBluetoothState.write(value.state, into: &buf)
+        FfiConverterSequenceTypeLocalBluetoothPeerSnapshot.write(value.peers, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalBluetoothSnapshot_lift(_ buf: RustBuffer) throws -> LocalBluetoothSnapshot {
+    return try FfiConverterTypeLocalBluetoothSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalBluetoothSnapshot_lower(_ value: LocalBluetoothSnapshot) -> RustBuffer {
+    return FfiConverterTypeLocalBluetoothSnapshot.lower(value)
 }
 
 
@@ -4632,6 +4786,205 @@ public func FfiConverterTypeIdentityImportPreviewOutcome_lift(_ buf: RustBuffer)
 #endif
 public func FfiConverterTypeIdentityImportPreviewOutcome_lower(_ value: IdentityImportPreviewOutcome) -> RustBuffer {
     return FfiConverterTypeIdentityImportPreviewOutcome.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum LocalBluetoothSettingsOutcome: Equatable, Hashable {
+
+    case ready(enabled: Bool
+    )
+    case busy
+    case unavailable(detail: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LocalBluetoothSettingsOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLocalBluetoothSettingsOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = LocalBluetoothSettingsOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LocalBluetoothSettingsOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .ready(enabled: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 2: return .busy
+
+        case 3: return .unavailable(detail: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: LocalBluetoothSettingsOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .ready(enabled):
+            writeInt(&buf, Int32(1))
+            FfiConverterBool.write(enabled, into: &buf)
+
+
+        case .busy:
+            writeInt(&buf, Int32(2))
+
+
+        case let .unavailable(detail):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(detail, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalBluetoothSettingsOutcome_lift(_ buf: RustBuffer) throws -> LocalBluetoothSettingsOutcome {
+    return try FfiConverterTypeLocalBluetoothSettingsOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalBluetoothSettingsOutcome_lower(_ value: LocalBluetoothSettingsOutcome) -> RustBuffer {
+    return FfiConverterTypeLocalBluetoothSettingsOutcome.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum LocalBluetoothState: Equatable, Hashable {
+
+    case stopped
+    case starting
+    case disabled
+    case disabling
+    case connecting
+    case waitingForPeers
+    case connected
+    case radioOff
+    case unavailable(detail: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LocalBluetoothState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLocalBluetoothState: FfiConverterRustBuffer {
+    typealias SwiftType = LocalBluetoothState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LocalBluetoothState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .stopped
+
+        case 2: return .starting
+
+        case 3: return .disabled
+
+        case 4: return .disabling
+
+        case 5: return .connecting
+
+        case 6: return .waitingForPeers
+
+        case 7: return .connected
+
+        case 8: return .radioOff
+
+        case 9: return .unavailable(detail: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: LocalBluetoothState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .stopped:
+            writeInt(&buf, Int32(1))
+
+
+        case .starting:
+            writeInt(&buf, Int32(2))
+
+
+        case .disabled:
+            writeInt(&buf, Int32(3))
+
+
+        case .disabling:
+            writeInt(&buf, Int32(4))
+
+
+        case .connecting:
+            writeInt(&buf, Int32(5))
+
+
+        case .waitingForPeers:
+            writeInt(&buf, Int32(6))
+
+
+        case .connected:
+            writeInt(&buf, Int32(7))
+
+
+        case .radioOff:
+            writeInt(&buf, Int32(8))
+
+
+        case let .unavailable(detail):
+            writeInt(&buf, Int32(9))
+            FfiConverterString.write(detail, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalBluetoothState_lift(_ buf: RustBuffer) throws -> LocalBluetoothState {
+    return try FfiConverterTypeLocalBluetoothState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalBluetoothState_lower(_ value: LocalBluetoothState) -> RustBuffer {
+    return FfiConverterTypeLocalBluetoothState.lower(value)
 }
 
 
@@ -9265,6 +9618,30 @@ fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionBool: FfiConverterRustBuffer {
+    typealias SwiftType = Bool?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterBool.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterBool.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     typealias SwiftType = String?
 
@@ -9620,6 +9997,31 @@ fileprivate struct FfiConverterSequenceTypeContact: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeContact.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeLocalBluetoothPeerSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = [LocalBluetoothPeerSnapshot]
+
+    public static func write(_ value: [LocalBluetoothPeerSnapshot], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeLocalBluetoothPeerSnapshot.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [LocalBluetoothPeerSnapshot] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [LocalBluetoothPeerSnapshot]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeLocalBluetoothPeerSnapshot.read(from: &buf))
         }
         return seq
     }
@@ -10384,6 +10786,21 @@ public func previewIdentityImport(identity: Data) -> IdentityImportPreviewOutcom
     )
 })
 }
+public func readBluetoothSettings()async  -> LocalBluetoothSettingsOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_read_bluetooth_settings(
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeLocalBluetoothSettingsOutcome_lift,
+            errorHandler: nil
+
+        )
+}
 public func readRemoteNode(input: ReadRemoteNodeInput)async  -> ReadRemoteNodeOutcome  {
     return
         try!  await uniffiRustCallAsync(
@@ -10476,6 +10893,24 @@ public func sendDirectText(input: SendDirectTextInput)async  -> SendDirectTextOu
             completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
             freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSendDirectTextOutcome_lift,
+            errorHandler: nil
+
+        )
+}
+/**
+ * Persist application participation and apply it to the existing native BLE supervisor.
+ */
+public func setBluetoothEnabled(enabled: Bool)async  -> LocalBluetoothSettingsOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_set_bluetooth_enabled(FfiConverterBool.lower(enabled)
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeLocalBluetoothSettingsOutcome_lift,
             errorHandler: nil
 
         )
@@ -10631,6 +11066,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_prns_app_checksum_func_preview_identity_import() != 31445) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_prns_app_checksum_func_read_bluetooth_settings() != 48522) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_prns_app_checksum_func_read_remote_node() != 34426) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10647,6 +11085,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_send_direct_text() != 24289) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_prns_app_checksum_func_set_bluetooth_enabled() != 13413) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_set_contact_alias() != 19054) {
