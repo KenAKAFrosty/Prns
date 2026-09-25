@@ -52,11 +52,7 @@ describe("preview capability copy", () => {
     expect(
       help.getByText(/pair and check nearby nodes, save contacts, exchange direct messages/u),
     ).toBeTruthy();
-    expect(
-      help.getByText(
-        /Messaging names, Saved and Discovered contacts, contact merging, identity management/u,
-      ),
-    ).toBeTruthy();
+    expect(help.getByText(/Contact merging, identity management/u)).toBeTruthy();
     expect(
       help.getByText(/change a paired node's supported settings, set up its Wi-Fi/u),
     ).toBeTruthy();

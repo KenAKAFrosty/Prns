@@ -12,6 +12,9 @@ import type {
   RemoteControlAnnounceOutcome,
   BluetoothAuthorizationStatus,
   LocalBluetoothSettingsOutcome,
+  LocalMessagingProfileOutcome,
+  LxmfDiscoveryClearOutcome,
+  ContactDestinationInput,
   AnnounceLxmfOutcome,
   ContactMutationOutcome,
   CancelLxmfMessageOutcome,
@@ -96,6 +99,14 @@ export type DevelopmentRuntimeView = {
   readonly setBluetoothEnabled: (
     enabled: boolean,
   ) => Promise<RuntimeCommandResult<LocalBluetoothSettingsOutcome>>;
+  readonly readMessagingProfile: () => Promise<RuntimeCommandResult<LocalMessagingProfileOutcome>>;
+  readonly setMessagingName: (
+    name: string,
+  ) => Promise<RuntimeCommandResult<LocalMessagingProfileOutcome>>;
+  readonly saveDiscoveredContact: (
+    input: ContactDestinationInput,
+  ) => Promise<RuntimeCommandResult<ContactMutationOutcome>>;
+  readonly clearLxmfDiscovery: () => Promise<RuntimeCommandResult<LxmfDiscoveryClearOutcome>>;
   readonly initiatePairing: (
     input: InitiateRemoteControlPairingInput,
   ) => Promise<RuntimeCommandResult<RemoteControlPairingCommandOutcome>>;
@@ -659,6 +670,27 @@ export function DevelopmentRuntimeProvider({
     [runGenerationBound],
   );
 
+  const readMessagingProfile = useCallback(
+    () => runAvailable((runtime) => runtime.readMessagingProfile()),
+    [runAvailable],
+  );
+
+  const setMessagingName = useCallback(
+    (name: string) => runAvailable((runtime) => runtime.setMessagingName(name)),
+    [runAvailable],
+  );
+
+  const saveDiscoveredContact = useCallback(
+    (input: ContactDestinationInput) =>
+      runGenerationBound((runtime) => runtime.saveDiscoveredContact(input)),
+    [runGenerationBound],
+  );
+
+  const clearLxmfDiscovery = useCallback(
+    () => runGenerationBound((runtime) => runtime.clearLxmfDiscovery()),
+    [runGenerationBound],
+  );
+
   const listLxmfMessages = useCallback(
     (input: ListLxmfMessagesInput) => runAvailable((runtime) => runtime.listLxmfMessages(input)),
     [runAvailable],
@@ -708,6 +740,10 @@ export function DevelopmentRuntimeProvider({
       stopNode,
       refreshSnapshot,
       setBluetoothEnabled,
+      readMessagingProfile,
+      setMessagingName,
+      saveDiscoveredContact,
+      clearLxmfDiscovery,
       initiatePairing,
       approvePairing,
       rejectPairing,
@@ -752,6 +788,10 @@ export function DevelopmentRuntimeProvider({
       phase,
       refreshSnapshot,
       setBluetoothEnabled,
+      readMessagingProfile,
+      setMessagingName,
+      saveDiscoveredContact,
+      clearLxmfDiscovery,
       rejectPairing,
       saveObservedDestination,
       listLxmfPeers,
@@ -779,6 +819,8 @@ export function routeConsumesDevelopmentSnapshot(pathname: string): boolean {
     pathname.startsWith("/nodes/") ||
     pathname === "/more/interfaces" ||
     pathname.startsWith("/more/interfaces/") ||
+    pathname === "/contacts" ||
+    pathname.startsWith("/contacts/") ||
     pathname === "/inbox" ||
     pathname.startsWith("/inbox/")
   );

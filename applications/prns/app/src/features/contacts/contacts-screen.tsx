@@ -5,6 +5,7 @@ import type {
   ContactLookupOutcome,
   ContactMutationOutcome,
   DevelopmentRuntime,
+  LxmfPeerSummary,
 } from "@prns-internal/expo";
 import type { Href } from "expo-router";
 import { useRouter } from "expo-router";
@@ -13,6 +14,10 @@ import { useCallback, useEffect, useState } from "react";
 
 import { StoragePreparationFailure } from "@/native/storage-preparation-failure";
 import { useContactRuntime } from "@/native/contact-runtime-context";
+import { useDevelopmentRuntime } from "@/native/development-runtime-context";
+import { peerLabel, shortDestination } from "@/features/inbox/format";
+import { useMessagingDirectory, lastHeardLabel } from "./messaging-directory";
+import { MessagingProfileCard } from "./messaging-profile";
 import { NavigationLink } from "@/ui/navigation-link";
 import {
   Badge,
@@ -21,6 +26,7 @@ import {
   Button,
   Card,
   CardHeader,
+  CardSection,
   KeyValue,
   Screen,
   ScreenHeading,
@@ -31,55 +37,283 @@ import { formatContactHash, parseDestinationHash, parseIdentityHash } from "./fo
 
 export function ContactsScreen() {
   const contactRuntime = useContactRuntime();
-  const [outcome, setOutcome] = useState<ContactListOutcome | null>(null);
-  const [failure, setFailure] = useState<string | Bindings.NativeStoragePreparationError | null>(
-    null,
-  );
-  const [pending, setPending] = useState(false);
-
-  const load = useCallback(async () => {
-    if (contactRuntime.runtime === null) {
-      return;
-    }
-    setPending(true);
-    setFailure(null);
-    try {
-      setOutcome(await contactRuntime.runtime.listContacts());
-    } catch (failure) {
-      setFailure(
-        failure instanceof Bindings.NativeStoragePreparationError
-          ? failure
-          : "Contacts could not be loaded. Try again.",
-      );
-    } finally {
-      setPending(false);
-    }
-  }, [contactRuntime.runtime]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
   return (
     <Screen>
       <ScreenHeading>Contacts</ScreenHeading>
-      <BodyText muted>People and nodes you&apos;ve saved on this device.</BodyText>
       {contactRuntime.runtime === null ? (
         <NativeContactsUnavailable platform={contactRuntime.availability.platform} />
       ) : (
-        <>
-          <ActionRow>
-            <NavigationLink href="/contacts/add">Add contact</NavigationLink>
-            <Button disabled={pending} onPress={() => void load()} tone="secondary">
-              {pending ? "Loading contacts…" : "Refresh contacts"}
-            </Button>
-          </ActionRow>
-          {failure === null ? null : <FailureCard detail={failure} />}
-          {failure === null ? <ContactListResult outcome={outcome} /> : null}
-        </>
+        <MessagingContacts />
       )}
     </Screen>
   );
+}
+
+function MessagingContacts() {
+  const development = useDevelopmentRuntime();
+  const directory = useMessagingDirectory();
+  const [mode, setMode] = useState<"saved" | "discovered">("saved");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [command, setCommand] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [mutation, setMutation] = useState<ContactMutationOutcome | null>(null);
+  const [saveFailure, setSaveFailure] = useState<
+    string | Bindings.NativeStoragePreparationError | null
+  >(null);
+
+  const announce = async () => {
+    setPendingAction("announce");
+    const result = await development.announceLxmf();
+    setCommand(
+      result.type === "operationFailure"
+        ? "The announcement could not be confirmed. Try again."
+        : announceLabel(result.outcome),
+    );
+    setPendingAction(null);
+  };
+  const save = async (destination: Uint8Array) => {
+    setPendingAction(formatContactHash(destination));
+    setMutation(null);
+    setSaveFailure(null);
+    const result = await development.saveDiscoveredContact({ destination });
+    if (result.type === "operationFailure") {
+      setSaveFailure(
+        result.storagePreparation === undefined
+          ? "The contact could not be saved. Try again."
+          : new Bindings.NativeStoragePreparationError(result.storagePreparation),
+      );
+    } else {
+      setMutation(result.outcome);
+      if (
+        result.outcome.tag === Bindings.ContactMutationOutcome_Tags.Saved ||
+        result.outcome.tag === Bindings.ContactMutationOutcome_Tags.Existing ||
+        result.outcome.tag === Bindings.ContactMutationOutcome_Tags.Updated
+      ) {
+        await directory.refreshContacts();
+      }
+    }
+    setPendingAction(null);
+  };
+  const clear = async () => {
+    setPendingAction("clear");
+    const result = await development.clearLxmfDiscovery();
+    setCommand(
+      result.type === "outcome" && result.outcome === Bindings.LxmfDiscoveryClearOutcome.Cleared
+        ? "Discovered contacts cleared. Saved contacts and messages are unchanged."
+        : "Discovered contacts could not be cleared. Try again.",
+    );
+    await directory.refreshDiscovery();
+    setPendingAction(null);
+  };
+
+  return (
+    <>
+      <MessagingProfileCard onSavingChange={setSavingProfile} />
+      <Card>
+        <BodyText muted>
+          Announce your messaging name and address on connected networks so others can discover you.
+          They may be several hops away.
+        </BodyText>
+        <Button
+          disabled={!directory.nodeRunning || pendingAction !== null || savingProfile}
+          onPress={() => void announce()}
+        >
+          {pendingAction === "announce" ? "Requesting announcement…" : "Announce yourself"}
+        </Button>
+        {directory.nodeRunning ? null : (
+          <BodyText muted>
+            Start this phone&apos;s node to announce yourself or discover contacts. Saved contacts
+            remain available.
+          </BodyText>
+        )}
+        {command === null ? null : <BodyText>{command}</BodyText>}
+      </Card>
+      <ActionRow>
+        <Button
+          accessibilityState={{ selected: mode === "saved" }}
+          tone={mode === "saved" ? "primary" : "secondary"}
+          onPress={() => setMode("saved")}
+        >
+          Saved
+        </Button>
+        <Button
+          accessibilityState={{ selected: mode === "discovered" }}
+          tone={mode === "discovered" ? "primary" : "secondary"}
+          onPress={() => setMode("discovered")}
+        >
+          Discovered
+        </Button>
+      </ActionRow>
+      <ActionRow>
+        <NavigationLink href="/contacts/add">Add contact</NavigationLink>
+        <Button
+          disabled={directory.pending || directory.discoveryPending}
+          onPress={() => void directory.refresh()}
+          tone="secondary"
+        >
+          {directory.pending ? "Loading contacts…" : "Refresh contacts"}
+        </Button>
+      </ActionRow>
+      {directory.failure === null ? null : <FailureCard detail={directory.failure} />}
+      {saveFailure === null ? null : <FailureCard detail={saveFailure} />}
+      <MutationResult outcome={mutation} />
+      {mode === "saved" ? (
+        directory.failure === null ? (
+          <ContactListResult outcome={directory.outcome} />
+        ) : null
+      ) : (
+        <>
+          <BodyText muted>
+            Names are supplied by their owners. Discovery is recent activity, not a guarantee that
+            someone is reachable now.
+          </BodyText>
+          {directory.discoveryFailure === null ? null : (
+            <FailureCard detail={directory.discoveryFailure} />
+          )}
+          {directory.peers.length === 0 ? (
+            <Card>
+              <Badge>
+                {directory.discoveryPending ? "Loading discovery" : "No discovered contacts"}
+              </Badge>
+              <BodyText>
+                {directory.discoveryPending
+                  ? "Checking recently heard messaging contacts…"
+                  : "Ask another person to announce themselves while both nodes are connected."}
+              </BodyText>
+            </Card>
+          ) : (
+            directory.peers.map((peer) => {
+              const destination = formatContactHash(peer.destination);
+              const name = peerLabel(peer.destination, directory.peers, directory.contacts);
+              const saved = directory.contacts.some(
+                (contact) => formatContactHash(contact.destination) === destination,
+              );
+              return (
+                <Card key={destination}>
+                  <CardHeader title={name}>
+                    {saved ? <Badge>Saved contact</Badge> : null}
+                  </CardHeader>
+                  <BodyText muted>
+                    {shortDestination(peer.destination)} ·{" "}
+                    {lastHeardLabel(peer.lastObservedAgeMillis)}
+                  </BodyText>
+                  <ActionRow>
+                    {saved ? (
+                      <NavigationLink
+                        href={{ pathname: "/contacts/[destination]", params: { destination } }}
+                      >
+                        Open contact
+                      </NavigationLink>
+                    ) : (
+                      <Button
+                        accessibilityLabel={`Save contact ${name}`}
+                        disabled={pendingAction !== null}
+                        onPress={() => void save(peer.destination)}
+                      >
+                        {pendingAction === destination ? "Saving…" : "Save contact"}
+                      </Button>
+                    )}
+                    <NavigationLink
+                      accessibilityLabel={`Message ${name}`}
+                      href={{ pathname: "/inbox/compose", params: { destination } }}
+                    >
+                      Message
+                    </NavigationLink>
+                  </ActionRow>
+                  <DiscoveryDetails peer={peer} name={name} />
+                </Card>
+              );
+            })
+          )}
+          <Button
+            tone="secondary"
+            disabled={
+              !directory.nodeRunning || pendingAction !== null || directory.peers.length === 0
+            }
+            onPress={() => void clear()}
+          >
+            Clear discovered contacts
+          </Button>
+          <BodyText muted>
+            Discovered contacts expire after a day and reset when the node restarts. Clearing this
+            list does not block anyone or remove saved contacts.
+          </BodyText>
+        </>
+      )}
+    </>
+  );
+}
+
+function DiscoveryDetails({
+  peer,
+  name,
+}: {
+  readonly peer: LxmfPeerSummary;
+  readonly name: string;
+}) {
+  const { snapshot } = useDevelopmentRuntime();
+  const [expanded, setExpanded] = useState(false);
+  const ingressId = formatContactHash(peer.sourceInterface);
+  const physicalIngress = snapshot?.bluetooth?.peers.find(
+    (candidate) => formatContactHash(candidate.interfaceId) === ingressId,
+  );
+  const ingress =
+    snapshot?.localHost?.tag === Bindings.LocalHostState_Tags.Running
+      ? snapshot.localHost.inner.host.interfaces.find(
+          (candidate) => formatContactHash(candidate.interfaceId) === ingressId,
+        )
+      : undefined;
+  const kind = ingress?.kind === "AutomaticBluetoothLe" ? "Automatic Bluetooth" : ingress?.kind;
+  return (
+    <>
+      <Button
+        tone="secondary"
+        accessibilityLabel={`${expanded ? "Hide" : "Show"} discovery details for ${name}`}
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded((current) => !current)}
+      >
+        {expanded ? "Hide discovery details" : "Discovery details"}
+      </Button>
+      {expanded ? (
+        <CardSection>
+          <KeyValue
+            label="Received via"
+            value={
+              physicalIngress?.name ??
+              (physicalIngress === undefined
+                ? (ingress?.name ?? kind ?? "Connection no longer listed")
+                : "Automatic Bluetooth")
+            }
+          />
+          <KeyValue label="Hop count" value={peer.hops.toString()} />
+          <KeyValue label="Connection ID" value={ingressId} />
+          <KeyValue label="Identity" value={formatContactHash(peer.identity)} />
+          <KeyValue
+            label="Announcement"
+            value={peer.isPathResponse ? "Path response" : "Announce"}
+          />
+          <BodyText muted>
+            This describes the last announcement received, not the route a future message will take.
+          </BodyText>
+        </CardSection>
+      ) : null}
+    </>
+  );
+}
+
+function announceLabel(outcome: Bindings.AnnounceLxmfOutcome): string {
+  switch (outcome) {
+    case Bindings.AnnounceLxmfOutcome.Requested:
+      return "Announcement requested. Other devices may hear it on connected networks.";
+    case Bindings.AnnounceLxmfOutcome.NoUsableConnection:
+      return "No usable connection. Open Connections to connect, then announce again.";
+    case Bindings.AnnounceLxmfOutcome.LocalNodeStopped:
+      return "This phone's node stopped before the announcement was requested.";
+    case Bindings.AnnounceLxmfOutcome.Busy:
+      return "Another messaging action is in progress. Try again.";
+    case Bindings.AnnounceLxmfOutcome.Failed:
+      return "The announcement could not be confirmed. Try again.";
+  }
 }
 
 function ContactListResult({ outcome }: { readonly outcome: ContactListOutcome | null }) {
@@ -115,10 +349,14 @@ function ContactListResult({ outcome }: { readonly outcome: ContactListOutcome |
         };
         return (
           <Card key={destination}>
-            <CardHeader title={contact.alias ?? destination}>
+            <CardHeader
+              title={
+                contact.alias ?? contact.announcedName ?? shortDestination(contact.destination)
+              }
+            >
               {contact.pinned ? <Badge>Pinned</Badge> : null}
             </CardHeader>
-            {contact.alias === undefined ? null : <BodyText muted>{destination}</BodyText>}
+            <BodyText muted>{destination}</BodyText>
             <NavigationLink href={href}>Open contact</NavigationLink>
           </Card>
         );
@@ -208,7 +446,7 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
   return (
     <Screen>
       <Badge>Saved destination</Badge>
-      <ScreenHeading>{contact?.alias ?? "Contact"}</ScreenHeading>
+      <ScreenHeading>{contact?.alias ?? contact?.announcedName ?? "Contact"}</ScreenHeading>
       <KeyValue label="Destination" value={destinationText} />
       {contactRuntime.runtime === null ? (
         <NativeContactsUnavailable platform={contactRuntime.availability.platform} />
@@ -227,6 +465,17 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
         </Card>
       ) : (
         <>
+          {contact.isMessaging ? (
+            <NavigationLink
+              href={{ pathname: "/inbox/compose", params: { destination: destinationText } }}
+            >
+              Message
+            </NavigationLink>
+          ) : (
+            <BodyText muted>
+              This saved destination has not been identified as a messaging contact.
+            </BodyText>
+          )}
           <Card>
             <Subheading>Association</Subheading>
             <KeyValue
@@ -238,7 +487,10 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
             <KeyValue label="Pinned" value={contact.pinned ? "Yes" : "No"} />
           </Card>
           <Card>
-            <Subheading>Contact name</Subheading>
+            <Subheading>Private contact name</Subheading>
+            <BodyText muted>
+              This name is only for you. It does not change the name this contact announces.
+            </BodyText>
             <TextField
               label="Name (optional)"
               autoCapitalize="sentences"
@@ -385,9 +637,7 @@ export function AddContactScreen() {
       )}
       {failure === null ? null : <FailureCard detail={failure} />}
       <MutationResult outcome={outcome} />
-      <BodyText muted>
-        You can also save a verified destination from Nodes &gt; This device.
-      </BodyText>
+      <BodyText muted>You can also save messaging contacts from Contacts &gt; Discovered.</BodyText>
       <NavigationLink href="/contacts" direction="back">
         Back to Contacts
       </NavigationLink>

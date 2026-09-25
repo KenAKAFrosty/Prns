@@ -1,7 +1,6 @@
 import { StoragePreparationFailure } from "@/native/storage-preparation-failure";
 import * as Bindings from "@prns-internal/expo";
 import type {
-  AnnounceLxmfOutcome,
   CancelLxmfMessageOutcome,
   Contact,
   ContactListOutcome,
@@ -16,10 +15,11 @@ import type {
 } from "@prns-internal/expo";
 import type { Href } from "expo-router";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Text } from "react-native";
 
 import { formatContactHash, parseDestinationHash } from "@/features/contacts/format";
+import { lastHeardLabel, useMessagingDirectory } from "@/features/contacts/messaging-directory";
 import { useContactRuntime } from "@/native/contact-runtime-context";
 import {
   type RuntimeCommandResult,
@@ -143,30 +143,11 @@ function useLxmfData(peer: Uint8Array | null): LxmfData {
 export function InboxScreen() {
   const development = useDevelopmentRuntime();
   const data = useLxmfData(null);
-  const [command, setCommand] = useState<string | null>(null);
-  const [announcing, setAnnouncing] = useState(false);
-  const [showMessagingOptions, setShowMessagingOptions] = useState(false);
   const nodeRunning =
     development.phase === "ready" &&
     development.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running;
 
-  const announce = async () => {
-    setAnnouncing(true);
-    setCommand(null);
-    const result = await development.announceLxmf();
-    setCommand(
-      result.type === "operationFailure"
-        ? "The messaging address could not be shared."
-        : announceOutcomeLabel(result.outcome),
-    );
-    setAnnouncing(false);
-    await development.refreshSnapshot();
-  };
-
-  const conversations = useMemo(
-    () => conversationDestinations(data.peers, data.messages),
-    [data.messages, data.peers],
-  );
+  const conversations = useMemo(() => conversationDestinations(data.messages), [data.messages]);
 
   return (
     <Screen>
@@ -186,34 +167,6 @@ export function InboxScreen() {
               {data.pending ? "Refreshing…" : "Refresh Inbox"}
             </Button>
           </ActionRow>
-          {nodeRunning ? (
-            <>
-              <Button
-                accessibilityState={{ expanded: showMessagingOptions }}
-                onPress={() => setShowMessagingOptions((current) => !current)}
-                tone="secondary"
-              >
-                {showMessagingOptions ? "Hide messaging options" : "Messaging options"}
-              </Button>
-              {showMessagingOptions ? (
-                <Card>
-                  <Subheading>Your messaging address</Subheading>
-                  <BodyText muted>
-                    Share this device&apos;s messaging address before exchanging messages with a new
-                    contact. Your messages stay saved on this device, including while offline.
-                  </BodyText>
-                  <Button disabled={announcing} onPress={() => void announce()} tone="secondary">
-                    {announcing ? "Sharing…" : "Share messaging address"}
-                  </Button>
-                </Card>
-              ) : null}
-            </>
-          ) : null}
-          {command === null ? null : (
-            <Card>
-              <BodyText>{command}</BodyText>
-            </Card>
-          )}
           {data.failure === null ? null : <FailureCard detail={data.failure} />}
           {!data.messagesLoaded && data.failure === null ? (
             <Card>
@@ -226,7 +179,7 @@ export function InboxScreen() {
                 <Badge>No conversations</Badge>
                 <BodyText>
                   {nodeRunning
-                    ? "Share your messaging address or start a new message."
+                    ? "Start a new message or discover people in Contacts."
                     : "No messages are saved on this device."}
                 </BodyText>
               </Card>
@@ -253,7 +206,7 @@ export function InboxScreen() {
                     value={
                       compatiblePeer === undefined
                         ? "Not recently seen"
-                        : `${compatiblePeer.lastObservedAgeMillis.toString()} ms ago`
+                        : lastHeardLabel(compatiblePeer.lastObservedAgeMillis)
                     }
                   />
                   <KeyValue label="Messages" value={peerMessages.length.toString()} />
@@ -387,13 +340,29 @@ export function ComposeScreen({
 }: {
   readonly initialDestination: string | null;
 }) {
+  // A reused route is a new recipient intent; old native work may finish, but
+  // its departed composer must not navigate or write into the new form.
+  return (
+    <ComposeJourney key={initialDestination ?? "choose"} initialDestination={initialDestination} />
+  );
+}
+
+function ComposeJourney({ initialDestination }: { readonly initialDestination: string | null }) {
   const development = useDevelopmentRuntime();
   const router = useRouter();
+  const directory = useMessagingDirectory();
   const [destinationText, setDestinationText] = useState(initialDestination ?? "");
+  const [recipientMode, setRecipientMode] = useState<"saved" | "discovered" | "manual">("saved");
+  const [sending, setSending] = useState(false);
   const destination = parseDestinationHash(destinationText);
-  const nodeRunning =
-    development.phase === "ready" &&
-    development.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running;
+  const nodeRunning = directory.nodeRunning;
+  const savedRecipients = directory.contacts.filter((contact) => contact.isMessaging);
+  const discoveredRecipients = directory.peers.filter(
+    (peer) =>
+      !savedRecipients.some(
+        (contact) => formatContactHash(contact.destination) === formatContactHash(peer.destination),
+      ),
+  );
 
   if (development.availability.type !== "available") {
     return (
@@ -422,33 +391,122 @@ export function ComposeScreen({
     <Screen>
       <Badge>New message</Badge>
       <ScreenHeading>Compose</ScreenHeading>
-      <BodyText>
-        Enter the 32-character destination for the person or device you want to reach.
-      </BodyText>
-      <TextField
-        label="Recipient"
-        autoCapitalize="none"
-        autoCorrect={false}
-        onChangeText={setDestinationText}
-        placeholder="32 hexadecimal characters"
-        value={destinationText}
-      />
-      {destination === null ? (
+      {destination !== null ? (
         <Card>
-          <Badge tone="warning">Destination required</Badge>
-          <BodyText>Enter exactly 32 hexadecimal characters.</BodyText>
+          <CardHeader title={peerLabel(destination, directory.peers, directory.contacts)} />
+          <BodyText muted>{formatContactHash(destination)}</BodyText>
+          <Button disabled={sending} tone="secondary" onPress={() => setDestinationText("")}>
+            Change recipient
+          </Button>
         </Card>
       ) : (
         <>
+          <BodyText>Choose who to message.</BodyText>
+          <ActionRow>
+            <Button
+              accessibilityState={{ selected: recipientMode === "saved" }}
+              tone={recipientMode === "saved" ? "primary" : "secondary"}
+              onPress={() => setRecipientMode("saved")}
+            >
+              Saved
+            </Button>
+            <Button
+              accessibilityState={{ selected: recipientMode === "discovered" }}
+              tone={recipientMode === "discovered" ? "primary" : "secondary"}
+              onPress={() => setRecipientMode("discovered")}
+            >
+              Discovered
+            </Button>
+            <Button
+              accessibilityState={{ selected: recipientMode === "manual" }}
+              tone={recipientMode === "manual" ? "primary" : "secondary"}
+              onPress={() => setRecipientMode("manual")}
+            >
+              Enter address
+            </Button>
+          </ActionRow>
+          {directory.failure === null ? null : <FailureCard detail={directory.failure} />}
+          {recipientMode === "manual" ? (
+            <>
+              <TextField
+                label="Recipient"
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={setDestinationText}
+                placeholder="32 hexadecimal characters"
+                value={destinationText}
+              />
+              {destinationText.length === 0 ? null : (
+                <BodyText>Enter exactly 32 hexadecimal characters.</BodyText>
+              )}
+            </>
+          ) : (
+            <>
+              {(recipientMode === "saved" ? savedRecipients : discoveredRecipients).map(
+                (recipient) => {
+                  const encoded = formatContactHash(recipient.destination);
+                  const label = peerLabel(
+                    recipient.destination,
+                    directory.peers,
+                    directory.contacts,
+                  );
+                  return (
+                    <Card key={encoded}>
+                      <CardHeader title={label} />
+                      <BodyText muted>{encoded}</BodyText>
+                      <Button
+                        accessibilityLabel={`Choose ${label}`}
+                        onPress={() => setDestinationText(encoded)}
+                      >
+                        Choose recipient
+                      </Button>
+                    </Card>
+                  );
+                },
+              )}
+              {recipientMode === "saved" &&
+              savedRecipients.length === 0 &&
+              directory.failure === null ? (
+                <BodyText>
+                  {directory.pending
+                    ? "Loading saved contacts…"
+                    : "No saved messaging contacts. Discover someone in Contacts, or enter an address."}
+                </BodyText>
+              ) : null}
+              {recipientMode === "discovered" && discoveredRecipients.length === 0 ? (
+                <BodyText>
+                  {directory.discoveryPending
+                    ? "Loading discovered contacts…"
+                    : "No other discovered messaging contacts. Ask someone to announce themselves, then refresh."}
+                </BodyText>
+              ) : null}
+              {recipientMode === "discovered" && directory.discoveryFailure !== null ? (
+                <BodyText>{directory.discoveryFailure}</BodyText>
+              ) : null}
+              <Button
+                disabled={directory.pending || directory.discoveryPending}
+                tone="secondary"
+                onPress={() => void directory.refresh()}
+              >
+                Refresh recipients
+              </Button>
+              <NavigationLink href="/contacts">Open Contacts</NavigationLink>
+            </>
+          )}
+        </>
+      )}
+      {destination === null ? null : (
+        <>
           <Composer
+            key={formatContactHash(destination)}
             destination={destination}
+            onBusyChange={setSending}
             onSettled={async (result) => {
               if (
                 result.type !== "outcome" ||
                 result.outcome.tag !== Bindings.SendDirectTextOutcome_Tags.Accepted
-              ) {
+              )
                 return;
-              }
               const href: Href = {
                 pathname: "/inbox/conversation/[destination]",
                 params: { destination: formatContactHash(destination) },
@@ -476,8 +534,10 @@ export function ComposeScreen({
 function Composer({
   destination,
   onSettled,
+  onBusyChange,
 }: {
   readonly destination: Uint8Array;
+  readonly onBusyChange?: (busy: boolean) => void;
   readonly onSettled: (result: RuntimeCommandResult<SendDirectTextOutcome>) => Promise<void>;
 }) {
   const development = useDevelopmentRuntime();
@@ -488,6 +548,14 @@ function Composer({
   const [sendOutcome, setSendOutcome] = useState<SendDirectTextOutcome | null>(null);
   const [sendFailure, setSendFailure] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      onBusyChange?.(false);
+    };
+  }, [onBusyChange]);
 
   useEffect(() => {
     let current = true;
@@ -510,6 +578,7 @@ function Composer({
 
   const send = async (nextTitle = title, nextContent = content) => {
     setSending(true);
+    onBusyChange?.(true);
     setSendOutcome(null);
     setSendFailure(null);
     const result = await development.sendDirectText({
@@ -517,6 +586,7 @@ function Composer({
       title: nextTitle,
       content: nextContent,
     });
+    if (!mounted.current) return;
     if (result.type === "operationFailure") {
       setSendFailure("Try again.");
     } else {
@@ -527,8 +597,9 @@ function Composer({
       }
     }
     setSending(false);
+    onBusyChange?.(false);
     await development.refreshSnapshot();
-    await onSettled(result);
+    if (mounted.current) await onSettled(result);
   };
 
   return (
@@ -536,12 +607,14 @@ function Composer({
       <Subheading>New message</Subheading>
       <TextField
         label="Title (optional)"
+        editable={!sending}
         onChangeText={setTitle}
         placeholder="Title"
         value={title}
       />
       <TextField
         label="Message"
+        editable={!sending}
         multiline
         onChangeText={setContent}
         placeholder="Message"
@@ -557,7 +630,7 @@ function Composer({
         }
         onPress={() => void send()}
       >
-        {sending ? "Sending…" : "Send message"}
+        {sending ? "Finding contact…" : "Send message"}
       </Button>
       {sendFailure === null ? null : <BodyText>Could not send: {sendFailure}</BodyText>}
       <SendResult outcome={sendOutcome} />
@@ -679,7 +752,20 @@ function SendResult({ outcome }: { readonly outcome: SendDirectTextOutcome | nul
         </BodyText>
       );
     case Bindings.SendDirectTextOutcome_Tags.PeerIdentityUnavailable:
-      return <BodyText>This address is not ready to receive messages.</BodyText>;
+    case Bindings.SendDirectTextOutcome_Tags.RecipientUnavailable:
+      return (
+        <BodyText>
+          This contact could not be found. Check your connection and try again. Your message has not
+          been queued.
+        </BodyText>
+      );
+    case Bindings.SendDirectTextOutcome_Tags.IdentityConflict:
+      return (
+        <BodyText>
+          This contact's identity differs from the one you saved. Check the contact before sending.
+          Your message has not been queued.
+        </BodyText>
+      );
     case Bindings.SendDirectTextOutcome_Tags.DevelopmentUnavailable:
       return <BodyText>Sending is not available right now.</BodyText>;
     case Bindings.SendDirectTextOutcome_Tags.DevelopmentResetRequired:
@@ -781,14 +867,8 @@ function messagingStateLabel(state: NonNullable<DevelopmentNodeSnapshot["lxmf"]>
   }
 }
 
-function conversationDestinations(
-  peers: readonly LxmfPeerSummary[],
-  messages: readonly LxmfMessage[],
-): readonly Uint8Array[] {
+function conversationDestinations(messages: readonly LxmfMessage[]): readonly Uint8Array[] {
   const destinations = new Map<string, Uint8Array>();
-  for (const peer of peers) {
-    destinations.set(formatContactHash(peer.destination), peer.destination);
-  }
   for (const message of messages) {
     const destination = messagePeer(message);
     destinations.set(formatContactHash(destination), destination);
@@ -844,19 +924,6 @@ function applyContactResult(
 ): void {
   if (outcome.tag === Bindings.ContactListOutcome_Tags.Listed) {
     publish(outcome.inner.contacts);
-  }
-}
-
-function announceOutcomeLabel(outcome: AnnounceLxmfOutcome): string {
-  switch (outcome) {
-    case Bindings.AnnounceLxmfOutcome.Announced:
-      return "Messaging address shared.";
-    case Bindings.AnnounceLxmfOutcome.LocalNodeStopped:
-      return "This device went offline before its address could be shared.";
-    case Bindings.AnnounceLxmfOutcome.Busy:
-      return "Another messaging action is in progress.";
-    case Bindings.AnnounceLxmfOutcome.Failed:
-      return "The messaging address could not be shared.";
   }
 }
 

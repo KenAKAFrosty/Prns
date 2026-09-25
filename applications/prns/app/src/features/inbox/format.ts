@@ -20,11 +20,12 @@ export function peerLabel(
   contacts: readonly Contact[],
 ): string {
   const encoded = formatContactHash(destination);
-  const alias = contacts.find(
-    (contact) => formatContactHash(contact.destination) === encoded,
-  )?.alias;
-  if (alias !== undefined && alias.trim().length > 0) {
-    return alias;
+  const contact = contacts.find(
+    (candidate) => formatContactHash(candidate.destination) === encoded,
+  );
+  const savedName = contact?.alias ?? contact?.announcedName;
+  if (savedName !== undefined && savedName.trim().length > 0) {
+    return savedName;
   }
   const announced = peers.find(
     (peer) => formatContactHash(peer.destination) === encoded,
