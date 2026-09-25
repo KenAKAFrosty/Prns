@@ -33,7 +33,19 @@ class ThirdPartyNoticeTests(unittest.TestCase):
         self.assertEqual(graphs["Prns app Android"], (app_manifest, "aarch64-linux-android"))
         self.assertEqual(graphs["Prns app iOS"], (app_manifest, "aarch64-apple-ios"))
         defaults = {name: graph for name, graph in graphs.items() if name not in notices.GRAPH_FEATURES}
-        self.assertEqual(len(defaults), 28)
+        self.assertEqual(len(defaults), 31)
+        self.assertEqual(
+            defaults["Host SDK native"],
+            ("prns-host/impls/native/Cargo.toml", "x86_64-unknown-linux-gnu"),
+        )
+        for name, target in (
+            ("Expo host", "x86_64-unknown-linux-gnu"),
+            ("Expo Android", "aarch64-linux-android"),
+            ("Expo iOS", "aarch64-apple-ios"),
+        ):
+            self.assertEqual(
+                defaults[name], ("prns-host/bindings/uniffi/image/Cargo.toml", target)
+            )
         self.assertEqual(defaults["engine"], ("Cargo.toml", "x86_64-unknown-linux-gnu"))
         self.assertEqual(
             defaults["Android"],
@@ -318,12 +330,11 @@ class ThirdPartyNoticeTests(unittest.TestCase):
                     if "--features" in command else ()
                 )
                 graphs.add((manifest, target, features))
-            # The pre-existing native Host SDK notice graph is not a separate
-            # release-audit root. All other graphs retain matching selections.
+            # Every notice graph, including the extracted native/Expo SDK,
+            # must retain the same target and feature selection in the audit.
             expected = {
                 (manifest, target, notices.GRAPH_FEATURES.get(name, ()))
                 for name, manifest, target in notices.GRAPHS
-                if name != "Host SDK native"
             }
             self.assertEqual(graphs, expected)
             self.assertEqual(len(commands), len(expected))
