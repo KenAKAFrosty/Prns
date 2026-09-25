@@ -8,7 +8,9 @@ use crate::config::VirtualMediumConfig;
 use crate::fault::{FaultPlan, TransmissionAction, TransmissionOrdinal};
 use crate::interface::VirtualInterface;
 use crate::time::{AdvanceError, AdvanceReport, SimulationDurationInTicks, SimulationTick};
+use crate::topology::Topology;
 use crate::trace::{DeliveryCopy, MediumEvent, ReceptionDropReason, TraceBuffer, TraceSnapshot};
+use crate::{Reachability, TopologyError, TopologyMutation};
 
 const MAX_CHANNEL_TAG_BYTES: usize = 128;
 
@@ -81,6 +83,7 @@ struct PendingDelivery {
 }
 
 struct MediumState {
+    topology: Topology<EndpointId>,
     max_endpoints: usize,
     endpoint_receive_queue: usize,
     pending_capacity: usize,
@@ -105,6 +108,7 @@ impl VirtualMedium {
     pub fn new(config: VirtualMediumConfig) -> Self {
         Self {
             state: Arc::new(Mutex::new(MediumState {
+                topology: Topology::new(config.topology),
                 max_endpoints: config.max_endpoints,
                 endpoint_receive_queue: config.endpoint_receive_queue,
                 pending_capacity: config.pending_deliveries,
@@ -154,6 +158,7 @@ impl VirtualMedium {
             },
         );
         debug_assert!(replaced.is_none(), "fresh endpoint id must be vacant");
+        state.topology.attach(endpoint);
         state.trace.push(MediumEvent::EndpointAttached {
             endpoint,
             channel_tag: channel_tag.clone(),
@@ -171,6 +176,29 @@ impl VirtualMedium {
     #[must_use]
     pub fn now(&self) -> SimulationTick {
         self.lock_state().now
+    }
+
+    /// Reachability is sampled on transmission; already scheduled frames remain in flight.
+    pub fn set_reachability(
+        &self,
+        first: EndpointId,
+        second: EndpointId,
+        reachability: Reachability,
+    ) -> Result<TopologyMutation, TopologyError<EndpointId>> {
+        let mut state = self.lock_state();
+        let mutation = state
+            .topology
+            .set_reachability(first, second, reachability)?;
+        if mutation == TopologyMutation::Applied {
+            let at = state.now;
+            state.trace.push(MediumEvent::ReachabilityChanged {
+                first,
+                second,
+                reachability,
+                at,
+            });
+        }
+        Ok(mutation)
     }
 
     #[must_use]
@@ -205,12 +233,7 @@ impl VirtualMedium {
             .next_transmission
             .ok_or(TransmitError::TransmissionOrdinalsExhausted)?;
         let deliveries = planned_deliveries(&state, ordinal)?;
-        let recipients: Vec<_> = state
-            .endpoints
-            .keys()
-            .copied()
-            .filter(|endpoint| *endpoint != from)
-            .collect();
+        let recipients: Vec<_> = state.topology.neighbors(from).collect();
         let delayed_per_recipient = deliveries.iter().filter(|(_, at)| *at > state.now).count();
         let delayed_count = recipients.len().saturating_mul(delayed_per_recipient);
         let has_pending_capacity = state
@@ -294,6 +317,7 @@ impl VirtualMedium {
             return;
         };
         let _ = state.channel_tags.remove(&detached.channel_tag);
+        state.topology.detach(endpoint);
         state.trace.push(MediumEvent::EndpointDetached { endpoint });
     }
 

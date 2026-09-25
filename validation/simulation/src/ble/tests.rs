@@ -1,11 +1,17 @@
 use personal_rns::interfaces::bluetooth_auto::{columba_role_capabilities, MAX_ADVERTISEMENT_LEN};
 
 use super::*;
-use crate::{SimulationDurationInTicks, SimulationTick};
+use crate::{SimulationDurationInTicks, SimulationTick, TopologyConfig};
 
 fn config(radios: usize, observations: usize, emissions: usize, trace: usize) -> BleMediumConfig {
-    BleMediumConfig::new(radios, observations, emissions, trace)
-        .unwrap_or_else(|error| unreachable!("test configuration is valid: {error}"))
+    BleMediumConfig::new(
+        TopologyConfig::FullyConnected,
+        radios,
+        observations,
+        emissions,
+        trace,
+    )
+    .unwrap_or_else(|error| unreachable!("test configuration is valid: {error}"))
 }
 
 fn parameters(role: BleRoleCapabilities, interval: u64) -> BleAdvertisingParameters {
@@ -68,7 +74,13 @@ fn advertisement_and_configuration_reject_invalid_whole_values() {
         ((1, 1, 1, 0), BleCapacityField::Trace),
     ] {
         assert_eq!(
-            BleMediumConfig::new(values.0, values.1, values.2, values.3),
+            BleMediumConfig::new(
+                TopologyConfig::FullyConnected,
+                values.0,
+                values.1,
+                values.2,
+                values.3
+            ),
             Err(BleMediumConfigError::ZeroCapacity(field)),
         );
     }

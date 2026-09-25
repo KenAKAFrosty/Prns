@@ -26,7 +26,7 @@ use prns_simulation::ble::{
     BleMediumConfig, VirtualBleBackendConfig, VirtualBleLab, VirtualBleLinkConfig,
     VirtualGattConfig,
 };
-use prns_simulation::{SimulationDurationInTicks, SimulationTick};
+use prns_simulation::{SimulationDurationInTicks, SimulationTick, TopologyConfig};
 
 const MAX_PEERS: usize = 4;
 const QUERY_PATH: &str = "/simulation/ble-echo";
@@ -73,7 +73,7 @@ fn backend_config(address: u8, rssi: i8) -> VirtualBleBackendConfig {
 
 #[tokio::test]
 async fn production_nodes_exchange_requests_after_link_and_radio_loss() {
-    let medium = BleMediumConfig::new(2, 8, 16, 256)
+    let medium = BleMediumConfig::new(TopologyConfig::FullyConnected, 2, 8, 16, 256)
         .unwrap_or_else(|error| unreachable!("test medium configuration is valid: {error}"));
     let lab = VirtualBleLab::new(medium);
     let first_backend = lab

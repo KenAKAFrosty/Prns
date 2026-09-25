@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::fault::FaultPlan;
+use crate::TopologyConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapacityField {
@@ -32,6 +33,7 @@ impl std::error::Error for VirtualMediumConfigError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VirtualMediumConfig {
+    pub(crate) topology: TopologyConfig,
     pub(crate) max_endpoints: usize,
     pub(crate) endpoint_receive_queue: usize,
     pub(crate) pending_deliveries: usize,
@@ -41,6 +43,7 @@ pub struct VirtualMediumConfig {
 
 impl VirtualMediumConfig {
     pub fn new(
+        topology: TopologyConfig,
         max_endpoints: usize,
         endpoint_receive_queue: usize,
         pending_deliveries: usize,
@@ -65,6 +68,7 @@ impl VirtualMediumConfig {
             });
         }
         Ok(Self {
+            topology,
             max_endpoints,
             endpoint_receive_queue,
             pending_deliveries,

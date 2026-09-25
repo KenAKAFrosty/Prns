@@ -7,7 +7,14 @@ fn config(
     trace: usize,
     faults: FaultPlan,
 ) -> VirtualMediumConfig {
-    match VirtualMediumConfig::new(endpoints, receive_queue, pending, trace, faults) {
+    match VirtualMediumConfig::new(
+        TopologyConfig::FullyConnected,
+        endpoints,
+        receive_queue,
+        pending,
+        trace,
+        faults,
+    ) {
         Ok(config) => config,
         Err(error) => unreachable!("test constants are valid: {error}"),
     }
@@ -35,6 +42,7 @@ fn configuration_rejects_each_zero_capacity_as_a_whole_value() {
     ] {
         assert_eq!(
             VirtualMediumConfig::new(
+                TopologyConfig::FullyConnected,
                 capacities.0,
                 capacities.1,
                 capacities.2,

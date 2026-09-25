@@ -11,7 +11,10 @@ use super::trace::{
     BleObservationDropReason, BleSimulationEvent, BleTraceBuffer, BleTraceSnapshot,
 };
 use super::{BleRadioPower, BleScanState};
-use crate::{SimulationDurationInTicks, SimulationTick};
+use crate::topology::Topology;
+use crate::{
+    Reachability, SimulationDurationInTicks, SimulationTick, TopologyError, TopologyMutation,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BleRadioId(u16);
@@ -124,6 +127,7 @@ struct Radio {
 }
 
 struct BleMediumState {
+    topology: Topology<BleRadioId>,
     max_radios: usize,
     observation_capacity: usize,
     max_emissions_per_advance: usize,
@@ -144,6 +148,7 @@ impl VirtualBleMedium {
     pub fn new(config: BleMediumConfig) -> Self {
         Self {
             state: Arc::new(Mutex::new(BleMediumState {
+                topology: Topology::new(config.topology),
                 max_radios: config.max_radios,
                 observation_capacity: config.observation_queue,
                 max_emissions_per_advance: config.max_emissions_per_advance,
@@ -187,6 +192,7 @@ impl VirtualBleMedium {
             },
         );
         debug_assert!(replaced.is_none(), "fresh BLE radio id must be vacant");
+        state.topology.attach(radio);
         state
             .trace
             .push(BleSimulationEvent::RadioAttached { radio });
@@ -205,11 +211,34 @@ impl VirtualBleMedium {
             .is_some_and(|radio| radio.power == BleRadioPower::On)
     }
 
-    pub(crate) fn is_connectable(&self, radio: BleRadioId) -> bool {
-        self.lock_state()
-            .radios
-            .get(&radio)
-            .is_some_and(|radio| radio.power == BleRadioPower::On && radio.advertising.is_some())
+    pub(crate) fn is_connectable(&self, from: BleRadioId, radio: BleRadioId) -> bool {
+        let state = self.lock_state();
+        state.topology.reaches(from, radio)
+            && state.radios.get(&radio).is_some_and(|radio| {
+                radio.power == BleRadioPower::On && radio.advertising.is_some()
+            })
+    }
+
+    pub fn set_reachability(
+        &self,
+        first: BleRadioId,
+        second: BleRadioId,
+        reachability: Reachability,
+    ) -> Result<TopologyMutation, TopologyError<BleRadioId>> {
+        let mut state = self.lock_state();
+        let mutation = state
+            .topology
+            .set_reachability(first, second, reachability)?;
+        if mutation == TopologyMutation::Applied {
+            let at = state.now;
+            state.trace.push(BleSimulationEvent::ReachabilityChanged {
+                first,
+                second,
+                reachability,
+                at,
+            });
+        }
+        Ok(mutation)
     }
 
     pub fn set_radio_power(
@@ -326,6 +355,7 @@ impl VirtualBleMedium {
             return;
         };
         let _ = state.addresses.remove(&detached.address);
+        state.topology.detach(radio);
         state
             .trace
             .push(BleSimulationEvent::RadioDetached { radio });
@@ -448,20 +478,14 @@ fn settle_emission(
         advertisement,
     });
 
-    let scanners: Vec<_> = state
-        .radios
-        .iter()
-        .filter_map(|(radio_id, radio)| {
-            (*radio_id != advertiser
-                && radio.power == BleRadioPower::On
-                && radio.scanning == BleScanState::On)
-                .then_some(*radio_id)
-        })
-        .collect();
-    for scanner in scanners {
+    let neighbors: Vec<_> = state.topology.neighbors(advertiser).collect();
+    for scanner in neighbors {
         let Some(receiver) = state.radios.get_mut(&scanner) else {
             continue;
         };
+        if receiver.power != BleRadioPower::On || receiver.scanning != BleScanState::On {
+            continue;
+        }
         if receiver.observations.len() == state.observation_capacity {
             report.observations_dropped = report.observations_dropped.saturating_add(1);
             state.trace.push(BleSimulationEvent::ObservationDropped {

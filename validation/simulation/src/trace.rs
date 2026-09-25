@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use crate::fault::TransmissionOrdinal;
 use crate::medium::EndpointId;
 use crate::time::SimulationTick;
+use crate::Reachability;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryCopy {
@@ -20,6 +21,12 @@ pub enum ReceptionDropReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MediumEvent {
+    ReachabilityChanged {
+        first: EndpointId,
+        second: EndpointId,
+        reachability: Reachability,
+        at: SimulationTick,
+    },
     EndpointAttached {
         endpoint: EndpointId,
         channel_tag: Vec<u8>,

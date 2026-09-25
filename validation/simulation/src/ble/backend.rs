@@ -16,6 +16,7 @@ use super::{
     BleAdvertisingParameters, BleMediumConfig, BleRadioId, BleRoleCapabilities, BleSimulationError,
     BleTraceSnapshot, VirtualBleMedium,
 };
+use crate::{Reachability, TopologyError, TopologyMutation};
 use crate::{SimulationDurationInTicks, SimulationTick};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,6 +309,37 @@ impl VirtualBleLab {
         })
     }
 
+    /// Isolating a pair closes its queued and established connections before returning.
+    pub fn set_reachability(
+        &self,
+        first: BleAddress,
+        second: BleAddress,
+        reachability: Reachability,
+    ) -> Result<TopologyMutation, TopologyError<BleAddress>> {
+        let mut network = self.lock_network();
+        let radio = |address| {
+            network
+                .peers
+                .get(&address)
+                .map(|peer| peer.radio)
+                .ok_or(TopologyError::UnknownNode(address))
+        };
+        let first_radio = radio(first)?;
+        let second_radio = radio(second)?;
+        let mutation = self
+            .medium
+            .set_reachability(first_radio, second_radio, reachability)
+            .map_err(|error| {
+                error.map_node(|node| if node == first_radio { first } else { second })
+            })?;
+        if mutation == TopologyMutation::Applied && reachability == Reachability::Isolated {
+            let _ = close_connections(&mut network, |connection| {
+                connection.connects(first) && connection.connects(second)
+            });
+        }
+        Ok(mutation)
+    }
+
     fn lock_network(&self) -> MutexGuard<'_, ConnectionNetwork> {
         self.network
             .lock()
@@ -467,7 +499,7 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
         let Some(peer) = network.peers.get(&address) else {
             return DialOutcome::UnknownPeer;
         };
-        if !self.medium.is_connectable(peer.radio) {
+        if !self.medium.is_connectable(self.radio, peer.radio) {
             return DialOutcome::UnknownPeer;
         }
         if network.connection_count(self.config.address) >= self.config.connection_capacity

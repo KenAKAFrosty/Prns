@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use super::{BleAdvertisement, BleRadioId, BleRadioPower, BleScanState};
-use crate::{SimulationDurationInTicks, SimulationTick};
+use crate::{Reachability, SimulationDurationInTicks, SimulationTick};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BleObservationDropReason {
@@ -10,6 +10,12 @@ pub enum BleObservationDropReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BleSimulationEvent {
+    ReachabilityChanged {
+        first: BleRadioId,
+        second: BleRadioId,
+        reachability: Reachability,
+        at: SimulationTick,
+    },
     RadioAttached {
         radio: BleRadioId,
     },

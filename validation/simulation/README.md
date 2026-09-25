@@ -43,6 +43,19 @@ Wi-Fi, flash, reset, sleep, and unified runtime time remain future work.
 
 ## Large-fleet design requirements
 
+Both media require an explicit topology choice: fully connected, or sparse with
+a nonzero neighbor limit. Sparse nodes start isolated; symmetric reachability
+changes validate both endpoints and their budgets before applying. Discovery and
+transmission visit only adjacent nodes. A 1,024-radio chain test checks every
+observation against its expected neighbor, with bounded queues and trace storage.
+This is medium-level evidence, not a full-node capacity result.
+
+Frame reachability is sampled at transmission; delayed frames already in flight
+retain their original recipients. BLE lab partitions instead close queued and
+established links before returning and prevent dialing previously seen peers
+until reachability is restored. Previously queued sightings remain historical
+observations, not permission to establish a connection.
+
 Many-node scenarios are a first-class target, not a sequence of isolated
 two-node tests. Hundreds and then thousands of production nodes are scale-test
 milestones, not demonstrated capacity or a promised limit. The current full-node
@@ -64,7 +77,7 @@ capstones establish two-node correctness only.
   simulated interval. Scale runs must retain correctness assertions for delivery,
   recovery, backpressure, and cleanup, not merely demonstrate that nodes start.
 
-Current obstacles include all-to-all medium fanout, global connection scans, and
+Remaining obstacles include global connection scans and
 real-time runtime deadlines. The production BLE peer receive buffer also uses
 the global maximum wire-frame size (524,352 bytes), despite its smaller transport
 MTU. Audit transport-specific bounds and measure against the existing runtime

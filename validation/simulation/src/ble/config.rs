@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::TopologyConfig;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BleCapacityField {
     Radios,
@@ -30,6 +32,7 @@ impl std::error::Error for BleMediumConfigError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BleMediumConfig {
+    pub(crate) topology: TopologyConfig,
     pub(crate) max_radios: usize,
     pub(crate) observation_queue: usize,
     pub(crate) max_emissions_per_advance: usize,
@@ -38,6 +41,7 @@ pub struct BleMediumConfig {
 
 impl BleMediumConfig {
     pub fn new(
+        topology: TopologyConfig,
         max_radios: usize,
         observation_queue: usize,
         max_emissions_per_advance: usize,
@@ -64,6 +68,7 @@ impl BleMediumConfig {
             });
         }
         Ok(Self {
+            topology,
             max_radios,
             observation_queue,
             max_emissions_per_advance,

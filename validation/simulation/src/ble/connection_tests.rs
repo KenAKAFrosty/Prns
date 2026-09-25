@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::future::{poll_fn, Future};
+use std::num::NonZeroUsize;
 use std::task::Poll;
 
 use personal_rns::interfaces::bluetooth_auto::{
@@ -8,9 +9,12 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 
 use super::*;
-use crate::{SimulationDurationInTicks, SimulationTick};
+use crate::{
+    Reachability, SimulationDurationInTicks, SimulationTick, TopologyConfig, TopologyMutation,
+};
 
 const MAX_PEERS: usize = 4;
+const FIRST_ADDRESS: BleAddress = BleAddress::new([1; 6]);
 const SECOND_ADDRESS: BleAddress = BleAddress::new([2; 6]);
 
 struct Pair {
@@ -21,7 +25,15 @@ struct Pair {
 
 impl Pair {
     async fn new(first_capacity: usize, second_capacity: usize) -> Result<Self, Box<dyn Error>> {
-        let lab = VirtualBleLab::new(BleMediumConfig::new(2, 4, 4, 32)?);
+        let lab = VirtualBleLab::new(BleMediumConfig::new(
+            TopologyConfig::Explicit {
+                max_neighbors: NonZeroUsize::MIN,
+            },
+            2,
+            4,
+            4,
+            32,
+        )?);
         let gatt = VirtualGattConfig::new(CONTROL_MAX_LEN, 20)?;
         let config = |address, capacity| {
             VirtualBleBackendConfig::new(
@@ -36,6 +48,7 @@ impl Pair {
         };
         let mut first = lab.attach_backend(config(1, first_capacity)?)?;
         let mut second = lab.attach_backend(config(2, second_capacity)?)?;
+        lab.set_reachability(FIRST_ADDRESS, SECOND_ADDRESS, Reachability::Reachable)?;
         for backend in [&mut first, &mut second] {
             BleBackend::<MAX_PEERS>::set_radio_mode(backend, RadioMode::On).await?;
             BleBackend::<MAX_PEERS>::set_advertising(backend, AdvertisingMode::On).await?;
@@ -67,6 +80,66 @@ impl Pair {
         };
         (first, second)
     }
+}
+
+#[tokio::test]
+async fn partitions_close_queued_and_active_links_and_prevent_redial() -> Result<(), Box<dyn Error>>
+{
+    let mut pair = Pair::new(1, 1).await?;
+    assert_eq!(pair.dial().await, DialOutcome::Started);
+    assert_eq!(
+        pair.lab
+            .set_reachability(FIRST_ADDRESS, SECOND_ADDRESS, Reachability::Isolated),
+        Ok(TopologyMutation::Applied)
+    );
+    assert_eq!(pair.lab.active_connection_count(), 0);
+    assert!(
+        matches!(BleBackend::<MAX_PEERS>::next_event(&mut pair.first).await,
+        BleEvent::DialFailed { address } if address == SECOND_ADDRESS)
+    );
+    assert_eq!(pair.dial().await, DialOutcome::UnknownPeer);
+    assert_eq!(
+        pair.lab
+            .advance_by(SimulationDurationInTicks::from_ticks(1))?,
+        BleAdvanceReport {
+            from: SimulationTick::ZERO,
+            to: SimulationTick::from_ticks(1),
+            advertisements_emitted: 2,
+            observations_queued: 0,
+            observations_dropped: 0,
+        }
+    );
+    assert_eq!(
+        pair.lab
+            .set_reachability(FIRST_ADDRESS, SECOND_ADDRESS, Reachability::Reachable),
+        Ok(TopologyMutation::Applied)
+    );
+    assert_eq!(pair.dial().await, DialOutcome::Busy);
+    {
+        let mut next = std::pin::pin!(BleBackend::<MAX_PEERS>::next_event(&mut pair.second));
+        poll_fn(|cx| {
+            assert!(next.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+    }
+    let (first, second) = pair.connect().await;
+    let (_source, mut sink) = first.into_data();
+    let (mut source, _sink) = second.into_data();
+    sink.send_frame(b"queued").await?;
+    pair.lab
+        .set_reachability(FIRST_ADDRESS, SECOND_ADDRESS, Reachability::Isolated)?;
+    assert_eq!(
+        source.recv_frame(&mut [0; 8]).await,
+        Err(VirtualBleError::LinkClosed)
+    );
+    assert_eq!(
+        sink.send_frame(b"new").await,
+        Err(VirtualBleError::LinkClosed)
+    );
+    assert_eq!(pair.dial().await, DialOutcome::UnknownPeer);
+    assert_eq!(pair.lab.active_connection_count(), 0);
+    Ok(())
 }
 
 #[tokio::test]

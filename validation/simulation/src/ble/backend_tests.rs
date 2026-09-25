@@ -6,7 +6,7 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 
 use super::*;
-use crate::{SimulationDurationInTicks, SimulationTick};
+use crate::{SimulationDurationInTicks, SimulationTick, TopologyConfig};
 
 const MAX_PEERS: usize = 4;
 
@@ -16,7 +16,7 @@ fn gatt_config() -> VirtualGattConfig {
 }
 
 fn lab(radios: usize) -> VirtualBleLab {
-    let config = BleMediumConfig::new(radios, 8, 32, 128)
+    let config = BleMediumConfig::new(TopologyConfig::FullyConnected, radios, 8, 32, 128)
         .unwrap_or_else(|error| unreachable!("test medium is valid: {error}"));
     VirtualBleLab::new(config)
 }
