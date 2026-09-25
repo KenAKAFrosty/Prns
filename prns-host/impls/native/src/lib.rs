@@ -1531,6 +1531,8 @@ async fn run(
             observer(AuthenticatedAnnounce {
                 destination: host_destination(observation.destination),
                 announced_identity: IdentityHash::new(*observation.announced_identity.as_bytes()),
+                source_interface: InterfaceId::new(*observation.source_interface.as_bytes()),
+                hops: observation.hops.0,
                 app_data: observation.app_data,
                 arrived_at_millis: observation.arrived_at.0,
                 is_path_response: observation.is_path_response,
