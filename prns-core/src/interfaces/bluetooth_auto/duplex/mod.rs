@@ -2,7 +2,8 @@ use core::future::{poll_fn, Future};
 use core::pin::{pin, Pin};
 use core::task::Poll;
 
-use super::{receive_frame, BleFrameReceiveError, BleReceiveError, BleSink, BleSource};
+use super::receive::validate_received_frame_length;
+use super::{BleSink, BleSource};
 
 /// Receives whole BLE frames across an adapter's inbound boundary. Implementations must retain
 /// the frame until forwarding completes; their pending future applies receive-side backpressure.
@@ -29,18 +30,16 @@ enum Progress<W, R> {
     Received(R),
 }
 
-async fn prefer_work<W: Future, R: Future>(
-    mut work: Pin<&mut W>,
-    receive: R,
-) -> Progress<W::Output, R::Output> {
-    let mut receive = pin!(receive);
-    poll_fn(|context| {
+fn prefer_work<'a, W: Future, R: Future>(
+    mut work: Pin<&'a mut W>,
+    mut receive: Pin<&'a mut R>,
+) -> impl Future<Output = Progress<W::Output, R::Output>> + 'a {
+    poll_fn(move |context| {
         if let Poll::Ready(result) = work.as_mut().poll(context) {
             return Poll::Ready(Progress::Finished(result));
         }
         receive.as_mut().poll(context).map(Progress::Received)
     })
-    .await
 }
 
 /// Keep receiving whole frames during one uninterrupted send, using caller-owned storage.
@@ -58,44 +57,47 @@ pub async fn send_frame_duplex<Source: BleSource, Sink: BleSink, Forwarder: BleF
     inbound: &mut [u8],
     forwarder: Forwarder,
 ) -> BleDuplexOutcome<Source::Error, Sink::Error, Forwarder::Error> {
-    receive_frames_during(sink.send_frame(outbound), source, inbound, forwarder).await
+    let work = pin!(sink.send_frame(outbound));
+    receive_frames_during(work, source, inbound, forwarder).await
 }
 
 /// Keep receiving until `work` settles, without cancelling a completed receive's forwarding.
 /// The work may include a send and a wait for other peers; it remains polled during ingress
 /// backpressure. Completion wins over starting another receive, and empty frames are ignored.
+/// Borrows the caller-pinned work so its state is stored once, outside this receive driver.
+/// The driver may complete that work; callers must not poll it again after `Finished`.
 ///
-/// Pending receives must preserve partial-frame progress on cancellation. Ingress failure
-/// cancels the work, so callers must retire any possibly partial transport. External cancellation
-/// can also abandon forwarding; adapters must track that boundary when deciding which peers to
-/// retire. Uses caller-owned storage and requires no executor, allocator, clock, or queue.
+/// Pending receives must preserve partial-frame progress on cancellation. On ingress failure
+/// or external cancellation, callers must discard the work and retire any possibly partial
+/// transport. Cancellation can also abandon forwarding; adapters must track that boundary when
+/// deciding which peers to retire. Uses caller-owned storage and requires no executor,
+/// allocator, clock, or queue.
 pub async fn receive_frames_during<
     Work: Future<Output = Result<(), WorkError>>,
     WorkError,
     Source: BleSource,
     Forwarder: BleFrameForwarder,
 >(
-    work: Work,
+    mut work: Pin<&mut Work>,
     source: &mut Source,
     inbound: &mut [u8],
     mut forwarder: Forwarder,
 ) -> BleDuplexOutcome<Source::Error, WorkError, Forwarder::Error> {
-    let mut work = pin!(work);
     loop {
-        let frame = match prefer_work(work.as_mut(), receive_frame(source, inbound)).await {
-            Progress::Finished(result) => return BleDuplexOutcome::Finished(result),
-            Progress::Received(Ok([])) => continue,
-            Progress::Received(Ok(frame)) => frame,
-            Progress::Received(Err(BleFrameReceiveError::Length(
-                BleReceiveError::BufferTooSmall { length, .. },
-            ))) => {
-                return BleDuplexOutcome::InvalidReceiveLength(length);
-            }
-            Progress::Received(Err(BleFrameReceiveError::Source(error))) => {
-                return BleDuplexOutcome::ReceiveFailed(error)
-            }
+        let received = {
+            let receive = pin!(source.recv_frame(inbound));
+            prefer_work(work.as_mut(), receive).await
         };
-        let mut forwarding = pin!(forwarder.forward(frame));
+        let length = match received {
+            Progress::Finished(result) => return BleDuplexOutcome::Finished(result),
+            Progress::Received(Ok(0)) => continue,
+            Progress::Received(Ok(length)) => length,
+            Progress::Received(Err(error)) => return BleDuplexOutcome::ReceiveFailed(error),
+        };
+        if validate_received_frame_length(length, inbound.len()).is_err() {
+            return BleDuplexOutcome::InvalidReceiveLength(length);
+        }
+        let mut forwarding = pin!(forwarder.forward(&inbound[..length]));
         match prefer_work(work.as_mut(), forwarding.as_mut()).await {
             Progress::Finished(result) => {
                 if let Err(error) = forwarding.await {

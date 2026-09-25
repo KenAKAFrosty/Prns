@@ -33,6 +33,12 @@ its send.
 There are no extra packet buffers or spawned tasks; the mutex and per-peer future
 state still have a resource cost that firmware builds must measure.
 
+The shared driver borrows caller-pinned work rather than embedding another owned
+work future. Its receive selection also borrows pinned futures and uses the
+shared length validator directly. The [T114 layout measurement](measurements/ble-duplex-layout.md)
+records the resulting static-memory savings without changing peer capacity,
+packet buffers, or the runtime stack reservation.
+
 Receive, length, send, and forwarding failures retire the affected member without
 restarting another member's send. The existing two-second fanout deadline and
 disable cancellation remain in force, including while forwarding is blocked.

@@ -215,6 +215,7 @@ fn receive_only_work_ignores_empty_frames_and_settles_current_forwarding_exactly
                 Poll::Pending
             }
         });
+        let work = pin!(work);
         let mut running = pin!(receive_frames_during(
             work,
             &mut source,
@@ -249,8 +250,9 @@ fn ready_work_wins_without_consuming_another_frame() {
         let mut frames = Vec::new();
         let forward_ready = Cell::new(true);
         {
+            let work = pin!(core::future::ready(result));
             let mut running = pin!(receive_frames_during(
-                core::future::ready(result),
+                work,
                 &mut source,
                 &mut inbound,
                 Forwarder {
@@ -270,4 +272,41 @@ fn ready_work_wins_without_consuming_another_frame() {
             (VecDeque::from([Ok(2)]), [0; 2], vec![])
         );
     }
+}
+
+#[test]
+fn receive_driver_storage_is_independent_of_borrowed_work_size() {
+    struct WorkState<const BYTES: usize>([u8; BYTES]);
+
+    impl<const BYTES: usize> Future for WorkState<BYTES> {
+        type Output = Result<(), Closed>;
+
+        fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+            if self.0.iter().all(|byte| *byte == 0) {
+                Poll::Pending
+            } else {
+                Poll::Ready(Ok(()))
+            }
+        }
+    }
+
+    fn driver_size<const BYTES: usize>() -> usize {
+        let work = pin!(WorkState([0; BYTES]));
+        let mut source = Source(VecDeque::new());
+        let mut inbound = [0; 2];
+        let forward_ready = Cell::new(true);
+        let mut frames = Vec::new();
+        let driver = receive_frames_during(
+            work,
+            &mut source,
+            &mut inbound,
+            Forwarder {
+                ready: &forward_ready,
+                frames: &mut frames,
+            },
+        );
+        core::mem::size_of_val(&driver)
+    }
+
+    assert_eq!(driver_size::<1>(), driver_size::<4096>());
 }

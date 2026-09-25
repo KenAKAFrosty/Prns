@@ -144,6 +144,7 @@ async fn send_member<
         })
         .await
     };
+    let work = pin!(work);
     match receive_frames_during(
         work,
         &mut member.source,
