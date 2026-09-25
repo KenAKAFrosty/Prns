@@ -13,17 +13,12 @@ pub enum BleCapacityField {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BleMediumConfigError {
     ZeroCapacity(BleCapacityField),
-    TooManyRadios { requested: usize, maximum: usize },
 }
 
 impl fmt::Display for BleMediumConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ZeroCapacity(field) => write!(formatter, "{field:?} capacity must be nonzero"),
-            Self::TooManyRadios { requested, maximum } => write!(
-                formatter,
-                "BLE radio capacity {requested} exceeds the representable maximum {maximum}",
-            ),
         }
     }
 }
@@ -59,13 +54,6 @@ impl BleMediumConfig {
             if capacity == 0 {
                 return Err(BleMediumConfigError::ZeroCapacity(field));
             }
-        }
-        let maximum = usize::from(u16::MAX) + 1;
-        if max_radios > maximum {
-            return Err(BleMediumConfigError::TooManyRadios {
-                requested: max_radios,
-                maximum,
-            });
         }
         Ok(Self {
             topology,

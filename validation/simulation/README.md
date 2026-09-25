@@ -84,6 +84,20 @@ scanner and checks the complete bounded history and eviction count after every
 observation. Only two backends are live in this test; it establishes retention
 behavior under churn, not concurrent full-node capacity or a throughput claim.
 
+Radio identities are monotonically issued 64-bit values scoped to one medium.
+They are never reused, so stale handles, queued observations, and trace entries
+cannot alias a replacement. Issuance uses constant bookkeeping rather than a
+history or recycling table. The final representable ID is issued once, then
+attachment fails with `RadioIdsExhausted`; IDs never wrap. Required live-radio
+capacity remains a separate limit, and rejected attachments consume no IDs.
+IDs are wider host-side values, not a firmware or BLE wire-format change.
+
+A backend regression reuses one address through 65,537 advertiser attachments,
+requiring fresh discovery every time and exchanging data after the old 16-bit
+ceiling. History and trace stay bounded. Detaching a radio wakes all pending
+observation readers with `UnknownRadio`, even if its address is already reused;
+the departed radio's topology edges are not inherited by its replacement.
+
 Frame reachability is sampled at transmission; delayed frames already in flight
 retain their original recipients. BLE lab partitions instead close queued and
 established links before returning and prevent dialing previously seen peers
@@ -111,8 +125,8 @@ capstones establish two-node correctness only.
   simulated interval. Scale runs must retain correctness assertions for delivery,
   recovery, backpressure, and cleanup, not merely demonstrate that nodes start.
 
-Remaining obstacles include real-time runtime deadlines and lifetime radio IDs.
+Remaining obstacles include real-time runtime deadlines and per-peer allocation.
 The production BLE peer receive buffer also uses the global maximum wire-frame
-size (524,352 bytes), despite its smaller transport MTU. Audit transport-specific bounds and measure
-against the existing runtime before changing allocation policy; do not conceal
-that cost in the simulator.
+size (524,352 bytes), despite its smaller transport MTU. Audit transport-specific
+bounds and measure against the existing runtime before changing allocation
+policy; do not conceal that cost in the simulator.

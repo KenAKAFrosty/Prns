@@ -7,24 +7,15 @@ use tokio::sync::Notify;
 
 use super::advertisement::{BleAdvertisement, BleAdvertisingParameters};
 use super::config::BleMediumConfig;
+use super::radio_id::RadioIdSequence;
 use super::trace::{
     BleObservationDropReason, BleSimulationEvent, BleTraceBuffer, BleTraceSnapshot,
 };
-use super::{BleRadioPower, BleScanState};
+use super::{BleRadioId, BleRadioPower, BleScanState};
 use crate::topology::Topology;
 use crate::{
     Reachability, SimulationDurationInTicks, SimulationTick, TopologyError, TopologyMutation,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BleRadioId(u16);
-
-impl BleRadioId {
-    #[must_use]
-    pub const fn get(self) -> u16 {
-        self.0
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BleRadioMutation {
@@ -132,7 +123,7 @@ struct BleMediumState {
     observation_capacity: usize,
     max_emissions_per_advance: usize,
     now: SimulationTick,
-    next_radio: Option<BleRadioId>,
+    radio_ids: RadioIdSequence,
     addresses: BTreeSet<BleAddress>,
     radios: BTreeMap<BleRadioId, Radio>,
     trace: BleTraceBuffer,
@@ -153,7 +144,7 @@ impl VirtualBleMedium {
                 observation_capacity: config.observation_queue,
                 max_emissions_per_advance: config.max_emissions_per_advance,
                 now: SimulationTick::ZERO,
-                next_radio: Some(BleRadioId(0)),
+                radio_ids: RadioIdSequence::new(),
                 addresses: BTreeSet::new(),
                 radios: BTreeMap::new(),
                 trace: BleTraceBuffer::new(config.trace_capacity),
@@ -173,10 +164,7 @@ impl VirtualBleMedium {
         if state.addresses.contains(&address) {
             return Err(BleSimulationError::DuplicateAddress);
         }
-        let radio = state
-            .next_radio
-            .ok_or(BleSimulationError::RadioIdsExhausted)?;
-        state.next_radio = radio.0.checked_add(1).map(BleRadioId);
+        let radio = state.radio_ids.issue()?;
         let _ = state.addresses.insert(address);
         let observation_capacity = state.observation_capacity;
         let replaced = state.radios.insert(
@@ -361,6 +349,8 @@ impl VirtualBleMedium {
         state
             .trace
             .push(BleSimulationEvent::RadioDetached { radio });
+        drop(state);
+        detached.observation_ready.notify_waiters();
     }
 
     pub fn advance_by(

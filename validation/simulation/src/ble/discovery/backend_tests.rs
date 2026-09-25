@@ -272,3 +272,54 @@ async fn thousands_of_departed_peers_retain_only_the_configured_history(
     assert_eq!(scenario.lab.active_connection_count(), 0);
     Ok(())
 }
+
+#[tokio::test]
+async fn address_reuse_remains_safe_beyond_sixty_five_thousand_attachments(
+) -> Result<(), Box<dyn Error>> {
+    const ATTACHMENTS: u64 = u16::MAX as u64 + 2;
+    let mut scenario = Scenario::new(NonZeroUsize::MIN).await?;
+    let address = BleAddress::new([1; 6]);
+    for ordinal in 1..=ATTACHMENTS {
+        let mut peer = scenario.advertiser(address).await?;
+        assert_eq!(scenario.dial(address).await, DialOutcome::UnknownPeer);
+        scenario.emit()?;
+        scenario.sighting(address).await;
+        let snapshot = scenario.scanner.discovery_snapshot();
+        assert_eq!(snapshot.peers.len(), 1);
+        let observed = snapshot.peers[0];
+        assert_eq!((observed.address, observed.radio.get()), (address, ordinal));
+        assert_eq!(
+            snapshot,
+            BleDiscoverySnapshot {
+                capacity: NonZeroUsize::MIN,
+                peers: vec![observed],
+                evicted_peers: 0,
+            }
+        );
+        if ordinal == ATTACHMENTS {
+            assert_eq!(scenario.dial(address).await, DialOutcome::Started);
+            let BleEvent::LinkReady { link: dialed, .. } =
+                BleBackend::<MAX_PEERS>::next_event(&mut scenario.scanner).await
+            else {
+                unreachable!("freshly observed radio is dialable past the old ceiling")
+            };
+            let BleEvent::LinkReady { link: accepted, .. } =
+                BleBackend::<MAX_PEERS>::next_event(&mut peer).await
+            else {
+                unreachable!("replacement accepts its link")
+            };
+            let (_source, mut sink) = dialed.into_data();
+            let (mut source, _sink) = accepted.into_data();
+            sink.send_frame(b"lifetime").await?;
+            let mut received = [0; FRAME_LENGTH];
+            assert_eq!(source.recv_frame(&mut received).await?, FRAME_LENGTH);
+            assert_eq!(&received, b"lifetime");
+        }
+        drop(peer);
+        assert_eq!(scenario.lab.active_connection_count(), 0);
+    }
+    let trace = scenario.lab.trace();
+    assert_eq!(trace.events.len(), 8);
+    assert_eq!(trace.discarded_events, 3 + 6 * ATTACHMENTS - 8);
+    Ok(())
+}
