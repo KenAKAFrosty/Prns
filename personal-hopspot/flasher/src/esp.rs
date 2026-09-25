@@ -182,6 +182,7 @@ fn sparse_plan(
         .map(|part| SparsePart {
             offset: part.offset(),
             bytes: part.bytes().to_vec(),
+            erase_before_write: false,
         })
         .collect::<Vec<_>>();
     if let Some(config) = provisioning_image(provisioning)
@@ -194,6 +195,7 @@ fn sparse_plan(
         plan.push(SparsePart {
             offset: slot.offset,
             bytes: config,
+            erase_before_write: false,
         });
     }
     // A wired flash writes the application into ota_0. The bootloader follows otadata, which a
@@ -759,14 +761,17 @@ mod port_tests {
             SparsePart {
                 offset: 0,
                 bytes: vec![1],
+                erase_before_write: false,
             },
             SparsePart {
                 offset: 0x8000,
                 bytes: vec![2],
+                erase_before_write: false,
             },
             SparsePart {
                 offset: 0x10000,
                 bytes: vec![3],
+                erase_before_write: false,
             },
         ]
     }
