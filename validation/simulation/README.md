@@ -18,7 +18,15 @@ The medium intentionally makes its limits and faults explicit:
 - every accepted transmission and delivery outcome enters a bounded trace;
 - trace eviction is counted instead of silently pretending the trace is whole.
 
-The logical clock currently owns media delivery, not the production runtime's
-deadline clock. BLE, Wi-Fi, flash, reset, sleep, and unified runtime time belong
-above this transport-neutral seam in later reviewable slices. The production
-protocol engine remains the system under test throughout.
+The BLE lab adds bounded discovery, per-radio connection budgets, control/data
+queues, and explicit link loss. Connection admission requires a powered dialer
+and a powered, advertising listener. Queued and established connections share
+the budget; closing either endpoint releases its reservation. The BLE capstone
+runs two production nodes and exchanges requests before loss, after forced
+disconnect, and after radio disable/re-enable.
+
+The logical clock owns media delivery and advertisement scheduling. Production
+runtime deadlines still use real time, so full runtime replay is not yet
+deterministic. BLE control messages and frames cross the backend trait seam;
+native controller behavior, GATT framing, and L2CAP upgrades are not modeled.
+Wi-Fi, flash, reset, sleep, and unified runtime time remain future work.

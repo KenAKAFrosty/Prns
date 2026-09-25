@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use personal_rns::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Control, DialOutcome,
     L2capPlan, Origin, PeerProtocol, RadioMode, ScanningMode,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
+use super::connection::{Connection, ConnectionEndpoint};
 use super::{
     BleAddress, BleAdvanceError, BleAdvanceReport, BleAdvertisement, BleAdvertisementError,
     BleAdvertisingParameters, BleMediumConfig, BleRadioId, BleRoleCapabilities, BleSimulationError,
@@ -21,6 +21,7 @@ pub enum VirtualBleBackendConfigError {
     Advertisement(BleAdvertisementError),
     ZeroAdvertisingInterval,
     ZeroInboundLinkCapacity,
+    ZeroConnectionCapacity,
     ZeroControlCapacity,
     ZeroDataCapacity,
     ZeroMaximumFrameLength,
@@ -35,6 +36,9 @@ impl fmt::Display for VirtualBleBackendConfigError {
             }
             Self::ZeroInboundLinkCapacity => {
                 formatter.write_str("inbound link capacity must be nonzero")
+            }
+            Self::ZeroConnectionCapacity => {
+                formatter.write_str("connection capacity must be nonzero")
             }
             Self::ZeroControlCapacity => {
                 formatter.write_str("control message capacity must be nonzero")
@@ -55,6 +59,7 @@ pub struct VirtualBleBackendConfig {
     received_signal_strength_dbm: i8,
     advertising: BleAdvertisingParameters,
     inbound_link_capacity: usize,
+    connection_capacity: usize,
     link: VirtualBleLinkConfig,
 }
 
@@ -65,6 +70,7 @@ impl VirtualBleBackendConfig {
         role_capabilities: BleRoleCapabilities,
         advertising_interval: SimulationDurationInTicks,
         inbound_link_capacity: usize,
+        connection_capacity: usize,
         link: VirtualBleLinkConfig,
     ) -> Result<Self, VirtualBleBackendConfigError> {
         if advertising_interval == SimulationDurationInTicks::ZERO {
@@ -72,6 +78,9 @@ impl VirtualBleBackendConfig {
         }
         if inbound_link_capacity == 0 {
             return Err(VirtualBleBackendConfigError::ZeroInboundLinkCapacity);
+        }
+        if connection_capacity == 0 {
+            return Err(VirtualBleBackendConfigError::ZeroConnectionCapacity);
         }
         let advertisement = BleAdvertisement::reticulum(role_capabilities)
             .map_err(VirtualBleBackendConfigError::Advertisement)?;
@@ -82,6 +91,7 @@ impl VirtualBleBackendConfig {
             received_signal_strength_dbm,
             advertising,
             inbound_link_capacity,
+            connection_capacity,
             link,
         })
     }
@@ -134,6 +144,12 @@ pub enum VirtualBleError {
     ReceiveBufferTooSmall { frame: usize, buffer: usize },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "disconnect reports reveal whether an active connection was actually closed"]
+pub struct VirtualBleDisconnectReport {
+    pub connections_closed: usize,
+}
+
 impl fmt::Display for VirtualBleError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -180,17 +196,17 @@ impl VirtualBleLab {
         &self,
         config: VirtualBleBackendConfig,
     ) -> Result<VirtualBleBackend, BleSimulationError> {
+        let mut network = self.lock_network();
         let radio = self
             .medium
             .attach(config.address, config.received_signal_strength_dbm)?;
         let (inbound, inbound_rx) = mpsc::channel(config.inbound_link_capacity);
-        let powered = Arc::new(AtomicBool::new(false));
-        let replaced = self.lock_network().peers.insert(
+        let replaced = network.peers.insert(
             config.address,
             RegisteredPeer {
                 radio,
                 inbound,
-                powered: powered.clone(),
+                connection_capacity: config.connection_capacity,
                 received_signal_strength_dbm: config.received_signal_strength_dbm,
                 link: config.link,
             },
@@ -204,7 +220,6 @@ impl VirtualBleLab {
             network: self.network.clone(),
             config,
             radio,
-            powered,
             inbound_rx,
             known_peers: BTreeSet::new(),
             dialed: None,
@@ -235,6 +250,29 @@ impl VirtualBleLab {
         self.medium.trace()
     }
 
+    #[must_use]
+    pub fn active_connection_count(&self) -> usize {
+        let mut network = self.lock_network();
+        network.prune_closed();
+        network.connections.len()
+    }
+
+    pub fn disconnect_between(
+        &self,
+        first: BleAddress,
+        second: BleAddress,
+    ) -> VirtualBleDisconnectReport {
+        close_connections(&mut self.lock_network(), |connection| {
+            connection.connects(first) && connection.connects(second)
+        })
+    }
+
+    pub fn disconnect_radio(&self, address: BleAddress) -> VirtualBleDisconnectReport {
+        close_connections(&mut self.lock_network(), |connection| {
+            connection.connects(address)
+        })
+    }
+
     fn lock_network(&self) -> MutexGuard<'_, ConnectionNetwork> {
         self.network
             .lock()
@@ -242,15 +280,31 @@ impl VirtualBleLab {
     }
 }
 
+// Admission and radio transitions take this lock before the medium lock.
 #[derive(Default)]
 struct ConnectionNetwork {
     peers: BTreeMap<BleAddress, RegisteredPeer>,
+    connections: Vec<Arc<Connection>>,
+}
+
+impl ConnectionNetwork {
+    fn prune_closed(&mut self) {
+        self.connections
+            .retain(|connection| !connection.is_closed());
+    }
+
+    fn connection_count(&self, address: BleAddress) -> usize {
+        self.connections
+            .iter()
+            .filter(|connection| connection.connects(address))
+            .count()
+    }
 }
 
 struct RegisteredPeer {
     radio: BleRadioId,
     inbound: mpsc::Sender<VirtualBleLink>,
-    powered: Arc<AtomicBool>,
+    connection_capacity: usize,
     received_signal_strength_dbm: i8,
     link: VirtualBleLinkConfig,
 }
@@ -260,18 +314,9 @@ pub struct VirtualBleBackend {
     network: Arc<Mutex<ConnectionNetwork>>,
     config: VirtualBleBackendConfig,
     radio: BleRadioId,
-    powered: Arc<AtomicBool>,
     inbound_rx: mpsc::Receiver<VirtualBleLink>,
     known_peers: BTreeSet<BleAddress>,
     dialed: Option<VirtualBleLink>,
-}
-
-impl VirtualBleBackend {
-    fn lock_network(&self) -> MutexGuard<'_, ConnectionNetwork> {
-        self.network
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
 }
 
 impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
@@ -279,6 +324,10 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
     type Link = VirtualBleLink;
 
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Self::Error> {
+        let _network = self
+            .network
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let parameters = mode.is_on().then_some(self.config.advertising);
         let _ = self.medium.set_advertising(self.radio, parameters)?;
         Ok(())
@@ -290,14 +339,29 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
     }
 
     async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), Self::Error> {
+        let mut network = self
+            .network
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _ = self.medium.set_radio_power(self.radio, mode)?;
-        self.powered.store(mode.is_on(), Ordering::Release);
+        if !mode.is_on() {
+            let _ = close_connections(&mut network, |connection| {
+                connection.connects(self.config.address)
+            });
+            self.dialed = None;
+            while self.inbound_rx.try_recv().is_ok() {}
+        }
         Ok(())
     }
 
     async fn next_event(&mut self) -> BleEvent<Self::Link> {
         loop {
             if let Some(link) = self.dialed.take() {
+                if link.endpoint.connection.is_closed() {
+                    return BleEvent::DialFailed {
+                        address: link.peer_address,
+                    };
+                }
                 let peer_rssi = Some(link.peer_signal_strength());
                 return BleEvent::LinkReady {
                     link,
@@ -311,6 +375,7 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
                 biased;
                 inbound = self.inbound_rx.recv() => match inbound {
                     Some(link) => {
+                        if link.endpoint.connection.is_closed() { continue; }
                         let peer_rssi = Some(link.peer_signal_strength());
                         return BleEvent::LinkReady {
                             link,
@@ -335,7 +400,11 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
     }
 
     async fn dial(&mut self, address: BleAddress) -> DialOutcome {
-        if !self.powered.load(Ordering::Acquire) {
+        let mut network = self
+            .network
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !self.medium.is_powered(self.radio) {
             return DialOutcome::RadioOff;
         }
         if address == self.config.address {
@@ -347,33 +416,31 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
         if !self.known_peers.contains(&address) {
             return DialOutcome::UnknownPeer;
         }
-        let peer = {
-            let network = self.lock_network();
-            network.peers.get(&address).map(|peer| {
-                (
-                    peer.inbound.clone(),
-                    peer.powered.clone(),
-                    peer.received_signal_strength_dbm,
-                    peer.link,
-                )
-            })
-        };
-        let Some((inbound, powered, peer_rssi, peer_config)) = peer else {
+        network.prune_closed();
+        let Some(peer) = network.peers.get(&address) else {
             return DialOutcome::UnknownPeer;
         };
-        if !powered.load(Ordering::Acquire) {
+        if !self.medium.is_connectable(peer.radio) {
             return DialOutcome::UnknownPeer;
         }
+        if network.connection_count(self.config.address) >= self.config.connection_capacity
+            || network.connection_count(address) >= peer.connection_capacity
+        {
+            return DialOutcome::Busy;
+        }
+        let lifecycle = Arc::new(Connection::new(self.config.address, address));
         let (mine, theirs) = link_pair(
             self.config.address,
             address,
             self.config.link,
-            peer_config,
+            peer.link,
             self.config.received_signal_strength_dbm,
-            peer_rssi,
+            peer.received_signal_strength_dbm,
+            lifecycle.clone(),
         );
-        match inbound.try_send(theirs) {
+        match peer.inbound.try_send(theirs) {
             Ok(()) => {
+                network.connections.push(lifecycle);
                 self.dialed = Some(mine);
                 DialOutcome::Started
             }
@@ -385,11 +452,13 @@ impl<const MAX_PEERS: usize> BleBackend<MAX_PEERS> for VirtualBleBackend {
 
 impl Drop for VirtualBleBackend {
     fn drop(&mut self) {
-        self.powered.store(false, Ordering::Release);
         let mut network = self
             .network
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _ = close_connections(&mut network, |connection| {
+            connection.connects(self.config.address)
+        });
         if network
             .peers
             .get(&self.config.address)
@@ -397,7 +466,6 @@ impl Drop for VirtualBleBackend {
         {
             let _ = network.peers.remove(&self.config.address);
         }
-        drop(network);
         self.medium.detach(self.radio);
     }
 }
@@ -410,11 +478,16 @@ pub struct VirtualBleLink {
     data_rx: mpsc::Receiver<Vec<u8>>,
     maximum_frame_length: usize,
     peer_signal_strength_dbm: i8,
+    endpoint: Arc<ConnectionEndpoint>,
 }
 
 impl VirtualBleLink {
     const fn peer_signal_strength(&self) -> i8 {
         self.peer_signal_strength_dbm
+    }
+
+    fn closed(&self) -> watch::Receiver<bool> {
+        self.endpoint.connection.subscribe()
     }
 }
 
@@ -432,31 +505,49 @@ impl BleLink for VirtualBleLink {
     }
 
     async fn control_send(&mut self, message: &Control) -> Result<(), Self::Error> {
-        self.control_tx
-            .send(*message)
-            .await
-            .map_err(|_| VirtualBleError::LinkClosed)
+        let mut closed = self.closed();
+        if *closed.borrow_and_update() {
+            return Err(VirtualBleError::LinkClosed);
+        }
+        tokio::select! {
+            biased;
+            _ = closed.changed() => Err(VirtualBleError::LinkClosed),
+            result = self.control_tx.send(*message) => {
+                result.map_err(|_| VirtualBleError::LinkClosed)
+            }
+        }
     }
 
     async fn control_recv(&mut self) -> Result<Control, Self::Error> {
-        self.control_rx
-            .recv()
-            .await
-            .ok_or(VirtualBleError::LinkClosed)
+        let mut closed = self.closed();
+        if *closed.borrow_and_update() {
+            return Err(VirtualBleError::LinkClosed);
+        }
+        tokio::select! {
+            biased;
+            _ = closed.changed() => Err(VirtualBleError::LinkClosed),
+            message = self.control_rx.recv() => message.ok_or(VirtualBleError::LinkClosed),
+        }
     }
 
     async fn upgrade(&mut self, _plan: &L2capPlan) -> Result<(), Self::Error> {
-        Ok(())
+        if self.endpoint.connection.is_closed() {
+            Err(VirtualBleError::LinkClosed)
+        } else {
+            Ok(())
+        }
     }
 
     fn into_data(self) -> (Self::Source, Self::Sink) {
         (
             VirtualBleSource {
                 receiver: self.data_rx,
+                endpoint: self.endpoint.clone(),
             },
             VirtualBleSink {
                 sender: self.data_tx,
                 maximum_frame_length: self.maximum_frame_length,
+                endpoint: self.endpoint,
             },
         )
     }
@@ -464,17 +555,22 @@ impl BleLink for VirtualBleLink {
 
 pub struct VirtualBleSource {
     receiver: mpsc::Receiver<Vec<u8>>,
+    endpoint: Arc<ConnectionEndpoint>,
 }
 
 impl BleSource for VirtualBleSource {
     type Error = VirtualBleError;
 
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, Self::Error> {
-        let frame = self
-            .receiver
-            .recv()
-            .await
-            .ok_or(VirtualBleError::LinkClosed)?;
+        let mut closed = self.endpoint.connection.subscribe();
+        if *closed.borrow_and_update() {
+            return Err(VirtualBleError::LinkClosed);
+        }
+        let frame = tokio::select! {
+            biased;
+            _ = closed.changed() => return Err(VirtualBleError::LinkClosed),
+            frame = self.receiver.recv() => frame.ok_or(VirtualBleError::LinkClosed)?,
+        };
         if frame.len() > out.len() {
             return Err(VirtualBleError::ReceiveBufferTooSmall {
                 frame: frame.len(),
@@ -489,6 +585,7 @@ impl BleSource for VirtualBleSource {
 pub struct VirtualBleSink {
     sender: mpsc::Sender<Vec<u8>>,
     maximum_frame_length: usize,
+    endpoint: Arc<ConnectionEndpoint>,
 }
 
 impl BleSink for VirtualBleSink {
@@ -501,10 +598,17 @@ impl BleSink for VirtualBleSink {
                 maximum: self.maximum_frame_length,
             });
         }
-        self.sender
-            .send(frame.to_vec())
-            .await
-            .map_err(|_| VirtualBleError::LinkClosed)
+        let mut closed = self.endpoint.connection.subscribe();
+        if *closed.borrow_and_update() {
+            return Err(VirtualBleError::LinkClosed);
+        }
+        tokio::select! {
+            biased;
+            _ = closed.changed() => Err(VirtualBleError::LinkClosed),
+            result = self.sender.send(frame.to_vec()) => {
+                result.map_err(|_| VirtualBleError::LinkClosed)
+            }
+        }
     }
 }
 
@@ -515,6 +619,7 @@ fn link_pair(
     config_b: VirtualBleLinkConfig,
     signal_strength_a: i8,
     signal_strength_b: i8,
+    lifecycle: Arc<Connection>,
 ) -> (VirtualBleLink, VirtualBleLink) {
     let control_capacity = config_a.control_capacity.min(config_b.control_capacity);
     let data_capacity = config_a.data_capacity.min(config_b.data_capacity);
@@ -534,6 +639,9 @@ fn link_pair(
             data_rx: data_b_rx,
             maximum_frame_length,
             peer_signal_strength_dbm: signal_strength_b,
+            endpoint: Arc::new(ConnectionEndpoint {
+                connection: lifecycle.clone(),
+            }),
         },
         VirtualBleLink {
             peer_address: address_a,
@@ -543,6 +651,68 @@ fn link_pair(
             data_rx: data_a_rx,
             maximum_frame_length,
             peer_signal_strength_dbm: signal_strength_a,
+            endpoint: Arc::new(ConnectionEndpoint {
+                connection: lifecycle,
+            }),
         },
     )
+}
+
+fn close_connections(
+    network: &mut ConnectionNetwork,
+    matches: impl Fn(&Connection) -> bool,
+) -> VirtualBleDisconnectReport {
+    let connections_closed = network
+        .connections
+        .iter()
+        .filter(|connection| matches(connection) && connection.close())
+        .count();
+    network.prune_closed();
+    VirtualBleDisconnectReport { connections_closed }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn endpoint_teardown_during_disconnect_does_not_relock_the_registry() {
+        let (done, completion) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let connection = Arc::new(Connection::new(
+                BleAddress::new([1; 6]),
+                BleAddress::new([2; 6]),
+            ));
+            let endpoint = Mutex::new(Some(ConnectionEndpoint {
+                connection: connection.clone(),
+            }));
+            let registry = Mutex::new(ConnectionNetwork {
+                connections: vec![connection],
+                ..ConnectionNetwork::default()
+            });
+            let mut network = registry
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let report = close_connections(&mut network, |_| {
+                // Force teardown while the registry lock and traversal reference are held.
+                drop(
+                    endpoint
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .take(),
+                );
+                false
+            });
+            let _ = done.send((report, network.connections.len()));
+        });
+        assert_eq!(
+            completion.recv_timeout(std::time::Duration::from_secs(1)),
+            Ok((
+                VirtualBleDisconnectReport {
+                    connections_closed: 0
+                },
+                0
+            ))
+        );
+    }
 }

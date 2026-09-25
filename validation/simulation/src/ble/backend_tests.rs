@@ -28,6 +28,7 @@ fn backend_config(
         BleRoleCapabilities::DualRole,
         SimulationDurationInTicks::from_ticks(2),
         2,
+        MAX_PEERS,
         link,
     )
     .unwrap_or_else(|error| unreachable!("test backend is valid: {error}"))
@@ -75,6 +76,7 @@ fn backend_configuration_rejects_each_zero_capacity_as_a_whole_value() {
             BleRoleCapabilities::DualRole,
             SimulationDurationInTicks::from_ticks(1),
             0,
+            MAX_PEERS,
             link,
         ),
         Err(VirtualBleBackendConfigError::ZeroInboundLinkCapacity),
@@ -86,9 +88,22 @@ fn backend_configuration_rejects_each_zero_capacity_as_a_whole_value() {
             BleRoleCapabilities::DualRole,
             SimulationDurationInTicks::ZERO,
             1,
+            MAX_PEERS,
             link,
         ),
         Err(VirtualBleBackendConfigError::ZeroAdvertisingInterval),
+    );
+    assert_eq!(
+        VirtualBleBackendConfig::new(
+            BleAddress::new([1; 6]),
+            -40,
+            BleRoleCapabilities::DualRole,
+            SimulationDurationInTicks::from_ticks(1),
+            1,
+            0,
+            link
+        ),
+        Err(VirtualBleBackendConfigError::ZeroConnectionCapacity),
     );
 }
 
@@ -259,6 +274,31 @@ async fn discovery_dial_control_and_data_use_the_production_traits() {
             frame: 3,
             buffer: 2,
         }),
+    );
+    assert_eq!(lab.active_connection_count(), 1);
+    let mut after_close = [0; 8];
+    let (received, disconnected) =
+        tokio::join!(second_source.recv_frame(&mut after_close), async {
+            tokio::task::yield_now().await;
+            lab.disconnect_between(BleAddress::new([1; 6]), BleAddress::new([2; 6]))
+        },);
+    assert_eq!(
+        disconnected,
+        VirtualBleDisconnectReport {
+            connections_closed: 1,
+        },
+    );
+    assert_eq!(received, Err(VirtualBleError::LinkClosed));
+    assert_eq!(
+        first_sink.send_frame(&[4]).await,
+        Err(VirtualBleError::LinkClosed),
+    );
+    assert_eq!(lab.active_connection_count(), 0);
+    assert_eq!(
+        lab.disconnect_between(BleAddress::new([1; 6]), BleAddress::new([2; 6])),
+        VirtualBleDisconnectReport {
+            connections_closed: 0,
+        },
     );
 }
 

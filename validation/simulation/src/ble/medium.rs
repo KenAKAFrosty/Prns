@@ -198,6 +198,20 @@ impl VirtualBleMedium {
         self.lock_state().now
     }
 
+    pub(crate) fn is_powered(&self, radio: BleRadioId) -> bool {
+        self.lock_state()
+            .radios
+            .get(&radio)
+            .is_some_and(|radio| radio.power == BleRadioPower::On)
+    }
+
+    pub(crate) fn is_connectable(&self, radio: BleRadioId) -> bool {
+        self.lock_state()
+            .radios
+            .get(&radio)
+            .is_some_and(|radio| radio.power == BleRadioPower::On && radio.advertising.is_some())
+    }
+
     pub fn set_radio_power(
         &self,
         radio: BleRadioId,

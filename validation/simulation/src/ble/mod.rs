@@ -3,6 +3,7 @@
 mod advertisement;
 mod backend;
 mod config;
+mod connection;
 mod medium;
 mod trace;
 
@@ -11,8 +12,9 @@ pub use advertisement::{
     BleAdvertisingParametersError,
 };
 pub use backend::{
-    VirtualBleBackend, VirtualBleBackendConfig, VirtualBleBackendConfigError, VirtualBleError,
-    VirtualBleLab, VirtualBleLink, VirtualBleLinkConfig, VirtualBleSink, VirtualBleSource,
+    VirtualBleBackend, VirtualBleBackendConfig, VirtualBleBackendConfigError,
+    VirtualBleDisconnectReport, VirtualBleError, VirtualBleLab, VirtualBleLink,
+    VirtualBleLinkConfig, VirtualBleSink, VirtualBleSource,
 };
 pub use config::{BleCapacityField, BleMediumConfig, BleMediumConfigError};
 pub use medium::{
@@ -26,5 +28,7 @@ pub use trace::{BleObservationDropReason, BleSimulationEvent, BleTraceSnapshot};
 
 #[cfg(test)]
 mod backend_tests;
+#[cfg(test)]
+mod connection_tests;
 #[cfg(test)]
 mod tests;
