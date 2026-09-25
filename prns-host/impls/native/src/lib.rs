@@ -90,6 +90,13 @@ mod supplied_pipe;
 pub use prns_host_snapshot::{
     assemble_host_snapshot, HostInterfaceAttachment, HostSnapshotAssemblyError,
 };
+
+/// One native inspection capture, before logical fleet folding discards member rows.
+/// Native compositions can project physical interfaces without a second, racing capture.
+pub struct NativeInspectionSnapshot {
+    pub host: HostSnapshot,
+    pub interfaces: Vec<personal_rns::node_introspection::InterfaceInventoryEntry>,
+}
 #[cfg(unix)]
 pub use supplied_pipe::{
     NativeSuppliedPipe, SuppliedPipeConfig, SuppliedPipeOpenRequest, SuppliedPipeRequestWait,
@@ -660,6 +667,22 @@ impl NativeHost {
         result.await.map_err(|_| NativeSnapshotError::Stopped)?
     }
 
+    pub async fn inspection_async(&self) -> Result<NativeInspectionSnapshot, NativeSnapshotError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(NativeSnapshotError::Stopped);
+        }
+        let (reply, result) = oneshot::channel();
+        self.snapshots
+            .try_send(SnapshotJob {
+                reply: SnapshotReply::Inspection(reply),
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => NativeSnapshotError::Busy,
+                mpsc::error::TrySendError::Closed(_) => NativeSnapshotError::Stopped,
+            })?;
+        result.await.map_err(|_| NativeSnapshotError::Stopped)?
+    }
+
     pub fn stop(&self) {
         let _ = self.stop_result();
     }
@@ -835,15 +858,19 @@ struct SnapshotJob {
 enum SnapshotReply {
     Blocking(std::sync::mpsc::SyncSender<Result<HostSnapshot, NativeSnapshotError>>),
     Async(oneshot::Sender<Result<HostSnapshot, NativeSnapshotError>>),
+    Inspection(oneshot::Sender<Result<NativeInspectionSnapshot, NativeSnapshotError>>),
 }
 
 impl SnapshotReply {
-    fn send(self, snapshot: Result<HostSnapshot, NativeSnapshotError>) {
+    fn send(self, snapshot: Result<NativeInspectionSnapshot, NativeSnapshotError>) {
         match self {
             Self::Blocking(reply) => {
-                let _ = reply.send(snapshot);
+                let _ = reply.send(snapshot.map(|snapshot| snapshot.host));
             }
             Self::Async(reply) => {
+                let _ = reply.send(snapshot.map(|snapshot| snapshot.host));
+            }
+            Self::Inspection(reply) => {
                 let _ = reply.send(snapshot);
             }
         }
@@ -1840,7 +1867,7 @@ async fn collect_snapshot(
     revision: u64,
     started_at: Instant,
     persistence: &Mutex<PersistenceSnapshot>,
-) -> Result<HostSnapshot, NativeSnapshotError> {
+) -> Result<NativeInspectionSnapshot, NativeSnapshotError> {
     let raw_interfaces = handle.interface_inventory();
     let attached_interfaces = attachments
         .iter()
@@ -1856,8 +1883,8 @@ async fn collect_snapshot(
         .engine_inspection_snapshot()
         .await
         .ok_or(NativeSnapshotError::Unavailable)?;
-    assemble_host_snapshot(
-        raw_interfaces,
+    let host = assemble_host_snapshot(
+        raw_interfaces.clone(),
         attached_interfaces,
         engine,
         native_backend_info(),
@@ -1865,7 +1892,11 @@ async fn collect_snapshot(
         revision,
         started_at.elapsed(),
     )
-    .map_err(|_| NativeSnapshotError::Unavailable)
+    .map_err(|_| NativeSnapshotError::Unavailable)?;
+    Ok(NativeInspectionSnapshot {
+        host,
+        interfaces: raw_interfaces,
+    })
 }
 
 async fn upload_loop(
