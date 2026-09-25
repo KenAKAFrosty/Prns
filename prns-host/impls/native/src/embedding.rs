@@ -17,6 +17,9 @@ pub type NativeEventCallback = Box<dyn for<'a> FnMut(PrnsEvent<'a>) + Send>;
 pub struct AuthenticatedAnnounce<'a> {
     pub destination: prns_host::DestinationHash,
     pub announced_identity: prns_host::IdentityHash,
+    /// Interface and hop count recorded when this announce was accepted.
+    pub source_interface: prns_host::InterfaceId,
+    pub hops: u8,
     pub app_data: &'a [u8],
     pub arrived_at_millis: u64,
     pub is_path_response: bool,
