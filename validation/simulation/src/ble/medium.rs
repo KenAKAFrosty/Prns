@@ -14,7 +14,8 @@ use super::trace::{
 use super::{BleRadioId, BleRadioPower, BleScanState};
 use crate::topology::Topology;
 use crate::{
-    Reachability, SimulationDurationInTicks, SimulationTick, TopologyError, TopologyMutation,
+    MediumSchedule, Reachability, SimulationDurationInTicks, SimulationTick, TopologyError,
+    TopologyMutation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -373,6 +374,20 @@ impl VirtualBleMedium {
     }
 
     #[must_use]
+    pub fn schedule(&self) -> MediumSchedule {
+        schedule_locked(&self.lock_state())
+    }
+
+    pub fn advance_to_next_event(
+        &self,
+        not_after: SimulationTick,
+    ) -> Result<BleAdvanceReport, BleAdvanceError> {
+        let mut state = self.lock_state();
+        let target = schedule_locked(&state).target_not_after(not_after);
+        advance_locked(&mut state, target)
+    }
+
+    #[must_use]
     pub fn trace(&self) -> BleTraceSnapshot {
         self.lock_state().trace.snapshot()
     }
@@ -381,6 +396,22 @@ impl VirtualBleMedium {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+fn schedule_locked(state: &BleMediumState) -> MediumSchedule {
+    MediumSchedule {
+        now: state.now,
+        next_event_at: state
+            .radios
+            .values()
+            .filter_map(|radio| {
+                if radio.power != BleRadioPower::On {
+                    return None;
+                }
+                radio.advertising.as_ref()?.next_emission
+            })
+            .min(),
     }
 }
 

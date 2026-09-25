@@ -18,7 +18,7 @@ use super::{
     BleAdvertisingParameters, BleMediumConfig, BleRadioId, BleRoleCapabilities, BleSimulationError,
     BleTraceSnapshot, VirtualBleMedium,
 };
-use crate::{Reachability, TopologyError, TopologyMutation};
+use crate::{MediumSchedule, Reachability, TopologyError, TopologyMutation};
 use crate::{SimulationDurationInTicks, SimulationTick};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,6 +257,18 @@ impl VirtualBleLab {
     #[must_use]
     pub fn now(&self) -> SimulationTick {
         self.medium.now()
+    }
+
+    #[must_use]
+    pub fn schedule(&self) -> MediumSchedule {
+        self.medium.schedule()
+    }
+
+    pub fn advance_to_next_event(
+        &self,
+        not_after: SimulationTick,
+    ) -> Result<BleAdvanceReport, BleAdvanceError> {
+        self.medium.advance_to_next_event(not_after)
     }
 
     pub fn advance_to(

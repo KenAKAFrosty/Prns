@@ -85,6 +85,37 @@ unavailable; capability advertisement reports GATT support and the configured
 frame limit. Wi-Fi, flash, reset, sleep, and a unified time driver remain future
 work.
 
+## Event-aware stepping
+
+Both frame and BLE media expose an atomic `MediumSchedule` snapshot containing
+their current tick and earliest scheduled event, if any. `VirtualBleLab` exposes
+the same view. Queued receptions and runnable runtime tasks are not represented
+by this snapshot; an absent scheduled event does not mean the runtime is idle.
+
+`advance_to_next_event(not_after)` stops at the next scheduled tick or the
+caller's boundary, whichever comes first. It settles all events at that tick,
+preserving delivery-sequence order for frames and radio-ID order for BLE ties.
+Events due now settle without moving time. Between calls, runtime reactions may
+change the next event; advancement recomputes it under the medium lock rather
+than trusting an earlier snapshot. Existing bulk-advance methods are unchanged.
+
+Existing queue and work limits still apply. A BLE same-tick batch exceeding its
+emission budget fails before any clock, trace, schedule, or queue mutation.
+Backward advances also fail without mutation. The numeric final tick is a real
+deadline, not an idle sentinel; an exhausted periodic schedule does not wrap.
+Frame lookup uses the ordered pending-delivery map. BLE lookup currently scans
+attached radios without retaining another schedule index. This establishes
+semantics, not a many-node scheduling throughput claim.
+
+This is the medium-side prerequisite for a unified time driver: it does not yet
+advance Tokio time, choose ordering between a timer and a medium event at the
+same instant, or establish task quiescence. The caller still owns those steps
+and the total scenario work budget.
+
+```console
+cargo test --locked -p prns-simulation --lib stepping
+```
+
 ## Large-fleet design requirements
 
 Both media require an explicit topology choice: fully connected, or sparse with

@@ -95,7 +95,7 @@ async fn poll_once<F: Future>(mut future: Pin<&mut F>) -> Poll<F::Output> {
 
 fn emit_sighting(lab: &VirtualBleLab) {
     let report = lab
-        .advance_by(SimulationDurationInTicks::from_ticks(1))
+        .advance_to_next_event(SimulationTick::from_ticks(u64::MAX))
         .unwrap_or_else(|error| unreachable!("one discovery step fits: {error}"));
     assert!(report.observations_queued > 0);
 }
@@ -228,7 +228,7 @@ async fn stalled_handshake_releases_capacity_at_ten_seconds_without_medium_time_
         (
             0,
             ConnectionState::Disconnected,
-            SimulationTick::from_ticks(1),
+            SimulationTick::ZERO,
             InstantMillis(10_000)
         )
     );

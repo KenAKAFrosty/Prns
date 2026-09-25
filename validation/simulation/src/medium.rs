@@ -10,7 +10,7 @@ use crate::interface::VirtualInterface;
 use crate::time::{AdvanceError, AdvanceReport, SimulationDurationInTicks, SimulationTick};
 use crate::topology::Topology;
 use crate::trace::{DeliveryCopy, MediumEvent, ReceptionDropReason, TraceBuffer, TraceSnapshot};
-use crate::{Reachability, TopologyError, TopologyMutation};
+use crate::{MediumSchedule, Reachability, TopologyError, TopologyMutation};
 
 const MAX_CHANNEL_TAG_BYTES: usize = 128;
 
@@ -206,6 +206,22 @@ impl VirtualMedium {
         self.lock_state().pending.len()
     }
 
+    #[must_use]
+    pub fn schedule(&self) -> MediumSchedule {
+        schedule_locked(&self.lock_state())
+    }
+
+    /// Stops at the earliest scheduled tick or `not_after`, settling all deliveries at that tick.
+    /// Recomputes the next event under the advancement lock; a prior snapshot is not a reservation.
+    pub fn advance_to_next_event(
+        &self,
+        not_after: SimulationTick,
+    ) -> Result<AdvanceReport, AdvanceError> {
+        let mut state = self.lock_state();
+        let target = schedule_locked(&state).target_not_after(not_after);
+        advance_locked(&mut state, target)
+    }
+
     pub fn advance_to(&self, requested: SimulationTick) -> Result<AdvanceReport, AdvanceError> {
         advance_locked(&mut self.lock_state(), requested)
     }
@@ -325,6 +341,13 @@ impl VirtualMedium {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+fn schedule_locked(state: &MediumState) -> MediumSchedule {
+    MediumSchedule {
+        now: state.now,
+        next_event_at: state.pending.first_key_value().map(|(key, _)| key.at),
     }
 }
 

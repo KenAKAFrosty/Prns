@@ -7,6 +7,7 @@ mod fault;
 mod interface;
 mod medium;
 mod seeded;
+mod stepping;
 mod time;
 mod topology;
 mod trace;
@@ -23,6 +24,7 @@ pub use seeded::{
     RatePerMillion, RatePerMillionError, SeededFaultProfile, SeededFaultProfileError,
     SeededFaultRecipe, SimulationSeed, SEEDED_FAULT_ALGORITHM_VERSION,
 };
+pub use stepping::MediumSchedule;
 pub use time::{AdvanceError, AdvanceReport, SimulationDurationInTicks, SimulationTick};
 pub use topology::{Reachability, TopologyConfig, TopologyError, TopologyMutation};
 pub use trace::{DeliveryCopy, MediumEvent, ReceptionDropReason, TraceSnapshot};
