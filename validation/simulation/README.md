@@ -350,3 +350,11 @@ multi-medium coordination, and measured total per-node and per-peer allocation.
 The transport-sized BLE receive buffer removes one known large allocation, not
 all of those costs. Native queues, scheduler storage, and larger production-node
 scales still need evidence.
+
+A larger BLE ring probe exposed an interface-inventory lifetime race during
+same-ID peer replacement. The Tokio runtime now retains the departing attachment's
+own status registration, preserving replacement inventory and retiring only the
+old traffic counters. Its [focused lifecycle regression](../../prns-runtime/impls/tokio/README.md#interface-replacement)
+fails against the prior implementation. This repair does not yet establish the
+larger BLE ring as a passing capstone; simultaneous peer replacement and full-ring
+traffic/recovery remain follow-up work.

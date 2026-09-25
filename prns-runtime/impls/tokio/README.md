@@ -4,6 +4,25 @@ This crate is one package in the Personal RNS public Rust graph. Quick overviews
 
 All public packages use the same engine, release version, and dual MIT/Apache-2.0 license.
 
+## Interface replacement
+
+Interface inventory follows attachment instances, not just stable interface IDs.
+When a stopped interface is replaced before its queued teardown runs, retirement
+must preserve the replacement's status and count only the departing instance's
+traffic. The driver retains that instance's existing attachment epoch and shared
+status view until retirement; it does not allocate a second status object.
+
+The focused lifecycle regressions cover queued same-ID replacement, independent
+status retirement, final byte/frame accounting, and run teardown ordering:
+
+```console
+cargo test --locked --manifest-path prns-runtime/impls/tokio/Cargo.toml --lib interface_lifecycle
+```
+
+This is status-lifetime protection for ordered teardown and reattachment, not a
+claim that arbitrary concurrent same-ID attachments or stale attachment handles
+are interchangeable.
+
 ## Process model
 
 The runtime supports ordinary process creation that starts a new program, including
