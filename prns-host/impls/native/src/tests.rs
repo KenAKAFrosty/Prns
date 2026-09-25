@@ -715,9 +715,14 @@ fn snapshots_track_interface_changes_consistently() -> Result<(), String> {
         CommandWait::Completed(Ok(CommandOutcome::InterfaceAttached { interface })) => interface,
         other => return Err(format!("{other:?}")),
     };
-    let attached_snapshot = host
-        .snapshot(Some(Duration::from_secs(2)))
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let inspection = runtime
+        .block_on(host.inspection_async())
         .map_err(|error| format!("{error:?}"))?;
+    let attached_snapshot = inspection.host;
     if attached_snapshot.revision != 2
         || attached_snapshot.interfaces.len() != 1
         || attached_snapshot.interfaces[0].interface_id != interface
@@ -726,6 +731,11 @@ fn snapshots_track_interface_changes_consistently() -> Result<(), String> {
     {
         return Err("attached interface snapshot was inconsistent".to_string());
     }
+    assert_eq!(inspection.interfaces.len(), 1);
+    let raw = &inspection.interfaces[0].snapshot;
+    assert_eq!(raw.id.as_bytes(), interface.as_bytes());
+    assert_eq!(raw.rx_bytes, attached_snapshot.interfaces[0].rx_bytes);
+    assert_eq!(raw.tx_bytes, attached_snapshot.interfaces[0].tx_bytes);
     let detached = host
         .submit(HostCommand::DetachInterface { interface })
         .map_err(|error| format!("{error:?}"))?;
@@ -745,6 +755,10 @@ fn snapshots_track_interface_changes_consistently() -> Result<(), String> {
         return Err("detached interface snapshot was inconsistent".to_string());
     }
     host.stop();
+    assert!(matches!(
+        runtime.block_on(host.inspection_async()),
+        Err(NativeSnapshotError::Stopped)
+    ));
     Ok(())
 }
 
