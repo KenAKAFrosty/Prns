@@ -29,8 +29,8 @@ fn canonical_matrix_has_sixteen_unique_profile_bound_targets(
                 TargetPlatform::Esp
             ),
             (
-                "heltec-v4-r8",
-                "heltec-v4-r8",
+                "heltec-v4-r8-ab",
+                "heltec-v4-r8-ab",
                 "xtensa-esp32s3-none-elf",
                 "xtensa-esp32s3-gnu-ld",
                 TargetPlatform::Esp

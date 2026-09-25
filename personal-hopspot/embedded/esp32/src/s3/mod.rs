@@ -362,7 +362,12 @@ static REMOTE_CONTROL_COMMANDS: screen::HopspotCommandMailbox<
 static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(not(feature = "remote-control-pairing"))]
-fn firmware_on_event(_event: PrnsEvent<'_>, _state: &RemoteControlHandle) {}
+fn firmware_on_event(event: PrnsEvent<'_>, _state: &RemoteControlHandle) {
+    #[cfg(feature = "firmware-update")]
+    firmware_update_listener::observe(&event);
+    #[cfg(not(feature = "firmware-update"))]
+    let _ = event;
+}
 
 #[cfg(feature = "remote-control-pairing")]
 fn apply_remote_control_effects(effects: RemoteControlCompositionEffects) {
@@ -418,6 +423,8 @@ fn observe_restored_remote_control_grants(restored_count: u32) {
 
 #[cfg(feature = "remote-control-pairing")]
 fn firmware_on_event(event: PrnsEvent<'_>, _state: &RemoteControlHandle) {
+    #[cfg(feature = "firmware-update")]
+    firmware_update_listener::observe(&event);
     match event {
         PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(pairing)) => {
             let confirmation = pairing.confirmation();
@@ -885,4 +892,32 @@ fn request_radio_mode(mode: RadioMode) -> ! {
 }
 
 mod firmware;
+#[cfg(feature = "firmware-update")]
+mod firmware_update_listener;
+
+fn boot_slot_profile() -> &'static personal_hopspot_memory::MemoryProfile {
+    #[cfg(feature = "firmware-update")]
+    {
+        &personal_hopspot_memory::HELTEC_V4_R8_AB
+    }
+    #[cfg(not(feature = "firmware-update"))]
+    {
+        &personal_hopspot_memory::HELTEC_V4_R8
+    }
+}
+
+pub(crate) fn booted_slot_label(
+    profile: &'static personal_hopspot_memory::MemoryProfile,
+) -> &'static str {
+    #[cfg(all(target_arch = "xtensa", feature = "firmware-update"))]
+    {
+        let memory = crate::memory::EspFirmwareMemory::new(profile);
+        crate::firmware_update::booted_slot_name(&memory)
+    }
+    #[cfg(not(all(target_arch = "xtensa", feature = "firmware-update")))]
+    {
+        let _ = profile;
+        "unavailable"
+    }
+}
 pub(super) use firmware::run;

@@ -2504,6 +2504,7 @@ dependencies = [
  "portable-atomic",
  "prns-core",
  "prns-interfaces-embassy",
+ "sha2",
  "ssd1306",
  "static_cell",
  "trouble-host",

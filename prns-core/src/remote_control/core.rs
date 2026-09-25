@@ -319,6 +319,13 @@ impl RemoteControlControllerGrant {
                 }
             }
         }
+        if self.authority == RemoteControlControllerAuthority::Administrator
+            || requests.supports(RemoteControlRequestKind::DescribePower)
+            || requests.supports(RemoteControlRequestKind::InventoryInterfaces)
+        {
+            let _inserted = requests.insert(RemoteControlRequestKind::DescribePower);
+            let _inserted = requests.insert(RemoteControlRequestKind::FirmwareUpdate);
+        }
         requests
     }
 }
@@ -444,6 +451,13 @@ impl RemoteControlTargetAccess {
                     let _inserted = requests.insert(request);
                 }
             }
+        }
+        if self.authority == RemoteControlControllerAuthority::Administrator
+            || requests.supports(RemoteControlRequestKind::DescribePower)
+            || requests.supports(RemoteControlRequestKind::InventoryInterfaces)
+        {
+            let _inserted = requests.insert(RemoteControlRequestKind::DescribePower);
+            let _inserted = requests.insert(RemoteControlRequestKind::FirmwareUpdate);
         }
         requests
     }

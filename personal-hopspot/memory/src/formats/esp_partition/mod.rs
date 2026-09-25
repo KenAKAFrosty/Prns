@@ -7,10 +7,18 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EspPartitionKind {
     FactoryApplication,
+    OtaApplication { slot: u8 },
+    OtaData,
     NvsData,
     PhyData,
     Custom { partition_type: u8, subtype: u8 },
 }
+
+/// The ESP-IDF bootloader maps an application partition through the flash MMU, whose pages are
+/// 64 KiB, so every app partition has to start on a 64 KiB boundary.
+const APPLICATION_PARTITION_ALIGNMENT: u64 = 0x1_0000;
+/// `esp_ota_ops` keeps two selection entries, one flash sector each.
+const BOOT_SELECTION_PARTITION_BYTES: u64 = 0x2000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EspPartitionBinding {
@@ -97,6 +105,23 @@ impl EspPartitionTable {
                     kind: partition.kind,
                 });
             }
+            if matches!(
+                partition.kind,
+                EspPartitionKind::FactoryApplication | EspPartitionKind::OtaApplication { .. }
+            ) && !region
+                .range
+                .start()
+                .is_multiple_of(APPLICATION_PARTITION_ALIGNMENT)
+            {
+                return Err(EspPartitionTableError::MisalignedApplicationPartition {
+                    region: region.id,
+                });
+            }
+            if matches!(partition.kind, EspPartitionKind::OtaData)
+                && region.range.byte_len() != BOOT_SELECTION_PARTITION_BYTES
+            {
+                return Err(EspPartitionTableError::InvalidBootSelectionSize { region: region.id });
+            }
             if let Some(previous) = previous_region {
                 if region.range.start() < previous.range.end() {
                     return Err(EspPartitionTableError::PartitionsOutOfOrder {
@@ -158,6 +183,20 @@ fn write_csv_line(
                 partition.name
             )
         }
+        EspPartitionKind::OtaApplication { slot } => {
+            writeln!(
+                output,
+                "{},app,ota_{slot},0x{offset:x},0x{size:x},",
+                partition.name
+            )
+        }
+        EspPartitionKind::OtaData => {
+            writeln!(
+                output,
+                "{},data,ota,0x{offset:x},0x{size:x},",
+                partition.name
+            )
+        }
         EspPartitionKind::NvsData => {
             writeln!(
                 output,
@@ -186,6 +225,11 @@ fn write_csv_line(
 const fn partition_kind_matches_region(kind: EspPartitionKind, role: RegionRole) -> bool {
     match kind {
         EspPartitionKind::FactoryApplication => matches!(role, RegionRole::FirmwareImage),
+        EspPartitionKind::OtaApplication { .. } => matches!(
+            role,
+            RegionRole::FirmwareImage | RegionRole::FirmwareUpdateSlot
+        ),
+        EspPartitionKind::OtaData => matches!(role, RegionRole::BootSelection),
         EspPartitionKind::NvsData => matches!(role, RegionRole::PlatformData),
         EspPartitionKind::PhyData => matches!(role, RegionRole::PhyInitialization),
         EspPartitionKind::Custom { .. } => matches!(
@@ -243,6 +287,12 @@ pub enum EspPartitionTableError {
     PartitionKindMismatch {
         region: MemoryRegionId,
         kind: EspPartitionKind,
+    },
+    MisalignedApplicationPartition {
+        region: MemoryRegionId,
+    },
+    InvalidBootSelectionSize {
+        region: MemoryRegionId,
     },
     PartitionsOutOfOrder {
         previous: MemoryRegionId,

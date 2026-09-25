@@ -18,6 +18,11 @@ pub struct RemoteControlTargetConnection {
 
 impl RemoteControlTargetConnection {
     #[must_use]
+    pub fn from_resolved(link_id: LinkId, resolved: ResolvedRemoteControlTarget) -> Self {
+        Self::established(link_id, resolved)
+    }
+
+    #[must_use]
     fn established(link_id: LinkId, resolved: ResolvedRemoteControlTarget) -> Self {
         Self {
             target: resolved.target(),
@@ -94,6 +99,18 @@ pub trait RemoteControlTargetConnectionControl: RemoteControlTargetConnectionTra
                 .resolve_remote_control_target(target)
                 .await
                 .map_err(ConnectRemoteControlTargetError::Resolve)?;
+            self.establish_remote_control_target_resolved(resolved)
+                .await
+        }
+    }
+
+    fn establish_remote_control_target_resolved(
+        &self,
+        resolved: ResolvedRemoteControlTarget,
+    ) -> impl core::future::Future<
+        Output = Result<RemoteControlTargetConnection, ConnectRemoteControlTargetError>,
+    > + Send {
+        async move {
             let destination = resolved.endpoint().destination_hash();
             let controller = resolved.controller().identity_hash();
             let link_id = self
@@ -104,7 +121,7 @@ pub trait RemoteControlTargetConnectionControl: RemoteControlTargetConnectionTra
                 self.close_remote_control_link(link_id);
                 return Err(ConnectRemoteControlTargetError::Identify(error));
             }
-            Ok(RemoteControlTargetConnection::established(
+            Ok(RemoteControlTargetConnection::from_resolved(
                 link_id, resolved,
             ))
         }
@@ -157,7 +174,7 @@ mod tests {
         .unwrap();
         let target = access.target().identity_hash();
         let link_id = LinkId::new([0x41; 16]);
-        let connection = RemoteControlTargetConnection::established(
+        let connection = RemoteControlTargetConnection::from_resolved(
             link_id,
             ResolvedRemoteControlTarget::from((&controller, &access)),
         );

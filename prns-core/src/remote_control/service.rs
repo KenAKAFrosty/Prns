@@ -144,6 +144,7 @@ pub struct RemoteControlConfiguration<'a> {
     initial_controller_grants: RemoteControlInitialControllerGrants<'a>,
     self_announcement: RemoteControlSelfAnnouncement,
     capabilities: RemoteControlCapabilities,
+    register_firmware_update_destination: bool,
 }
 
 impl<'a> RemoteControlService<'a> {
@@ -158,6 +159,7 @@ impl<'a> RemoteControlService<'a> {
             initial_controller_grants,
             self_announcement,
             capabilities: RemoteControlCapabilities::describe_only(),
+            register_firmware_update_destination: false,
         })
     }
 
@@ -173,7 +175,18 @@ impl<'a> RemoteControlService<'a> {
             initial_controller_grants,
             self_announcement,
             capabilities,
+            register_firmware_update_destination: false,
         })
+    }
+
+    /// Register `reticulum.remote.ota` for as long as this node is running. The A/B image
+    /// asks for this. Other boards leave the destination unregistered.
+    #[must_use]
+    pub fn with_firmware_update_destination(mut self) -> Self {
+        if let Self::Available(configuration) = &mut self {
+            configuration.register_firmware_update_destination = true;
+        }
+        self
     }
 
     #[must_use]
@@ -241,11 +254,13 @@ impl<'a> RemoteControlConfiguration<'a> {
         RemoteControlNodeIdentitySecrets,
         RemoteControlInitialControllerGrants<'a>,
         RemoteControlSelfAnnouncement,
+        bool,
     ) {
         (
             self.identity_secrets,
             self.initial_controller_grants,
             self.self_announcement,
+            self.register_firmware_update_destination,
         )
     }
 }
@@ -390,7 +405,7 @@ mod tests {
             RemoteControlSelfAnnouncement::Unavailable,
         );
 
-        let (identity_secrets, initial_controller_grants, self_announcement) =
+        let (identity_secrets, initial_controller_grants, self_announcement, firmware_update) =
             service.into_configuration().unwrap().into_parts();
 
         assert_eq!(identity_secrets.identities(), identities);
@@ -402,6 +417,7 @@ mod tests {
             self_announcement,
             RemoteControlSelfAnnouncement::Unavailable
         );
+        assert!(!firmware_update);
     }
 
     #[test]

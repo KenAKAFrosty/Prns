@@ -196,11 +196,64 @@ fn sparse_plan(
             bytes: config,
         });
     }
+    // A wired flash writes the application into ota_0. The bootloader follows otadata, which a
+    // previous install may still have aimed at ota_1. Replace that selection with one that names
+    // ota_0. Single-slot tables have no otadata row, so they are left alone.
+    if let Some(offset) = plan
+        .iter()
+        .find(|part| part.offset == PARTITION_TABLE_OFFSET)
+        .and_then(|part| otadata_offset(&part.bytes))
+    {
+        plan.push(SparsePart {
+            offset,
+            bytes: ota_0_selection(),
+            erase_before_write: true,
+        });
+    }
     plan.sort_by_key(|part| part.offset);
     if plan.is_empty() {
         return Err(AppError::trust_manifest("ESP sparse flash plan is empty"));
     }
     Ok(plan)
+}
+
+const PARTITION_TABLE_OFFSET: u32 = 0x8000;
+const PARTITION_ENTRY_LEN: usize = 32;
+const PARTITION_MAGIC: [u8; 2] = [0xAA, 0x50];
+const PARTITION_TYPE_DATA: u8 = 0x01;
+const PARTITION_SUBTYPE_OTA: u8 = 0x00;
+const OTA_DATA_LEN: u32 = 0x2000;
+/// Sequence 1, erased label, state Undefined. `(seq - 1) % 2` is ota_0. The CRC is the one
+/// `esp-bootloader-esp-idf` checks over the sequence alone. Undefined leaves the running image
+/// to stamp the slot valid after it boots.
+const OTA_0_SELECT_ENTRY: [u8; 32] = [
+    1, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 154, 152, 67, 71,
+];
+
+fn otadata_offset(partition_table: &[u8]) -> Option<u32> {
+    let mut cursor = 0;
+    while cursor + PARTITION_ENTRY_LEN <= partition_table.len() {
+        let entry = &partition_table[cursor..cursor + PARTITION_ENTRY_LEN];
+        if entry[0..2] != PARTITION_MAGIC {
+            break;
+        }
+        let kind = entry[2];
+        let subtype = entry[3];
+        let offset = u32::from_le_bytes([entry[4], entry[5], entry[6], entry[7]]);
+        let len = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]);
+        if kind == PARTITION_TYPE_DATA && subtype == PARTITION_SUBTYPE_OTA && len == OTA_DATA_LEN {
+            return Some(offset);
+        }
+        cursor += PARTITION_ENTRY_LEN;
+    }
+    None
+}
+
+fn ota_0_selection() -> Vec<u8> {
+    let mut bytes = vec![0xFF; OTA_DATA_LEN as usize];
+    bytes[..OTA_0_SELECT_ENTRY.len()].copy_from_slice(&OTA_0_SELECT_ENTRY);
+    bytes
 }
 
 fn run_flash_session(
@@ -538,6 +591,31 @@ mod port_tests {
     use std::rc::Rc;
 
     use super::*;
+
+    #[test]
+    fn otadata_offset_reads_the_data_ota_row() {
+        let mut table = vec![0xFFu8; 64];
+        table[0] = 0xAA;
+        table[1] = 0x50;
+        table[2] = 0x00;
+        table[3] = 0x10;
+        table[32] = 0xAA;
+        table[33] = 0x50;
+        table[34] = PARTITION_TYPE_DATA;
+        table[35] = PARTITION_SUBTYPE_OTA;
+        table[36..40].copy_from_slice(&0x00E7_0000u32.to_le_bytes());
+        table[40..44].copy_from_slice(&OTA_DATA_LEN.to_le_bytes());
+        assert_eq!(otadata_offset(&table), Some(0x00E7_0000));
+        assert_eq!(otadata_offset(&[0xE9, 0, 0, 0]), None);
+    }
+
+    #[test]
+    fn ota_0_selection_names_sequence_one_and_erases_the_other_copy() {
+        let bytes = ota_0_selection();
+        assert_eq!(bytes.len(), OTA_DATA_LEN as usize);
+        assert_eq!(&bytes[..32], &OTA_0_SELECT_ENTRY);
+        assert!(bytes[0x1000..].iter().all(|byte| *byte == 0xFF));
+    }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum InjectFailure {

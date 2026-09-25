@@ -1050,7 +1050,7 @@ mod tests {
                 (
                     "heltec-v4-r8",
                     Some(16_777_216),
-                    Some(("partitions-hopspot-16mb.csv", "16mb"))
+                    Some(("partitions-hopspot-16mb-ab.csv", "16mb"))
                 ),
                 (
                     "heltec-e290",
@@ -1124,7 +1124,7 @@ mod tests {
             bindings,
             [
                 ("heltec-v4", "heltec-v4", "xtensa-esp32s3-none-elf"),
-                ("heltec-v4-r8", "heltec-v4-r8", "xtensa-esp32s3-none-elf"),
+                ("heltec-v4-r8", "heltec-v4-r8-ab", "xtensa-esp32s3-none-elf"),
                 ("heltec-e290", "heltec-e290", "xtensa-esp32s3-none-elf"),
                 (
                     "heltec-wireless-stick-lite-v3",

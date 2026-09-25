@@ -431,6 +431,23 @@ impl<C: LinkTable> Links<C> {
         self.table.phases().get(index)
     }
 
+    /// Destination a link was opened toward, including a handshake that has not activated yet.
+    pub fn destination_of(&self, link_id: &LinkId) -> Option<DestinationHash> {
+        match self.phase_for(link_id)? {
+            LinkPhase::Pending { destination, .. } | LinkPhase::Handshake { destination, .. } => {
+                Some(*destination)
+            }
+            LinkPhase::Active {
+                role: LinkRole::Responder { destination, .. },
+                ..
+            } => Some(*destination),
+            LinkPhase::Active {
+                role: LinkRole::Initiator { .. },
+                ..
+            } => None,
+        }
+    }
+
     /// [`phase_for`](Self::phase_for) narrowed to an active link's transport view, keeping "absent" and "present but inactive" apart. Borrows only the `links` column, so a caller can hold the view's `key` while mutating a sibling field like `outgoing_resources`.
     pub(crate) fn active_view(&self, link_id: &LinkId) -> ActiveLinkLookup<'_> {
         match self.phase_for(link_id) {

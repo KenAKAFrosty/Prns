@@ -13,4 +13,5 @@ esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }
 
 [features]
-default = []
+default = ["firmware-update"]
+firmware-update = ["personal-hopspot-esp32/firmware-update"]

@@ -2,9 +2,7 @@ use super::*;
 use personal_hopspot_memory::HELTEC_WIRELESS_STICK_LITE_V3;
 use personal_rns::interfaces::lora::AirtimePolicy;
 use personal_rns::lora::{LoRaInterfaceInput, LoRaSpectrumStatus};
-use personal_rns::remote_control::{
-    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
-};
+use personal_rns::remote_control::{RemoteControlSelfAnnouncement, RemoteControlService};
 use personal_rns::runtime::{PrnsNodeHandle, PrnsNodeRecipe, SharedNorFlash};
 
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x27Personal Hopspot Wireless Stick Lite V3\xc0";
@@ -99,11 +97,12 @@ pub async fn run(spawner: Spawner) {
         .destination_hashes()
         .expect("the hopspot destination names are valid")
         .node_page;
+    let factory_grant = remote_control_bootstrap.factory_grant;
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
-        remote_control_bootstrap.into_parts();
+        remote_control_bootstrap.bootstrap.into_parts();
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
-        RemoteControlInitialControllerGrants::Nobody,
+        crate::identity::factory_or_fallback_grants(factory_grant),
         RemoteControlSelfAnnouncement::Destination(node_page_destination),
         remote_control::capabilities(),
     );

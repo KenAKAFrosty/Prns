@@ -25,7 +25,8 @@ use crate::persistence::{
     TIMEBASE_RECORD_INTERVAL_MILLIS,
 };
 use crate::remote_control::{
-    DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
+    RemoteControlControllerGrantTable, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
+    DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
 };
 use crate::routing::announce::emit::MAX_ANNOUNCE_APP_DATA_LEN;
 use crate::routing::AnnounceIdRing;
@@ -1940,8 +1941,23 @@ fn apply_record<S: StorageLayout>(
                     .saturating_add(restored_count as u32);
                 return;
             };
+            let mut preexisting = HeaplessVec::<
+                crate::remote_control::RemoteControlControllerGrant,
+                DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
+            >::new();
+            if let Some(table) = remote_control.controller_grants() {
+                for grant in table.grants_in_identity_hash_order() {
+                    let _ = preexisting.push(*grant);
+                }
+            }
             match remote_control.restore_controller_grants(restored) {
                 Ok(outcome) => {
+                    for grant in preexisting {
+                        let _ = remote_control.set_controller_grant(grant);
+                    }
+                    if let Some(table) = remote_control.controller_grants() {
+                        crate::runtime::note_firmware_update_grants(table);
+                    }
                     *controller_grants_snapshot = Some(snapshot);
                     report.remote_control_controller_grants_restored_count =
                         outcome.restored_count as u32;

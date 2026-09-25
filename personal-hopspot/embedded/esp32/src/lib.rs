@@ -122,6 +122,10 @@ pub mod bluetooth_auto;
     not(feature = "wifi-auto")
 ))]
 pub mod c6;
+#[cfg(all(target_arch = "xtensa", feature = "firmware-update"))]
+mod firmware_update;
+#[cfg(any(test, all(target_arch = "xtensa", feature = "firmware-update")))]
+mod firmware_update_plan;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod flash;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]

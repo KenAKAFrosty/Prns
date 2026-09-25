@@ -278,6 +278,7 @@ pub enum IngestPacketOutcome<'p> {
     LinkActivated {
         link_id: LinkId,
         rtt_millis: u64,
+        destination: crate::wire::DestinationHash,
     },
     OwesKeepaliveEcho {
         link_id: LinkId,

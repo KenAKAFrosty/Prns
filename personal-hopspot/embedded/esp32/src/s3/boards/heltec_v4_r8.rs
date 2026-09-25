@@ -143,8 +143,14 @@ impl Esp32S3Board for HeltecV4R8Board {
     const NODE_ANNOUNCE_APP_DATA: &'static [u8] = NODE_ANNOUNCE_APP_DATA;
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTECV4_R8";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
+    #[cfg(not(feature = "firmware-update"))]
     const MEMORY_PROFILE: &'static personal_hopspot_memory::MemoryProfile =
         &personal_hopspot_memory::HELTEC_V4_R8;
+    // Only the firmware-update build takes the dual-slot carve. The shipping build keeps the
+    // single-slot profile byte for byte, which is what its flashed table says.
+    #[cfg(feature = "firmware-update")]
+    const MEMORY_PROFILE: &'static personal_hopspot_memory::MemoryProfile =
+        &personal_hopspot_memory::HELTEC_V4_R8_AB;
     type Display = ImmediateBoardDisplay<HeltecDisplay>;
     type Battery = HeltecR8Battery;
     type Gnss = NoGnss;

@@ -152,6 +152,7 @@ fn controller_pairing_initiation_establishes_the_observed_endpoint_before_beginn
                         settlement: Settlement::EstablishLink(Ok(LinkEstablished {
                             link_id: CONTROLLER_PAIRING_LINK_ID,
                             rtt_millis: 17,
+                            destination: crate::wire::DestinationHash::new([0; 16]),
                         })),
                     },
                     |_| {},
@@ -383,6 +384,7 @@ fn connection_resolves_links_identifies_and_refuses_unpermitted_egress() {
                     settlement: Settlement::EstablishLink(Ok(LinkEstablished {
                         link_id,
                         rtt_millis: 17,
+                        destination: crate::wire::DestinationHash::new([0; 16]),
                     })),
                 },
                 |_| {},
@@ -453,6 +455,7 @@ fn identification_failure_queues_link_cleanup_and_preserves_the_failure() {
                     settlement: Settlement::EstablishLink(Ok(LinkEstablished {
                         link_id,
                         rtt_millis: 18,
+                        destination: crate::wire::DestinationHash::new([0; 16]),
                     })),
                 },
                 |_| {},

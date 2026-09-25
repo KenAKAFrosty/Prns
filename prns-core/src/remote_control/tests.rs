@@ -432,6 +432,7 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlRequestKind::InspectWifiTransaction,
             RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
             RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
+            RemoteControlRequestKind::FirmwareUpdate,
         ],
     );
     assert_eq!(

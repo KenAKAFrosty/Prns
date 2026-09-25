@@ -601,6 +601,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::LinkActivated {
             link_id,
             rtt_millis: rtt.millis(),
+            destination,
         }
     }
 

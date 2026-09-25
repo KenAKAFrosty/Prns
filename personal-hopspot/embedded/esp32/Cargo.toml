@@ -53,6 +53,9 @@ jtag-logging = ["esp-println/jtag-serial"]
 silent-logging = ["esp-println/no-op"]
 # Developer-only interoperability fixture. Shipping board packages do not enable it.
 wifi-security-probe = []
+# Signed A/B firmware installs. Off unless a board package enables it: that build selects the
+# dual-slot memory profile and must be flashed with partitions-hopspot-16mb-ab.csv first.
+firmware-update = ["dep:sha2"]
 
 [dependencies]
 cfg-if = "1.0"
@@ -92,6 +95,9 @@ esp-phy = "0.2.0"
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
 esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "log-04"] }
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
+# Minisign prehashes with BLAKE2b-512. The install engine hashes the image the same way,
+# once as the bytes arrive and again from what NOR holds.
+sha2 = { version = "0.11", default-features = false, optional = true }
 ssd1306 = "0.9"
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }
 esp-radio-rtos-driver = { version = "0.3.0", default-features = false }
