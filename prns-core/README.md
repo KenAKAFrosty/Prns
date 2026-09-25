@@ -4,6 +4,14 @@ This crate is one package in the Personal RNS public Rust graph. Quick overviews
 
 All public packages use the same engine, release version, and dual MIT/Apache-2.0 license.
 
+## BLE receive boundary
+
+`interfaces::bluetooth_auto::receive_frame` validates a backend's reported length
+before exposing a borrowed whole frame. Its typed error distinguishes source
+failures from invalid lengths. Tokio peers, the shared duplex sender, and Embassy
+member reception use this same boundary. It adds no buffer or allocation and
+preserves the underlying source's cancellation semantics; empty frames stay empty.
+
 ## BLE duplex transfers
 
 `interfaces::bluetooth_auto::send_frame_duplex` owns executor-neutral progress for

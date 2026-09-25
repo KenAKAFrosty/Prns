@@ -166,6 +166,16 @@ jobs:
       - name: clippy — prns-interfaces-embassy (all features)
         run: cargo clippy --all-features --all-targets --locked -- -D warnings
         working-directory: prns-interfaces/impls/embassy
+      - name: test — Embassy BLE components without hardware
+        run: python3 validation/run.py run --suite bluetooth-auto-embassy --expected-sha "$GITHUB_SHA"
+      - name: Upload Embassy BLE host evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embassy-ble-host-evidence
+          retention-days: 7
+          path: validation-artifacts/results/bluetooth-auto-embassy
+          if-no-files-found: ignore
       - name: doc — prns-interfaces-embassy (all features)
         run: cargo doc --locked --no-deps --document-private-items --all-features --quiet
         env:

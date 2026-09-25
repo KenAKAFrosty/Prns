@@ -146,6 +146,32 @@ def plan_for_paths(paths: set[str]) -> PrePushPlan:
             )
         )
 
+    embassy_ble_surface = bool(
+        paths
+        & {
+            "Cargo.toml",
+            "Cargo.lock",
+            ".github/workflows/ci.yml",
+            "validation/manifest.toml",
+            "validation/hygiene/pre-push-ci-parity.py",
+        }
+    ) or _has_prefix(
+        paths,
+        (
+            "prns-core/",
+            "prns-interfaces/impls/embassy/",
+            "prns-runtime/core/",
+            "prns-runtime/impls/embassy/",
+        ),
+    )
+    if embassy_ble_surface:
+        gates.append(
+            Gate(
+                "Embassy BLE host tests",
+                validation_command(("bluetooth-auto-embassy",)),
+            )
+        )
+
     if embedded.required(Lane.RESOURCES):
         gates.append(
             Gate(

@@ -13,3 +13,7 @@ sends fill bounded queues in both directions. The adapter retains one additional
 after copying the whole frame; completion and TX accounting follow the send result.
 The wire format is unchanged. This integration covers Tokio backends; Embassy's
 separate fanout/pump arrangement is not changed by this slice.
+
+Normal and in-flight-send reception both use the core's checked `receive_frame`
+boundary. Invalid reported lengths close the peer without forwarding or counting
+a partial frame; the same boundary now protects Embassy member reception.

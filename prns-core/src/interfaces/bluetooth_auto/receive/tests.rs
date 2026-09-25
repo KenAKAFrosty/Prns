@@ -1,5 +1,94 @@
 use super::*;
 use crate::interfaces::bluetooth_auto::{BLE_HW_MTU, BLE_WIRE_FRAME_LEN};
+use embassy_futures::block_on;
+
+#[derive(Debug, PartialEq, Eq)]
+struct SourceFailure(u8);
+
+struct ReportingSource(Result<usize, SourceFailure>);
+
+impl BleSource for ReportingSource {
+    type Error = SourceFailure;
+
+    async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, Self::Error> {
+        out.fill(0x17);
+        match &self.0 {
+            Ok(length) => Ok(*length),
+            Err(SourceFailure(code)) => Err(SourceFailure(*code)),
+        }
+    }
+}
+
+#[test]
+fn checked_receive_exposes_only_whole_valid_frames_and_preserves_source_errors() {
+    const CANARY: u8 = 0xA5;
+    for length in (0..=BLE_WIRE_FRAME_LEN + 1).chain([usize::MAX]) {
+        for capacity in [0, 1, BLE_HW_MTU, BLE_WIRE_FRAME_LEN - 1, BLE_WIRE_FRAME_LEN] {
+            let mut buffer = [CANARY; BLE_WIRE_FRAME_LEN + 1];
+            let mut expected_buffer = buffer;
+            expected_buffer[..capacity].fill(0x17);
+            let mut source = ReportingSource(Ok(length));
+            let result =
+                block_on(receive_frame(&mut source, &mut buffer[..capacity])).map(<[u8]>::to_vec);
+            let expected = if length <= capacity {
+                Ok(vec![0x17; length])
+            } else {
+                Err(BleFrameReceiveError::Length(
+                    BleReceiveError::BufferTooSmall { length, capacity },
+                ))
+            };
+            assert_eq!((result, buffer), (expected, expected_buffer));
+        }
+    }
+    let mut source = ReportingSource(Err(SourceFailure(9)));
+    let mut buffer = [CANARY; 3];
+    assert_eq!(
+        block_on(receive_frame(&mut source, &mut buffer)),
+        Err(BleFrameReceiveError::Source(SourceFailure(9)))
+    );
+    assert_eq!(buffer, [0x17; 3]);
+}
+
+struct ResumableSource {
+    consumed_prefix: bool,
+}
+
+impl BleSource for ResumableSource {
+    type Error = core::convert::Infallible;
+
+    async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, Self::Error> {
+        if !self.consumed_prefix {
+            self.consumed_prefix = true;
+            core::future::pending::<()>().await;
+        }
+        out[..3].copy_from_slice(b"abc");
+        Ok(3)
+    }
+}
+
+#[test]
+fn checked_receive_cancellation_preserves_the_sources_partial_progress() {
+    use core::future::Future;
+    use core::task::{Context, Waker};
+
+    let mut source = ResumableSource {
+        consumed_prefix: false,
+    };
+    let mut buffer = [0xA5; 4];
+    {
+        let mut receive = core::pin::pin!(receive_frame(&mut source, &mut buffer));
+        assert!(receive
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending());
+    }
+    assert!(source.consumed_prefix);
+    assert_eq!(
+        block_on(receive_frame(&mut source, &mut buffer)),
+        Ok(b"abc".as_slice())
+    );
+    assert_eq!(buffer, [b'a', b'b', b'c', 0xA5]);
+}
 
 #[test]
 fn all_frame_lengths_through_authentication_headroom_are_copied_whole_or_refused() {

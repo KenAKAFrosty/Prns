@@ -145,9 +145,9 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
         let mut pending_outbound = [0u8; contract::BLE_WIRE_FRAME_LEN];
         loop {
             tokio::select! {
-                received = self.source.recv_frame(&mut buf) => {
-                    let len = match received {
-                        Ok(len) => len,
+                received = contract::receive_frame(&mut self.source, &mut buf) => {
+                    let frame = match received {
+                        Ok(frame) => frame,
                         Err(error) => {
                             crate::diagnostic_log::warn!(
                                 "bluetooth: peer {:?} receive closed: {error:?}",
@@ -156,18 +156,11 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                             break;
                         }
                     };
-                    if len == 0 {
+                    if frame.is_empty() {
                         continue;
                     }
-                    if len > buf.len() {
-                        crate::diagnostic_log::warn!(
-                            "bluetooth: peer {:?} reported invalid receive length {len}",
-                            self.identity
-                        );
-                        break;
-                    }
-                    self.status.add_rx(len as u64);
-                    seam.next_inbound(&buf[..len]).await;
+                    self.status.add_rx(frame.len() as u64);
+                    seam.next_inbound(frame).await;
                 }
                 outbound = seam.next_outbound() => {
                     if outbound.is_empty() {

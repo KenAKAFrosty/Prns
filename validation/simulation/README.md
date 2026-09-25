@@ -372,6 +372,13 @@ Discovery has a 60-second simulated deadline; OS entropy still prevents exact re
 Alternating Apple/BlueZ protocol endpoints exercise shared handshake decisions,
 not native OS Bluetooth APIs, controllers, L2CAP, or Embassy firmware.
 
+The separate `bluetooth-auto-embassy` PR suite runs actual Embassy BLE component
+tests on the host, including checked receive fan-in and Trouble's bounded pools
+and queues. Tokio, Embassy, and the duplex core share the same checked receive
+boundary; a faulty backend cannot dispatch an out-of-buffer reported length.
+This does not yet run an Embassy node on the manual fleet clock or apply the
+duplex sender to Embassy's shared-lane fanout.
+
 ```console
 cargo test --locked -p prns-core interfaces::bluetooth_auto::duplex
 cargo test --locked -p prns-simulation --test ble_peer_frames

@@ -50,6 +50,44 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("JVM binding compile", names)
         self.assertIn("Swift host contract smoke", names)
 
+    def test_embassy_ble_host_tests_cover_shared_and_embedded_dependencies(self) -> None:
+        for path in (
+            "Cargo.toml",
+            "Cargo.lock",
+            "prns-core/src/interfaces/bluetooth_auto/receive/mod.rs",
+            "prns-interfaces/impls/embassy/src/bluetooth_auto/runtime.rs",
+            "prns-interfaces/impls/embassy/Cargo.lock",
+            "prns-runtime/core/src/runtime/mod.rs",
+            "prns-runtime/impls/embassy/src/lib.rs",
+            "validation/manifest.toml",
+            "validation/hygiene/pre-push-ci-parity.py",
+            ".github/workflows/ci.yml",
+        ):
+            with self.subTest(path=path):
+                gates = parity.plan_for_paths({path}).gates
+                selected = tuple(
+                    gate for gate in gates if gate.name == "Embassy BLE host tests"
+                )
+                self.assertEqual(
+                    selected,
+                    (
+                        parity.Gate(
+                            "Embassy BLE host tests",
+                            (
+                                "python3",
+                                "validation/run.py",
+                                "run",
+                                "--suite",
+                                "bluetooth-auto-embassy",
+                            ),
+                        ),
+                    ),
+                )
+        self.assertNotIn(
+            "Embassy BLE host tests",
+            self.gate_names({"prns-interfaces/impls/tokio/src/bluetooth_auto/runtime.rs"}),
+        )
+
     def test_swift_binding_change_runs_contract_smoke(self) -> None:
         gates = parity.plan_for_paths(
             {"prns-host/bindings/swift/Sources/PersonalRns/Command.swift"}

@@ -600,6 +600,17 @@ inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", 
 artifacts = "validation-artifacts/results/virtual-device-simulation"
 
 [[suite]]
+id = "bluetooth-auto-embassy"
+domain = "native"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-interfaces/impls/embassy/Cargo.toml", "--features", "bluetooth-auto-trouble", "--lib", "bluetooth_auto"]
+inputs = ["prns-interfaces/impls/embassy", "prns-core/src/interfaces/bluetooth_auto", "prns-runtime/core", "prns-runtime/impls/embassy"]
+artifacts = "validation-artifacts/results/bluetooth-auto-embassy"
+
+[[suite]]
 id = "release-contracts"
 domain = "release"
 tiers = ["pr", "release", "scheduled"]

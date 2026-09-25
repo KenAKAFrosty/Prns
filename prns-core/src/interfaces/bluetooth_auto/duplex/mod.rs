@@ -2,7 +2,7 @@ use core::future::{poll_fn, Future};
 use core::pin::{pin, Pin};
 use core::task::Poll;
 
-use super::{BleSink, BleSource};
+use super::{receive_frame, BleFrameReceiveError, BleReceiveError, BleSink, BleSource};
 
 /// Receives whole BLE frames across an adapter's inbound boundary. Implementations must retain
 /// the frame until forwarding completes; their pending future applies receive-side backpressure.
@@ -52,19 +52,22 @@ pub async fn send_frame_duplex<Source: BleSource, Sink: BleSink>(
     inbound: &mut [u8],
     mut forwarder: impl BleFrameForwarder,
 ) -> BleDuplexOutcome<Source::Error, Sink::Error> {
-    let capacity = inbound.len();
     let mut send = pin!(sink.send_frame(outbound));
     loop {
-        let length = match prefer_send(send.as_mut(), source.recv_frame(inbound)).await {
+        let frame = match prefer_send(send.as_mut(), receive_frame(source, inbound)).await {
             Progress::Sent(result) => return BleDuplexOutcome::Finished(result),
-            Progress::Received(Ok(0)) => continue,
-            Progress::Received(Ok(length)) if length <= capacity => length,
-            Progress::Received(Ok(length)) => {
+            Progress::Received(Ok([])) => continue,
+            Progress::Received(Ok(frame)) => frame,
+            Progress::Received(Err(BleFrameReceiveError::Length(
+                BleReceiveError::BufferTooSmall { length, .. },
+            ))) => {
                 return BleDuplexOutcome::InvalidReceiveLength(length);
             }
-            Progress::Received(Err(error)) => return BleDuplexOutcome::ReceiveFailed(error),
+            Progress::Received(Err(BleFrameReceiveError::Source(error))) => {
+                return BleDuplexOutcome::ReceiveFailed(error)
+            }
         };
-        let mut forwarding = pin!(forwarder.forward(&inbound[..length]));
+        let mut forwarding = pin!(forwarder.forward(frame));
         match prefer_send(send.as_mut(), forwarding.as_mut()).await {
             Progress::Sent(result) => {
                 forwarding.await;

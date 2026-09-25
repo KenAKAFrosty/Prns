@@ -695,7 +695,10 @@ enum SupervisorStep<L: BleLink> {
     DiscoveryGroups(u32),
     Handshake(HandshakeStep<L>),
     Backend(BleEvent<L>),
-    Inbound(usize, Result<usize, <L::Source as BleSource>::Error>),
+    Inbound(
+        usize,
+        Result<usize, contract::BleFrameReceiveError<<L::Source as BleSource>::Error>>,
+    ),
     Outbound,
 }
 
@@ -1299,9 +1302,11 @@ async fn advance_handshake<L: BleLink>(
 async fn recv_or_pending<L: BleLink>(
     member: &mut Option<Active<L>>,
     buf: &mut [u8; contract::BLE_HW_MTU],
-) -> Result<usize, <L::Source as BleSource>::Error> {
+) -> Result<usize, contract::BleFrameReceiveError<<L::Source as BleSource>::Error>> {
     match member {
-        Some(active) => active.source.recv_frame(buf).await,
+        Some(active) => contract::receive_frame(&mut active.source, buf)
+            .await
+            .map(<[u8]>::len),
         None => ::core::future::pending().await,
     }
 }
@@ -1313,7 +1318,10 @@ async fn recv_or_pending<L: BleLink>(
 async fn recv_any<L: BleLink, const MEMBERS: usize>(
     members: &mut [Option<Active<L>>; MEMBERS],
     bufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],
-) -> (usize, Result<usize, <L::Source as BleSource>::Error>) {
+) -> (
+    usize,
+    Result<usize, contract::BleFrameReceiveError<<L::Source as BleSource>::Error>>,
+) {
     let mut pairs = members.iter_mut().zip(bufs.iter_mut());
     let futures: [_; MEMBERS] = ::core::array::from_fn(|_| {
         let (member, buf) = pairs.next().expect("one pair per member slot");
@@ -1767,7 +1775,7 @@ mod tests {
         });
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq, Eq)]
     struct MockError;
 
     #[derive(Clone, Copy)]
@@ -1776,7 +1784,11 @@ mod tests {
         Blocked,
     }
 
-    struct MockSource;
+    enum MockSource {
+        Pending,
+        ReportedLength(usize),
+        Closed,
+    }
 
     struct MockSink {
         mode: MockSinkMode,
@@ -1838,7 +1850,7 @@ mod tests {
 
         fn into_data(self) -> (MockSource, MockSink) {
             (
-                MockSource,
+                MockSource::Pending,
                 MockSink {
                     mode: MockSinkMode::Ready,
                 },
@@ -1849,8 +1861,15 @@ mod tests {
     impl BleSource for MockSource {
         type Error = MockError;
 
-        async fn recv_frame(&mut self, _out: &mut [u8]) -> Result<usize, MockError> {
-            ::core::future::pending().await
+        async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, MockError> {
+            match self {
+                Self::Pending => ::core::future::pending().await,
+                Self::ReportedLength(length) => {
+                    out.fill(0xA5);
+                    Ok(*length)
+                }
+                Self::Closed => Err(MockError),
+            }
         }
     }
 
@@ -1890,9 +1909,61 @@ mod tests {
             id: InterfaceId::new([id; 8]),
             slot: usize::from(id),
             address: BleAddress::new([id; 6]),
-            source: MockSource,
+            source: MockSource::Pending,
             sink: MockSink { mode },
         }
+    }
+
+    #[test]
+    fn receive_fan_in_rejects_invalid_lengths_before_dispatching_to_the_manifold() {
+        for length in [
+            0,
+            1,
+            contract::BLE_HW_MTU,
+            contract::BLE_HW_MTU + 1,
+            usize::MAX,
+        ] {
+            let mut member = active(1, MockSinkMode::Ready);
+            member.source = MockSource::ReportedLength(length);
+            let mut members = [Some(active(0, MockSinkMode::Ready)), Some(member), None];
+            let mut buffers = [[0; contract::BLE_HW_MTU]; 3];
+            let (slot, received) = block_on(recv_any(&mut members, &mut buffers));
+            let expected = if length <= contract::BLE_HW_MTU {
+                Ok(length)
+            } else {
+                Err(contract::BleFrameReceiveError::Length(
+                    contract::BleReceiveError::BufferTooSmall {
+                        length,
+                        capacity: contract::BLE_HW_MTU,
+                    },
+                ))
+            };
+            assert_eq!((slot, received), (1, expected));
+            assert_eq!(
+                buffers,
+                [
+                    [0; contract::BLE_HW_MTU],
+                    [0xA5; contract::BLE_HW_MTU],
+                    [0; contract::BLE_HW_MTU]
+                ]
+            );
+        }
+        let mut member = active(0, MockSinkMode::Ready);
+        member.source = MockSource::Closed;
+        assert_eq!(
+            block_on(recv_or_pending(
+                &mut Some(member),
+                &mut [0; contract::BLE_HW_MTU]
+            )),
+            Err(contract::BleFrameReceiveError::Source(MockError))
+        );
+        assert!(matches!(
+            block_on(select(
+                recv_or_pending::<MockLink>(&mut None, &mut [0; contract::BLE_HW_MTU]),
+                async {}
+            )),
+            Either::Second(())
+        ));
     }
 
     #[test]

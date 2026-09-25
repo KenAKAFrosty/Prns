@@ -40,7 +40,7 @@ pub use identity::{
     decode_persisted_ble_identity, encode_persisted_ble_identity, BleAddress, BleIdentity,
     PersistedBleIdentityError, BLE_IDENTITY_LEN, GROUP_ID, PERSISTED_BLE_IDENTITY_LEN,
 };
-pub use receive::{copy_received_frame, BleReceiveError};
+pub use receive::{copy_received_frame, receive_frame, BleFrameReceiveError, BleReceiveError};
 /// Canonical name for a Bluetooth LE device address.
 pub type BluetoothLeAddress = BleAddress;
 /// Canonical name for a Bluetooth LE auto-interface identity.
