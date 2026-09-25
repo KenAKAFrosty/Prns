@@ -19,8 +19,8 @@ use prns_core::interfaces::bluetooth_auto::{
     role_for, ConnectionPolicy, PolicyAction, PolicyInput,
 };
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, RadioMode,
-    ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, BluetoothRadioState,
+    Origin, RadioMode, ScanningMode,
 };
 use prns_core::interfaces::bluetooth_auto::{Endpoint, L2capPlan};
 
@@ -384,15 +384,35 @@ pub struct BluetoothAutoStatus {
     shared: Arc<BluetoothAutoShared>,
 }
 
+#[derive(Clone, Copy)]
+struct BluetoothEnableState {
+    enabled: bool,
+    generation: u64,
+    disabled: bool,
+}
+
+impl BluetoothEnableState {
+    fn replace(&mut self, enabled: bool) -> bool {
+        if self.enabled == enabled {
+            return false;
+        }
+        self.enabled = enabled;
+        self.generation = self.generation.wrapping_add(1);
+        self.disabled = false;
+        true
+    }
+}
+
 struct BluetoothAutoShared {
     id: InterfaceId,
-    enabled: watch::Sender<bool>,
+    enabled: watch::Sender<BluetoothEnableState>,
     discovery_groups: watch::Sender<DiscoveryGroupSet>,
     applied_discovery_groups: watch::Sender<DiscoveryGroupSet>,
     discovery_group_replacement: AsyncMutex<()>,
     up: AtomicBool,
     failed: AtomicBool,
     failure_reason: Mutex<Option<&'static str>>,
+    radio_state_source: Mutex<Option<Arc<dyn Fn() -> BluetoothRadioState + Send + Sync>>>,
     members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
     last_member_at: Mutex<Option<Instant>>,
 }
@@ -403,7 +423,11 @@ impl BluetoothAutoStatus {
     }
 
     pub(crate) fn new_with_discovery_groups(discovery_groups: DiscoveryGroupSet) -> Self {
-        let (enabled, _) = watch::channel(true);
+        let (enabled, _) = watch::channel(BluetoothEnableState {
+            enabled: true,
+            generation: 0,
+            disabled: false,
+        });
         let (groups, _) = watch::channel(discovery_groups);
         let (applied_groups, _) = watch::channel(discovery_groups);
         Self {
@@ -416,6 +440,7 @@ impl BluetoothAutoStatus {
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
                 failure_reason: Mutex::new(None),
+                radio_state_source: Mutex::new(None),
                 members: Mutex::new(std::vec::Vec::new()),
                 last_member_at: Mutex::new(None),
             }),
@@ -424,6 +449,29 @@ impl BluetoothAutoStatus {
 
     fn mark_up(&self) {
         self.shared.up.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns the platform's current observation, independently of the requested enabled state.
+    /// A backend without a live radio observation reports `Unknown`; an idle interface alone is
+    /// not evidence that the radio is powered on.
+    #[must_use]
+    pub fn radio_state(&self) -> BluetoothRadioState {
+        self.shared
+            .radio_state_source
+            .lock()
+            .ok()
+            .and_then(|source| source.as_ref().map(|read| read()))
+            .unwrap_or_default()
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios", test))]
+    pub(crate) fn observe_radio_state(
+        &self,
+        source: impl Fn() -> BluetoothRadioState + Send + Sync + 'static,
+    ) {
+        if let Ok(mut slot) = self.shared.radio_state_source.lock() {
+            *slot = Some(Arc::new(source));
+        }
     }
 
     pub(crate) fn mark_failed(&self, reason: Option<&'static str>) {
@@ -456,10 +504,9 @@ impl BluetoothAutoStatus {
     }
 
     pub fn toggle_enabled(&self) {
-        self.shared.enabled.send_if_modified(|current| {
-            *current = !*current;
-            true
-        });
+        self.shared
+            .enabled
+            .send_if_modified(|current| current.replace(!current.enabled));
     }
 
     #[must_use]
@@ -512,29 +559,52 @@ impl BluetoothAutoStatus {
     }
 
     fn update_enabled(&self, enabled: bool) {
-        self.shared.enabled.send_if_modified(|current| {
-            let changed = *current != enabled;
-            *current = enabled;
-            changed
-        });
+        self.shared
+            .enabled
+            .send_if_modified(|current| current.replace(enabled));
     }
 
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        *self.shared.enabled.borrow()
+        self.shared.enabled.borrow().enabled
     }
 
-    async fn wait_until_enabled(&self) {
-        self.wait_for_enabled_state(true).await;
+    /// Whether the supervisor completed shutdown for the current disabled request. This does not
+    /// imply that the operating system's Bluetooth radio is powered off.
+    #[must_use]
+    pub fn is_disabled(&self) -> bool {
+        self.shared.enabled.borrow().disabled
     }
 
-    async fn wait_until_disabled(&self) {
+    pub(super) fn disabled_request(&self) -> Option<u64> {
+        let current = self.shared.enabled.borrow();
+        (!current.enabled).then_some(current.generation)
+    }
+
+    pub(super) fn acknowledge_disabled(&self, generation: u64) {
+        self.shared.enabled.send_if_modified(|current| {
+            if current.enabled || current.generation != generation || current.disabled {
+                return false;
+            }
+            current.disabled = true;
+            true
+        });
+    }
+
+    pub(super) async fn wait_for_enabled_change(&self, generation: u64) {
+        let mut changed = self.shared.enabled.subscribe();
+        let _ = changed
+            .wait_for(|current| current.generation != generation)
+            .await;
+    }
+
+    pub(super) async fn wait_until_disabled(&self) {
         self.wait_for_enabled_state(false).await;
     }
 
     async fn wait_for_enabled_state(&self, enabled: bool) {
         let mut changed = self.shared.enabled.subscribe();
-        let _ = changed.wait_for(|current| *current == enabled).await;
+        let _ = changed.wait_for(|current| current.enabled == enabled).await;
     }
 
     fn set_members(&self, members: std::vec::Vec<TokioInterfaceStatus>) {
@@ -651,6 +721,18 @@ where
         let configured_capabilities = local.capabilities;
         let mut local = local;
         let mut discovery_groups = status.discovery_groups();
+        while let Some(generation) = status.disabled_request() {
+            let advertising_stopped = backend.set_advertising(AdvertisingMode::Off).await.is_ok();
+            let scanning_stopped = backend.set_scanning(ScanningMode::Off).await.is_ok();
+            let radio_stopped = backend.set_radio_mode(RadioMode::Off).await.is_ok();
+            status.mark_up();
+            if advertising_stopped && scanning_stopped && radio_stopped {
+                status.acknowledge_disabled(generation);
+            }
+            status.wait_for_enabled_change(generation).await;
+            discovery_groups = status.discovery_groups();
+            local.discovery_groups = discovery_groups.hashes();
+        }
         prepare_radio::<B, MAX_PEERS>(&mut backend, &mut local, configured_capabilities).await;
         let started = Instant::now();
         let mut manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
@@ -662,9 +744,10 @@ where
         manager.start(&mut |action| pending.push(action));
         apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
         loop {
-            if !status.is_enabled() {
-                let _ = backend.set_advertising(AdvertisingMode::Off).await;
-                let _ = backend.set_scanning(ScanningMode::Off).await;
+            if let Some(generation) = status.disabled_request() {
+                let advertising_stopped =
+                    backend.set_advertising(AdvertisingMode::Off).await.is_ok();
+                let scanning_stopped = backend.set_scanning(ScanningMode::Off).await.is_ok();
                 for (_, member) in members.drain() {
                     member.attached.teardown();
                     backend.on_link_closed(member.address).await;
@@ -672,8 +755,14 @@ where
                 handshakes = FuturesUnordered::new();
                 pending.clear();
                 status.set_members(std::vec::Vec::new());
-                let _ = backend.set_radio_mode(RadioMode::Off).await;
-                status.wait_until_enabled().await;
+                let radio_stopped = backend.set_radio_mode(RadioMode::Off).await.is_ok();
+                if advertising_stopped && scanning_stopped && radio_stopped {
+                    status.acknowledge_disabled(generation);
+                }
+                status.wait_for_enabled_change(generation).await;
+                if !status.is_enabled() {
+                    continue;
+                }
                 prepare_radio::<B, MAX_PEERS>(&mut backend, &mut local, configured_capabilities)
                     .await;
                 manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
@@ -1150,6 +1239,47 @@ mod tests {
         assert_eq!(status.failure_reason(), None);
     }
 
+    #[test]
+    fn radio_observation_is_live_and_independent_of_preference_or_peer_count() {
+        let status = BluetoothAutoStatus::new();
+        status.mark_up();
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        assert_eq!(status.radio_state(), BluetoothRadioState::Unknown);
+
+        let (observed, current) = watch::channel(BluetoothRadioState::PoweredOn);
+        status.observe_radio_state(move || *current.borrow());
+        let cloned = status.clone();
+        status.disable();
+        assert_eq!(cloned.radio_state(), BluetoothRadioState::PoweredOn);
+        assert_eq!(cloned.connection(), ConnectionState::Disabled);
+
+        observed.send_replace(BluetoothRadioState::PoweredOff);
+        status.enable();
+        assert_eq!(cloned.radio_state(), BluetoothRadioState::PoweredOff);
+        assert_eq!(cloned.connection(), ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn disabled_acknowledgment_cannot_settle_a_newer_enable_request() {
+        let status = BluetoothAutoStatus::new();
+        assert!(!status.is_disabled());
+        status.disable();
+        let old_request = status.disabled_request().unwrap();
+        assert!(!status.is_disabled());
+        status.enable();
+        status.acknowledge_disabled(old_request);
+        assert!(!status.is_disabled());
+        status.disable();
+        status.acknowledge_disabled(old_request);
+        assert!(!status.is_disabled());
+        status.acknowledge_disabled(status.disabled_request().unwrap());
+        assert!(status.is_disabled());
+        status.enable();
+        assert!(!status.is_disabled());
+        status.toggle_enabled();
+        assert!(!status.is_disabled());
+    }
+
     struct MockSeam {
         inbound: mpsc::UnboundedSender<std::vec::Vec<u8>>,
         sink: std::vec::Vec<u8>,
@@ -1483,6 +1613,8 @@ mod tests {
     struct RecordingStartupBackend {
         calls: Vec<StartupCall>,
         first_event: Option<oneshot::Sender<Vec<StartupCall>>>,
+        radio_off: Option<oneshot::Sender<()>>,
+        finish_radio_off: Option<oneshot::Receiver<Result<(), Closed>>>,
     }
 
     impl BleBackend<7> for RecordingStartupBackend {
@@ -1491,6 +1623,14 @@ mod tests {
 
         async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), Closed> {
             self.calls.push(StartupCall::Radio(mode));
+            if mode == RadioMode::Off {
+                if let Some(radio_off) = self.radio_off.take() {
+                    let _ = radio_off.send(());
+                }
+                if let Some(finish) = self.finish_radio_off.take() {
+                    return finish.await.map_err(|_| Closed)?;
+                }
+            }
             Ok(())
         }
 
@@ -1539,6 +1679,8 @@ mod tests {
             RecordingStartupBackend {
                 calls: Vec::new(),
                 first_event: Some(first_event_tx),
+                radio_off: None,
+                finish_radio_off: None,
             },
             BleIdentity::new([1; 16]),
             Endpoint::CoreBluetooth(AppleHost::Ios),
@@ -1563,6 +1705,97 @@ mod tests {
                 StartupCall::NextEvent,
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn initially_disabled_bluetooth_never_starts_scanning_before_enable() {
+        let (first_event_tx, first_event_rx) = oneshot::channel();
+        let (radio_off_tx, radio_off_rx) = oneshot::channel();
+        let capabilities = LinkCapabilities {
+            l2cap: None,
+            link_mtu: contract::BLE_HW_MTU as u16,
+        };
+        let bluetooth = BluetoothAuto::<_, 7>::new(
+            RecordingStartupBackend {
+                calls: Vec::new(),
+                first_event: Some(first_event_tx),
+                radio_off: Some(radio_off_tx),
+                finish_radio_off: None,
+            },
+            BleIdentity::new([1; 16]),
+            Endpoint::CoreBluetooth(AppleHost::Ios),
+            capabilities,
+        );
+        let status = bluetooth.status();
+        status.disable();
+        assert!(!status.is_disabled());
+        let (fleet, _detached_fleet) = Fleet::detached(status.id());
+        let observe = async {
+            radio_off_rx.await.unwrap();
+            assert_eq!(status.connection(), ConnectionState::Disabled);
+            assert!(status.is_disabled());
+            status.enable();
+            first_event_rx.await.unwrap()
+        };
+        let calls = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(1), observe) => result.unwrap(),
+            () = bluetooth.run(fleet) => unreachable!("the BLE supervisor runs until cancelled"),
+        };
+        assert_eq!(
+            calls,
+            vec![
+                StartupCall::Advertising(AdvertisingMode::Off),
+                StartupCall::Scanning(ScanningMode::Off),
+                StartupCall::Radio(RadioMode::Off),
+                StartupCall::Radio(RadioMode::On),
+                StartupCall::Capabilities(capabilities),
+                StartupCall::Advertising(AdvertisingMode::On),
+                StartupCall::Scanning(ScanningMode::On),
+                StartupCall::NextEvent,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_peer_shutdown_waits_for_backend_completion_before_acknowledging() {
+        for initially_enabled in [true, false] {
+            let (first_event_tx, first_event_rx) = oneshot::channel();
+            let (radio_off_tx, radio_off_rx) = oneshot::channel();
+            let (finish_off_tx, finish_off_rx) = oneshot::channel();
+            let bluetooth = BluetoothAuto::<_, 7>::new(
+                RecordingStartupBackend {
+                    calls: Vec::new(),
+                    first_event: Some(first_event_tx),
+                    radio_off: Some(radio_off_tx),
+                    finish_radio_off: Some(finish_off_rx),
+                },
+                BleIdentity::new([1; 16]),
+                Endpoint::CoreBluetooth(AppleHost::Ios),
+                caps(0x0081),
+            );
+            let status = bluetooth.status();
+            if !initially_enabled {
+                status.disable();
+            }
+            let (fleet, _detached_fleet) = Fleet::detached(status.id());
+            let observe = async {
+                if initially_enabled {
+                    first_event_rx.await.unwrap();
+                    status.disable();
+                }
+                radio_off_rx.await.unwrap();
+                assert!(!status.is_disabled());
+                assert!(status.shared.members.lock().unwrap().is_empty());
+                finish_off_tx.send(Ok(())).unwrap();
+                let mut changed = status.shared.enabled.subscribe();
+                changed.wait_for(|current| current.disabled).await.unwrap();
+                assert!(status.is_disabled());
+            };
+            tokio::select! {
+                result = tokio::time::timeout(Duration::from_secs(1), observe) => result.unwrap(),
+                () = bluetooth.run(fleet) => unreachable!("the BLE supervisor runs until cancelled"),
+            }
+        }
     }
 
     #[tokio::test]

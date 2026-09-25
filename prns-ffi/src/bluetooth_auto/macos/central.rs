@@ -9,7 +9,7 @@ use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, Message};
 use objc2_core_bluetooth::{
     CBCentralManager, CBCentralManagerDelegate, CBCentralManagerRestoredStatePeripheralsKey,
-    CBCharacteristic, CBManagerState, CBPeripheral, CBPeripheralDelegate, CBService,
+    CBCharacteristic, CBPeripheral, CBPeripheralDelegate, CBService,
 };
 use objc2_foundation::{
     NSArray, NSData, NSDictionary, NSError, NSNumber, NSObject, NSObjectProtocol, NSString,
@@ -1050,9 +1050,8 @@ define_class!(
             *self.ivars().manager.borrow_mut() = Some(SendCentralManager(central.retain()));
             // SAFETY: CoreBluetooth supplied this live manager to its delegate on the configured
             // serial dispatch queue.
-            if unsafe { central.state() } == CBManagerState::PoweredOn {
-                self.ivars().manager_signals.central_powered();
-            }
+            let state = unsafe { central.state() };
+            self.ivars().manager_signals.central_state_changed(state);
         }
 
         #[unsafe(method(centralManager:willRestoreState:))]

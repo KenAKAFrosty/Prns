@@ -17,8 +17,8 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, DialOutcome, LinkCapabilities, Origin, RadioMode,
-    ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, BluetoothRadioState, DialOutcome, LinkCapabilities,
+    Origin, RadioMode, ScanningMode,
 };
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
@@ -36,9 +36,9 @@ use super::{
     CoreBluetoothRestorationIdentifiers,
 };
 use super::{
-    manager_signal_channel, start_scan, CoreBluetoothPeerId, L2capPublicationState, MacosBleError,
-    ManagerSignals, PublicationState, SendCentralDelegate, SendCentralManager, SendPeripheral,
-    SendPeripheralDelegate, Sighting,
+    manager_signal_channel, start_scan, CoreBluetoothPeerId, CoreBluetoothRadioStatus,
+    L2capPublicationState, MacosBleError, ManagerSignals, PublicationState, SendCentralDelegate,
+    SendCentralManager, SendPeripheral, SendPeripheralDelegate, Sighting,
 };
 
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
@@ -182,7 +182,9 @@ pub(super) fn manager_readiness(
     let L2capPublicationState::Published(psm) = signals.l2cap else {
         return Ok(None);
     };
-    if signals.central_powered_generation == 0 || signals.gatt != PublicationState::Published {
+    if signals.radio_state() != BluetoothRadioState::PoweredOn
+        || signals.gatt != PublicationState::Published
+    {
         return Ok(None);
     }
     Ok(Some(ManagerReadiness {
@@ -536,6 +538,11 @@ impl ManagerPreparation {
 
 impl MacosBleBackend {
     pub const MAX_PEERS: usize = MAX_PEERS;
+
+    #[must_use]
+    pub fn radio_status(&self) -> CoreBluetoothRadioStatus {
+        CoreBluetoothRadioStatus(self.backend.manager_signals.clone())
+    }
 
     /// Creates CoreBluetooth managers with the existing iOS restoration identifiers.
     ///
@@ -916,6 +923,11 @@ impl PreparedCoreBluetoothBackend {
 }
 
 impl PreparedMacosBleBackend {
+    #[must_use]
+    pub fn radio_status(&self) -> CoreBluetoothRadioStatus {
+        CoreBluetoothRadioStatus(self.backend.manager_signals.clone())
+    }
+
     pub async fn ready(self) -> Result<MacosBleBackend, MacosBleError> {
         let ready = self.backend.ready().await?;
         let psm = ready.local_psm;
