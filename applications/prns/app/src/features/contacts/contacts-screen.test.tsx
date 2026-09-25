@@ -499,6 +499,55 @@ describe("messaging discovery and local profile", () => {
     expect(view.getByText("Pinned")).toBeTruthy();
   });
 
+  test("upgrades a manually saved address through authenticated discovery without replacing its private name", async () => {
+    mockRunning = true;
+    let contact: Bindings.Contact = {
+      destination,
+      identity: undefined,
+      alias: "Private Alice",
+      announcedName: undefined,
+      isMessaging: false,
+      pinned: false,
+    };
+    const runtime = fakeRuntime({
+      listContacts: async () => Bindings.ContactListOutcome.Listed.new({ contacts: [contact] }),
+      getContact: async () => Bindings.ContactLookupOutcome.Found.new({ contact }),
+    });
+    mockSaveDiscovered.mockImplementation(async () => {
+      contact = {
+        ...contact,
+        identity,
+        announcedName: discovered.displayName,
+        isMessaging: true,
+      };
+      return {
+        type: "outcome",
+        outcome: Bindings.ContactMutationOutcome.Updated.new({ contact }),
+      };
+    });
+    const view = withRuntime(runtime, <ContactsScreen />);
+    await view.findByText("Private Alice");
+    fireEvent.press(view.getByRole("button", { name: "Discovered" }));
+    expect(view.getByRole("link", { name: "Open contact" })).toBeTruthy();
+    fireEvent.press(
+      await view.findByRole("button", { name: "Save messaging contact Private Alice" }),
+    );
+    await waitFor(() =>
+      expect(
+        view.queryByRole("button", { name: "Save messaging contact Private Alice" }),
+      ).toBeNull(),
+    );
+    expect(mockSaveDiscovered).toHaveBeenCalledWith({ destination });
+    expect(contact.alias).toBe("Private Alice");
+    expect(contact.pinned).toBe(false);
+    expect(view.getByRole("link", { name: "Message Private Alice" })).toBeTruthy();
+    view.unmount();
+
+    const detail = withRuntime(runtime, <ContactDetailScreen destination={destination} />);
+    expect(await detail.findByRole("link", { name: "Message" })).toBeTruthy();
+    expect(detail.getByDisplayValue("Private Alice")).toBeTruthy();
+  });
+
   test("preserves identity conflict feedback and leaves a discovered contact unsaved", async () => {
     mockRunning = true;
     mockSaveDiscovered.mockResolvedValue({

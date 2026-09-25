@@ -185,9 +185,10 @@ function MessagingContacts() {
             directory.peers.map((peer) => {
               const destination = formatContactHash(peer.destination);
               const name = peerLabel(peer.destination, directory.peers, directory.contacts);
-              const saved = directory.contacts.some(
+              const saved = directory.contacts.find(
                 (contact) => formatContactHash(contact.destination) === destination,
               );
+              const saveLabel = saved === undefined ? "Save contact" : "Save messaging contact";
               return (
                 <Card key={destination}>
                   <CardHeader title={name}>
@@ -204,13 +205,14 @@ function MessagingContacts() {
                       >
                         Open contact
                       </NavigationLink>
-                    ) : (
+                    ) : null}
+                    {saved?.isMessaging === true ? null : (
                       <Button
-                        accessibilityLabel={`Save contact ${name}`}
+                        accessibilityLabel={`${saveLabel} ${name}`}
                         disabled={pendingAction !== null}
                         onPress={() => void save(peer.destination)}
                       >
-                        {pendingAction === destination ? "Saving…" : "Save contact"}
+                        {pendingAction === destination ? "Saving…" : saveLabel}
                       </Button>
                     )}
                     <NavigationLink
