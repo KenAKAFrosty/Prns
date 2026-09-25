@@ -17,7 +17,8 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, DialOutcome, Origin, RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, BluetoothRadioState, DialOutcome, Origin, RadioMode,
+    ScanningMode,
 };
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
@@ -35,9 +36,9 @@ use super::{
     CoreBluetoothRestorationIdentifiers,
 };
 use super::{
-    manager_signal_channel, start_scan, CoreBluetoothPeerId, L2capPublicationState, MacosBleError,
-    ManagerSignals, PublicationState, SendCentralDelegate, SendCentralManager, SendPeripheral,
-    SendPeripheralDelegate, Sighting,
+    manager_signal_channel, start_scan, CoreBluetoothPeerId, CoreBluetoothRadioStatus,
+    L2capPublicationState, MacosBleError, ManagerSignals, PublicationState, SendCentralDelegate,
+    SendCentralManager, SendPeripheral, SendPeripheralDelegate, Sighting,
 };
 
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
@@ -162,7 +163,9 @@ pub(super) fn manager_readiness(signals: ManagerSignals) -> Result<Option<Psm>, 
     let L2capPublicationState::Published(psm) = signals.l2cap else {
         return Ok(None);
     };
-    if signals.central_powered_generation == 0 || signals.gatt != PublicationState::Published {
+    if signals.radio_state() != BluetoothRadioState::PoweredOn
+        || signals.gatt != PublicationState::Published
+    {
         return Ok(None);
     }
     Ok(Some(Psm::new(psm).ok_or(MacosBleError::PublishFailed)?))
@@ -498,6 +501,11 @@ impl MacosBleBackend {
     #[cfg(target_os = "macos")]
     pub const MAX_PEERS: usize = 8;
 
+    #[must_use]
+    pub fn radio_status(&self) -> CoreBluetoothRadioStatus {
+        CoreBluetoothRadioStatus(self.manager_signals.clone())
+    }
+
     /// Creates CoreBluetooth managers with the existing iOS restoration identifiers.
     ///
     /// Applications using this path are responsible for the matching background modes and
@@ -795,6 +803,11 @@ impl MacosBleBackend {
 }
 
 impl PreparedMacosBleBackend {
+    #[must_use]
+    pub fn radio_status(&self) -> CoreBluetoothRadioStatus {
+        CoreBluetoothRadioStatus(self.manager_signals.clone())
+    }
+
     pub async fn ready(mut self) -> Result<MacosBleBackend, MacosBleError> {
         let Handles {
             central,
