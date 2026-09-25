@@ -232,12 +232,6 @@ class PrnsBluetoothLink(
         Columba,
     }
 
-    private enum class OutboundAdmission {
-        Accepted,
-        Busy,
-        Terminal,
-    }
-
     private class LinkState(
         val connId: Int,
         val address: String,
@@ -942,31 +936,18 @@ class PrnsBluetoothLink(
         lane: String,
     ): OutboundAdmission {
         val gatt = link.clientGatt ?: return OutboundAdmission.Terminal
-        val responseBearing = type == BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        val operation = PendingGattOperation(GattOperationKind.ClientWrite, char.uuid)
-        if (responseBearing && !link.beginGattOperation(operation)) {
-            return OutboundAdmission.Busy
-        }
         val result = try {
-            writeGattCharacteristic(gatt, char, payload, type)
-        } catch (e: Exception) {
-            if (responseBearing) {
-                link.cancelGattOperation(operation)
+            prnsSubmitGattClientWrite(link.gattState, char.uuid) {
+                writeGattCharacteristic(gatt, char, payload, type)
             }
-            Log.w(TAG, "$lane write[${link.connId}]: $e")
+        } catch (e: Exception) {
+            Log.w(TAG, "$lane write[${link.connId}] characteristic=${char.uuid} type=$type: $e")
             return OutboundAdmission.Terminal
         }
-        if (result == BluetoothGatt.GATT_SUCCESS) {
-            return OutboundAdmission.Accepted
+        if (result.admission == OutboundAdmission.Terminal) {
+            Log.w(TAG, "$lane write rejected[${link.connId}] characteristic=${char.uuid} type=$type result=${result.status}")
         }
-        if (responseBearing) {
-            link.cancelGattOperation(operation)
-        }
-        if (result == ERROR_GATT_WRITE_REQUEST_BUSY) {
-            return OutboundAdmission.Busy
-        }
-        Log.w(TAG, "$lane write rejected[${link.connId}] result=$result")
-        return OutboundAdmission.Terminal
+        return result.admission
     }
 
     private fun serverNotifyAdmission(
@@ -1513,12 +1494,14 @@ class PrnsBluetoothLink(
                         return
                     }
                     val link = links[connId] ?: return
-                    if (link.completeGattOperation(GattOperationKind.ClientWrite, characteristic.uuid)) {
+                    val completion = prnsCompleteGattClientWrite(link.gattState, characteristic.uuid, status)
+                    if (completion.shouldClose) {
+                        Log.w(TAG, "write completion failed[$connId] characteristic=${characteristic.uuid} status=$status pendingMatched=${completion.releasedPending}")
+                        closeLink(connId)
+                    } else if (completion.releasedPending) {
                         PrnsBluetoothNative.nativeBleWakePumps()
-                        if (status != BluetoothGatt.GATT_SUCCESS) {
-                            Log.w(TAG, "write completion failed[$connId] status=$status")
-                            closeLink(connId)
-                        }
+                    } else {
+                        Log.d(TAG, "write completion ignored[$connId] characteristic=${characteristic.uuid} status=$status pendingMatched=false")
                     }
                 }
             }
@@ -1997,7 +1980,6 @@ class PrnsBluetoothLink(
         private const val CLIENT_LINK_READY_TIMEOUT_MS = 8_000L
         private const val WORKER_SHUTDOWN_TIMEOUT_MS = 2_000L
         private const val GATT_BUSY_RETRY_MS = 4L
-        private const val ERROR_GATT_WRITE_REQUEST_BUSY = 201
         private const val ATT_INSUFFICIENT_RESOURCES = 0x11
         private const val L2CAP_OPEN_RETRIES = 5
         private const val L2CAP_OPEN_RETRY_MS = 200L

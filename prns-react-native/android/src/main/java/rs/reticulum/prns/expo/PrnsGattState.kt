@@ -3,7 +3,53 @@
 
 package rs.reticulum.prns.expo
 
+import android.bluetooth.BluetoothGatt
 import java.util.UUID
+
+internal const val ERROR_GATT_WRITE_REQUEST_BUSY = 201
+
+internal enum class OutboundAdmission { Accepted, Busy, Terminal }
+
+internal data class GattWriteSubmission(val admission: OutboundAdmission, val status: Int? = null)
+
+/** Every client write occupies Android's operation lane, including writes without ATT response. */
+internal fun prnsSubmitGattClientWrite(
+    state: PrnsGattState,
+    characteristic: UUID,
+    write: () -> Int,
+): GattWriteSubmission {
+    val operation = PendingGattOperation(GattOperationKind.ClientWrite, characteristic)
+    if (!state.begin(operation)) return GattWriteSubmission(OutboundAdmission.Busy)
+    val status = try {
+        write()
+    } catch (error: Exception) {
+        state.cancel(operation)
+        throw error
+    }
+    if (status == BluetoothGatt.GATT_SUCCESS) {
+        return GattWriteSubmission(OutboundAdmission.Accepted, status)
+    }
+    state.cancel(operation)
+    return GattWriteSubmission(
+        if (status == ERROR_GATT_WRITE_REQUEST_BUSY) OutboundAdmission.Busy else OutboundAdmission.Terminal,
+        status,
+    )
+}
+
+internal data class GattWriteCompletion(val releasedPending: Boolean, val shouldClose: Boolean)
+
+internal fun prnsCompleteGattClientWrite(
+    state: PrnsGattState,
+    characteristic: UUID,
+    status: Int,
+): GattWriteCompletion = synchronized(state) {
+    val released = state.complete(GattOperationKind.ClientWrite, characteristic)
+    // An error is still terminal when no matching operation was tracked.
+    // A mismatched successful callback must not release another operation.
+    val failed = status != BluetoothGatt.GATT_SUCCESS
+    if (failed) state.close()
+    GattWriteCompletion(released, failed)
+}
 
 internal enum class GattOperationKind {
     Mtu,
