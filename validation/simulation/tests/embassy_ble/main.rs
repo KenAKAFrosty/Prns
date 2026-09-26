@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use std::cell::Cell;
+use std::num::NonZeroUsize;
 use std::pin::pin;
 use std::rc::Rc;
 use std::task::Poll;
@@ -20,9 +21,10 @@ mod echo;
 mod fixture;
 mod interop;
 mod node;
+mod resources;
 mod tokio_node;
 mod traffic;
-use clock::{ClockLease, EmbassyTasks};
+use clock::{ClockLease, CompletionBudget, EmbassyTasks};
 use fixture::{backend, lab, supervisor, MAX_PEERS};
 
 fn tick(milliseconds: u64) -> SimulationTick {
@@ -206,4 +208,99 @@ fn refused_steps_preserve_all_clocks_and_clock_leases_reset_between_scenarios() 
             Some(embassy_time::Instant::from_millis(1))
         );
     }
+}
+
+#[test]
+fn bounded_completion_drives_timers_without_relaxing_timeless_completion() {
+    let clock = ClockLease::acquire();
+    let mut driver =
+        ManualTimeDriver::new(ManualMedium::Ble(lab()), Duration::from_millis(1)).unwrap();
+    let mut tasks = EmbassyTasks::new(&mut driver, clock);
+    assert_eq!(
+        tasks.complete_with_budget(
+            CompletionBudget {
+                deadline: tick(10),
+                polls_per_tick: NonZeroUsize::new(128).unwrap()
+            },
+            async {
+                embassy_time::Timer::at(embassy_time::Instant::from_millis(7)).await;
+                42
+            }
+        ),
+        42
+    );
+    let at_seven = prns_simulation::ManualTimeSnapshot {
+        tick: tick(7),
+        runtime_elapsed: Duration::from_millis(7),
+    };
+    assert_eq!(tasks.snapshot(), at_seven);
+    assert_eq!(
+        tasks.complete_ready(async {
+            tokio::task::yield_now().await;
+            43
+        }),
+        43
+    );
+    assert_eq!(tasks.snapshot(), at_seven);
+    tasks.complete_with_budget(
+        CompletionBudget {
+            deadline: tick(10),
+            polls_per_tick: NonZeroUsize::new(128).unwrap(),
+        },
+        async {
+            embassy_time::Timer::at(embassy_time::Instant::from_millis(10)).await;
+        },
+    );
+    assert_eq!(
+        tasks.snapshot(),
+        prns_simulation::ManualTimeSnapshot {
+            tick: tick(10),
+            runtime_elapsed: Duration::from_millis(10),
+        }
+    );
+    let late = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tasks.complete_with_budget(
+            CompletionBudget {
+                deadline: tick(12),
+                polls_per_tick: NonZeroUsize::new(128).unwrap(),
+            },
+            async {
+                embassy_time::Timer::at(embassy_time::Instant::from_millis(13)).await;
+            },
+        );
+    }));
+    assert!(late.is_err());
+    assert_eq!(
+        tasks.snapshot(),
+        prns_simulation::ManualTimeSnapshot {
+            tick: tick(12),
+            runtime_elapsed: Duration::from_millis(12),
+        }
+    );
+}
+
+#[test]
+#[should_panic(expected = "per-tick poll budget")]
+fn a_self_waking_operation_cannot_spend_the_future_ticks_poll_budget() {
+    let clock = ClockLease::acquire();
+    let mut driver =
+        ManualTimeDriver::new(ManualMedium::Ble(lab()), Duration::from_millis(1)).unwrap();
+    let mut tasks = EmbassyTasks::new(&mut driver, clock);
+    tasks.complete_with_budget(
+        CompletionBudget {
+            deadline: tick(10),
+            polls_per_tick: NonZeroUsize::new(128).unwrap(),
+        },
+        async {
+            std::future::poll_fn(|cx| {
+                assert_eq!(
+                    embassy_time::Instant::now(),
+                    embassy_time::Instant::from_millis(0)
+                );
+                cx.waker().wake_by_ref();
+                Poll::<()>::Pending
+            })
+            .await;
+        },
+    );
 }

@@ -20,18 +20,21 @@ use prns_simulation::{ManualMedium, ManualTimeDriver};
 use super::clock::{ClockLease, EmbassyTasks};
 use super::echo::{destination, QUERY_PATH};
 use super::fixture::lab;
-use super::node::{Node, PAYLOAD_BYTES};
+use super::node::{Node, NodeFixture, PAYLOAD_BYTES};
 use super::{tick, tokio_node};
 
-const EMBASSY_ADDRESS: u8 = 1;
-const TOKIO_ADDRESS: u8 = 2;
+pub(super) const EMBASSY_ADDRESS: u8 = 1;
+pub(super) const TOKIO_ADDRESS: u8 = 2;
 const DISCOVERY_BUDGET_MS: u64 = 60_000;
 
 fn peer(address: u8) -> InterfaceId {
     InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, &[address; 16])
 }
 
-fn members(embassy: &Node, tokio: &PrnsNodeHandle) -> [Vec<(InterfaceId, ConnectionState)>; 2] {
+fn members<const RESPONSE: usize, const REQUEST: usize>(
+    embassy: &NodeFixture<RESPONSE, REQUEST>,
+    tokio: &PrnsNodeHandle,
+) -> [Vec<(InterfaceId, ConnectionState)>; 2] {
     [
         embassy
             .status
@@ -49,10 +52,10 @@ fn members(embassy: &Node, tokio: &PrnsNodeHandle) -> [Vec<(InterfaceId, Connect
     ]
 }
 
-fn converge(
+pub(super) fn converge<const RESPONSE: usize, const REQUEST: usize>(
     tasks: &mut EmbassyTasks<'_>,
     lab: &VirtualBleLab,
-    embassy: &Node,
+    embassy: &NodeFixture<RESPONSE, REQUEST>,
     tokio: &PrnsNodeHandle,
 ) {
     let expected = [
@@ -72,9 +75,9 @@ fn converge(
     unreachable!("bounded discovery step count")
 }
 
-fn establish_pair(
+pub(super) fn establish_pair<const RESPONSE: usize, const REQUEST: usize>(
     tasks: &mut EmbassyTasks<'_>,
-    embassy: &Node,
+    embassy: &NodeFixture<RESPONSE, REQUEST>,
     desktop: &PrnsNodeHandle,
 ) -> [LinkId; 2] {
     let embedded = embassy.handle;

@@ -23,7 +23,7 @@ use prns_core::entropy::EntropySource;
 use prns_interfaces_embassy::bluetooth_auto::BluetoothAutoStatus;
 use prns_runtime_embassy::manifold::driver::EmbassyHost;
 use prns_runtime_embassy::runtime::{
-    CompletionPool, PrnsNode, PrnsNodeHandle, SharedRuntimeEntropy,
+    CompletionPool, PrnsNode, PrnsNodeHandle, RequestRoutingCapacity, SharedRuntimeEntropy,
 };
 use prns_simulation::ble::VirtualBleLab;
 
@@ -35,13 +35,13 @@ const COMMAND_CAPACITY: usize = 4;
 const EVENT_CAPACITY: usize = 8;
 const REQUEST_CAPACITY: usize = 2;
 pub(super) const PAYLOAD_BYTES: usize = 256;
-pub(super) type Handle = PrnsNodeHandle<
+pub(super) type Handle<const RESPONSE_BYTES: usize> = PrnsNodeHandle<
     'static,
     RawMutex,
     COMMAND_CAPACITY,
     COMMAND_CAPACITY,
     REQUEST_CAPACITY,
-    PAYLOAD_BYTES,
+    RESPONSE_BYTES,
 >;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -73,15 +73,19 @@ pub(super) fn destination() -> PreConfiguredDestination<'static> {
     }
 }
 
-pub(super) struct Node {
-    pub handle: Handle,
+pub(super) type Node = NodeFixture<PAYLOAD_BYTES, MAX_SEND_REQUEST_DATA_LEN>;
+
+pub(super) struct NodeFixture<const RESPONSE_BYTES: usize, const REQUEST_BYTES: usize> {
+    pub handle: Handle<RESPONSE_BYTES>,
     pub status: BluetoothAutoStatus<MAX_PEERS>,
     received: Rc<RefCell<Vec<Received>>>,
     settled: Rc<RefCell<Vec<(CommandId, Settlement)>>>,
     closed: Rc<RefCell<Vec<(LinkId, LinkClosedReason)>>>,
 }
 
-impl Node {
+impl<const RESPONSE_BYTES: usize, const REQUEST_BYTES: usize>
+    NodeFixture<RESPONSE_BYTES, REQUEST_BYTES>
+{
     pub fn start(
         tasks: &mut EmbassyTasks<'_>,
         lab: &VirtualBleLab,
@@ -107,7 +111,7 @@ impl Node {
         )
     }
 
-    fn with_endpoints<R: RequestEndpointSet<NoRemoteControlHostControls> + 'static>(
+    pub(super) fn with_endpoints<R: RequestEndpointSet<NoRemoteControlHostControls> + 'static>(
         tasks: &mut EmbassyTasks<'_>,
         lab: &VirtualBleLab,
         address: u8,
@@ -130,7 +134,7 @@ impl Node {
             RawMutex,
             COMMAND_CAPACITY,
             REQUEST_CAPACITY,
-            PAYLOAD_BYTES,
+            RESPONSE_BYTES,
         >::new()));
         let handle = Handle::new(commands.sender(), completions);
         let wiring = lanes.into_manifold_wiring(
@@ -199,10 +203,15 @@ impl Node {
             4,
             COMMAND_CAPACITY,
             4,
-            MAX_SEND_REQUEST_DATA_LEN,
+            REQUEST_BYTES,
             REQUEST_CAPACITY,
-            PAYLOAD_BYTES,
-        > = PrnsNode::new(recipe, wiring, EmbassyHost::new(entropy.handle()));
+            RESPONSE_BYTES,
+        > = PrnsNode::new_with_request_capacity(
+            recipe,
+            wiring,
+            EmbassyHost::new(entropy.handle()),
+            RequestRoutingCapacity::new(),
+        );
         tasks.insert(node.run(supervisor.run(fleet)));
         Self {
             handle,

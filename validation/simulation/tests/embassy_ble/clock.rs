@@ -41,6 +41,11 @@ pub(super) struct EmbassyTasks<'driver> {
     _clock: ClockLease,
 }
 
+pub(super) struct CompletionBudget {
+    pub deadline: SimulationTick,
+    pub polls_per_tick: NonZeroUsize,
+}
+
 impl<'driver> EmbassyTasks<'driver> {
     pub(super) fn new(driver: &'driver mut ManualTimeDriver, clock: ClockLease) -> Self {
         let tasks = Self {
@@ -60,21 +65,61 @@ impl<'driver> EmbassyTasks<'driver> {
         &mut self,
         future: impl Future<Output = T> + 'static,
     ) -> T {
+        self.complete_with_budget(
+            CompletionBudget {
+                deadline: self.snapshot().tick,
+                polls_per_tick: NonZeroUsize::new(SETTLEMENT_POLL_BUDGET).unwrap(),
+            },
+            future,
+        )
+    }
+
+    #[track_caller]
+    pub(super) fn complete_with_budget<T: 'static>(
+        &mut self,
+        budget: CompletionBudget,
+        future: impl Future<Output = T> + 'static,
+    ) -> T {
         let before = self.snapshot();
+        let ticks = budget
+            .deadline
+            .get()
+            .checked_sub(before.tick.get())
+            .unwrap();
+        let poll_budget = usize::try_from(ticks.checked_add(1).unwrap())
+            .unwrap()
+            .checked_mul(budget.polls_per_tick.get())
+            .unwrap();
         let (send, mut result) = tokio::sync::oneshot::channel();
         let operation = self.insert(async move {
             assert!(send.send(future.await).is_ok());
         });
-        for _ in 0..SETTLEMENT_POLL_BUDGET {
+        let mut polls_at_tick = 0;
+        for _ in 0..poll_budget {
+            polls_at_tick += 1;
+            assert!(
+                polls_at_tick <= budget.polls_per_tick.get(),
+                "operation failed to yield within its per-tick poll budget"
+            );
             match self.runner.poll_next().unwrap() {
                 ManualTaskPoll::Pending { .. } => {}
                 ManualTaskPoll::Completed { task, output: () } => {
                     assert_eq!(task, operation, "only the operation may complete");
                     let _ = self.settle();
-                    assert_eq!(self.snapshot(), before, "operation must not advance time");
+                    assert!(self.snapshot().tick <= budget.deadline);
                     return result.try_recv().unwrap();
                 }
-                ManualTaskPoll::Idle => unreachable!("operation stalled before completion"),
+                ManualTaskPoll::Idle => {
+                    let now = self.snapshot().tick.get();
+                    assert!(
+                        now < budget.deadline.get(),
+                        "operation stalled before completion"
+                    );
+                    self.advance(SimulationTick::from_ticks(now + 1)).unwrap();
+                    if self.snapshot().tick.get() != now {
+                        polls_at_tick = 0;
+                    }
+                }
             }
             let _ = self.snapshot();
         }

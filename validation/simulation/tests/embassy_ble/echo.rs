@@ -28,6 +28,13 @@ impl RequestEndpoint<NoRemoteControlHostControls> for Echo {
 }
 
 pub(super) fn destination(address: u8) -> PreConfiguredDestination<'static> {
+    destination_with_limit(address, ByteLimit::Maximum(WRAPPED_PLAINTEXT_CAP as u64))
+}
+
+pub(super) fn destination_with_limit(
+    address: u8,
+    maximum_request_bytes: ByteLimit,
+) -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
         resource_strategy: ResourceStrategy::AcceptNone,
         app_name: "simulation",
@@ -37,7 +44,7 @@ pub(super) fn destination(address: u8) -> PreConfiguredDestination<'static> {
         proof: ProofStrategy::ProveAll,
         link_requests: LinkRequestPolicy::AcceptAll,
         ratchet: RatchetPolicy::NoRatchets,
-        maximum_request_bytes: ByteLimit::Maximum(WRAPPED_PLAINTEXT_CAP as u64),
+        maximum_request_bytes,
         request_endpoints: ServeMyRequestEndpoints::Yes,
     }
 }

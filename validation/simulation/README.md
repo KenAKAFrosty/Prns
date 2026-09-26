@@ -454,3 +454,34 @@ cargo test --locked -p prns-simulation --test ble_peer_frames
 cargo test --locked -p prns-simulation --features controlled-time --test manual_fleet ble::
 cargo test --locked -p prns-simulation --features controlled-time --test embassy_ble
 ```
+
+### Mixed-runtime Resource transfers
+
+Two additional `embassy_ble` scenarios transfer exact 1,200-byte application
+payloads with ESP32/Apple and nRF52/BlueZ endpoints. Tokio sends a Resource-backed
+request to Embassy and receives its Resource echo. Both nodes concurrently ask
+for Resource-sized replies on independent links. A desktop response limit one
+byte below the encoded envelope is refused with `ResponseTooLarge`, while the
+exact envelope limit succeeds; the embedded responder sees `RejectedByPeer`.
+Further replies and another upload succeed on those same links.
+
+These scenarios use explicit 2 KiB request-routing and response-completion
+capacities in the host fixture. Existing small fixtures and shipping capacities
+are unchanged. The two-frame Embassy egress lane, four-entry GATT fragment queue,
+and 20-byte values remain bounded; transfers may need protocol retries. The
+private runner advances in one-millisecond steps only when actors are idle,
+within a ten-second operation deadline and an explicit 256 polls per tick;
+existing timeless completions retain their 128-poll bound. RTTs must equal
+elapsed controlled time. Tests also cover deadline completion/refusal and prevent
+a self-waking actor from spending future ticks' poll budgets without advancing.
+
+Dense application bytes explicitly pass the production uncompressed preflight,
+keeping background compression workers out of this scenario. Its 4,096-event
+trace must remain complete, both radios must detach exactly once, and all BLE
+connections must close. This is not compressed/segmented Resource, native OS
+Bluetooth, firmware memory, hardware, or many-node scale evidence.
+
+The [local evidence](measurements/resource-transfers.md) lists checks and limits.
+The tests preserve current Resource envelope-limit behavior; the
+[shared-core accounting follow-up](../../prns-core/plans/response-size-accounting.md)
+records its mismatch with packet and completion-buffer accounting.

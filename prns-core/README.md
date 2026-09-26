@@ -56,6 +56,10 @@ alone is not response success, and late failures cannot settle a retired receipt
 An accepted Resource response retires its obsolete upload even if proof was lost.
 Request envelopes must use a whole Resource; segmented responses remain supported.
 
+Response-size accounting is not yet uniform between packets and Resources.
+The [accounting follow-up](plans/response-size-accounting.md) records the current
+boundary behavior and the cases a shared-core correction must preserve.
+
 ## Request ingress diagnostics
 
 `EngineState::ingest_packet_into_report` and `ingest_classified_into_report` return an optional

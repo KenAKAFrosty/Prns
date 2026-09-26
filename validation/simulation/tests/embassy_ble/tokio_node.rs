@@ -7,9 +7,10 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 use personal_rns::remote_control::RemoteControlService;
 use personal_rns::routing::links::LinkId;
+use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::runtime::{
-    CryptoPoolConfig, Diagnostic, NoPersistence, NoRemoteControlHostControls, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe,
+    CryptoPoolConfig, Diagnostic, NoPersistence, NoRemoteControlHostControls,
+    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 use prns_interfaces_tokio::bluetooth_auto::BluetoothAuto;
@@ -41,6 +42,24 @@ pub(super) fn start(
     address: u8,
     endpoint: Endpoint,
 ) -> oneshot::Receiver<TokioNode> {
+    with_endpoints(
+        tasks,
+        lab,
+        address,
+        endpoint,
+        [echo::destination(address)],
+        personal_rns::request_endpoints![Echo],
+    )
+}
+
+pub(super) fn with_endpoints<R: RequestEndpointSet<NoRemoteControlHostControls> + 'static>(
+    tasks: &mut EmbassyTasks<'_>,
+    lab: &VirtualBleLab,
+    address: u8,
+    endpoint: Endpoint,
+    destinations: [PreConfiguredDestination<'static>; 1],
+    endpoints: R,
+) -> oneshot::Receiver<TokioNode> {
     let supervisor = BluetoothAuto::<_, MAX_PEERS>::new(
         backend(lab, address),
         BleIdentity::new([address; 16]),
@@ -57,10 +76,10 @@ pub(super) fn start(
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             remote_control: RemoteControlService::Unavailable,
-            pre_configured_destinations: [echo::destination(address)],
+            pre_configured_destinations: destinations,
             app_state: NoRemoteControlHostControls,
             storage: GrowableHeap,
-            request_endpoints: personal_rns::request_endpoints![Echo],
+            request_endpoints: endpoints,
             interfaces: move |handle: &PrnsNodeHandle| {
                 let _attached = handle.supervise(supervisor);
             },
