@@ -64,7 +64,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(super) fn culled_settlement(&mut self, kind: ReceiptKind) -> Settlement {
+    pub(crate) fn culled_settlement(&mut self, kind: ReceiptKind) -> Settlement {
         match kind {
             ReceiptKind::SendSinglePacket { .. } => {
                 Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Culled))

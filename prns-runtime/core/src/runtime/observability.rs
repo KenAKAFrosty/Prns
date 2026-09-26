@@ -573,6 +573,7 @@ impl From<&SendRequestFailure> for RuntimeOperationOutcome {
             SendRequestFailure::ResponseTooLarge => Self::ResponseTooLarge,
             SendRequestFailure::ResponseTransferFailed(_) => Self::ResponseTransferFailed,
             SendRequestFailure::ResourceCapacity => Self::Backpressure,
+            SendRequestFailure::RequestTransferFailed(inner) => Self::from(inner),
         }
     }
 }

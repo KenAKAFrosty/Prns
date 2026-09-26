@@ -49,6 +49,13 @@ must preserve the typed rejection rather than treating every non-packet result
 as a large request. The legacy `request_fits_packet` predicate delegates to this
 plan but cannot distinguish a rejection from a Resource-sized request.
 
+Resource-backed requests settle through `SendRequest`, including typed
+`RequestTransferFailed(SendResourceFailure)` upload failures. After advertisement,
+the matching link/command/request receipt owns the terminal result: upload proof
+alone is not response success, and late failures cannot settle a retired receipt.
+An accepted Resource response retires its obsolete upload even if proof was lost.
+Request envelopes must use a whole Resource; segmented responses remain supported.
+
 ## Request ingress diagnostics
 
 `EngineState::ingest_packet_into_report` and `ingest_classified_into_report` return an optional

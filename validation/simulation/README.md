@@ -421,9 +421,14 @@ restore encrypted request/response. Dropping the actors leaves no connections
 and detaches each radio exactly once. This regression exposed the
 [Tokio request-admission fix](../../prns-runtime/impls/tokio/README.md#request-admission):
 the shared core now distinguishes link rejection from transport size selection.
-Post-admission Resource failure settlement remains a separate follow-up.
 The [local correctness evidence](measurements/mixed-runtime-ble.md) records the
 red/green regression, verification commands, and coverage limits.
+
+The same scenarios send a Resource-sized request beyond the Embassy echo's
+admission limit. It must promptly return the exact typed peer rejection, then
+allow an ordinary exchange on the same link. This exposed a separate shared-core
+request settlement bug; [Resource settlement evidence](measurements/resource-request-settlement.md)
+records its regression and receipt-ownership checks.
 
 Its private clock bridge mirrors successful medium/Tokio steps into Embassy's
 mock time driver before polling actors. The existing wake-driven runner retains

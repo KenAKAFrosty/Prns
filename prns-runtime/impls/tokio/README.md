@@ -37,12 +37,11 @@ successful exchanges on fresh links:
 cargo test --locked -p prns-simulation --features controlled-time --test embassy_ble interop
 ```
 
-Follow-up: failures of Resource-backed requests after transport planning still
-need request-specific settlement and receipt cleanup. Resource-send failure
-currently uses `Settlement::SendResource`, which does not complete a request
-waiter. The fix must preserve correlation and avoid duplicate settlement from
-an already-tracked response receipt; this admission check does not resolve that
-separate lifecycle path.
+Resource upload failures now settle the request waiter with
+`SendRequestFailure::RequestTransferFailed`. Shared core retires its exact receipt,
+suppresses late duplicate results, and waits for the response after upload proof.
+The mixed-runtime regression also checks prompt peer rejection of an oversized
+request, followed by a successful ordinary exchange on the same link.
 
 ## Process model
 

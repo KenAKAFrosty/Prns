@@ -507,6 +507,7 @@ pub struct OutgoingResources<C: ResourceTable<OutgoingResourceState>> {
 pub struct LinkOwnedOutgoingResource {
     pub command_id: CommandId,
     pub correlation: ResourceCorrelation,
+    pub status: OutgoingResourceStatus,
 }
 
 impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
@@ -1070,6 +1071,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         let resource = LinkOwnedOutgoingResource {
             command_id: state.command_id,
             correlation: state.correlation,
+            status: state.status,
         };
         self.table.swap_remove(index);
         self.refresh_earliest_timeout();
@@ -1765,6 +1767,7 @@ mod tests {
             Some(LinkOwnedOutgoingResource {
                 command_id: CommandId(7),
                 correlation: ResourceCorrelation::Unsolicited,
+                status: OutgoingResourceStatus::Building,
             }),
             "link teardown removes a building row without inventing a wire hash",
         );

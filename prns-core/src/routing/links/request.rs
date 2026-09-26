@@ -611,24 +611,32 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The request formed no packet, so the row is keyed by `sha256` of the pack. Its first sixteen bytes are the request id (RNS 1.4.2 `truncated_hash(packed_request)`) the response names back.
-    pub(crate) fn book_request_resource_receipt(
+    pub(crate) fn book_request_resource_receipt<Work>(
         &mut self,
         id: CommandId,
         link_id: &LinkId,
         packed_request: &[u8],
-        response_timeout: RequestResponseTimeout,
-        maximum_response_bytes: crate::units::ByteLimit,
+        correlation: crate::routing::links::resources::ResourceCorrelation,
         now: InstantMillis,
-    ) {
+        sink: &mut impl FnMut(crate::engine::EngineReaction<'_, Work>),
+    ) -> crate::engine::WakeSchedules {
+        let crate::routing::links::resources::ResourceCorrelation::Request {
+            response_timeout,
+            maximum_response_bytes,
+            ..
+        } = correlation
+        else {
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
         let Some(LinkPhase::Active {
             rtt, peer_signing, ..
         }) = self.links.phase_for(link_id)
         else {
-            return;
+            return crate::engine::WakeSchedules::UNCHANGED;
         };
         let peer_signing = *peer_signing;
         let timeout_ms = requested_response_timeout_ms(*rtt, response_timeout);
-        let _ = self.receipts.track(OutstandingReceipt {
+        let culled = self.receipts.track(OutstandingReceipt {
             packet_hash: PacketHash::new(sha256(packed_request)),
             command_id: id,
             kind: ReceiptKind::request(
@@ -640,6 +648,15 @@ impl<S: StorageLayout> EngineState<S> {
             sent_at: now,
             timeout_at: InstantMillis(now.0.saturating_add(timeout_ms)),
         });
+        if let Some(culled) = culled {
+            let settlement = self.culled_settlement(culled.kind);
+            crate::engine::settle(sink, culled.command_id, settlement);
+        }
+        crate::engine::WakeSchedules {
+            receipt_timeouts: self.receipt_timeouts_wake(),
+            remote_control_pairing: self.remote_control_pairing_wake(),
+            ..crate::engine::WakeSchedules::UNCHANGED
+        }
     }
 
     /// Fire-and-forget; the reference sends its response packet and moves on.

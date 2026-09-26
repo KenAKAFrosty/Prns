@@ -2060,6 +2060,7 @@ mod dynamics_tests {
                 failed: std::vec::Vec::new(),
                 segments: std::vec::Vec::new(),
                 response_segments: std::vec::Vec::new(),
+                responses: std::vec::Vec::new(),
                 assembled: std::vec::Vec::new(),
                 mismatched: std::vec::Vec::new(),
                 requests: std::vec::Vec::new(),

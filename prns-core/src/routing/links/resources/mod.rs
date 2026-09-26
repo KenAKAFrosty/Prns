@@ -10,6 +10,7 @@ pub mod receive;
 pub mod send;
 mod send_plan;
 pub mod serve_outgoing;
+pub(crate) mod settlement;
 pub mod streamed_open;
 pub mod table;
 

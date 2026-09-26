@@ -2491,6 +2491,9 @@ fn request_failure(error: SendError<SendRequestFailure>) -> CommandFailure {
         SendError::Failed(SendRequestFailure::ResourceCapacity) => {
             CommandFailure::ResourceTableFull
         }
+        SendError::Failed(SendRequestFailure::RequestTransferFailed(inner)) => {
+            resource_send_failure(ResourceSendError::Rejected(inner))
+        }
     }
 }
 

@@ -626,6 +626,9 @@ fn send_link_error(error: personal_rns::SendError<SendToLinkFailure>) -> crate::
 
 fn request_error(error: personal_rns::SendError<SendRequestFailure>) -> crate::errors::CodeError {
     match error {
+        personal_rns::SendError::Failed(SendRequestFailure::RequestTransferFailed(inner)) => {
+            send_resource_failure(inner)
+        }
         personal_rns::SendError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
         personal_rns::SendError::Busy => code_err(ErrorCode::Busy, "engine busy"),
         personal_rns::SendError::PayloadTooLarge => {

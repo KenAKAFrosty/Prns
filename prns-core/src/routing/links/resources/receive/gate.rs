@@ -448,7 +448,7 @@ impl<S: StorageLayout> EngineState<S> {
                 .begin(link_id, original_hash, total_segment_count);
         }
         if let ResourceCorrelation::Response(id) = correlation {
-            self.receipts.claim_request_for_transfer(id);
+            self.claim_resource_response(&link_id, id);
         }
         self.links.note_inbound(&link_id, arrived_at);
         AcceptedResourceAdmission::Pull { link_id, hash }

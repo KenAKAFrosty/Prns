@@ -359,6 +359,31 @@ impl<C: ReceiptTable> Receipts<C> {
         Some(proven)
     }
 
+    /// Retire only the request owned by this transfer, including when request IDs collide.
+    pub(crate) fn take_request_for_command(
+        &mut self,
+        link: &LinkId,
+        command: CommandId,
+        request: RequestId,
+    ) -> Option<ProvenRequestReceipt> {
+        let index = (0..self.table.len()).find(|index| {
+            self.table.command_ids()[*index] == command
+                && matches!(self.table.kinds()[*index], ReceiptKind::SendRequest { link_id, .. } if link_id == *link)
+                && &self.table.packet_hashes()[*index].as_bytes()[..16] == request.as_bytes()
+        })?;
+        let ReceiptKind::SendRequest { response, .. } = self.table.kinds()[index] else {
+            return None;
+        };
+        let receipt = ProvenRequestReceipt {
+            command_id: command,
+            intent: response.intent(),
+            sent_at: self.table.sent_ats()[index],
+        };
+        self.table.remove(index);
+        self.refresh_earliest_timeout();
+        Some(receipt)
+    }
+
     /// Non-removing peek for the resource accept gate: RNS 1.4.2 `Link.receive` accepts a response resource only when it names a request we actually sent.
     pub fn has_pending_request(&self, request_id: RequestId) -> bool {
         self.request_row_index(request_id).is_some()

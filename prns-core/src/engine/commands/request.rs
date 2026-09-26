@@ -57,6 +57,7 @@ pub enum SendRequestFailure {
     LinkClosed,
     ResponseTooLarge,
     ResponseTransferFailed(ResourceFailureCause),
+    RequestTransferFailed(SendResourceFailure),
     /// A valid Resource response could not be admitted within the receiver's
     /// bounded memory and pending-offer limits.
     ResourceCapacity,

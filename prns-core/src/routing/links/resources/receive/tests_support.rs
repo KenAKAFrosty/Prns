@@ -179,6 +179,7 @@ pub(crate) struct InboundCapture {
     pub(crate) failed: std::vec::Vec<(ResourceHash, ResourceFailureCause)>,
     pub(crate) segments: std::vec::Vec<(ResourceHash, u64, std::vec::Vec<u8>)>,
     pub(crate) response_segments: std::vec::Vec<(CommandId, RequestId, u64, std::vec::Vec<u8>)>,
+    pub(crate) responses: std::vec::Vec<(CommandId, RequestId, std::vec::Vec<u8>)>,
     pub(crate) assembled: std::vec::Vec<(ResourceHash, u64)>,
     pub(crate) mismatched: std::vec::Vec<(InterfaceId, InterfaceId)>,
     pub(crate) requests: std::vec::Vec<(RequestId, std::vec::Vec<u8>)>,
@@ -232,6 +233,7 @@ fn feed_inner<S: StorageLayout>(
         failed: std::vec::Vec::new(),
         segments: std::vec::Vec::new(),
         response_segments: std::vec::Vec::new(),
+        responses: std::vec::Vec::new(),
         assembled: std::vec::Vec::new(),
         mismatched: std::vec::Vec::new(),
         requests: std::vec::Vec::new(),
@@ -306,6 +308,16 @@ fn capture_inbound_reaction(
                     .segment_metadata
                     .push((original_hash, segment_index, metadata.to_vec()));
             }
+        }
+        EngineReaction::Journaled(Journaled::ResponseReceived {
+            command_id,
+            request_id,
+            data,
+            ..
+        }) => {
+            capture
+                .responses
+                .push((command_id, request_id, data.to_vec()));
         }
         EngineReaction::Journaled(Journaled::ResponseSegmentReceived {
             command_id,

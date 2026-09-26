@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, LinkClosedReason, SendRequestFailure,
-    SendRequestRejection, Settlement, MAX_SEND_REQUEST_DATA_LEN,
+    SendRequestRejection, SendResourceFailure, Settlement, MAX_SEND_REQUEST_DATA_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::{
     AppleHost, BleAddress, BlueZHost, Endpoint, Esp32Host, Nrf52Host,
@@ -182,6 +182,24 @@ fn refuse_expired_requests(
     assert!(embassy.take_settled().is_empty());
 }
 
+fn refuse_oversized_transfer(tasks: &mut EmbassyTasks<'_>, tokio: &PrnsNodeHandle, link: LinkId) {
+    let desktop = tokio.clone();
+    assert_eq!(
+        tasks.complete_ready(async move {
+            desktop
+                .request(
+                    link,
+                    RequestPathHash::of(QUERY_PATH),
+                    &[0xD4; MAX_SEND_REQUEST_DATA_LEN + 1],
+                )
+                .await
+        }),
+        Err(SendError::Failed(
+            SendRequestFailure::RequestTransferFailed(SendResourceFailure::RejectedByPeer)
+        ))
+    );
+}
+
 fn scenario(embedded_endpoint: Endpoint, desktop_endpoint: Endpoint) {
     let clock = ClockLease::acquire();
     let lab = lab();
@@ -205,6 +223,7 @@ fn scenario(embedded_endpoint: Endpoint, desktop_endpoint: Endpoint) {
     let desktop = desktop.try_recv().unwrap();
     converge(&mut tasks, &lab, &embassy, &desktop.handle);
     let links = establish_pair(&mut tasks, &embassy, &desktop.handle);
+    refuse_oversized_transfer(&mut tasks, &desktop.handle, links[1]);
     exchange(&mut tasks, &embassy, &desktop.handle, links, 0);
 
     assert_eq!(

@@ -41,8 +41,9 @@ select shared protocol behavior. The fixture uses host storage, bounded leaked
 static allocations, and production Tokio entropy; it is not an embedded-memory,
 large-fleet, throughput, or byte-for-byte replay measurement.
 
-Resource-backed request failures after transport planning remain a separate
-[settlement and receipt-cleanup follow-up](../../../prns-runtime/impls/tokio/README.md#request-admission).
+At this checkpoint, post-admission Resource failures remained unresolved.
+The subsequent [Resource settlement slice](resource-request-settlement.md) records
+the separate fix and evidence.
 
 ## Focused mutation audit
 
