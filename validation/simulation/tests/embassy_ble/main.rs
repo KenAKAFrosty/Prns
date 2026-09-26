@@ -17,6 +17,8 @@ use prns_simulation::{ManualMedium, ManualTimeDriver, ManualTimeError, Simulatio
 
 mod clock;
 mod fixture;
+mod node;
+mod traffic;
 use clock::{ClockLease, EmbassyTasks};
 use fixture::{backend, lab, supervisor, MAX_PEERS};
 

@@ -58,14 +58,18 @@ pressure, failure isolation, and exact accounting. This is host component eviden
 not an emulated controller or full embedded node. Native RF behavior and firmware
 resource evidence remain separate.
 
-## Supervisor simulation
+## Node and supervisor simulation
 
 The simulation package's [`embassy_ble` target](../../../validation/simulation/tests/embassy_ble/main.rs)
 runs this supervisor with virtual BLE radios, real fleet lifecycle channels, and
 coordinated manual time. It checks the exact handshake timeout boundary,
 successful peer admission, and disable teardown on both ends. These scenarios
 run in PR CI and relevant pre-push checks through `virtual-device-simulation`.
-No production clock or firmware dependency changes are required.
+The same target runs three complete Embassy nodes through simultaneous fragmented
+fanout and targeted traffic, checking whole deliveries, command settlement, byte
+accounting, and hub disable/reconnection. The [simulation coverage and limits](../../../validation/simulation/README.md)
+describe the private clock, entropy, and storage fixtures. These are host runtime
+tests; native controllers and board firmware have separate assurance paths.
 
 ```console
 python3 validation/run.py run --suite bluetooth-auto-embassy --suite virtual-device-simulation

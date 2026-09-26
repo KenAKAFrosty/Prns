@@ -20,6 +20,7 @@ tokio = { version = "1", default-features = false, features = ["macros", "rt-mul
 critical-section = { version = "1", features = ["std"] }
 embassy-sync = { version = "0.8.0", default-features = false }
 embassy-time = { version = "0.5", default-features = false, features = ["mock-driver", "generic-queue-64"] }
+prns-core = { path = "../../prns-core", default-features = false }
 prns-interfaces-embassy = { path = "../../prns-interfaces/impls/embassy", default-features = false, features = ["bluetooth-auto"] }
 prns-interfaces-tokio = { path = "../../prns-interfaces/impls/tokio", default-features = false, features = ["bluetooth-auto-runtime"] }
 prns-runtime-embassy = { path = "../../prns-runtime/impls/embassy", default-features = false }

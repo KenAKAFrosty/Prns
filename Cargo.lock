@@ -3428,6 +3428,7 @@ dependencies = [
  "embassy-sync 0.8.0",
  "embassy-time",
  "personal-rns",
+ "prns-core",
  "prns-interfaces-embassy",
  "prns-interfaces-tokio",
  "prns-runtime-embassy",

@@ -386,8 +386,8 @@ into its shared lane is serialized by an async mutex. Component tests exercise
 concurrent receive/send progress, forwarding pressure, completion ordering,
 failure isolation, and accounting through real Embassy fleet lanes. Unsettled
 forwarding is tracked independently of send completion for safe cancellation.
-This does not yet run an Embassy node on the manual fleet clock or provide
-receive tasks independent of fanout.
+Receive pumps remain scoped to fanout; independent receive tasks are still a
+separate runtime change.
 
 The `embassy_ble` integration target runs the real Embassy BLE supervisor against
 the same virtual BLE backend used by Tokio. It verifies a silent peer stays
@@ -395,6 +395,16 @@ connected at 9,999 ms and is retired at 10,000 ms for both ESP32 and nRF52 proto
 endpoints, with exact recovery counters and no premature member admission. A
 two-supervisor scenario checks native handshake admission, member registration,
 and both ends' teardown after disabling one radio.
+
+A three-node scenario runs complete production Embassy nodes, including command
+settlement, routing, fleet lanes, and application delivery, on the manual clock.
+One hub connects to two leaves through 20-byte GATT values and four-entry fragment
+queues. Every node sends a 256-byte payload concurrently; the hub alternates
+all-peer fanout and a selected peer while receiving both leaves' traffic. Whole
+delivery values, command settlements, and per-peer RX/TX deltas must match, and
+each exchange must settle without advancing time. Disabling the hub removes all
+members and links; re-enabling it must restore the exact topology and successful
+traffic within 60 seconds of virtual time. Dropping the actors closes all links.
 
 Its private clock bridge mirrors successful medium/Tokio steps into Embassy's
 mock time driver before polling actors. The existing wake-driven runner retains
@@ -404,10 +414,14 @@ resets the mock timer queue only after the actors are dropped. This test fixture
 allows eight actors and uses a 64-entry timer queue; these are scenario bounds,
 not an Embassy fleet scale claim. Known runtime deadlines are supplied explicitly.
 
-The tests are included in `virtual-device-simulation`, now run alongside Embassy
-component tests in PR CI and by the relevant pre-push gate. The clock and backend
-dependencies are test-only. This is supervisor-level evidence, not full Embassy
-nodes, data-plane fanout, native HCI/Trouble execution, board firmware, or RF evidence.
+The tests are included in `virtual-device-simulation`, run alongside Embassy
+component tests in PR CI and by the relevant pre-push gate. The clock, backend,
+and deterministic entropy source are confined to tests. The node fixture uses
+host `GrowableHeap` storage and a fixed number of leaked allocations for the
+runtime's static APIs; it establishes behavior, not embedded memory use or
+large-fleet capacity. ESP32/nRF52 endpoint labels exercise shared protocol paths.
+Native HCI/Trouble execution, board firmware, and RF still require separate
+evidence.
 
 ```console
 cargo test --locked -p prns-core interfaces::bluetooth_auto::duplex
