@@ -17,7 +17,8 @@ use crate::remote_control::{
     REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::links::request::{
-    write_packed_binary_header, PackBinaryError, SendRequestView, MAX_PACKED_BINARY_HEADER_LEN,
+    packed_binary_len, write_packed_binary_header, PackBinaryError, SendRequestView,
+    MAX_PACKED_BINARY_HEADER_LEN,
 };
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -35,6 +36,13 @@ type RemoteControlControllerPairingRequestData =
     HeaplessVec<u8, MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_REQUEST_DATA_LEN>;
 const _: () =
     assert!(MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_REQUEST_DATA_LEN <= MAX_SEND_REQUEST_DATA_LEN);
+const MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN: usize =
+    match packed_binary_len(RemoteControlPairingResponse::MAX_ENCODED_LEN) {
+        Some(length) => length,
+        None => panic!(),
+    };
+const _: () =
+    assert!(MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN <= super::MAX_RESPOND_DATA_LEN);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BeginRemoteControlControllerPairing {
@@ -102,7 +110,7 @@ impl RemoteControlControllerPairingRequest {
             RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
             self.data.as_slice(),
             self.response_timeout,
-            ByteLimit::Maximum(RemoteControlPairingResponse::MAX_ENCODED_LEN as u64),
+            ByteLimit::Maximum(MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN as u64),
         )
     }
 
@@ -1162,7 +1170,7 @@ mod tests {
                 maximum: DurationMillis(9_000),
             },
             maximum_response_bytes: ByteLimit::Maximum(
-                RemoteControlPairingResponse::MAX_ENCODED_LEN as u64,
+                MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN as u64,
             ),
         };
         assert_eq!(request.send_request(), (&expected).into());
@@ -1181,6 +1189,22 @@ mod tests {
 
     #[test]
     fn exact_pairing_request_receipt_admits_offer_without_application_response() {
+        assert_offer_admitted(permissions(), false);
+    }
+
+    #[test]
+    fn maximum_pairing_offer_fits_the_complete_encoded_response_budget() {
+        assert_offer_admitted(
+            RemoteControlPairingPermissions::new(
+                crate::remote_control::RemoteControlControllerAuthority::Administrator,
+                RemoteControlRequestSet::all(),
+            )
+            .unwrap(),
+            true,
+        );
+    }
+
+    fn assert_offer_admitted(permissions: RemoteControlPairingPermissions, maximum: bool) {
         let mut engine = engine_with_active_link();
         let (controller, request_id) = dispatch_begin_request(&mut engine);
         let interfaces = [routable_descriptor(lane())];
@@ -1191,13 +1215,26 @@ mod tests {
             &signer(0x52),
             context(),
             &begin,
-            permissions(),
+            permissions,
             RemoteControlPairingAttemptTimeout::try_from(DurationMillis(3_000)).unwrap(),
         )
         .unwrap();
         let (offer, transcript) = prepared.into_parts();
         let attempt_id = (&transcript).into();
-        let packed = packed_response(RemoteControlPairingResponse::Offer(offer));
+        let response = RemoteControlPairingResponse::Offer(offer);
+        if maximum {
+            assert_eq!(
+                response.encoded_len(),
+                RemoteControlPairingResponse::MAX_ENCODED_LEN
+            );
+        }
+        let packed = packed_response(response);
+        if maximum {
+            assert_eq!(
+                packed.len(),
+                MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN
+            );
+        }
         let mut plaintext = [0u8; BROADCAST_MTU];
         let plaintext_len = write_response_plaintext(&request_id, &packed, &mut plaintext).unwrap();
         let mut response_frame = [0u8; BROADCAST_MTU];
@@ -1427,7 +1464,7 @@ mod tests {
             )),
             response_timeout: RequestResponseTimeout::Exact(DurationMillis(2_500)),
             maximum_response_bytes: ByteLimit::Maximum(
-                RemoteControlPairingResponse::MAX_ENCODED_LEN as u64,
+                MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN as u64,
             ),
         };
         assert_eq!(request.send_request(), (&expected).into());
