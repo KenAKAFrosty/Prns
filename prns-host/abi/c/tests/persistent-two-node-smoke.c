@@ -557,7 +557,9 @@ int main(int argc, char **argv) {
     REQUIRE(hex_bytes(fixture.announce_app_data_hex, announce_data, sizeof(announce_data), &announce_data_length), "invalid announce data");
     REQUIRE(hex_bytes(fixture.request_payload_hex, request_payload, sizeof(request_payload), &request_payload_length), "invalid request payload");
     REQUIRE(hex_bytes(fixture.response_hex, response_payload, sizeof(response_payload), &response_payload_length), "invalid response payload");
-    maximum_response_bytes = (uint64_t)response_payload_length;
+    /* This at-most-128-byte fixture is returned as bin8: count its two-byte
+       value header, even though the host outcome exposes decoded bytes. */
+    maximum_response_bytes = (uint64_t)response_payload_length + 2;
     REQUIRE(hex_bytes(fixture.path_hash_hex, path_hash, sizeof(path_hash), &path_hash_length), "invalid path hash");
     REQUIRE(path_hash_length == PRNS_REQUEST_PATH_HASH_LENGTH, "path hash length mismatch");
     REQUIRE(hex_bytes(fixture.metadata_hex, metadata, sizeof(metadata), &metadata_length), "invalid metadata");

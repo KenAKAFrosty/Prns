@@ -455,6 +455,22 @@ cargo test --locked -p prns-simulation --features controlled-time --test manual_
 cargo test --locked -p prns-simulation --features controlled-time --test embassy_ble
 ```
 
+### Packet response limits
+
+Two `embassy_ble` scenarios exercise exact packet response limits on the same
+ESP32/Apple and nRF52/BlueZ pairings. Concurrent requests in both directions
+accept 255 and 256 bytes, refuse 257 and 258 bytes with `ResponseTooLarge`, and
+then succeed on the same links. Bin8/bin16/bin32 values also fill exactly the
+256-byte completion capacity; their headers count because Rust callers receive
+them unchanged. Shipping buffers, queues, and wire bytes are unchanged.
+
+The scenarios exposed and now guard the shared-core two-byte undercount that
+previously let Tokio accept oversized packet responses. Embassy's final buffer
+already refused them; now the common ingress boundary does so consistently.
+The [local evidence](measurements/packet-response-limits.md) records verification;
+the [accounting plan](../../prns-core/plans/response-size-accounting.md) records
+the remaining Resource admission work.
+
 ### Mixed-runtime Resource transfers
 
 Two additional `embassy_ble` scenarios transfer exact 1,200-byte application

@@ -801,7 +801,9 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
-        let response_size = response_data.len().saturating_sub(2) as u64;
+        // The response value is delivered verbatim, including any MessagePack
+        // binary header. Only parse_response_plaintext's outer envelope is gone.
+        let response_size = response_data.len() as u64;
         if !maximum_response_bytes.allows(response_size) {
             let Some(proven) = self.receipts.settle_by_request_id(request_id) else {
                 return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);

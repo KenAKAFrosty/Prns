@@ -172,6 +172,9 @@ pub struct RespondTokenSpec {
 pub struct RequestOptions {
     /// Request timeout in milliseconds.
     pub timeout_millis: Option<f64>,
+    /// Encoded response limit before binary decoding (packet: `packed.length`,
+    /// not `data.length`). Resources currently count the entire advertised
+    /// uncompressed stream, including envelope and metadata.
     pub maximum_response_bytes: Option<f64>,
 }
 

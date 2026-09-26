@@ -4,6 +4,9 @@
 //!
 //! Payloads past the link MDU are Resource territory, refused here.
 
+#[cfg(test)]
+mod response_limits;
+
 use crate::crypto::sha256;
 use crate::engine::{
     CommandId, CommandOutcome, RemoteControlControllerPairingRequest, RequestResponseTimeout,
@@ -1318,7 +1321,7 @@ mod tests {
             CommandId(42),
             1_800,
             20_000,
-            ByteLimit::Maximum(3),
+            ByteLimit::Maximum(5),
         );
         let mut plaintext = [0u8; 64];
         let plaintext_len = write_response_plaintext(
@@ -1365,7 +1368,7 @@ mod tests {
             CommandId(42),
             1_800,
             20_000,
-            ByteLimit::Maximum(4),
+            ByteLimit::Maximum(6),
         );
         let mut plaintext = [0u8; 64];
         let plaintext_len = write_response_plaintext(

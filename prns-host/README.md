@@ -45,6 +45,21 @@ Rust and TypeScript/JavaScript are the paved application SDKs. Python, .NET, Go,
 
 Commands settle as an explicit success or failure case. Cancellation does not abandon a blocked foreign thread: each adapter interrupts the native wait and joins its ownership boundary before release. Application and diagnostic lanes are claimed once. Application data remains lossless inside declared bounds; diagnostics may drop newest and report an exact accumulated gap. Resource bodies have one consumer and retain their own native handle after the parent event is released.
 
+## Request response limits
+
+Request response limits apply before adapter binary decoding. For packet
+responses, `maximumResponseBytes` / `maximum_response_bytes` counts the complete
+encoded response value, excluding only its outer request-ID envelope. For
+example, nine bytes returned as MessagePack bin8 require a limit of eleven; raw
+nine-byte responses require nine. A nil response counts as one byte. Zero is a
+real bound, not unlimited; omit the optional limit for unlimited.
+
+Resource responses currently use a stricter pre-allocation bound on the complete
+advertised uncompressed stream, including envelope and metadata. The shared-core
+[response-size accounting follow-up](../prns-core/plans/response-size-accounting.md)
+owns removing that transport discrepancy. Native adapters still return decoded
+binary data where they already did; the limit is not a decoded-data budget.
+
 ## Contract workflow
 
 Change the schema first. Generated files are never edited directly.

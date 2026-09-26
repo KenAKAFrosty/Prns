@@ -86,6 +86,9 @@ pub enum HostCommand {
         path_hash: RequestPathHash,
         payload: Vec<u8>,
         timeout: ResponseTimeout,
+        /// Bounds the encoded response before adapter binary decoding; packet
+        /// binary headers count. Resources currently count the full advertised
+        /// uncompressed stream, including envelope and metadata.
         maximum_response_bytes: Option<u64>,
     },
     Respond {

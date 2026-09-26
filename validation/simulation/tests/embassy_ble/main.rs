@@ -21,6 +21,7 @@ mod echo;
 mod fixture;
 mod interop;
 mod node;
+mod packet_limits;
 mod resources;
 mod tokio_node;
 mod traffic;
