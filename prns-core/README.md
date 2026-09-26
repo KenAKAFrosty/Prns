@@ -40,6 +40,15 @@ GNSS/NMEA provider, and coherent battery/external-power observations. Embedded, 
 responsible for acquiring the observations, and core never publishes them or changes network
 behavior merely because they are available.
 
+## Request transport planning
+
+`EngineState::plan_request_transport` rejects missing or inactive links before
+choosing `RequestTransport::Packet` or `Resource`. The packet choice respects
+both the negotiated link MDU and the bounded request payload capacity. Hosts
+must preserve the typed rejection rather than treating every non-packet result
+as a large request. The legacy `request_fits_packet` predicate delegates to this
+plan but cannot distinguish a rejection from a Resource-sized request.
+
 ## Request ingress diagnostics
 
 `EngineState::ingest_packet_into_report` and `ingest_classified_into_report` return an optional

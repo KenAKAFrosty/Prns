@@ -406,6 +406,25 @@ each exchange must settle without advancing time. Disabling the hub removes all
 members and links; re-enabling it must restore the exact topology and successful
 traffic within 60 seconds of virtual time. Dropping the actors closes all links.
 
+Two mixed-runtime scenarios pair a complete Embassy node with a complete Tokio
+node using ESP32/Apple and nRF52/BlueZ protocol endpoints. Both announce, open
+encrypted links, and concurrently exchange exact 256-byte echo requests through
+20-byte GATT values and four-entry fragment queues. Each operation must settle
+without advancing virtual time. Tokio uses its existing inline crypto mode.
+
+A forced BLE disconnect removes both member inventories. The 60-second
+advertising interval allows the Reticulum links to expire before rediscovery;
+both nodes must report exactly those link IDs with `Timeout`. Requests on the
+expired links must promptly return `Rejected(NoSuchLink)`, including empty
+requests and a Resource-sized Tokio payload. Fresh announcements and links must
+restore encrypted request/response. Dropping the actors leaves no connections
+and detaches each radio exactly once. This regression exposed the
+[Tokio request-admission fix](../../prns-runtime/impls/tokio/README.md#request-admission):
+the shared core now distinguishes link rejection from transport size selection.
+Post-admission Resource failure settlement remains a separate follow-up.
+The [local correctness evidence](measurements/mixed-runtime-ble.md) records the
+red/green regression, verification commands, and coverage limits.
+
 Its private clock bridge mirrors successful medium/Tokio steps into Embassy's
 mock time driver before polling actors. The existing wake-driven runner retains
 explicit actor and poll budgets; refused ready-actor and backward-time steps
@@ -421,7 +440,8 @@ host `GrowableHeap` storage and a fixed number of leaked allocations for the
 runtime's static APIs; it establishes behavior, not embedded memory use or
 large-fleet capacity. ESP32/nRF52 endpoint labels exercise shared protocol paths.
 Native HCI/Trouble execution, board firmware, and RF still require separate
-evidence.
+evidence. The mixed-runtime scenarios retain Tokio's production OS entropy;
+they do not establish byte-for-byte deterministic replay.
 
 ```console
 cargo test --locked -p prns-core interfaces::bluetooth_auto::duplex

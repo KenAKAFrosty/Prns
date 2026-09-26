@@ -1,9 +1,12 @@
 use crate::engine::{
     CryptoOwed, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, OwedWork,
-    PrnsCommand, Respond, RespondData, SendRequest, SendRequestData, WakeSchedules,
+    PrnsCommand, Respond, RespondData, SendRequest, SendRequestData, SendRequestFailure,
+    Settlement, WakeSchedules,
 };
 use crate::manifold::Host;
-use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
+use crate::routing::links::request::{
+    write_request_plaintext, RequestId, RequestTransport, REQUEST_WIRE_OVERHEAD,
+};
 use crate::routing::links::resources::{
     ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSegment, ResourceSend,
 };
@@ -456,8 +459,17 @@ where
                 } = request;
                 journal.register_request(id, completion);
                 let payload = data.as_slice();
-                let delta = if engine.request_fits_packet(&link_id, payload) {
-                    match SendRequestData::from_slice(payload) {
+                let delta = match engine.plan_request_transport(&link_id, payload.len()) {
+                    Err(rejection) => {
+                        journal.route(Journaled::CommandSettled {
+                            id,
+                            settlement: Settlement::SendRequest(Err(SendRequestFailure::Rejected(
+                                rejection,
+                            ))),
+                        });
+                        WakeSchedules::UNCHANGED
+                    }
+                    Ok(RequestTransport::Packet) => match SendRequestData::from_slice(payload) {
                         Ok(send_data) => engine.ingest_command_into(
                             IssuedCommand {
                                 id,
@@ -485,44 +497,46 @@ where
                             },
                         ),
                         Err(_) => journal.fail_request(id),
-                    }
-                } else {
-                    let mut packed = std::vec![0u8; REQUEST_WIRE_OVERHEAD + payload.len().max(1)];
-                    match write_request_plaintext(now, &path_hash, payload, &mut packed) {
-                        Ok(plain_len) => {
-                            let packed_request = &packed[..plain_len];
-                            let request_id = RequestId::of_request_data(packed_request);
-                            engine.ingest_send_resource_into(
-                                &ResourceSend {
-                                    id,
-                                    link_id,
-                                    body: ResourceBody {
-                                        data: packed_request,
-                                        compressed_candidate: None,
-                                        metadata: ResourceMetadata::None,
+                    },
+                    Ok(RequestTransport::Resource) => {
+                        let mut packed =
+                            std::vec![0u8; REQUEST_WIRE_OVERHEAD + payload.len().max(1)];
+                        match write_request_plaintext(now, &path_hash, payload, &mut packed) {
+                            Ok(plain_len) => {
+                                let packed_request = &packed[..plain_len];
+                                let request_id = RequestId::of_request_data(packed_request);
+                                engine.ingest_send_resource_into(
+                                    &ResourceSend {
+                                        id,
+                                        link_id,
+                                        body: ResourceBody {
+                                            data: packed_request,
+                                            compressed_candidate: None,
+                                            metadata: ResourceMetadata::None,
+                                        },
+                                        correlation: ResourceCorrelation::Request {
+                                            id: request_id,
+                                            response_timeout,
+                                            maximum_response_bytes,
+                                        },
                                     },
-                                    correlation: ResourceCorrelation::Request {
-                                        id: request_id,
-                                        response_timeout,
-                                        maximum_response_bytes,
+                                    now,
+                                    &mut |entropy| host.fill_random(entropy),
+                                    &mut |reaction| {
+                                        route_command_reaction(
+                                            reaction,
+                                            &mut topology.egress,
+                                            &topology.ifacs,
+                                            &mut topology.pacers,
+                                            wire_scratch,
+                                            journal,
+                                            now,
+                                        )
                                     },
-                                },
-                                now,
-                                &mut |entropy| host.fill_random(entropy),
-                                &mut |reaction| {
-                                    route_command_reaction(
-                                        reaction,
-                                        &mut topology.egress,
-                                        &topology.ifacs,
-                                        &mut topology.pacers,
-                                        wire_scratch,
-                                        journal,
-                                        now,
-                                    )
-                                },
-                            )
+                                )
+                            }
+                            Err(_) => journal.fail_request(id),
                         }
-                        Err(_) => journal.fail_request(id),
                     }
                 };
                 CommandEffect::Delta(delta)

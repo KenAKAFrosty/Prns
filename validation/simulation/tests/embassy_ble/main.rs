@@ -16,8 +16,11 @@ use prns_runtime_embassy::manifold::driver::InterfaceLifecycle;
 use prns_simulation::{ManualMedium, ManualTimeDriver, ManualTimeError, SimulationTick};
 
 mod clock;
+mod echo;
 mod fixture;
+mod interop;
 mod node;
+mod tokio_node;
 mod traffic;
 use clock::{ClockLease, EmbassyTasks};
 use fixture::{backend, lab, supervisor, MAX_PEERS};

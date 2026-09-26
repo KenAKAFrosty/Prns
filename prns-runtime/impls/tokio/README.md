@@ -23,6 +23,27 @@ This is status-lifetime protection for ordered teardown and reattachment, not a
 claim that arbitrary concurrent same-ID attachments or stale attachment handles
 are interchangeable.
 
+## Request admission
+
+The shared core's typed request transport plan separates inactive or missing
+links from Resource-sized requests. Tokio settles the former as
+`SendRequestFailure::Rejected` immediately. Previously they entered the Resource
+path, whose rejection did not settle the request waiter.
+
+The mixed Tokio/Embassy BLE regression exercises expired-link requests and
+successful exchanges on fresh links:
+
+```console
+cargo test --locked -p prns-simulation --features controlled-time --test embassy_ble interop
+```
+
+Follow-up: failures of Resource-backed requests after transport planning still
+need request-specific settlement and receipt cleanup. Resource-send failure
+currently uses `Settlement::SendResource`, which does not complete a request
+waiter. The fix must preserve correlation and avoid duplicate settlement from
+an already-tracked response receipt; this admission check does not resolve that
+separate lifecycle path.
+
 ## Process model
 
 The runtime supports ordinary process creation that starts a new program, including

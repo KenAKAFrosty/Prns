@@ -57,6 +57,13 @@ const BIN_32: u8 = 0xC6;
 const NIL: u8 = 0xC0;
 pub const MAX_PACKED_BINARY_HEADER_LEN: usize = 5;
 
+/// The wire transport for a request on an active link, after applying its negotiated MTU.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RequestTransport {
+    Packet,
+    Resource,
+}
+
 /// RNS 1.4.2 `packet.getTruncatedHash()`, naming the request in its response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestId(pub [u8; TRUNCATED_HASH_BYTE_LEN]);
@@ -511,12 +518,32 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub fn request_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
-        let Some(LinkPhase::Active { mtu, .. }) = self.links.phase_for(link_id) else {
-            return false;
+        matches!(
+            self.plan_request_transport(link_id, data.len()),
+            Ok(RequestTransport::Packet)
+        )
+    }
+
+    /// Reject missing or inactive links before choosing a packet or Resource transfer.
+    pub fn plan_request_transport(
+        &self,
+        link_id: &LinkId,
+        data_len: usize,
+    ) -> Result<RequestTransport, SendRequestRejection> {
+        let mtu = match self.links.phase_for(link_id) {
+            Some(LinkPhase::Active { mtu, .. }) => *mtu,
+            Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
+                return Err(SendRequestRejection::LinkNotActive);
+            }
+            None => return Err(SendRequestRejection::NoSuchLink),
         };
-        let data_len = if data.is_empty() { 1 } else { data.len() };
-        REQUEST_WIRE_OVERHEAD + data_len <= link_mdu(*mtu)
-            && data.len() <= MAX_SEND_REQUEST_DATA_LEN
+        if data_len <= MAX_SEND_REQUEST_DATA_LEN
+            && REQUEST_WIRE_OVERHEAD + data_len.max(1) <= link_mdu(mtu)
+        {
+            Ok(RequestTransport::Packet)
+        } else {
+            Ok(RequestTransport::Resource)
+        }
     }
 
     pub(crate) fn write_commanded_send_request(
@@ -798,14 +825,8 @@ mod tests {
         }
     }
 
-    fn engine_with_an_active_link_at(
-        link_id: LinkId,
-        mtu: usize,
-    ) -> EngineState<crate::storage::GrowableHeap> {
-        use crate::crypto::{
-            x25519_diffie_hellman, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey,
-            X25519SecretKey,
-        };
+    fn engine_with_a_pending_link(link_id: LinkId) -> EngineState<crate::storage::GrowableHeap> {
+        use crate::crypto::{Ed25519SecretKey, X25519SecretKey};
         use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
         use crate::routing::links::table::InitiatedLink;
 
@@ -830,6 +851,18 @@ mod tests {
                 command_id: CommandId(1),
             })
             .unwrap();
+        engine
+    }
+
+    fn engine_with_an_active_link_at(
+        link_id: LinkId,
+        mtu: usize,
+    ) -> EngineState<crate::storage::GrowableHeap> {
+        use crate::crypto::{
+            x25519_diffie_hellman, Ed25519PublicKey, X25519PublicKey, X25519SecretKey,
+        };
+
+        let mut engine = engine_with_a_pending_link(link_id);
         let key = LinkKey::derive(
             &link_id,
             &x25519_diffie_hellman(
@@ -1180,6 +1213,77 @@ mod tests {
         assert!(!wide_engine
             .request_fits_packet(&wide_link, &std::vec![0xBB; MAX_SEND_REQUEST_DATA_LEN + 1],));
         assert!(!engine.request_fits_packet(&LinkId::new([0x99; 16]), b"anything"));
+    }
+
+    #[test]
+    fn request_transport_respects_both_packet_boundaries_without_length_overflow() {
+        for mtu in [300, BROADCAST_MTU, BROADCAST_MTU * 2] {
+            let link = LinkId::new([0x43; 16]);
+            let engine = engine_with_an_active_link_at(link, mtu);
+            let largest_packet =
+                (link_mdu(mtu) - REQUEST_WIRE_OVERHEAD).min(MAX_SEND_REQUEST_DATA_LEN);
+            for (length, expected) in [
+                (0, RequestTransport::Packet),
+                (1, RequestTransport::Packet),
+                (largest_packet, RequestTransport::Packet),
+                (largest_packet + 1, RequestTransport::Resource),
+                (usize::MAX, RequestTransport::Resource),
+            ] {
+                assert_eq!(engine.plan_request_transport(&link, length), Ok(expected));
+            }
+        }
+        let link = LinkId::new([0x44; 16]);
+        let mtu = crate::routing::links::data::link_data_frame_ceiling(0);
+        let tiny = engine_with_an_active_link_at(link, mtu);
+        assert!(link_mdu(mtu) < REQUEST_WIRE_OVERHEAD + 1);
+        assert_eq!(
+            tiny.plan_request_transport(&link, 0),
+            Ok(RequestTransport::Resource)
+        );
+    }
+
+    #[test]
+    fn request_transport_refuses_missing_and_both_inactive_link_phases() {
+        use crate::crypto::Ed25519PublicKey;
+        use crate::identity::IdentityHash;
+        use crate::routing::links::resources::receive::tests_support::link_key;
+        use crate::routing::links::table::RespondingLink;
+        use crate::routing::upstream_app_destinations::ProofStrategy;
+
+        let pending = LinkId::new([0x45; 16]);
+        let handshake = LinkId::new([0x46; 16]);
+        let missing = LinkId::new([0x47; 16]);
+        let mut engine = engine_with_a_pending_link(pending);
+        engine
+            .links
+            .track_responding(RespondingLink {
+                link_id: handshake,
+                key: link_key(),
+                requested_at: InstantMillis(500),
+                timeout_at: InstantMillis(5_000),
+                mtu: BROADCAST_MTU,
+                initiator_signing: Ed25519PublicKey([0x99; 32]),
+                destination: DestinationHash::new([0x11; 16]),
+                identity: IdentityHash::new([0x77; 16]),
+                proof_strategy: ProofStrategy::ProveNone,
+            })
+            .unwrap();
+        for length in [
+            0,
+            MAX_SEND_REQUEST_DATA_LEN,
+            MAX_SEND_REQUEST_DATA_LEN + 1,
+            usize::MAX,
+        ] {
+            assert_eq!(
+                [pending, handshake, missing]
+                    .map(|link| engine.plan_request_transport(&link, length)),
+                [
+                    Err(SendRequestRejection::LinkNotActive),
+                    Err(SendRequestRejection::LinkNotActive),
+                    Err(SendRequestRejection::NoSuchLink),
+                ]
+            );
+        }
     }
 
     #[test]

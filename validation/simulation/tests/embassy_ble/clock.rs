@@ -55,6 +55,32 @@ impl<'driver> EmbassyTasks<'driver> {
         self.runner.insert(future).unwrap()
     }
 
+    #[track_caller]
+    pub(super) fn complete_ready<T: 'static>(
+        &mut self,
+        future: impl Future<Output = T> + 'static,
+    ) -> T {
+        let before = self.snapshot();
+        let (send, mut result) = tokio::sync::oneshot::channel();
+        let operation = self.insert(async move {
+            assert!(send.send(future.await).is_ok());
+        });
+        for _ in 0..SETTLEMENT_POLL_BUDGET {
+            match self.runner.poll_next().unwrap() {
+                ManualTaskPoll::Pending { .. } => {}
+                ManualTaskPoll::Completed { task, output: () } => {
+                    assert_eq!(task, operation, "only the operation may complete");
+                    let _ = self.settle();
+                    assert_eq!(self.snapshot(), before, "operation must not advance time");
+                    return result.try_recv().unwrap();
+                }
+                ManualTaskPoll::Idle => unreachable!("operation stalled before completion"),
+            }
+            let _ = self.snapshot();
+        }
+        unreachable!("operation exceeded the explicit settlement poll budget")
+    }
+
     pub(super) fn snapshot(&self) -> ManualTimeSnapshot {
         let snapshot = self.runner.snapshot().unwrap();
         assert_eq!(
