@@ -11,7 +11,7 @@ use prns_core::interfaces::bluetooth_auto::{
 };
 use prns_core::interfaces::bluetooth_auto::{BleLink, BleSink, BleSource};
 
-use super::bridge::{LinkSignal, WorkSignal};
+use super::bridge::{AndroidBleBridge, LinkSignal, WorkSignal};
 use super::outbound::{BoundedByteQueue, BoundedMessageQueue, OutboundQueueError};
 use super::AndroidBleError;
 
@@ -20,7 +20,44 @@ const GATT_REASSEMBLY_CAP: usize = 600;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const MERGED_IN_DEPTH: usize = 16;
 
+/// Owns one physical connection through handshake and both settled data halves.
+/// The queue identity fences a delayed drop even if Kotlin later reuses a conn_id.
+pub(super) struct LinkLease {
+    bridge: AndroidBleBridge,
+    conn_id: u32,
+    owner: Arc<BoundedMessageQueue>,
+}
+
+impl LinkLease {
+    pub(super) fn new(
+        bridge: AndroidBleBridge,
+        conn_id: u32,
+        owner: Arc<BoundedMessageQueue>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            bridge,
+            conn_id,
+            owner,
+        })
+    }
+}
+
+impl Drop for LinkLease {
+    fn drop(&mut self) {
+        if !self
+            .bridge
+            .close_owned_connection(self.conn_id, &self.owner)
+        {
+            crate::diagnostic_log::error!(
+                "bluetooth: could not queue Android physical close for connection {}",
+                self.conn_id
+            );
+        }
+    }
+}
+
 pub struct AndroidBleLink {
+    pub(super) lease: Arc<LinkLease>,
     pub(super) conn_id: u32,
     pub(super) address: BleAddress,
     pub(super) peer_protocol: PeerProtocol,
@@ -151,8 +188,12 @@ impl BleLink for AndroidBleLink {
 
         drop(merged_tx);
         (
-            AndroidBleSource { inbound: merged_rx },
+            AndroidBleSource {
+                inbound: merged_rx,
+                _lease: Arc::clone(&self.lease),
+            },
             AndroidBleSink {
+                _lease: self.lease,
                 l2cap_out: self.l2cap_out,
                 gatt_out: self.data_out,
                 l2cap_up: self.l2cap_up,
@@ -164,6 +205,7 @@ impl BleLink for AndroidBleLink {
 
 pub struct AndroidBleSource {
     inbound: Receiver<Vec<u8>>,
+    _lease: Arc<LinkLease>,
 }
 
 impl BleSource for AndroidBleSource {
@@ -177,6 +219,7 @@ impl BleSource for AndroidBleSource {
 }
 
 pub struct AndroidBleSink {
+    _lease: Arc<LinkLease>,
     l2cap_out: Arc<BoundedByteQueue>,
     gatt_out: Arc<BoundedMessageQueue>,
     l2cap_up: Arc<LinkSignal>,
