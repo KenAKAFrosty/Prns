@@ -9,6 +9,9 @@ remains blocked by stale
 Bluetooth peer ownership, detailed below. The final Apple notification repair
 passed its retained-message retry and a fresh Saved send on September 25;
 the [follow-up below](#notification-repair-device-follow-up) records those results separately.
+The later [controlled restart check](#controlled-ios-cold-restart-check) reproduced
+the connection-recovery failure on that same final build and restored delivery
+by resetting only Android's app Bluetooth.
 Earlier [Bluetooth control acceptance](2026-09-24-local-bluetooth.md) and
 [transport feasibility](2026-09-23-ordinary-corebluetooth.md#physical-continuation-direct-unpaired-ble-messaging)
 do not qualify these new binaries. The
@@ -312,7 +315,7 @@ not seamless-restart qualification. No manual announce was issued on either phon
   message ID `5fdbedd3feb083f379376e5cca820e2fff3be6f9a4dffeb34295c2d4bedc4cba`
   with **Verified source**.
 - At 16:44:27 EDT, iOS sent `iOS-E` and reached Delivered in **175 ms**. Android
-  received message ID `2548ca654475b847641cee607e5349758d1596f3ec9c627690520abbad52bae6`
+  received message ID `2548ca654475b847641cce607e5349758d1596f3ec9c627690520abbad52bae6`
   with **Verified source** after the reverse send's key lookup. The existing
   `iOS-C` and `iOS-D` records retained their earlier Unknown verification state.
 
@@ -348,8 +351,59 @@ use. Key absence was observed here; its exact eviction or persistence timing was
 not captured. A narrow follow-up should mark actual use of authenticated keys
 through the [existing public retention API](../../prns-runtime/core/src/runtime/command.rs).
 First-time unknown senders and re-verification of stored Unknown records need
-separate bounded policies; a
-saved name or successful delivery must never upgrade verification by itself.
+separate bounded policies; a saved name or successful delivery must never upgrade
+verification by itself.
+
+## Controlled iOS cold-restart check
+
+Later on September 25, device access resumed. The iOS container capture confirmed
+the previously inferred 30 messages, with all 28 records from the earlier capture
+unchanged, three contacts, one pairing and unchanged identities. Android's Inbox
+confirmed 20 messages (17 in this conversation and three older records).
+
+Both apps still had their previous processes: iOS PID 22915 and Android PID 18175.
+Both showed one connected peer. Android was rejecting additional same-identity
+connection candidates even before the restart. That rejection alone did not
+establish a stale or unusable incumbent: a baseline Saved send, `iOS-F`, reached
+Delivered in **179 ms** at 18:28:17 EDT and arrived once on Android. Its ID is
+`02b17152304165b4a2f76c54dd918a0b3b0710c8ea5b738f4365d0186148a38d`.
+Android's aggregate increased to 21. Its active data writer was connection 40;
+the retained logs do not establish that connection's central/peripheral role.
+
+Only iOS was terminated and relaunched, producing PID 24159. Android remained in
+the same process with no Bluetooth reset, send or manual announce. iOS retained
+its Saved contact and messages, started with an empty Discovered list, and again
+displayed Connected. A fresh Saved send, `iOS-G`, then exhausted the 15-second
+recipient lookup. The UI kept the draft and explicitly reported that it had not
+been queued. Android received no G, retained its established member and continued
+rejecting replacement candidates. A second iOS container capture contained only
+31 messages (the prior 30 plus F), with all stable records preserved. This
+reproduces the restart failure on the final Apple notification-repair build.
+
+For recovery, only Android's app Bluetooth was turned Off and On. Its process
+remained PID 18175; iOS stayed in PID 24159 with the same unsent G draft. Android
+established a new GATT dialer connection 1. No manual announce was issued.
+Explicitly sending that preserved draft then reached Delivered in **96 ms** at
+18:34:54 EDT. Android received exactly one G with ID
+`8abaff4f62274bf9585b79a36ac59e503a95240dd425d1307629b333ac1437e8`.
+
+The final iOS capture contains 32 messages (19 in this conversation and 13 older
+records): all 30 baseline records are unchanged, with only F and G added.
+Identities, three contacts and one pairing remain unchanged. Android's Inbox
+confirms 22 messages (19 here and three older records). Both app Bluetooth
+settings were left On with the original text sizes, and the test composers were
+empty. This isolates a connection-recovery failure from data loss or duplicate
+durable admission; the restart problem itself remains unfixed.
+Android marked F and G SourceUnknown, consistent with the separate public-key
+availability limitation above; the delivery proofs do not upgrade that status.
+
+Evidence is under `/Volumes/wavlink/dev/prns-messaging-20260925/restart`.
+Android logs and UI capture cover the baseline and failed lookup. iOS process
+snapshots and container reads used CoreDevice; the initial USB syslog attempt
+could not attach. The device was discoverable to the network logging tool, which
+was started only for the subsequent recovery check. No iOS transport trace is
+claimed for the original failed lookup. The app's developer TCP fixture remained
+disabled; the control/logging connection is separate from app message transport.
 
 ## Required Bluetooth lifecycle follow-up
 
