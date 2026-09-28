@@ -45,8 +45,11 @@ the network is communicating. The
 records direct discovery, two-way messages and one bounded off-screen receipt.
 The remaining UX and inspection slices are still planned.
 
-Finish truthful connection states, then announcing/discovery/contact UX and
-bounded network inspection. TCP remains outside this product milestone. Preserve
+Connection states and the announcing/discovery/contact journey are implemented
+with the bounded evidence in the [messaging checkpoint](../checkpoints/2026-09-24-messaging-discovery.md).
+Finish [shared Bluetooth restart recovery](../../docs/bluetooth-session-recovery.md)
+and qualify it on both phones before adding bounded network inspection.
+TCP remains outside this product milestone. Preserve
 native background ownership and qualify foreground, locked/background and
 recovery behavior separately. The app uses ordinary Bluetooth permission and
 dual-role CoreBluetooth; the old per-accessory chooser investigation is retired.
