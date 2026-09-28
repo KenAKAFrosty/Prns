@@ -106,6 +106,13 @@ android {
         jvmTarget = "1.8"
     }
 
+    // Share only transport ownership helpers, without depending on Expo or its native image.
+    sourceSets.getByName("main").java.srcDir(
+        "../../../../prns-react-native/android/src/main/java/rs/reticulum/prns/bluetooth",
+    )
+    sourceSets.getByName("test").java.srcDir(
+        "../../../../prns-react-native/android/src/test/java/rs/reticulum/prns/bluetooth",
+    )
     sourceSets.getByName("main").assets.srcDir(releaseNoticesDirectory)
 
 }

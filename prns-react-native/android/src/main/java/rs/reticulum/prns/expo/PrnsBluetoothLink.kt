@@ -8,6 +8,17 @@
 
 package rs.reticulum.prns.expo
 
+import rs.reticulum.prns.bluetooth.ERROR_GATT_WRITE_REQUEST_BUSY
+import rs.reticulum.prns.bluetooth.GattOperationKind
+import rs.reticulum.prns.bluetooth.GattServerOwners
+import rs.reticulum.prns.bluetooth.GattState
+import rs.reticulum.prns.bluetooth.OutboundAdmission
+import rs.reticulum.prns.bluetooth.PendingGattOperation
+import rs.reticulum.prns.bluetooth.completeGattClientWrite
+import rs.reticulum.prns.bluetooth.expireGattOperation
+import rs.reticulum.prns.bluetooth.gattCallbackOwner
+import rs.reticulum.prns.bluetooth.submitGattClientWrite
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.location.LocationManager
@@ -177,6 +188,8 @@ class PrnsBluetoothLink(
     private val adapter: BluetoothAdapter? = bluetoothManager?.adapter
     private val peerCapacity = PrnsBluetoothNative.nativeBlePeerCapacity().coerceAtLeast(1)
     private val deviceCacheCapacity = 2 * peerCapacity
+    // Serialized with callbacks, admission, retirement, and server teardown.
+    private val serverOwners = GattServerOwners<LinkState>(peerCapacity)
 
     @Volatile
     private var scanner: BluetoothLeScanner? = null
@@ -238,7 +251,7 @@ class PrnsBluetoothLink(
         val dialed: Boolean,
         @Volatile var peerProtocol: BlePeerProtocol,
     ) {
-        val gattState = PrnsGattState()
+        val gattState = GattState()
 
         @Volatile
         var central: BluetoothDevice? = null
@@ -318,23 +331,26 @@ class PrnsBluetoothLink(
         }
     }
 
-    private fun gattServerCallback(epoch: Long) = object : BluetoothGattServerCallback() {
+    private fun gattServerCallback(epoch: Long, serverEpoch: Long) = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             withCallback(epoch) {
+                if (serverOwners.epoch != serverEpoch) return
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     rememberDevice(device)
                     return
                 }
                 if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    val connId = inboundByAddr.remove(device.address) ?: return
-                    Log.i(TAG, "listener[$connId] ${device.address} disconnected")
-                    closeLink(connId)
+                    val link = serverOwners.disconnected(serverEpoch, device.address) ?: return
+                    if (links[link.connId] !== link) return
+                    Log.i(TAG, "listener[${link.connId}] ${device.address} disconnected")
+                    closeLink(link.connId, serverDisconnected = true)
                 }
             }
         }
 
         override fun onServiceAdded(status: Int, service: BluetoothGattService) {
             withCallback(epoch) {
+                if (serverOwners.epoch != serverEpoch) return
                 if (status != BluetoothGatt.GATT_SUCCESS) {
                     failRadio("Android could not publish the Bluetooth service (error $status).")
                     return
@@ -354,6 +370,7 @@ class PrnsBluetoothLink(
             characteristic: BluetoothGattCharacteristic,
         ) {
             withCallback(epoch) {
+                if (serverOwners.epoch != serverEpoch) return
                 if (!running || !radioActive) {
                     return
                 }
@@ -412,6 +429,7 @@ class PrnsBluetoothLink(
             value: ByteArray,
         ) {
             withCallback(epoch) {
+                if (serverOwners.epoch != serverEpoch) return
                 if (!running || !radioActive) {
                     return
                 }
@@ -455,6 +473,7 @@ class PrnsBluetoothLink(
             value: ByteArray,
         ) {
             withCallback(epoch) {
+                if (serverOwners.epoch != serverEpoch) return
                 if (!running || !radioActive) {
                     return
                 }
@@ -479,12 +498,13 @@ class PrnsBluetoothLink(
                     descriptor.characteristic.uuid == NATIVE_CONTROL &&
                     inboundByAddr[device.address] == null
                 ) {
-                    if (links.size >= peerCapacity) {
+                    if (links.size >= peerCapacity || !serverOwners.canRegister(device.address)) {
                         responseStatus = ATT_INSUFFICIENT_RESOURCES
                     } else {
                         val connId = nextConnId.getAndIncrement()
                         val link = LinkState(connId, device.address, dialed = false, peerProtocol = BlePeerProtocol.Native)
                         link.central = device
+                        check(serverOwners.register(device.address, link))
                         links[connId] = link
                         inboundByAddr[device.address] = connId
                         Log.i(TAG, "listener[$connId] ${device.address} subscribed")
@@ -511,11 +531,13 @@ class PrnsBluetoothLink(
 
         override fun onNotificationSent(device: BluetoothDevice, status: Int) {
             withCallback(epoch) {
+                if (serverOwners.epoch != serverEpoch) return
                 if (!running || !radioActive) {
                     return
                 }
-                val connId = inboundByAddr[device.address] ?: return
-                val link = links[connId] ?: return
+                val link = serverOwners.completeNotification(serverEpoch, device.address) ?: return
+                if (links[link.connId] !== link) return
+                val connId = link.connId
                 if (link.completeGattOperation(GattOperationKind.ServerNotify)) {
                     PrnsBluetoothNative.nativeBleWakePumps()
                     if (status != BluetoothGatt.GATT_SUCCESS) {
@@ -535,12 +557,13 @@ class PrnsBluetoothLink(
                 Log.w(TAG, "columba RX from $address before identity (${value.size}B), dropping")
                 return PrnsBluetoothNative.BLE_INGRESS_CLOSED
             }
-            if (links.size >= peerCapacity) return PrnsBluetoothNative.BLE_INGRESS_FULL
+            if (links.size >= peerCapacity || !serverOwners.canRegister(address)) return PrnsBluetoothNative.BLE_INGRESS_FULL
             val octets = parseMac(address) ?: return PrnsBluetoothNative.BLE_INGRESS_CLOSED
             val connId = nextConnId.getAndIncrement()
             val link = LinkState(connId, address, dialed = false, peerProtocol = BlePeerProtocol.Columba)
             link.central = columbaSubscribedCentrals[address] ?: device
             link.peerIdentity = value.copyOf()
+            check(serverOwners.register(address, link))
             links[connId] = link
             inboundByAddr[address] = connId
             Log.i(TAG, "columba listener[$connId] $address identity ${value.size}B")
@@ -613,8 +636,8 @@ class PrnsBluetoothLink(
         }
         val victim = devices.keys.firstOrNull {
             !inboundByAddr.containsKey(it) &&
-                !dialingAddrs.contains(it) &&
-                !connectedAddrs.contains(it)
+                !dialingAddrs.containsKey(it) &&
+                !connectedAddrs.containsKey(it)
         } ?: return false
         devices.remove(victim)
         devices[address] = device
@@ -712,12 +735,26 @@ class PrnsBluetoothLink(
         }
     }
 
+    private fun expireGattOperations() {
+        lifecycleLock.withLock {
+            if (!running || !radioActive) return
+            val now = System.nanoTime() / 1_000_000
+            for (link in links.values) {
+                expireGattOperation(link.gattState, now, GATT_OPERATION_TIMEOUT_MS) {
+                    Log.w(TAG, "GATT operation deadline[${link.connId}]; closing physical link")
+                    closeLink(link.connId, uncertain = true)
+                }
+            }
+        }
+    }
+
     private fun startRadioStatePump() {
         startWorker("radio-state") {
             var generation = PrnsBluetoothNative.nativeBleWorkGeneration()
             while (running) {
                 // Also recheck permissions/radio while desired Rust state is unchanged.
                 applyDesiredRadioState(PrnsBluetoothNative.nativeBleDesiredState())
+                expireGattOperations()
                 generation = PrnsBluetoothNative.nativeBleWaitForWork(generation, RADIO_STATE_RETRY_MS)
             }
         }
@@ -935,19 +972,22 @@ class PrnsBluetoothLink(
         type: Int,
         lane: String,
     ): OutboundAdmission {
-        val gatt = link.clientGatt ?: return OutboundAdmission.Terminal
-        val result = try {
-            prnsSubmitGattClientWrite(link.gattState, char.uuid) {
-                writeGattCharacteristic(gatt, char, payload, type)
+        return lifecycleLock.withLock {
+            if (!running || !radioActive || links[link.connId] !== link) return OutboundAdmission.Terminal
+            val gatt = link.clientGatt ?: return OutboundAdmission.Terminal
+            val result = try {
+                submitGattClientWrite(link.gattState, char.uuid) {
+                    writeGattCharacteristic(gatt, char, payload, type)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "$lane write[${link.connId}] characteristic=${char.uuid} type=$type: $e")
+                return OutboundAdmission.Terminal
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "$lane write[${link.connId}] characteristic=${char.uuid} type=$type: $e")
-            return OutboundAdmission.Terminal
+            if (result.admission == OutboundAdmission.Terminal) {
+                Log.w(TAG, "$lane write rejected[${link.connId}] characteristic=${char.uuid} type=$type result=${result.status}")
+            }
+            return result.admission
         }
-        if (result.admission == OutboundAdmission.Terminal) {
-            Log.w(TAG, "$lane write rejected[${link.connId}] characteristic=${char.uuid} type=$type result=${result.status}")
-        }
-        return result.admission
     }
 
     private fun serverNotifyAdmission(
@@ -956,28 +996,37 @@ class PrnsBluetoothLink(
         payload: ByteArray,
         lane: String,
     ): OutboundAdmission {
-        val central = link.central ?: return OutboundAdmission.Terminal
-        val server = gattServer ?: return OutboundAdmission.Terminal
-        val operation = PendingGattOperation(GattOperationKind.ServerNotify, char.uuid)
-        if (!link.beginGattOperation(operation)) {
-            return OutboundAdmission.Busy
-        }
-        val result = try {
-            notifyGattCharacteristic(server, central, char, payload)
-        } catch (e: Exception) {
+        return lifecycleLock.withLock {
+            if (!running || !radioActive || links[link.connId] !== link) return OutboundAdmission.Terminal
+            val central = link.central ?: return OutboundAdmission.Terminal
+            val server = gattServer ?: return OutboundAdmission.Terminal
+            val operation = PendingGattOperation(GattOperationKind.ServerNotify, char.uuid)
+            if (!link.beginGattOperation(operation)) {
+                return OutboundAdmission.Busy
+            }
+            if (!serverOwners.beginNotification(link.address, link)) {
+                link.cancelGattOperation(operation)
+                return OutboundAdmission.Busy
+            }
+            val result = try {
+                notifyGattCharacteristic(server, central, char, payload)
+            } catch (e: Exception) {
+                serverOwners.cancelNotification(link.address, link)
+                link.cancelGattOperation(operation)
+                Log.w(TAG, "$lane notify[${link.connId}]: $e")
+                return OutboundAdmission.Terminal
+            }
+            if (result == BluetoothGatt.GATT_SUCCESS) {
+                return OutboundAdmission.Accepted
+            }
+            serverOwners.cancelNotification(link.address, link)
             link.cancelGattOperation(operation)
-            Log.w(TAG, "$lane notify[${link.connId}]: $e")
+            if (result == ERROR_GATT_WRITE_REQUEST_BUSY) {
+                return OutboundAdmission.Busy
+            }
+            Log.w(TAG, "$lane notify rejected[${link.connId}] result=$result")
             return OutboundAdmission.Terminal
         }
-        if (result == BluetoothGatt.GATT_SUCCESS) {
-            return OutboundAdmission.Accepted
-        }
-        link.cancelGattOperation(operation)
-        if (result == ERROR_GATT_WRITE_REQUEST_BUSY) {
-            return OutboundAdmission.Busy
-        }
-        Log.w(TAG, "$lane notify rejected[${link.connId}] result=$result")
-        return OutboundAdmission.Terminal
     }
 
     private fun startDataOutPump() {
@@ -1073,8 +1122,8 @@ class PrnsBluetoothLink(
                 direct.get(octets, 0, 6)
                 val address = formatMac(octets)
                 if (inboundByAddr.containsKey(address) ||
-                    dialingAddrs.contains(address) ||
-                    connectedAddrs.contains(address)
+                    dialingAddrs.containsKey(address) ||
+                    connectedAddrs.containsKey(address)
                 ) {
                     continue
                 }
@@ -1090,8 +1139,8 @@ class PrnsBluetoothLink(
                         PrnsBluetoothNative.nativeBleDialFailed(directBufferOf(octets))
                         return@withLock
                     }
-                    dialingAddrs.add(address)
                     val connId = nextConnId.getAndIncrement()
+                    dialingAddrs[address] = connId
                     val link = LinkState(connId, address, dialed = true, peerProtocol = BlePeerProtocol.Native)
                     links[connId] = link
                     val gatt = device.connectGatt(
@@ -1218,6 +1267,12 @@ class PrnsBluetoothLink(
 
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 withCallback(epoch) {
+                    val currentLink = links[connId] ?: run {
+                        runCatching { gatt.disconnect() }
+                        runCatching { gatt.close() }
+                        return
+                    }
+                    if (currentLink.clientGatt != null && currentLink.clientGatt !== gatt) return
                     if (!running || !radioActive) {
                         runCatching { gatt.disconnect() }
                         runCatching { gatt.close() }
@@ -1231,7 +1286,7 @@ class PrnsBluetoothLink(
                             return
                         }
                         link.clientGatt = gatt
-                        connectedAddrs.add(address)
+                        connectedAddrs[address] = connId
                         if (!link.gattState.beginStartup(System.nanoTime() / 1_000_000)) return
                         scheduleClientOpenWatchdog(connId, address, gatt)
                         val mtuOperation = PendingGattOperation(GattOperationKind.Mtu, null)
@@ -1257,8 +1312,8 @@ class PrnsBluetoothLink(
                                 }
                             }
                         }
-                        dialingAddrs.remove(address)
-                        connectedAddrs.remove(address)
+                        dialingAddrs.remove(address, connId)
+                        connectedAddrs.remove(address, connId)
                         runCatching { gatt.disconnect() }
                         runCatching { gatt.close() }
                         closeLink(connId)
@@ -1268,6 +1323,7 @@ class PrnsBluetoothLink(
 
             override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
                 withCallback(epoch) {
+                    gattCallbackOwner(links[connId], gatt) { it.clientGatt } ?: return
                     if (!running || !radioActive) {
                         return
                     }
@@ -1280,6 +1336,7 @@ class PrnsBluetoothLink(
 
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
                 withCallback(epoch) {
+                    gattCallbackOwner(links[connId], gatt) { it.clientGatt } ?: return
                     if (!running || !radioActive) {
                         return
                     }
@@ -1343,6 +1400,7 @@ class PrnsBluetoothLink(
                 status: Int,
             ) {
                 withCallback(epoch) {
+                    gattCallbackOwner(links[connId], gatt) { it.clientGatt } ?: return
                     handleClientCharacteristicRead(connId, address, gatt, characteristic, value, status)
                 }
             }
@@ -1354,6 +1412,7 @@ class PrnsBluetoothLink(
                 status: Int,
             ) {
                 withCallback(epoch) {
+                    gattCallbackOwner(links[connId], gatt) { it.clientGatt } ?: return
                     handleClientCharacteristicRead(
                         connId,
                         address,
@@ -1417,6 +1476,7 @@ class PrnsBluetoothLink(
                 status: Int,
             ) {
                 withCallback(epoch) {
+                    gattCallbackOwner(links[connId], gatt) { it.clientGatt } ?: return
                     if (!running || !radioActive) {
                         return
                     }
@@ -1490,11 +1550,12 @@ class PrnsBluetoothLink(
                 status: Int,
             ) {
                 withCallback(epoch) {
+                    gattCallbackOwner(links[connId], gatt) { it.clientGatt } ?: return
                     if (!running || !radioActive) {
                         return
                     }
                     val link = links[connId] ?: return
-                    val completion = prnsCompleteGattClientWrite(link.gattState, characteristic.uuid, status)
+                    val completion = completeGattClientWrite(link.gattState, characteristic.uuid, status)
                     if (completion.shouldClose) {
                         Log.w(TAG, "write completion failed[$connId] characteristic=${characteristic.uuid} status=$status pendingMatched=${completion.releasedPending}")
                         closeLink(connId)
@@ -1512,6 +1573,7 @@ class PrnsBluetoothLink(
                 value: ByteArray,
             ) {
                 withCallback(epoch) {
+                    gattCallbackOwner(links[connId], gatt) { it.clientGatt } ?: return
                     if (!running || !radioActive) {
                         return
                     }
@@ -1596,31 +1658,34 @@ class PrnsBluetoothLink(
         }
     }
 
-    private fun closeLink(connId: Int) {
-        val link = links.remove(connId)
-        val current = Thread.currentThread()
-        val ownedWorkers = linkWorkers.remove(connId).orEmpty().filter { it !== current }
-        if (link == null) {
+    private fun closeLink(connId: Int, serverDisconnected: Boolean = false, uncertain: Boolean = false) {
+        return lifecycleLock.withLock {
+            val link = links.remove(connId)
+            val current = Thread.currentThread()
+            val ownedWorkers = linkWorkers.remove(connId).orEmpty().filter { it !== current }
+            if (link == null) {
+                ownedWorkers.forEach(Thread::interrupt)
+                // A Rust close request owns its slot until this acknowledgement. The physical link may
+                // already be gone, but the lifecycle transition still has to complete.
+                PrnsBluetoothNative.nativeBleDisconnected(connId)
+                return
+            }
+            link.gattState.close()
+            linkedConnIds.remove(connId)
+            if (!link.dialed) serverOwners.retire(link.address, link, serverDisconnected, uncertain)
+            if (inboundByAddr.remove(link.address, connId)) columbaSubscribedCentrals.remove(link.address)
+            dialingAddrs.remove(link.address, connId)
+            connectedAddrs.remove(link.address, connId)
+            runCatching { link.openingL2capSocket?.close() }
+            runCatching { link.l2capSocket?.close() }
+            if (!link.dialed && !serverDisconnected) {
+                link.central?.let { central -> runCatching { gattServer?.cancelConnection(central) } }
+            }
+            runCatching { link.clientGatt?.disconnect() }
+            runCatching { link.clientGatt?.close() }
             ownedWorkers.forEach(Thread::interrupt)
-            // A Rust close request owns its slot until this acknowledgement. The physical link may
-            // already be gone, but the lifecycle transition still has to complete.
             PrnsBluetoothNative.nativeBleDisconnected(connId)
-            return
         }
-        link.gattState.close()
-        inboundByAddr.remove(link.address, connId)
-        columbaSubscribedCentrals.remove(link.address)
-        dialingAddrs.remove(link.address)
-        connectedAddrs.remove(link.address)
-        runCatching { link.openingL2capSocket?.close() }
-        runCatching { link.l2capSocket?.close() }
-        if (!link.dialed) {
-            link.central?.let { central -> runCatching { gattServer?.cancelConnection(central) } }
-        }
-        runCatching { link.clientGatt?.disconnect() }
-        runCatching { link.clientGatt?.close() }
-        ownedWorkers.forEach(Thread::interrupt)
-        PrnsBluetoothNative.nativeBleDisconnected(connId)
     }
 
     private fun startGattServer() {
@@ -1629,7 +1694,7 @@ class PrnsBluetoothLink(
         }
         val manager = bluetoothManager ?: return
         val server = try {
-            manager.openGattServer(context, gattServerCallback(radioEpoch))
+            manager.openGattServer(context, gattServerCallback(radioEpoch, serverOwners.epoch))
         } catch (e: SecurityException) {
             failRadio("Bluetooth service permission was denied.")
             return
@@ -1830,6 +1895,7 @@ class PrnsBluetoothLink(
         radioActive = false
         advertisingWanted = false
         scanningWanted = false
+        serverOwners.reset()
         stopScan()
         stopAdvertise()
         runCatching { gattServer?.close() }
@@ -1977,6 +2043,7 @@ class PrnsBluetoothLink(
         private const val RADIO_STATE_RETRY_MS = 1_000L
         private const val RSSI_NONE = 127
         private const val MAX_ATT_MTU = 517
+        private const val GATT_OPERATION_TIMEOUT_MS = 30_000L
         private const val CLIENT_LINK_READY_TIMEOUT_MS = 8_000L
         private const val WORKER_SHUTDOWN_TIMEOUT_MS = 2_000L
         private const val GATT_BUSY_RETRY_MS = 4L
@@ -1998,8 +2065,8 @@ class PrnsBluetoothLink(
         private const val COLUMBA_IDENTITY_LEN = 16
     }
 
-    private val dialingAddrs = ConcurrentHashMap.newKeySet<String>()
-    private val connectedAddrs = ConcurrentHashMap.newKeySet<String>()
+    private val dialingAddrs = ConcurrentHashMap<String, Int>()
+    private val connectedAddrs = ConcurrentHashMap<String, Int>()
     private val linkedConnIds = ConcurrentHashMap.newKeySet<Int>()
 }
 
