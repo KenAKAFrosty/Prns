@@ -17,8 +17,15 @@ The latest Apple notification repair passed the retained-message retry, fresh
 Saved send and reverse delivery on September 25. The additional cold-restart
 check later reproduced the recovery failure on that final build: a baseline
 message delivered, the post-restart lookup failed without queueing, and resetting
-only Android's app Bluetooth restored delivery of the same draft. Receiver
-source-key retention and verification also need follow-up; delivery proof does not establish
+only Android's app Bluetooth restored delivery of the same draft. The
+[shared recovery sequence](../../docs/bluetooth-session-recovery.md) separates
+implemented ownership repairs from pending control lifetime and negotiated
+liveness; the [September 28 checkpoint](../checkpoints/2026-09-28-bluetooth-ownership.md)
+records automated validation and the remaining device gap. The LXMF service now
+refreshes bounded authenticated-key retention in source;
+[automated checks](../checkpoints/2026-09-24-messaging-discovery.md#authenticated-key-retention-follow-up)
+passed, with mobile validation still pending. Unknown-sender resolution and
+stored-message re-verification remain separate work; delivery proof does not establish
 the sender's identity. The user accepts losing ASK's extra force-quit relaunch
 support to make the phone usable as its own node,
 without a board or per-peer authorization.
