@@ -283,6 +283,17 @@ Bluetooth permissions, background behavior, and iOS restoration require device
 qualification. Desktop capability advertisements alone do not qualify mobile
 transports. Native builds and device results are reported separately.
 
+Android GATT operation state and callback ownership have one maintained source
+under `android/src/main/java/rs/reticulum/prns/bluetooth`. Hopspot compiles that
+same transport-only source directory without depending on Expo. Writes and
+notifications have a 30-second progress deadline from the first attempt;
+persistent Busy retries do not reset it. Expiration closes the physical link
+rather than reusing an uncertain operation lane. A timed-out peripheral address
+stays reserved until the GATT
+server is reset, because Android's server callbacks do not identify the original
+connection. This protects replacement ownership; it does not by itself provide
+automatic recovery from an idle peer's process restart.
+
 ## Native retained ownership
 
 For Android background operation, subclass `PrnsForegroundService` and provide
