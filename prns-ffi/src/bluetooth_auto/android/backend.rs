@@ -4,7 +4,7 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::bluetooth_auto::{BleAddress, LinkCapabilities, Psm};
 
 use super::bridge::{AndroidBleBridge, Event, PEER_CAPACITY};
-use super::link::AndroidBleLink;
+use super::link::{AndroidBleLink, LinkLease};
 use super::AndroidBleError;
 
 pub struct AndroidBleBackend {
@@ -68,6 +68,11 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
                     let dialed = pending.dialed;
                     let peer_rssi = pending.rssi;
                     let link = AndroidBleLink {
+                        lease: LinkLease::new(
+                            self.bridge.clone(),
+                            pending.conn_id,
+                            pending.data_out.clone(),
+                        ),
                         conn_id: pending.conn_id,
                         address: pending.address,
                         peer_protocol: pending.peer_protocol,
@@ -104,12 +109,6 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
         }
     }
 
-    async fn on_link_closed(&mut self, address: BleAddress) {
-        if !self.bridge.close_by_address(*address.octets()) {
-            crate::diagnostic_log::error!(
-                "bluetooth: could not queue Android physical close for {:02x?}",
-                address.octets()
-            );
-        }
-    }
+    // Physical cleanup belongs to LinkLease, not an address-level policy notice:
+    // an incumbent and a rejected challenger can share the same Bluetooth address.
 }
