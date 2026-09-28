@@ -34,10 +34,15 @@ use prns_runtime::manifold::driver::TokioInterfaceStatus;
 use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
-struct ClosedSignal {
+struct MemberClosed {
     identity: BleIdentity,
     address: BleAddress,
-    sink: mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
+    session: Arc<()>,
+}
+
+struct ClosedSignal {
+    event: MemberClosed,
+    sink: mpsc::UnboundedSender<MemberClosed>,
 }
 
 pub struct BluetoothPeer<Src, Snk> {
@@ -85,11 +90,15 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
     fn report_close_to(
         mut self,
         address: BleAddress,
-        sink: mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
+        session: Arc<()>,
+        sink: mpsc::UnboundedSender<MemberClosed>,
     ) -> Self {
         self.closed = Some(ClosedSignal {
-            identity: self.identity,
-            address,
+            event: MemberClosed {
+                identity: self.identity,
+                address,
+                session,
+            },
             sink,
         });
         self
@@ -162,13 +171,8 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
         }
         let closed = self.closed.take();
         drop(self);
-        if let Some(ClosedSignal {
-            identity,
-            address,
-            sink,
-        }) = closed
-        {
-            let _ = sink.send((identity, address));
+        if let Some(ClosedSignal { event, sink }) = closed {
+            let _ = sink.send(event);
             std::future::pending::<()>().await;
         }
     }
@@ -195,6 +199,8 @@ struct TokioMember {
     attached: AttachedInterface,
     status: TokioInterfaceStatus,
     address: BleAddress,
+    // An old queued close keeps its token alive, preventing reuse even across resets.
+    session: Arc<()>,
 }
 
 struct HandshakeDone<L: BleLink> {
@@ -219,7 +225,7 @@ enum HandshakeFailure {
 enum Step<L: BleLink> {
     Event(BleEvent<L>),
     Handshake(HandshakeDone<L>),
-    Closed(BleIdentity, BleAddress),
+    Closed(MemberClosed),
     Disabled,
     DiscoveryGroups(DiscoveryGroupSet),
 }
@@ -635,7 +641,7 @@ where
         let mut manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
         let mut members: HashMap<BleIdentity, TokioMember> = HashMap::new();
         let mut handshakes: HandshakeQueue<B::Link> = FuturesUnordered::new();
-        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<MemberClosed>();
         let mut pending: std::vec::Vec<PolicyAction> = std::vec::Vec::new();
         status.mark_up();
         manager.start(&mut |action| pending.push(action));
@@ -670,7 +676,7 @@ where
             let step = tokio::select! {
                 event = backend.next_event() => Step::Event(event),
                 Some(done) = handshakes.next(), if !handshakes.is_empty() => Step::Handshake(done),
-                Some((identity, address)) = closed_rx.recv() => Step::Closed(identity, address),
+                Some(closed) = closed_rx.recv() => Step::Closed(closed),
                 () = status.wait_until_disabled() => Step::Disabled,
                 groups = status.wait_for_discovery_groups_change(&discovery_groups) => Step::DiscoveryGroups(groups),
             };
@@ -800,18 +806,8 @@ where
                         }
                     }
                 }
-                Step::Closed(identity, address) => {
-                    if members
-                        .get(&identity)
-                        .is_some_and(|member| member.address == address)
-                    {
-                        if let Some(member) = members.remove(&identity) {
-                            member.attached.teardown();
-                        }
-                    }
-                    manager.handle(PolicyInput::Closed { identity, address }, &mut |action| {
-                        pending.push(action)
-                    });
+                Step::Closed(closed) => {
+                    close_member(closed, &mut members, &mut manager, &mut pending);
                     apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
                 }
             }
@@ -838,6 +834,31 @@ where
 }
 
 pub(super) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn close_member<const MAX_PEERS: usize>(
+    closed: MemberClosed,
+    members: &mut HashMap<BleIdentity, TokioMember>,
+    manager: &mut ConnectionPolicy<MAX_PEERS, DIAL_TRACK>,
+    pending: &mut std::vec::Vec<PolicyAction>,
+) {
+    let matches = members.get(&closed.identity).is_some_and(|member| {
+        member.address == closed.address && Arc::ptr_eq(&member.session, &closed.session)
+    });
+    if !matches {
+        // Policy also emits backend cleanup for Closed, so stale events must stop here.
+        return;
+    }
+    if let Some(member) = members.remove(&closed.identity) {
+        member.attached.teardown();
+    }
+    manager.handle(
+        PolicyInput::Closed {
+            identity: closed.identity,
+            address: closed.address,
+        },
+        &mut |action| pending.push(action),
+    );
+}
 
 async fn prepare_radio<B, const MAX_PEERS: usize>(
     backend: &mut B,
@@ -896,7 +917,7 @@ async fn apply_settle<B, const MAX_PEERS: usize>(
     pending: &mut std::vec::Vec<PolicyAction>,
     link: B::Link,
     fleet: &Fleet,
-    closed: &mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
+    closed: &mpsc::UnboundedSender<MemberClosed>,
     members: &mut HashMap<BleIdentity, TokioMember>,
     backend: &mut B,
     policy: EffectiveInterfacePolicy,
@@ -919,8 +940,9 @@ async fn apply_settle<B, const MAX_PEERS: usize>(
                 if let Some(mut held) = link.take() {
                     arm_fast_lane(&mut held, &lane).await;
                     let (source, sink) = held.into_data();
+                    let session = Arc::new(());
                     let member = BluetoothPeer::with_policy(identity, source, sink, policy)
-                        .report_close_to(address, closed.clone());
+                        .report_close_to(address, session.clone(), closed.clone());
                     let status = member.status();
                     let attached = fleet.add(member);
                     members.insert(
@@ -929,6 +951,7 @@ async fn apply_settle<B, const MAX_PEERS: usize>(
                             attached,
                             status,
                             address,
+                            session,
                         },
                     );
                 }
@@ -2044,16 +2067,23 @@ mod tests {
         drop(link_b);
 
         let identity = BleIdentity::new([1u8; 16]);
-        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
-        let member =
-            BluetoothPeer::new(identity, source, sink).report_close_to(addr, closed_tx.clone());
-        tokio::spawn(member.run(idle_seam()));
+        let session = Arc::new(());
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel();
+        let member = BluetoothPeer::new(identity, source, sink).report_close_to(
+            addr,
+            session.clone(),
+            closed_tx,
+        );
+        let task = tokio::spawn(member.run(idle_seam()));
 
         let reported = tokio::time::timeout(Duration::from_secs(2), closed_rx.recv())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(reported, (identity, addr));
+        assert_eq!(reported.identity, identity);
+        assert_eq!(reported.address, addr);
+        assert!(Arc::ptr_eq(&reported.session, &session));
+        task.abort();
     }
 
     #[tokio::test]
@@ -2063,9 +2093,12 @@ mod tests {
         let (source, sink) = link_a.into_data();
         let _keep_peer_alive = link_b;
 
-        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
-        let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), source, sink)
-            .report_close_to(addr, closed_tx.clone());
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel();
+        let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), source, sink).report_close_to(
+            addr,
+            Arc::new(()),
+            closed_tx.clone(),
+        );
         let handle = tokio::spawn(member.run(idle_seam()));
 
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2073,5 +2106,151 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         assert!(closed_rx.try_recv().is_err());
+    }
+
+    async fn assert_delayed_close_preserves_replacement(replacement_address: BleAddress) {
+        let old_address = BleAddress::new([0x11; 6]);
+        let identity = BleIdentity::new([2; 16]);
+        let old_session = Arc::new(());
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel();
+        let (old_link, old_remote) = link_pair(BleAddress::new([0xAA; 6]), old_address);
+        let (source, sink) = old_link.into_data();
+        let old_peer = BluetoothPeer::new(identity, source, sink).report_close_to(
+            old_address,
+            old_session.clone(),
+            closed_tx.clone(),
+        );
+        let old_task = tokio::spawn(old_peer.run(idle_seam()));
+        drop(old_remote);
+        // Hold the real peer's notification until after a fresh admission, as can happen
+        // when replacement or a supervisor reset wins the race with the close queue.
+        let delayed_close = tokio::time::timeout(Duration::from_secs(1), closed_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        old_task.abort();
+
+        let capabilities = LinkCapabilities {
+            l2cap: None,
+            link_mtu: 247,
+        };
+        let local = LocalPeer {
+            identity: BleIdentity::new([1; 16]),
+            endpoint: linux(),
+            capabilities,
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
+        };
+        let established = EstablishedPeer {
+            identity,
+            transport: EstablishedTransport::Native {
+                endpoint: linux(),
+                capabilities,
+            },
+            peer_rssi: None,
+        };
+        let mut manager = ConnectionPolicy::<8, DIAL_TRACK>::new(local);
+        manager.start(&mut |_| {});
+        let mut pending = Vec::new();
+        manager.handle(
+            PolicyInput::Settled {
+                address: replacement_address,
+                origin: Origin::Dialed,
+                established,
+                now_ms: 0,
+            },
+            &mut |action| pending.push(action),
+        );
+        assert!(matches!(pending[0], PolicyAction::Admit { .. }));
+        let (replacement_link, _replacement_remote) =
+            link_pair(BleAddress::new([0xAA; 6]), replacement_address);
+        let (fleet, _detached_fleet) = Fleet::detached(BluetoothAutoStatus::new().id());
+        let (mut backend, _remote_backend) = LoopbackBleBackend::pair();
+        let mut members = HashMap::new();
+        apply_settle(
+            &mut pending,
+            replacement_link,
+            &fleet,
+            &closed_tx,
+            &mut members,
+            &mut backend,
+            contract::defaults_for_bitrate(contract::BLE_BITRATE_GUESS_BPS)
+                .configured(ConfiguredInterfacePolicy::default()),
+        )
+        .await;
+        let replacement_session = members[&identity].session.clone();
+        assert!(!Arc::ptr_eq(&replacement_session, &old_session));
+
+        close_member(delayed_close, &mut members, &mut manager, &mut pending);
+        assert_eq!(members.len(), 1);
+        assert!(Arc::ptr_eq(
+            &members[&identity].session,
+            &replacement_session
+        ));
+        assert_eq!(manager.settled_count(), 1);
+        assert!(
+            pending.is_empty(),
+            "stale close must not emit backend cleanup"
+        );
+
+        // The keeper still owns the policy slot, so an ordinary duplicate loses.
+        let challenger_address = BleAddress::new([0x33; 6]);
+        manager.handle(
+            PolicyInput::Settled {
+                address: challenger_address,
+                origin: Origin::Accepted,
+                established,
+                now_ms: 1,
+            },
+            &mut |action| pending.push(action),
+        );
+        assert_eq!(
+            pending,
+            vec![PolicyAction::Reject {
+                address: challenger_address,
+                dialed: false,
+            }]
+        );
+        pending.clear();
+
+        close_member(
+            MemberClosed {
+                identity,
+                address: replacement_address,
+                session: replacement_session.clone(),
+            },
+            &mut members,
+            &mut manager,
+            &mut pending,
+        );
+        assert!(members.is_empty());
+        assert_eq!(manager.settled_count(), 0);
+        assert_eq!(
+            pending,
+            vec![PolicyAction::NotifyClosed(replacement_address)]
+        );
+        pending.clear();
+
+        // Repeated notifications after retirement cannot trigger duplicate cleanup.
+        close_member(
+            MemberClosed {
+                identity,
+                address: replacement_address,
+                session: replacement_session,
+            },
+            &mut members,
+            &mut manager,
+            &mut pending,
+        );
+        assert!(pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delayed_close_does_not_retire_same_identity_at_same_address() {
+        assert_delayed_close_preserves_replacement(BleAddress::new([0x11; 6])).await;
+    }
+
+    #[tokio::test]
+    async fn delayed_close_does_not_retire_same_identity_at_new_address() {
+        assert_delayed_close_preserves_replacement(BleAddress::new([0x22; 6])).await;
     }
 }
