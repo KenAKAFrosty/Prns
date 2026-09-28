@@ -3,6 +3,16 @@
 
 package rs.reticulum.prns.expo
 
+import rs.reticulum.prns.bluetooth.ERROR_GATT_WRITE_REQUEST_BUSY
+import rs.reticulum.prns.bluetooth.GattOperationKind
+import rs.reticulum.prns.bluetooth.GattState
+import rs.reticulum.prns.bluetooth.GattWriteCompletion
+import rs.reticulum.prns.bluetooth.GattWriteSubmission
+import rs.reticulum.prns.bluetooth.OutboundAdmission
+import rs.reticulum.prns.bluetooth.PendingGattOperation
+import rs.reticulum.prns.bluetooth.completeGattClientWrite
+import rs.reticulum.prns.bluetooth.submitGattClientWrite
+
 import android.bluetooth.BluetoothGatt
 import java.util.UUID
 import org.junit.Assert.assertEquals
@@ -16,13 +26,13 @@ class PrnsGattWriteTest {
 
     @Test
     fun noResponseFragmentsRetainTheirQueueHeadUntilAndroidCompletesThePreviousWrite() {
-        val state = PrnsGattState()
+        val state = GattState()
         val queued = ArrayDeque(listOf(88, 180, 47))
         val submitted = mutableListOf<Int>()
         var platformBusy = false
         fun pump(): OutboundAdmission {
             val next = queued.first()
-            val result = prnsSubmitGattClientWrite(state, data) {
+            val result = submitGattClientWrite(state, data) {
                 // The legacy API reports false (mapped to 257) for overlapping
                 // writes, even when they do not request an ATT response.
                 if (platformBusy) BluetoothGatt.GATT_FAILURE else {
@@ -43,7 +53,7 @@ class PrnsGattWriteTest {
             platformBusy = false
             assertEquals(
                 GattWriteCompletion(releasedPending = true, shouldClose = false),
-                prnsCompleteGattClientWrite(state, data, BluetoothGatt.GATT_SUCCESS),
+                completeGattClientWrite(state, data, BluetoothGatt.GATT_SUCCESS),
             )
         }
         assertEquals(listOf(88, 180, 47), submitted)
@@ -52,68 +62,68 @@ class PrnsGattWriteTest {
 
     @Test
     fun controlAndDataShareTheSameLaneAndMismatchedSuccessCannotReleaseIt() {
-        val state = PrnsGattState()
-        assertEquals(OutboundAdmission.Accepted, prnsSubmitGattClientWrite(state, data) { 0 }.admission)
+        val state = GattState()
+        assertEquals(OutboundAdmission.Accepted, submitGattClientWrite(state, data) { 0 }.admission)
         assertEquals(
             GattWriteCompletion(releasedPending = false, shouldClose = false),
-            prnsCompleteGattClientWrite(state, control, 0),
+            completeGattClientWrite(state, control, 0),
         )
-        assertEquals(OutboundAdmission.Busy, prnsSubmitGattClientWrite(state, control) {
+        assertEquals(OutboundAdmission.Busy, submitGattClientWrite(state, control) {
             throw AssertionError("control must not overlap an admitted data write")
         }.admission)
-        assertTrue(prnsCompleteGattClientWrite(state, data, 0).releasedPending)
-        assertEquals(OutboundAdmission.Accepted, prnsSubmitGattClientWrite(state, control) { 0 }.admission)
+        assertTrue(completeGattClientWrite(state, data, 0).releasedPending)
+        assertEquals(OutboundAdmission.Accepted, submitGattClientWrite(state, control) { 0 }.admission)
     }
 
     @Test
     fun platformBusyReleasesOnlyTheUnstartedOperationForExplicitPumpRetry() {
-        val state = PrnsGattState()
+        val state = GattState()
         assertEquals(
             GattWriteSubmission(OutboundAdmission.Busy, ERROR_GATT_WRITE_REQUEST_BUSY),
-            prnsSubmitGattClientWrite(state, data) { ERROR_GATT_WRITE_REQUEST_BUSY },
+            submitGattClientWrite(state, data) { ERROR_GATT_WRITE_REQUEST_BUSY },
         )
-        assertEquals(OutboundAdmission.Accepted, prnsSubmitGattClientWrite(state, data) { 0 }.admission)
+        assertEquals(OutboundAdmission.Accepted, submitGattClientWrite(state, data) { 0 }.admission)
     }
 
     @Test
     fun legacyFalseRemainsTerminalInsteadOfGuessingItWasBusy() {
-        val state = PrnsGattState()
+        val state = GattState()
         assertEquals(
             GattWriteSubmission(OutboundAdmission.Terminal, BluetoothGatt.GATT_FAILURE),
-            prnsSubmitGattClientWrite(state, data) { BluetoothGatt.GATT_FAILURE },
+            submitGattClientWrite(state, data) { BluetoothGatt.GATT_FAILURE },
         )
         assertFalse(state.complete(GattOperationKind.ClientWrite, data))
     }
 
     @Test
     fun failedCallbackClosesEvenWithoutAMatchingPendingWrite() {
-        val state = PrnsGattState()
+        val state = GattState()
         assertEquals(
             GattWriteCompletion(releasedPending = false, shouldClose = true),
-            prnsCompleteGattClientWrite(state, data, 133),
+            completeGattClientWrite(state, data, 133),
         )
         assertFalse(state.begin(PendingGattOperation(GattOperationKind.ClientWrite, data)))
     }
 
     @Test
     fun failedMatchingCallbackReleasesAndClosesBeforeAnotherWriteCanStart() {
-        val state = PrnsGattState()
-        assertEquals(OutboundAdmission.Accepted, prnsSubmitGattClientWrite(state, data) { 0 }.admission)
+        val state = GattState()
+        assertEquals(OutboundAdmission.Accepted, submitGattClientWrite(state, data) { 0 }.admission)
         assertEquals(
             GattWriteCompletion(releasedPending = true, shouldClose = true),
-            prnsCompleteGattClientWrite(state, data, 17),
+            completeGattClientWrite(state, data, 17),
         )
         assertFalse(state.begin(PendingGattOperation(GattOperationKind.ClientWrite, control)))
     }
 
     @Test
     fun throwingPlatformRequestDoesNotLeaveAnUnstartedOperationInFlight() {
-        val state = PrnsGattState()
+        val state = GattState()
         try {
-            prnsSubmitGattClientWrite(state, data) { throw SecurityException("denied") }
+            submitGattClientWrite(state, data) { throw SecurityException("denied") }
             throw AssertionError("expected platform exception")
         } catch (_: SecurityException) {
-            assertEquals(OutboundAdmission.Accepted, prnsSubmitGattClientWrite(state, data) { 0 }.admission)
+            assertEquals(OutboundAdmission.Accepted, submitGattClientWrite(state, data) { 0 }.admission)
         }
     }
 }
