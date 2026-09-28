@@ -15,8 +15,10 @@ cold-launch recovery is blocked by a stale Bluetooth member retained by the othe
 phone; fix settled link ownership before adding broader network inspection.
 The latest Apple notification repair passed the retained-message retry, fresh
 Saved send and reverse delivery on September 25. The additional cold-restart
-check was not started before the phone became unavailable. Receiver source-key
-retention and verification also need follow-up; delivery proof does not establish
+check later reproduced the recovery failure on that final build: a baseline
+message delivered, the post-restart lookup failed without queueing, and resetting
+only Android's app Bluetooth restored delivery of the same draft. Receiver
+source-key retention and verification also need follow-up; delivery proof does not establish
 the sender's identity. The user accepts losing ASK's extra force-quit relaunch
 support to make the phone usable as its own node,
 without a board or per-peer authorization.

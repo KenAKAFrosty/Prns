@@ -61,9 +61,10 @@ September 25. Incoming source verification remains separate from delivery proof:
 a missing sender public key produces an Unverified receipt, even for a saved
 contact. The checkpoint records this limitation and the key-retention follow-up.
 Automatic iOS cold-launch recovery remains blocked by a stale Bluetooth peer at
-the other phone; the lookup keeps the draft unqueued. The additional restart
-test on the final repair was
-not started before the phone became unavailable.
+the other phone; the lookup keeps the draft unqueued. A controlled repeat on the
+final repair confirmed a working baseline followed by failed lookup after iOS
+restart; resetting only Android's app Bluetooth restored delivery of the same
+draft without data loss.
 Settled Bluetooth link recovery is the next prerequisite in the demo plan.
 
 Pairing is authorization, not a live connection. Contacts and mailbox rows are
