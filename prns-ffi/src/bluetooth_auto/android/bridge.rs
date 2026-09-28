@@ -74,7 +74,6 @@ impl WorkSignal {
 }
 
 pub(super) struct Endpoints {
-    address: BleAddress,
     control_in_tx: Sender<Vec<u8>>,
     l2cap_in_tx: Sender<Vec<u8>>,
     data_in_tx: Sender<Vec<u8>>,
@@ -94,30 +93,22 @@ impl Endpoints {
 
 pub(super) enum LinkRecord {
     Active(Endpoints),
-    Closing { address: BleAddress },
+    Closing,
 }
 
 impl LinkRecord {
-    fn address(&self) -> BleAddress {
-        match self {
-            Self::Active(endpoints) => endpoints.address,
-            Self::Closing { address } => *address,
-        }
-    }
-
     pub(super) fn active(&self) -> Option<&Endpoints> {
         match self {
             Self::Active(endpoints) => Some(endpoints),
-            Self::Closing { .. } => None,
+            Self::Closing => None,
         }
     }
 
     fn request_close(&mut self) -> bool {
-        let Self::Active(endpoints) = self else {
+        let Self::Active(_) = self else {
             return false;
         };
-        let address = endpoints.address;
-        let previous = core::mem::replace(self, Self::Closing { address });
+        let previous = core::mem::replace(self, Self::Closing);
         if let Self::Active(endpoints) = previous {
             endpoints.close();
         }
@@ -470,7 +461,6 @@ impl AndroidBleBridge {
             let replaced = links.insert(
                 conn_id,
                 LinkRecord::Active(Endpoints {
-                    address: BleAddress::new(address),
                     control_in_tx: control_tx,
                     l2cap_in_tx: l2cap_tx,
                     data_in_tx: data_tx,
@@ -621,32 +611,36 @@ impl AndroidBleBridge {
         self.shared.work.wake();
     }
 
-    /// Policy rejected a link: drop Rust endpoints and ask Java to tear down the physical radio.
-    pub fn close_by_address(&self, address: [u8; 6]) -> bool {
-        let target = BleAddress::new(address);
+    /// Retire only the connection whose data queue is still owned by this lease.
+    /// Stale drops after a disconnect, radio reset, or conn_id reuse are harmless.
+    pub(super) fn close_owned_connection(
+        &self,
+        conn_id: u32,
+        owner: &Arc<BoundedMessageQueue>,
+    ) -> bool {
         let Ok(mut links) = self.shared.links.lock() else {
             return false;
         };
+        let Some(link) = links.get_mut(&conn_id) else {
+            return true;
+        };
+        if !link
+            .active()
+            .is_some_and(|ep| Arc::ptr_eq(&ep.data_out, owner))
+        {
+            return true;
+        }
         let Ok(mut requests) = self.shared.close_requests.lock() else {
             return false;
         };
-        let mut queued = false;
-        let mut complete = true;
-        for (conn_id, link) in links.iter_mut() {
-            if link.address() == target && matches!(link, LinkRecord::Active(_)) {
-                if requests.enqueue(*conn_id) {
-                    queued |= link.request_close();
-                } else {
-                    complete = false;
-                }
-            }
+        if !requests.enqueue(conn_id) {
+            return false;
         }
+        link.request_close();
         drop(requests);
         drop(links);
-        if queued {
-            self.shared.work.wake();
-        }
-        complete
+        self.shared.work.wake();
+        true
     }
 
     pub fn next_close(&self) -> Option<u32> {
