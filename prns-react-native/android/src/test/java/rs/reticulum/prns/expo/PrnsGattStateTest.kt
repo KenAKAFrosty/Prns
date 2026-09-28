@@ -3,6 +3,10 @@
 
 package rs.reticulum.prns.expo
 
+import rs.reticulum.prns.bluetooth.GattOperationKind
+import rs.reticulum.prns.bluetooth.GattState
+import rs.reticulum.prns.bluetooth.PendingGattOperation
+
 import java.util.UUID
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -15,7 +19,7 @@ class PrnsGattStateTest {
 
     @Test
     fun delayedMtuKeepsDiscoveryBlockedUntilMatchingCompletion() {
-        val state = PrnsGattState()
+        val state = GattState()
         assertTrue(state.beginStartup(0))
         assertTrue(state.begin(mtu))
 
@@ -37,7 +41,7 @@ class PrnsGattStateTest {
 
     @Test
     fun rejectedMtuRequestAllowsDiscoveryWithoutWaitingForCallback() {
-        val state = PrnsGattState()
+        val state = GattState()
         assertTrue(state.beginStartup(0))
         assertTrue(state.begin(mtu))
         assertTrue(state.cancel(mtu))
@@ -50,7 +54,7 @@ class PrnsGattStateTest {
 
     @Test
     fun missingMtuCallbackClosesAtTheTerminalDeadlineWithoutDiscovery() {
-        val state = PrnsGattState()
+        val state = GattState()
         assertTrue(state.beginStartup(0))
         assertTrue(state.begin(mtu))
         assertFalse(state.expireStartup(750, 8_000))
@@ -66,7 +70,7 @@ class PrnsGattStateTest {
 
     @Test
     fun duplicateConnectionDoesNotRestartStartupOrReleasePendingMtu() {
-        val state = PrnsGattState()
+        val state = GattState()
         assertTrue(state.beginStartup(0))
         assertTrue(state.begin(mtu))
         assertFalse(state.beginStartup(500))
@@ -79,7 +83,7 @@ class PrnsGattStateTest {
 
     @Test
     fun teardownFencesLateCallbacksAndFurtherOperations() {
-        val state = PrnsGattState()
+        val state = GattState()
         assertTrue(state.beginStartup(0))
         assertTrue(state.begin(mtu))
         state.close()
@@ -95,7 +99,7 @@ class PrnsGattStateTest {
 
     @Test
     fun readyLinkIsNotExpiredByTheStartupWatchdog() {
-        val state = PrnsGattState()
+        val state = GattState()
         assertTrue(state.beginStartup(0))
         assertTrue(state.begin(mtu))
         assertTrue(state.complete(GattOperationKind.Mtu))
@@ -112,7 +116,7 @@ class PrnsGattStateTest {
 
     @Test
     fun duplicateIdentityReadCannotReleaseTheFollowingDescriptorWrite() {
-        val state = PrnsGattState()
+        val state = GattState()
         assertTrue(state.begin(PendingGattOperation(GattOperationKind.CharacteristicRead, characteristic)))
         assertTrue(state.complete(GattOperationKind.CharacteristicRead, characteristic))
         assertTrue(state.begin(descriptor))
@@ -125,7 +129,7 @@ class PrnsGattStateTest {
 
     @Test
     fun serverNotificationCompletionStillAllowsAWildcardCharacteristic() {
-        val state = PrnsGattState()
+        val state = GattState()
         val notification = PendingGattOperation(GattOperationKind.ServerNotify, characteristic)
         assertTrue(state.begin(notification))
         assertFalse(state.complete(GattOperationKind.ServerNotify, UUID(0, 2)))
