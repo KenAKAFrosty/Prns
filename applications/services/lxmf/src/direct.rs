@@ -13,7 +13,7 @@ use std::vec::Vec;
 use personal_rns::identity::{PrivateIdentityMaterial, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::announce::{derive_single_destination_hash, ExpandNameError};
 use personal_rns::routing::delivery::Delivery;
-use personal_rns::runtime::{Message, PrnsEvent};
+use personal_rns::runtime::{DestinationIdentityRetentionControl, Message, PrnsEvent};
 use prns_host::{CommandFailure, CommandOutcome, HostCommand};
 use prns_host_native::owner::{HostClient, SessionError};
 use prns_lxmf_wire::{
@@ -37,6 +37,7 @@ pub const MAX_ANNOUNCE_APP_DATA_BYTES: usize = 512;
 pub const MAX_DISPLAY_NAME_BYTES: usize = 255;
 /// Maximum time explicit shutdown waits for cancelled service-owned tasks.
 pub const STOP_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
+const KEY_USE_RETENTION_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Boxed async result used by the injected direct-network seam.
 pub type DirectNetworkFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -78,6 +79,7 @@ pub trait DirectNetwork: Send + Sync + 'static {
         &self,
         destination: [u8; 16],
     ) -> DirectNetworkFuture<'_, Result<(), DirectSendFailure>>;
+    /// Establish a link whose responder proof authenticates this destination.
     fn establish_link(
         &self,
         destination: [u8; 16],
@@ -91,6 +93,12 @@ pub trait DirectNetwork: Send + Sync + 'static {
         &self,
         destination: [u8; 16],
     ) -> DirectNetworkFuture<'_, Option<[u8; 64]>>;
+    /// Best-effort refresh of the host's bounded used-key retention policy.
+    /// Called only after authenticated link establishment or successful LXMF
+    /// source/signature verification. It must not permanently retain a key,
+    /// request a path, or announce. Failure must not change delivery outcomes;
+    /// the service bounds the wait even when an adapter cannot complete it.
+    fn mark_destination_used(&self, destination: [u8; 16]) -> DirectNetworkFuture<'_, ()>;
     fn announce(
         &self,
         destination: [u8; 16],
@@ -205,6 +213,18 @@ impl DirectNetwork for PrnsDirectNetwork {
                 .await
                 .ok()
                 .flatten()
+        })
+    }
+
+    fn mark_destination_used(&self, destination: [u8; 16]) -> DirectNetworkFuture<'_, ()> {
+        Box::pin(async move {
+            let Ok(services) = self.host.native_services() else {
+                return;
+            };
+            let _retention = services
+                .protocols()
+                .mark_destination_used(personal_rns::wire::DestinationHash::new(destination))
+                .await;
         })
     }
 
@@ -920,7 +940,36 @@ pub(crate) async fn run_single_attempt(
         network.request_path(destination).await?;
     }
     let link = network.establish_link(destination).await?;
+    mark_authenticated_key_used(network, destination).await;
     network.send_link_packet(link, exact_wire).await
+}
+
+async fn mark_authenticated_key_used(network: &dyn DirectNetwork, destination: [u8; 16]) {
+    // Retention is bookkeeping, not part of transport proof or message verification.
+    // A stopped or stalled host must not turn an otherwise valid result into failure.
+    let _retention = tokio::time::timeout(
+        KEY_USE_RETENTION_TIMEOUT,
+        network.mark_destination_used(destination),
+    )
+    .await;
+}
+
+pub(crate) async fn verify_inbound_source(
+    network: &dyn DirectNetwork,
+    message: MessageView<'_>,
+) -> LxmfVerification {
+    let source = *message.source_hash();
+    let Some(public) = network.destination_public_key(source).await else {
+        return LxmfVerification::SourceUnknown;
+    };
+    let Ok(bound) = message.bind_source_identity(&public) else {
+        return LxmfVerification::InvalidSignature;
+    };
+    if message.verify_signature(&bound).is_err() {
+        return LxmfVerification::InvalidSignature;
+    }
+    mark_authenticated_key_used(network, source).await;
+    LxmfVerification::Verified
 }
 
 struct Shared {
@@ -1112,13 +1161,7 @@ async fn process_inbound(shared: &Arc<Shared>, job: InboundJob) {
     }
     let message_id = message.message_id();
     let source = *message.source_hash();
-    let verification = match shared.network.destination_public_key(source).await {
-        None => LxmfVerification::SourceUnknown,
-        Some(public) => match message.bind_source_identity(&public) {
-            Ok(bound) if message.verify_signature(&bound).is_ok() => LxmfVerification::Verified,
-            Ok(_) | Err(_) => LxmfVerification::InvalidSignature,
-        },
-    };
+    let verification = verify_inbound_source(shared.network.as_ref(), message).await;
     let timestamp_seconds = message.payload().timestamp();
     let timestamp_unix_ms = if timestamp_seconds.is_finite() && timestamp_seconds >= 0.0 {
         (timestamp_seconds * 1_000.0) as u64

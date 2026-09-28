@@ -346,13 +346,34 @@ not be read as proof that the initiator's long-term identity was authenticated.
 Destination keys do persist across restart. The
 [existing retention policy](../../prns-core/src/identity/destination_identity/core.rs)
 allows never-used keys without a route to expire after six minutes; marking use
-extends their bounded lifetime to 8.75 days. LXMF currently does not mark such
+extends their bounded lifetime to 8.75 days. The tested LXMF build did not mark such
 use. Key absence was observed here; its exact eviction or persistence timing was
-not captured. A narrow follow-up should mark actual use of authenticated keys
-through the [existing public retention API](../../prns-runtime/core/src/runtime/command.rs).
+not captured. The [September 28 follow-up](#authenticated-key-retention-follow-up)
+implements use marking through the existing public API.
 First-time unknown senders and re-verification of stored Unknown records need
 separate bounded policies; a saved name or successful delivery must never upgrade
 verification by itself.
+
+## Authenticated-key retention follow-up
+
+On September 28, the LXMF service began refreshing the core's existing bounded
+`UsedAt` retention after an authenticated recipient Link is established and
+after an inbound source's destination binding and message signature both verify.
+The durable and non-durable receive paths share the same verifier. Failed
+establishment, unknown sources, mismatched keys and invalid signatures do not
+refresh retention. The operation has a one-second best-effort deadline; it
+cannot change an otherwise successful delivery or verified receipt into failure.
+No new core API, permanent retention, automatic announcement or saved-contact
+key store is introduced.
+
+Validation passed: 50 LXMF unit tests, three real-host integration tests, strict
+LXMF all-target Clippy, and 198 app native tests with Apple/host-test features.
+The [new integration test](../services/lxmf/tests/key_use_retention.rs) checks
+real authenticated announces, persisted `UsedAt` state, route removal and host
+restart. It separately checks finite expiration against those exact persisted
+rows under controlled policy time; it does not claim a six-minute wall-clock
+mobile test. These changes have not yet been built or tested on the phones.
+First-time unknown senders and stored Unknown records remain separate work.
 
 ## Controlled iOS cold-restart check
 

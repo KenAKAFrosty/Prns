@@ -1003,6 +1003,14 @@ impl prns_lxmf::direct::DirectNetwork for PendingProofNetwork {
         Box::pin(async { None })
     }
 
+    fn mark_destination_used(
+        &self,
+        _destination: [u8; 16],
+    ) -> prns_lxmf::direct::DirectNetworkFuture<'_, ()> {
+        // This proof-lifecycle fake has no destination-key store to retain.
+        Box::pin(async {})
+    }
+
     fn announce(
         &self,
         _destination: [u8; 16],

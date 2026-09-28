@@ -28,6 +28,7 @@ enum Call {
     HasRoute,
     RequestPath,
     EstablishLink,
+    MarkDestinationUsed,
     SendLinkPacket,
     DestinationPublicKey,
     Announce,
@@ -39,6 +40,8 @@ struct FakeNetwork {
     establish_result: StdMutex<Result<[u8; 16], DirectSendFailure>>,
     send_result: StdMutex<Result<DirectDeliveryReceipt, DirectSendFailure>>,
     public_keys: StdMutex<BTreeMap<[u8; 16], [u8; 64]>>,
+    used_destinations: StdMutex<Vec<[u8; 16]>>,
+    block_retention: AtomicBool,
     calls: StdMutex<Vec<Call>>,
     sent_wires: StdMutex<Vec<Vec<u8>>>,
     block_send: AtomicBool,
@@ -67,6 +70,8 @@ impl Default for FakeNetwork {
             establish_result: StdMutex::new(Ok([0xa5; 16])),
             send_result: StdMutex::new(Ok(DirectDeliveryReceipt { rtt_millis: 9 })),
             public_keys: StdMutex::new(BTreeMap::new()),
+            used_destinations: StdMutex::new(Vec::new()),
+            block_retention: AtomicBool::new(false),
             calls: StdMutex::new(Vec::new()),
             sent_wires: StdMutex::new(Vec::new()),
             block_send: AtomicBool::new(false),
@@ -183,6 +188,16 @@ impl DirectNetwork for FakeNetwork {
         Box::pin(async move {
             self.record(Call::Announce);
             Ok(())
+        })
+    }
+
+    fn mark_destination_used(&self, destination: [u8; 16]) -> DirectNetworkFuture<'_, ()> {
+        Box::pin(async move {
+            self.record(Call::MarkDestinationUsed);
+            self.used_destinations.lock().unwrap().push(destination);
+            if self.block_retention.load(Ordering::Acquire) {
+                std::future::pending::<()>().await;
+            }
         })
     }
 }
@@ -506,7 +521,12 @@ async fn direct_send_is_single_attempt_and_delivered_only_after_proof_result() {
     assert_eq!(delivered.messages[0].local_record_id, local_record_id);
     assert_eq!(
         fake.calls(),
-        vec![Call::HasRoute, Call::EstablishLink, Call::SendLinkPacket]
+        vec![
+            Call::HasRoute,
+            Call::EstablishLink,
+            Call::MarkDestinationUsed,
+            Call::SendLinkPacket,
+        ]
     );
     assert_eq!(
         fake.sent_wires.lock().expect("sent-wire log is available")[0].len(),
@@ -555,6 +575,14 @@ async fn assert_failure(
     let failed = service.snapshot().await;
     assert_eq!(failed.messages[0].failure, Some(expected));
     assert_eq!(fake.calls(), expected_calls);
+    assert_eq!(
+        *fake.used_destinations.lock().unwrap(),
+        if expected_calls.contains(&Call::MarkDestinationUsed) {
+            vec![peer_destination]
+        } else {
+            Vec::new()
+        }
+    );
     service.stop().await.expect("service tasks stop promptly");
 }
 
@@ -587,7 +615,12 @@ async fn direct_send_retains_typed_single_attempt_failures() {
         Err(DirectSendFailure::DeliveryTimedOut),
         DirectSendFailure::DeliveryTimedOut,
         SendDirectTextOutcome::DeliveryTimedOut,
-        vec![Call::HasRoute, Call::EstablishLink, Call::SendLinkPacket],
+        vec![
+            Call::HasRoute,
+            Call::EstablishLink,
+            Call::MarkDestinationUsed,
+            Call::SendLinkPacket,
+        ],
     )
     .await;
     assert_failure(
@@ -597,7 +630,12 @@ async fn direct_send_retains_typed_single_attempt_failures() {
         Err(DirectSendFailure::LocalNodeStopped),
         DirectSendFailure::LocalNodeStopped,
         SendDirectTextOutcome::LocalNodeStopped,
-        vec![Call::HasRoute, Call::EstablishLink, Call::SendLinkPacket],
+        vec![
+            Call::HasRoute,
+            Call::EstablishLink,
+            Call::MarkDestinationUsed,
+            Call::SendLinkPacket,
+        ],
     )
     .await;
 }
@@ -726,6 +764,11 @@ async fn inbound_messages_retain_verification_exact_wire_and_logical_dedup() {
         snapshot.messages[2].verification,
         LxmfVerification::InvalidSignature
     );
+    assert_eq!(
+        *fake.used_destinations.lock().unwrap(),
+        vec![verified_signer.destination()],
+        "unknown sources and keys not bound to the claimed source are not used"
+    );
     assert_eq!(snapshot.messages[0].exact_wire, verified_wire);
     assert_eq!(snapshot.messages[0].arrived_at_millis, Some(7_700));
     assert_eq!(
@@ -787,6 +830,62 @@ async fn inbound_messages_retain_verification_exact_wire_and_logical_dedup() {
         .iter()
         .all(|message| message.exact_wire != stamped));
     service.stop().await.expect("service tasks stop promptly");
+}
+
+#[tokio::test(start_paused = true)]
+async fn retention_timeout_does_not_change_delivery_or_verified_source() {
+    let fake = FakeNetwork::default();
+    fake.block_retention.store(true, Ordering::Release);
+    let signer = identity(&PEER_SECRET);
+    let source = signer.destination();
+    let material = PrivateIdentityMaterial::from_bytes(PEER_SECRET);
+    fake.add_public_key(source, &material);
+    let wire = compose_wire(
+        &signer,
+        identity(&LOCAL_SECRET).destination(),
+        1_700_000_000_000,
+        b"retention is best effort",
+    );
+    let started = tokio::time::Instant::now();
+    assert_eq!(
+        run_single_attempt(&fake, source, wire.clone()).await,
+        Ok(DirectDeliveryReceipt { rtt_millis: 9 })
+    );
+    let message =
+        MessageView::parse_complete(&wire, WireLimits::new(431, 431, 128, 512, 8_192, 16)).unwrap();
+    assert_eq!(
+        verify_inbound_source(&fake, message).await,
+        LxmfVerification::Verified
+    );
+    assert_eq!(started.elapsed(), KEY_USE_RETENTION_TIMEOUT * 2);
+    assert_eq!(
+        *fake.used_destinations.lock().unwrap(),
+        vec![source, source]
+    );
+}
+
+#[tokio::test]
+async fn invalid_message_signature_does_not_refresh_a_known_source_key() {
+    let fake = FakeNetwork::default();
+    let signer = identity(&PEER_SECRET);
+    fake.add_public_key(
+        signer.destination(),
+        &PrivateIdentityMaterial::from_bytes(PEER_SECRET),
+    );
+    let mut wire = compose_wire(
+        &signer,
+        identity(&LOCAL_SECRET).destination(),
+        1_700_000_000_000,
+        b"tampered signature",
+    );
+    wire[32] ^= 1;
+    let message =
+        MessageView::parse_complete(&wire, WireLimits::new(431, 431, 128, 512, 8_192, 16)).unwrap();
+    assert_eq!(
+        verify_inbound_source(&fake, message).await,
+        LxmfVerification::InvalidSignature
+    );
+    assert!(fake.used_destinations.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

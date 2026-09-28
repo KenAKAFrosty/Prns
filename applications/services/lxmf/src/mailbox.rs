@@ -2261,13 +2261,7 @@ async fn process_durable_inbound(
     }
     let message_id = message.message_id();
     let source = *message.source_hash();
-    let verification = match shared.network.destination_public_key(source).await {
-        None => LxmfVerification::SourceUnknown,
-        Some(public) => match message.bind_source_identity(&public) {
-            Ok(bound) if message.verify_signature(&bound).is_ok() => LxmfVerification::Verified,
-            Ok(_) | Err(_) => LxmfVerification::InvalidSignature,
-        },
-    };
+    let verification = crate::direct::verify_inbound_source(shared.network.as_ref(), message).await;
     let Some(timestamp_unix_ms) = timestamp_millis(message.payload().timestamp()) else {
         return;
     };
@@ -2501,6 +2495,9 @@ mod tests {
         path_requested: Notify,
         results: StdMutex<VecDeque<Result<DirectDeliveryReceipt, DirectSendFailure>>>,
         public_keys: StdMutex<BTreeMap<[u8; 16], [u8; 64]>>,
+        used_destinations: StdMutex<Vec<[u8; 16]>>,
+        block_retention: AtomicBool,
+        retention_entered: Notify,
         sent_wires: StdMutex<Vec<Vec<u8>>>,
         block_send: AtomicBool,
         send_entered: Notify,
@@ -2526,6 +2523,9 @@ mod tests {
                     rtt_millis: 23,
                 })])),
                 public_keys: StdMutex::new(BTreeMap::new()),
+                used_destinations: StdMutex::new(Vec::new()),
+                block_retention: AtomicBool::new(false),
+                retention_entered: Notify::new(),
                 sent_wires: StdMutex::new(Vec::new()),
                 block_send: AtomicBool::new(false),
                 send_entered: Notify::new(),
@@ -2604,6 +2604,16 @@ mod tests {
             _destination: [u8; 16],
         ) -> DirectNetworkFuture<'_, Result<(), DirectAnnounceFailure>> {
             Box::pin(async move { Ok(()) })
+        }
+
+        fn mark_destination_used(&self, destination: [u8; 16]) -> DirectNetworkFuture<'_, ()> {
+            Box::pin(async move {
+                self.used_destinations.lock().unwrap().push(destination);
+                self.retention_entered.notify_one();
+                if self.block_retention.load(Ordering::Acquire) {
+                    std::future::pending::<()>().await;
+                }
+            })
         }
     }
 
@@ -4263,6 +4273,99 @@ mod tests {
                 cancelled_at_millis: 12_345
             }
         ));
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn durable_key_use_is_authenticated_and_retention_timeout_is_best_effort() {
+        let (_root, _database, submitter) = shared_database();
+        let network = Arc::new(DurableFakeNetwork::default());
+        network.block_retention.store(true, Ordering::Release);
+        let (peer, peer_destination) = peer_facts();
+        network.add_public_key(peer_destination, &peer);
+        let service = start_durable(network.clone(), submitter).await;
+        learn_durable_peer(&service).await;
+        assert_eq!(
+            service
+                .send_direct_text(
+                    peer_destination,
+                    1_700_000_009_000,
+                    b"outbound",
+                    b"retained"
+                )
+                .await,
+            DurableSendDirectTextOutcome::Accepted { local_record_id: 1 }
+        );
+        network.retention_entered.notified().await;
+        assert!(matches!(
+            service.snapshot(all_messages()).await.unwrap().messages[0].delivery_state,
+            DurableLxmfDeliveryState::Sending { failed_attempts: 0 }
+        ));
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let delivered = wait_for_durable_snapshot(&service, |snapshot| {
+            matches!(
+                snapshot.messages[0].delivery_state,
+                DurableLxmfDeliveryState::Delivered { .. }
+            )
+        })
+        .await;
+        assert_eq!(delivered.messages[0].local_record_id, 1);
+
+        for (secret, title, tamper) in [
+            (PEER_SECRET, b"verified".as_slice(), false),
+            (
+                [0x73; IDENTITY_SECRET_KEY_LEN],
+                b"unknown".as_slice(),
+                false,
+            ),
+            (PEER_SECRET, b"invalid".as_slice(), true),
+        ] {
+            let signer = LocalLxmfIdentity::from_secret_bytes(&secret).unwrap();
+            let mut output = [0_u8; MAX_BASIC_LXMF_WIRE_BYTES];
+            let prepared = compose_basic_direct_lxmf(
+                service.local_destination(),
+                signer.destination(),
+                1_700_000_009_000,
+                title,
+                b"inbound",
+                None,
+                &signer,
+                &mut output,
+            )
+            .unwrap();
+            let mut wire = output[..usize::from(prepared.wire_len())].to_vec();
+            if tamper {
+                wire[32] ^= 1;
+            }
+            assert_eq!(
+                service.callbacks().on_prns_event(&link_event(&wire)),
+                CallbackOutcome::Enqueued
+            );
+        }
+        network.retention_entered.notified().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let snapshot =
+            wait_for_durable_snapshot(&service, |snapshot| snapshot.messages.len() == 4).await;
+        for (title, verification) in [
+            (b"verified".as_slice(), LxmfVerification::Verified),
+            (b"unknown".as_slice(), LxmfVerification::SourceUnknown),
+            (b"invalid".as_slice(), LxmfVerification::InvalidSignature),
+        ] {
+            assert_eq!(
+                snapshot
+                    .messages
+                    .iter()
+                    .find(|message| message.title == title)
+                    .unwrap()
+                    .verification,
+                verification
+            );
+        }
+        assert_eq!(
+            *network.used_destinations.lock().unwrap(),
+            vec![peer_destination, peer_destination],
+            "only the established recipient and verified source refresh key retention"
+        );
         service.stop().await.unwrap();
     }
 
