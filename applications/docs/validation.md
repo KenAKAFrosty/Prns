@@ -29,7 +29,9 @@ the compatibility revision and matching artifacts before running the separate
 recorded-release gate. The [build cleanup](../checkpoints/2026-09-24-build-cleanup.md)
 records subsequent local Android/iOS Release compilation and the separate repair
 of inherited firmware-assurance and tester-roster failures using fresh upstream
-evidence. Consult the PR checks for hosted status.
+evidence. The September 29 reconciliation adopts upstream's subsequent repairs;
+the earlier failure records are historical, not outstanding landing work. Consult
+the PR checks for hosted status.
 
 ## Historical validation
 

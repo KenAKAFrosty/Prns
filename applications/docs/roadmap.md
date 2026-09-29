@@ -100,9 +100,9 @@ upstream capability and authority checks remain mandatory.
   longer relevant to the current permission model.
 - **SDK and app landing:** land the independent
   [SDK PR](https://github.com/KenAKAFrosty/Prns/pull/251) before the
-  [app PR](https://github.com/KenAKAFrosty/Prns/pull/197). The separate inherited
-  firmware-assurance and tester-roster repair has passed locally with a fresh
-  clean-commit baseline; land that repair as recorded in the
+  [app PR](https://github.com/KenAKAFrosty/Prns/pull/197). Upstream now includes
+  the inherited firmware-assurance and tester-roster repairs; no separate repair
+  PR is needed. The earlier investigation is recorded in the
   [build cleanup](../checkpoints/2026-09-24-build-cleanup.md#separate-upstream-ci-repair).
   Consult current PR checks for CI status; historical publishing hooks do not
   establish current hosted success.
