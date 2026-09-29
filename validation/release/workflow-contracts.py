@@ -11,6 +11,11 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = tuple(sorted((ROOT / ".github" / "workflows").glob("*.yml")))
+LOCAL_ACTIONS = tuple(sorted(
+    path
+    for pattern in ("action.yml", "action.yaml")
+    for path in (ROOT / ".github" / "actions").rglob(pattern)
+))
 ACTION_PATTERN = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", re.MULTILINE)
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 JOB_PATTERN = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\n")
@@ -156,7 +161,7 @@ def validate() -> list[str]:
         return ["release/flash/action-pins.json has an unsupported shape"]
 
     used: set[str] = set()
-    for workflow in WORKFLOWS:
+    for workflow in (*WORKFLOWS, *LOCAL_ACTIONS):
         text = workflow.read_text(encoding="utf-8")
         errors.extend(validate_resource_bounds(workflow, text))
         for reference in ACTION_PATTERN.findall(text):
