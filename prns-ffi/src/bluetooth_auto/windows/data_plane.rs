@@ -284,41 +284,6 @@ impl BleSource for WinGattSource {
             .map_err(|_| WindowsBleError::FrameTooLarge)
     }
 }
-
-#[cfg(test)]
-mod receive_tests {
-    use super::*;
-    use prns_core::interfaces::bluetooth_auto::BLE_WIRE_FRAME_LEN;
-
-    #[tokio::test]
-    async fn small_receive_buffers_refuse_whole_frames_and_preserve_the_next_frame() {
-        let (sender, inbound) = tokio_mpsc::channel(2);
-        let (_open, closed) = watch::channel(false);
-        assert!(sender.send(Box::from([1, 2, 3])).await.is_ok());
-        assert!(sender
-            .send(Box::from([0x17; BLE_WIRE_FRAME_LEN]))
-            .await
-            .is_ok());
-        let mut source = WinGattSource {
-            inbound,
-            closed,
-            _keepalive: SourceKeepalive::Peripheral,
-        };
-        let mut small = [0xA5; 2];
-        assert!(matches!(
-            source.recv_frame(&mut small).await,
-            Err(WindowsBleError::FrameTooLarge)
-        ));
-        assert_eq!(small, [0xA5; 2]);
-        let mut wire = [0; BLE_WIRE_FRAME_LEN];
-        assert!(matches!(
-            source.recv_frame(&mut wire).await,
-            Ok(BLE_WIRE_FRAME_LEN)
-        ));
-        assert_eq!(wire, [0x17; BLE_WIRE_FRAME_LEN]);
-    }
-}
-
 pub struct WinGattSink {
     plane: SinkPlane,
 }
@@ -363,3 +328,37 @@ impl BleSink for WinGattSink {
 }
 
 pub(super) const FRAGMENT_SCRATCH: usize = 8;
+
+#[cfg(test)]
+mod receive_tests {
+    use super::*;
+    use prns_core::interfaces::bluetooth_auto::BLE_WIRE_FRAME_LEN;
+
+    #[tokio::test]
+    async fn small_receive_buffers_refuse_whole_frames_and_preserve_the_next_frame() {
+        let (sender, inbound) = tokio_mpsc::channel(2);
+        let (_open, closed) = watch::channel(false);
+        assert!(sender.send(Box::from([1, 2, 3])).await.is_ok());
+        assert!(sender
+            .send(Box::from([0x17; BLE_WIRE_FRAME_LEN]))
+            .await
+            .is_ok());
+        let mut source = WinGattSource {
+            inbound,
+            closed,
+            _keepalive: SourceKeepalive::Peripheral,
+        };
+        let mut small = [0xA5; 2];
+        assert!(matches!(
+            source.recv_frame(&mut small).await,
+            Err(WindowsBleError::FrameTooLarge)
+        ));
+        assert_eq!(small, [0xA5; 2]);
+        let mut wire = [0; BLE_WIRE_FRAME_LEN];
+        assert!(matches!(
+            source.recv_frame(&mut wire).await,
+            Ok(BLE_WIRE_FRAME_LEN)
+        ));
+        assert_eq!(wire, [0x17; BLE_WIRE_FRAME_LEN]);
+    }
+}

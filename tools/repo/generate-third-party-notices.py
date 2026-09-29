@@ -161,15 +161,25 @@ def notice_input_paths() -> tuple[Path, ...]:
         if "node_modules" not in Path(relative).parts
     )
     paths.update(ROOT / relative for _, _, relative, _ in VENDORED)
-    for pattern in ("Cargo.toml", "Cargo.lock"):
-        paths.update(
-            path
-            for path in ROOT.rglob(pattern)
-            if not any(
-                part in {".git", "node_modules", "target", "vendor"}
-                for part in path.relative_to(ROOT).parts
-            )
+    tracked = subprocess.run(
+        ["git", "ls-files", "--cached", "--full-name", "-z"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    if tracked.returncode:
+        raise RuntimeError("cannot enumerate tracked notice inputs")
+    paths.update(
+        ROOT / relative
+        for encoded in tracked.stdout.split(b"\0")
+        if encoded
+        for relative in (Path(os.fsdecode(encoded)),)
+        if relative.name in {"Cargo.toml", "Cargo.lock"}
+        and not any(
+            part in {".git", "node_modules", "target", "vendor"}
+            for part in relative.parts
         )
+    )
     return tuple(sorted(paths, key=lambda path: path.relative_to(ROOT).as_posix()))
 
 
