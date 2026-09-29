@@ -57,7 +57,9 @@ def inventory(root):
              'prns-core/src/identity/held/core.rs':'prns_core::identity::held',
              'prns-core/src/routing/upstream_app_destinations/core.rs':'prns_core::routing::upstream_app_destinations',
              'prns-core/src/routing/delivery/send_plain.rs':'prns_core::routing::delivery::send_plain',
-             'prns-core/src/storage/core.rs':'prns_core::storage'}
+             'prns-core/src/storage/core.rs':'prns_core::storage',
+             'prns-core/src/routing/links/resources/build_outgoing.rs':'prns_core::routing::links::resources::build_outgoing',
+             'prns-core/src/crypto/token.rs':'prns_core::crypto'}
     paths = list((root / 'prns-core/src/remote_control').rglob('*.rs'))
     paths += list((root / 'prns-core/src/interfaces').rglob('*.rs'))
     paths += [root / 'prns-core/src/capabilities/power.rs']
@@ -94,6 +96,9 @@ def inventory(root):
                     field['borrowed']=bool(re.search(r'fn '+field['name']+r'\(\s*&self\s*\)\s*->\s*&',source))
             if name in result and result[name] != item: continue
             result[name] = item
+        for match in re.finditer(r'pub struct (\w+)\s*;', source):
+            result[match[1]] = {'name':match[1], 'kind':'struct', 'namespace':namespace,
+                'source':str(path.relative_to(root)), 'style':'unit', 'fields':[]}
         for match in re.finditer(r'desired_state!\((\w+)\s*\{', source):
             body = block(source, match.end()-1)
             result[match[1]] = {'name':match[1], 'kind':'enum','namespace':namespace,'source':str(path.relative_to(root)),
@@ -168,7 +173,7 @@ def load(root):
     all_types = inventory(root)
     for item in all_types.values():
         for field in item.get('fields',[]) + [f for v in item.get('variants',[]) for f in v['fields']]:
-            field['type']=re.sub(r'(?:(?:crate|super|table|engine|storage)::)+', '', field['type'])
+            field['type']=re.sub(r'(?:(?:crate|super|table|engine|storage|identity)::)+', '', field['type'])
     for name,namespace in [('InterfaceId','iface'),('IdentityHash','identity'),('DestinationHash','wire'),('PacketHash','dedup'),('LinkId','link')]:
         all_types[name] = {'name':name, 'kind':'struct', 'namespace':namespace, 'source':'prns-core/src', 'style':'named'}
     for name, field_list in CUSTOM.items():
@@ -298,6 +303,9 @@ uniffi::custom_type!(RemoteControlSecretCode, u32, {
                 rust += ['}']
             elif item.get('custom'):
                 rust += [custom_conversion(name,core(item),input)]
+            elif item.get('style')=='unit':
+                rust += ['let _ = value;'] if not input else []
+                rust += [core(item) if input else 'Self {}']
             elif item.get('style')=='tuple':
                 f=item['fields'][0]
                 rust += [f'{core(item)}({convert(f["type"],"value.value",direction)})' if input else f'Self {{ value: {convert(f["type"],"value.0",direction)} }}']

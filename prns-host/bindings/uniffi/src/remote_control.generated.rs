@@ -2,7 +2,7 @@
 // Uniform fallible converters retain ? for nested validation and error conversion.
 #![allow(clippy::needless_question_mark)]
 pub const REMOTE_CONTROL_SEMANTIC_FINGERPRINT: &str =
-    "becd93f1924c3ec2e50562f2df71a57b80c6cffb81f20399e616abbdc4e3df5c";
+    "1e391657f2f551490372385e1f85ee724e47111fb1ae26578d49c30be711f73e";
 use crate::transport::BindingError;
 pub struct RemoteControlSecretText(zeroize::Zeroizing<String>);
 uniffi::custom_type!(RemoteControlSecretText, String, {
@@ -2588,6 +2588,9 @@ pub enum RemoteControlSendRequestFailure {
     ResponseTransferFailed {
         value: RemoteControlResourceFailureCause,
     },
+    RequestTransferFailed {
+        value: RemoteControlSendResourceFailure,
+    },
     ResourceCapacity,
 }
 impl From<prns_core::engine::SendRequestFailure> for RemoteControlSendRequestFailure {
@@ -2615,6 +2618,11 @@ impl From<prns_core::engine::SendRequestFailure> for RemoteControlSendRequestFai
             }
             prns_core::engine::SendRequestFailure::ResponseTransferFailed(value) => {
                 RemoteControlSendRequestFailure::ResponseTransferFailed {
+                    value: value.into(),
+                }
+            }
+            prns_core::engine::SendRequestFailure::RequestTransferFailed(value) => {
+                RemoteControlSendRequestFailure::RequestTransferFailed {
                     value: value.into(),
                 }
             }
@@ -2717,6 +2725,121 @@ prns_core::routing::links::resources::table::ApplyHashmapUpdateError::SkipsAhead
 prns_core::routing::links::resources::table::ApplyHashmapUpdateError::HashmapTooLong => RemoteControlApplyHashmapUpdateError::HashmapTooLong,
 prns_core::routing::links::resources::table::ApplyHashmapUpdateError::HashmapRagged => RemoteControlApplyHashmapUpdateError::HashmapRagged,
 }
+    }
+}
+#[derive(uniffi::Enum)]
+pub enum RemoteControlSendResourceFailure {
+    Rejected {
+        value: RemoteControlSendResourceRejection,
+    },
+    WriteFailed,
+    RejectedByPeer,
+    Sequencing,
+    Timeout,
+    LinkClosed,
+    PredecessorFailed,
+}
+impl From<prns_core::engine::SendResourceFailure> for RemoteControlSendResourceFailure {
+    fn from(value: prns_core::engine::SendResourceFailure) -> Self {
+        match value {
+            prns_core::engine::SendResourceFailure::Rejected(value) => {
+                RemoteControlSendResourceFailure::Rejected {
+                    value: value.into(),
+                }
+            }
+            prns_core::engine::SendResourceFailure::WriteFailed => {
+                RemoteControlSendResourceFailure::WriteFailed
+            }
+            prns_core::engine::SendResourceFailure::RejectedByPeer => {
+                RemoteControlSendResourceFailure::RejectedByPeer
+            }
+            prns_core::engine::SendResourceFailure::Sequencing => {
+                RemoteControlSendResourceFailure::Sequencing
+            }
+            prns_core::engine::SendResourceFailure::Timeout => {
+                RemoteControlSendResourceFailure::Timeout
+            }
+            prns_core::engine::SendResourceFailure::LinkClosed => {
+                RemoteControlSendResourceFailure::LinkClosed
+            }
+            prns_core::engine::SendResourceFailure::PredecessorFailed => {
+                RemoteControlSendResourceFailure::PredecessorFailed
+            }
+        }
+    }
+}
+#[derive(uniffi::Enum)]
+pub enum RemoteControlSendResourceRejection {
+    NoSuchLink,
+    LinkNotActive,
+    LinkBusy,
+    TableFull,
+    Build {
+        value: RemoteControlBuildOutgoingResourceError,
+    },
+    MetadataMisplaced,
+}
+impl From<prns_core::engine::SendResourceRejection> for RemoteControlSendResourceRejection {
+    fn from(value: prns_core::engine::SendResourceRejection) -> Self {
+        match value {
+            prns_core::engine::SendResourceRejection::NoSuchLink => {
+                RemoteControlSendResourceRejection::NoSuchLink
+            }
+            prns_core::engine::SendResourceRejection::LinkNotActive => {
+                RemoteControlSendResourceRejection::LinkNotActive
+            }
+            prns_core::engine::SendResourceRejection::LinkBusy => {
+                RemoteControlSendResourceRejection::LinkBusy
+            }
+            prns_core::engine::SendResourceRejection::TableFull => {
+                RemoteControlSendResourceRejection::TableFull
+            }
+            prns_core::engine::SendResourceRejection::Build(value) => {
+                RemoteControlSendResourceRejection::Build {
+                    value: value.into(),
+                }
+            }
+            prns_core::engine::SendResourceRejection::MetadataMisplaced => {
+                RemoteControlSendResourceRejection::MetadataMisplaced
+            }
+        }
+    }
+}
+#[derive(uniffi::Enum)]
+pub enum RemoteControlBuildOutgoingResourceError {
+    DataTooLarge,
+    MetadataTooLarge,
+    SduTooSmall,
+    Seal { value: RemoteControlBufferTooShort },
+    HashmapBufferTooShort,
+    BufferShapeMismatch,
+    PreparedDigestInputMismatch,
+    SaltRerollsExhausted,
+}
+impl From<prns_core::routing::links::resources::build_outgoing::BuildOutgoingResourceError>
+    for RemoteControlBuildOutgoingResourceError
+{
+    fn from(
+        value: prns_core::routing::links::resources::build_outgoing::BuildOutgoingResourceError,
+    ) -> Self {
+        match value {
+prns_core::routing::links::resources::build_outgoing::BuildOutgoingResourceError::DataTooLarge => RemoteControlBuildOutgoingResourceError::DataTooLarge,
+prns_core::routing::links::resources::build_outgoing::BuildOutgoingResourceError::MetadataTooLarge => RemoteControlBuildOutgoingResourceError::MetadataTooLarge,
+prns_core::routing::links::resources::build_outgoing::BuildOutgoingResourceError::SduTooSmall => RemoteControlBuildOutgoingResourceError::SduTooSmall,
+prns_core::routing::links::resources::build_outgoing::BuildOutgoingResourceError::Seal(value) => RemoteControlBuildOutgoingResourceError::Seal { value: value.into() },
+prns_core::routing::links::resources::build_outgoing::BuildOutgoingResourceError::HashmapBufferTooShort => RemoteControlBuildOutgoingResourceError::HashmapBufferTooShort,
+prns_core::routing::links::resources::build_outgoing::BuildOutgoingResourceError::BufferShapeMismatch => RemoteControlBuildOutgoingResourceError::BufferShapeMismatch,
+prns_core::routing::links::resources::build_outgoing::BuildOutgoingResourceError::PreparedDigestInputMismatch => RemoteControlBuildOutgoingResourceError::PreparedDigestInputMismatch,
+prns_core::routing::links::resources::build_outgoing::BuildOutgoingResourceError::SaltRerollsExhausted => RemoteControlBuildOutgoingResourceError::SaltRerollsExhausted,
+}
+    }
+}
+#[derive(uniffi::Record)]
+pub struct RemoteControlBufferTooShort {}
+impl From<prns_core::crypto::BufferTooShort> for RemoteControlBufferTooShort {
+    fn from(value: prns_core::crypto::BufferTooShort) -> Self {
+        let _ = value;
+        Self {}
     }
 }
 #[derive(uniffi::Enum)]
@@ -4686,6 +4809,9 @@ personal_rns::runtime::RemoteControlPairingControlError::<prns_core::engine::App
 }
 #[derive(uniffi::Enum)]
 pub enum RemoteControlApproveRemoteControlTargetPairingFailure {
+    AuthorizationPreparationFailed {
+        failure: RemoteControlTargetPairingPreparationFailure,
+    },
     Expired {
         expired: RemoteControlTargetPairingAborted,
         retired_link: RemoteControlLinkId,
@@ -4714,6 +4840,7 @@ impl From<prns_core::engine::ApproveRemoteControlTargetPairingFailure>
 {
     fn from(value: prns_core::engine::ApproveRemoteControlTargetPairingFailure) -> Self {
         match value {
+prns_core::engine::ApproveRemoteControlTargetPairingFailure::AuthorizationPreparationFailed { failure } => RemoteControlApproveRemoteControlTargetPairingFailure::AuthorizationPreparationFailed { failure: failure.into() },
 prns_core::engine::ApproveRemoteControlTargetPairingFailure::Expired { expired, retired_link } => RemoteControlApproveRemoteControlTargetPairingFailure::Expired { expired: expired.into(), retired_link: retired_link.into() },
 prns_core::engine::ApproveRemoteControlTargetPairingFailure::NoActiveAttempt => RemoteControlApproveRemoteControlTargetPairingFailure::NoActiveAttempt,
 prns_core::engine::ApproveRemoteControlTargetPairingFailure::AttemptMismatch { requested, active } => RemoteControlApproveRemoteControlTargetPairingFailure::AttemptMismatch { requested: requested.into(), active: active.into() },
@@ -4721,6 +4848,49 @@ prns_core::engine::ApproveRemoteControlTargetPairingFailure::OfferPendingDispatc
 prns_core::engine::ApproveRemoteControlTargetPairingFailure::AlreadyApproved { attempt_id } => RemoteControlApproveRemoteControlTargetPairingFailure::AlreadyApproved { attempt_id: attempt_id.into() },
 prns_core::engine::ApproveRemoteControlTargetPairingFailure::FinalizationInProgress { attempt_id } => RemoteControlApproveRemoteControlTargetPairingFailure::FinalizationInProgress { attempt_id: attempt_id.into() },
 prns_core::engine::ApproveRemoteControlTargetPairingFailure::CompletionRetentionExpired { attempt_id, retired_link } => RemoteControlApproveRemoteControlTargetPairingFailure::CompletionRetentionExpired { attempt_id: attempt_id.into(), retired_link: retired_link.into() },
+}
+    }
+}
+#[derive(uniffi::Enum)]
+pub enum RemoteControlTargetPairingPreparationFailure {
+    TargetSignerUnavailable {
+        target_identity: RemoteControlIdentityHash,
+    },
+    SigningFailed {
+        error: RemoteControlPairingCompletionSigningError,
+    },
+    DeadlineElapsed,
+    NoAuthorizationOwed,
+    AttemptMismatch {
+        active: RemoteControlPairingAttemptId,
+    },
+}
+impl From<prns_core::engine::RemoteControlTargetPairingPreparationFailure>
+    for RemoteControlTargetPairingPreparationFailure
+{
+    fn from(value: prns_core::engine::RemoteControlTargetPairingPreparationFailure) -> Self {
+        match value {
+prns_core::engine::RemoteControlTargetPairingPreparationFailure::TargetSignerUnavailable { target_identity } => RemoteControlTargetPairingPreparationFailure::TargetSignerUnavailable { target_identity: target_identity.into() },
+prns_core::engine::RemoteControlTargetPairingPreparationFailure::SigningFailed { error } => RemoteControlTargetPairingPreparationFailure::SigningFailed { error: error.into() },
+prns_core::engine::RemoteControlTargetPairingPreparationFailure::DeadlineElapsed => RemoteControlTargetPairingPreparationFailure::DeadlineElapsed,
+prns_core::engine::RemoteControlTargetPairingPreparationFailure::NoAuthorizationOwed => RemoteControlTargetPairingPreparationFailure::NoAuthorizationOwed,
+prns_core::engine::RemoteControlTargetPairingPreparationFailure::AttemptMismatch { active } => RemoteControlTargetPairingPreparationFailure::AttemptMismatch { active: active.into() },
+}
+    }
+}
+#[derive(uniffi::Enum)]
+pub enum RemoteControlPairingCompletionSigningError {
+    TargetIdentityMismatch {
+        expected: RemoteControlIdentityHash,
+        found: RemoteControlIdentityHash,
+    },
+}
+impl From<prns_core::remote_control::RemoteControlPairingCompletionSigningError>
+    for RemoteControlPairingCompletionSigningError
+{
+    fn from(value: prns_core::remote_control::RemoteControlPairingCompletionSigningError) -> Self {
+        match value {
+prns_core::remote_control::RemoteControlPairingCompletionSigningError::TargetIdentityMismatch { expected, found } => RemoteControlPairingCompletionSigningError::TargetIdentityMismatch { expected: expected.into(), found: found.into() },
 }
     }
 }

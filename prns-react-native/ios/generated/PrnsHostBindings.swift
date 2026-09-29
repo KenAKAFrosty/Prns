@@ -2695,6 +2695,51 @@ public func FfiConverterTypeRemoteControlBeginRemoteControlControllerPairing_low
 }
 
 
+public struct RemoteControlBufferTooShort: Equatable, Hashable {
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init() {
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlBufferTooShort: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlBufferTooShort: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlBufferTooShort {
+        return
+            RemoteControlBufferTooShort()
+    }
+
+    public static func write(_ value: RemoteControlBufferTooShort, into buf: inout [UInt8]) {
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlBufferTooShort_lift(_ buf: RustBuffer) throws -> RemoteControlBufferTooShort {
+    return try FfiConverterTypeRemoteControlBufferTooShort.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlBufferTooShort_lower(_ value: RemoteControlBufferTooShort) -> RustBuffer {
+    return FfiConverterTypeRemoteControlBufferTooShort.lower(value)
+}
+
+
 public struct RemoteControlBuildVersion: Equatable, Hashable {
     public var value: String
 
@@ -12681,6 +12726,8 @@ public func FfiConverterTypeRemoteControlApproveRemoteControlTargetPairingContro
 
 public enum RemoteControlApproveRemoteControlTargetPairingFailure: Equatable, Hashable {
 
+    case authorizationPreparationFailed(failure: RemoteControlTargetPairingPreparationFailure
+    )
     case expired(expired: RemoteControlTargetPairingAborted, retiredLink: RemoteControlLinkId
     )
     case noActiveAttempt
@@ -12715,24 +12762,27 @@ public struct FfiConverterTypeRemoteControlApproveRemoteControlTargetPairingFail
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .expired(expired: try FfiConverterTypeRemoteControlTargetPairingAborted.read(from: &buf), retiredLink: try FfiConverterTypeRemoteControlLinkId.read(from: &buf)
+        case 1: return .authorizationPreparationFailed(failure: try FfiConverterTypeRemoteControlTargetPairingPreparationFailure.read(from: &buf)
         )
 
-        case 2: return .noActiveAttempt
-
-        case 3: return .attemptMismatch(requested: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf), active: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf)
+        case 2: return .expired(expired: try FfiConverterTypeRemoteControlTargetPairingAborted.read(from: &buf), retiredLink: try FfiConverterTypeRemoteControlLinkId.read(from: &buf)
         )
 
-        case 4: return .offerPendingDispatch(attemptId: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf)
+        case 3: return .noActiveAttempt
+
+        case 4: return .attemptMismatch(requested: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf), active: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf)
         )
 
-        case 5: return .alreadyApproved(attemptId: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf)
+        case 5: return .offerPendingDispatch(attemptId: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf)
         )
 
-        case 6: return .finalizationInProgress(attemptId: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf)
+        case 6: return .alreadyApproved(attemptId: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf)
         )
 
-        case 7: return .completionRetentionExpired(attemptId: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf), retiredLink: try FfiConverterTypeRemoteControlLinkId.read(from: &buf)
+        case 7: return .finalizationInProgress(attemptId: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf)
+        )
+
+        case 8: return .completionRetentionExpired(attemptId: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf), retiredLink: try FfiConverterTypeRemoteControlLinkId.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -12743,39 +12793,44 @@ public struct FfiConverterTypeRemoteControlApproveRemoteControlTargetPairingFail
         switch value {
 
 
-        case let .expired(expired,retiredLink):
+        case let .authorizationPreparationFailed(failure):
             writeInt(&buf, Int32(1))
+            FfiConverterTypeRemoteControlTargetPairingPreparationFailure.write(failure, into: &buf)
+
+
+        case let .expired(expired,retiredLink):
+            writeInt(&buf, Int32(2))
             FfiConverterTypeRemoteControlTargetPairingAborted.write(expired, into: &buf)
             FfiConverterTypeRemoteControlLinkId.write(retiredLink, into: &buf)
 
 
         case .noActiveAttempt:
-            writeInt(&buf, Int32(2))
+            writeInt(&buf, Int32(3))
 
 
         case let .attemptMismatch(requested,active):
-            writeInt(&buf, Int32(3))
+            writeInt(&buf, Int32(4))
             FfiConverterTypeRemoteControlPairingAttemptId.write(requested, into: &buf)
             FfiConverterTypeRemoteControlPairingAttemptId.write(active, into: &buf)
 
 
         case let .offerPendingDispatch(attemptId):
-            writeInt(&buf, Int32(4))
-            FfiConverterTypeRemoteControlPairingAttemptId.write(attemptId, into: &buf)
-
-
-        case let .alreadyApproved(attemptId):
             writeInt(&buf, Int32(5))
             FfiConverterTypeRemoteControlPairingAttemptId.write(attemptId, into: &buf)
 
 
-        case let .finalizationInProgress(attemptId):
+        case let .alreadyApproved(attemptId):
             writeInt(&buf, Int32(6))
             FfiConverterTypeRemoteControlPairingAttemptId.write(attemptId, into: &buf)
 
 
-        case let .completionRetentionExpired(attemptId,retiredLink):
+        case let .finalizationInProgress(attemptId):
             writeInt(&buf, Int32(7))
+            FfiConverterTypeRemoteControlPairingAttemptId.write(attemptId, into: &buf)
+
+
+        case let .completionRetentionExpired(attemptId,retiredLink):
+            writeInt(&buf, Int32(8))
             FfiConverterTypeRemoteControlPairingAttemptId.write(attemptId, into: &buf)
             FfiConverterTypeRemoteControlLinkId.write(retiredLink, into: &buf)
 
@@ -13352,6 +13407,118 @@ public func FfiConverterTypeRemoteControlBluetoothIndication_lift(_ buf: RustBuf
 #endif
 public func FfiConverterTypeRemoteControlBluetoothIndication_lower(_ value: RemoteControlBluetoothIndication) -> RustBuffer {
     return FfiConverterTypeRemoteControlBluetoothIndication.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteControlBuildOutgoingResourceError: Equatable, Hashable {
+
+    case dataTooLarge
+    case metadataTooLarge
+    case sduTooSmall
+    case seal(value: RemoteControlBufferTooShort
+    )
+    case hashmapBufferTooShort
+    case bufferShapeMismatch
+    case preparedDigestInputMismatch
+    case saltRerollsExhausted
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlBuildOutgoingResourceError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlBuildOutgoingResourceError: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlBuildOutgoingResourceError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlBuildOutgoingResourceError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .dataTooLarge
+
+        case 2: return .metadataTooLarge
+
+        case 3: return .sduTooSmall
+
+        case 4: return .seal(value: try FfiConverterTypeRemoteControlBufferTooShort.read(from: &buf)
+        )
+
+        case 5: return .hashmapBufferTooShort
+
+        case 6: return .bufferShapeMismatch
+
+        case 7: return .preparedDigestInputMismatch
+
+        case 8: return .saltRerollsExhausted
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlBuildOutgoingResourceError, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .dataTooLarge:
+            writeInt(&buf, Int32(1))
+
+
+        case .metadataTooLarge:
+            writeInt(&buf, Int32(2))
+
+
+        case .sduTooSmall:
+            writeInt(&buf, Int32(3))
+
+
+        case let .seal(value):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeRemoteControlBufferTooShort.write(value, into: &buf)
+
+
+        case .hashmapBufferTooShort:
+            writeInt(&buf, Int32(5))
+
+
+        case .bufferShapeMismatch:
+            writeInt(&buf, Int32(6))
+
+
+        case .preparedDigestInputMismatch:
+            writeInt(&buf, Int32(7))
+
+
+        case .saltRerollsExhausted:
+            writeInt(&buf, Int32(8))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlBuildOutgoingResourceError_lift(_ buf: RustBuffer) throws -> RemoteControlBuildOutgoingResourceError {
+    return try FfiConverterTypeRemoteControlBuildOutgoingResourceError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlBuildOutgoingResourceError_lower(_ value: RemoteControlBuildOutgoingResourceError) -> RustBuffer {
+    return FfiConverterTypeRemoteControlBuildOutgoingResourceError.lower(value)
 }
 
 
@@ -18720,6 +18887,70 @@ public func FfiConverterTypeRemoteControlPairingCompletedVerificationError_lower
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum RemoteControlPairingCompletionSigningError: Equatable, Hashable {
+
+    case targetIdentityMismatch(expected: RemoteControlIdentityHash, found: RemoteControlIdentityHash
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlPairingCompletionSigningError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlPairingCompletionSigningError: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlPairingCompletionSigningError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlPairingCompletionSigningError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .targetIdentityMismatch(expected: try FfiConverterTypeRemoteControlIdentityHash.read(from: &buf), found: try FfiConverterTypeRemoteControlIdentityHash.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlPairingCompletionSigningError, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .targetIdentityMismatch(expected,found):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeRemoteControlIdentityHash.write(expected, into: &buf)
+            FfiConverterTypeRemoteControlIdentityHash.write(found, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlPairingCompletionSigningError_lift(_ buf: RustBuffer) throws -> RemoteControlPairingCompletionSigningError {
+    return try FfiConverterTypeRemoteControlPairingCompletionSigningError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlPairingCompletionSigningError_lower(_ value: RemoteControlPairingCompletionSigningError) -> RustBuffer {
+    return FfiConverterTypeRemoteControlPairingCompletionSigningError.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum RemoteControlPairingControlErrorRemoteControlApproveRemoteControlControllerPairingControlFailure: Equatable, Hashable {
 
     case nodeStopped
@@ -23695,6 +23926,8 @@ public enum RemoteControlSendRequestFailure: Equatable, Hashable {
     case responseTooLarge
     case responseTransferFailed(value: RemoteControlResourceFailureCause
     )
+    case requestTransferFailed(value: RemoteControlSendResourceFailure
+    )
     case resourceCapacity
 
 
@@ -23733,7 +23966,10 @@ public struct FfiConverterTypeRemoteControlSendRequestFailure: FfiConverterRustB
         case 7: return .responseTransferFailed(value: try FfiConverterTypeRemoteControlResourceFailureCause.read(from: &buf)
         )
 
-        case 8: return .resourceCapacity
+        case 8: return .requestTransferFailed(value: try FfiConverterTypeRemoteControlSendResourceFailure.read(from: &buf)
+        )
+
+        case 9: return .resourceCapacity
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -23773,8 +24009,13 @@ public struct FfiConverterTypeRemoteControlSendRequestFailure: FfiConverterRustB
             FfiConverterTypeRemoteControlResourceFailureCause.write(value, into: &buf)
 
 
-        case .resourceCapacity:
+        case let .requestTransferFailed(value):
             writeInt(&buf, Int32(8))
+            FfiConverterTypeRemoteControlSendResourceFailure.write(value, into: &buf)
+
+
+        case .resourceCapacity:
+            writeInt(&buf, Int32(9))
 
         }
     }
@@ -23860,6 +24101,209 @@ public func FfiConverterTypeRemoteControlSendRequestRejection_lift(_ buf: RustBu
 #endif
 public func FfiConverterTypeRemoteControlSendRequestRejection_lower(_ value: RemoteControlSendRequestRejection) -> RustBuffer {
     return FfiConverterTypeRemoteControlSendRequestRejection.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteControlSendResourceFailure: Equatable, Hashable {
+
+    case rejected(value: RemoteControlSendResourceRejection
+    )
+    case writeFailed
+    case rejectedByPeer
+    case sequencing
+    case timeout
+    case linkClosed
+    case predecessorFailed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlSendResourceFailure: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlSendResourceFailure: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlSendResourceFailure
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlSendResourceFailure {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .rejected(value: try FfiConverterTypeRemoteControlSendResourceRejection.read(from: &buf)
+        )
+
+        case 2: return .writeFailed
+
+        case 3: return .rejectedByPeer
+
+        case 4: return .sequencing
+
+        case 5: return .timeout
+
+        case 6: return .linkClosed
+
+        case 7: return .predecessorFailed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlSendResourceFailure, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .rejected(value):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeRemoteControlSendResourceRejection.write(value, into: &buf)
+
+
+        case .writeFailed:
+            writeInt(&buf, Int32(2))
+
+
+        case .rejectedByPeer:
+            writeInt(&buf, Int32(3))
+
+
+        case .sequencing:
+            writeInt(&buf, Int32(4))
+
+
+        case .timeout:
+            writeInt(&buf, Int32(5))
+
+
+        case .linkClosed:
+            writeInt(&buf, Int32(6))
+
+
+        case .predecessorFailed:
+            writeInt(&buf, Int32(7))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlSendResourceFailure_lift(_ buf: RustBuffer) throws -> RemoteControlSendResourceFailure {
+    return try FfiConverterTypeRemoteControlSendResourceFailure.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlSendResourceFailure_lower(_ value: RemoteControlSendResourceFailure) -> RustBuffer {
+    return FfiConverterTypeRemoteControlSendResourceFailure.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteControlSendResourceRejection: Equatable, Hashable {
+
+    case noSuchLink
+    case linkNotActive
+    case linkBusy
+    case tableFull
+    case build(value: RemoteControlBuildOutgoingResourceError
+    )
+    case metadataMisplaced
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlSendResourceRejection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlSendResourceRejection: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlSendResourceRejection
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlSendResourceRejection {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .noSuchLink
+
+        case 2: return .linkNotActive
+
+        case 3: return .linkBusy
+
+        case 4: return .tableFull
+
+        case 5: return .build(value: try FfiConverterTypeRemoteControlBuildOutgoingResourceError.read(from: &buf)
+        )
+
+        case 6: return .metadataMisplaced
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlSendResourceRejection, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .noSuchLink:
+            writeInt(&buf, Int32(1))
+
+
+        case .linkNotActive:
+            writeInt(&buf, Int32(2))
+
+
+        case .linkBusy:
+            writeInt(&buf, Int32(3))
+
+
+        case .tableFull:
+            writeInt(&buf, Int32(4))
+
+
+        case let .build(value):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeRemoteControlBuildOutgoingResourceError.write(value, into: &buf)
+
+
+        case .metadataMisplaced:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlSendResourceRejection_lift(_ buf: RustBuffer) throws -> RemoteControlSendResourceRejection {
+    return try FfiConverterTypeRemoteControlSendResourceRejection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlSendResourceRejection_lower(_ value: RemoteControlSendResourceRejection) -> RustBuffer {
+    return FfiConverterTypeRemoteControlSendResourceRejection.lower(value)
 }
 
 
@@ -24821,6 +25265,103 @@ public func FfiConverterTypeRemoteControlTargetPairingApproval_lift(_ buf: RustB
 #endif
 public func FfiConverterTypeRemoteControlTargetPairingApproval_lower(_ value: RemoteControlTargetPairingApproval) -> RustBuffer {
     return FfiConverterTypeRemoteControlTargetPairingApproval.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteControlTargetPairingPreparationFailure: Equatable, Hashable {
+
+    case targetSignerUnavailable(targetIdentity: RemoteControlIdentityHash
+    )
+    case signingFailed(error: RemoteControlPairingCompletionSigningError
+    )
+    case deadlineElapsed
+    case noAuthorizationOwed
+    case attemptMismatch(active: RemoteControlPairingAttemptId
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlTargetPairingPreparationFailure: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlTargetPairingPreparationFailure: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlTargetPairingPreparationFailure
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlTargetPairingPreparationFailure {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .targetSignerUnavailable(targetIdentity: try FfiConverterTypeRemoteControlIdentityHash.read(from: &buf)
+        )
+
+        case 2: return .signingFailed(error: try FfiConverterTypeRemoteControlPairingCompletionSigningError.read(from: &buf)
+        )
+
+        case 3: return .deadlineElapsed
+
+        case 4: return .noAuthorizationOwed
+
+        case 5: return .attemptMismatch(active: try FfiConverterTypeRemoteControlPairingAttemptId.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlTargetPairingPreparationFailure, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .targetSignerUnavailable(targetIdentity):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeRemoteControlIdentityHash.write(targetIdentity, into: &buf)
+
+
+        case let .signingFailed(error):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeRemoteControlPairingCompletionSigningError.write(error, into: &buf)
+
+
+        case .deadlineElapsed:
+            writeInt(&buf, Int32(3))
+
+
+        case .noAuthorizationOwed:
+            writeInt(&buf, Int32(4))
+
+
+        case let .attemptMismatch(active):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeRemoteControlPairingAttemptId.write(active, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlTargetPairingPreparationFailure_lift(_ buf: RustBuffer) throws -> RemoteControlTargetPairingPreparationFailure {
+    return try FfiConverterTypeRemoteControlTargetPairingPreparationFailure.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlTargetPairingPreparationFailure_lower(_ value: RemoteControlTargetPairingPreparationFailure) -> RustBuffer {
+    return FfiConverterTypeRemoteControlTargetPairingPreparationFailure.lower(value)
 }
 
 
