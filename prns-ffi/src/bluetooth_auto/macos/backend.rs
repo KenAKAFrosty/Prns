@@ -151,6 +151,13 @@ pub(super) const fn scan_op(enabled: bool, is_scanning: bool, restart: bool) -> 
     }
 }
 
+pub(super) fn take_inbound_event<T>(event: Option<T>, inbound_open: &mut bool) -> Option<T> {
+    if event.is_none() {
+        *inbound_open = false;
+    }
+    event
+}
+
 pub(super) fn manager_readiness(signals: ManagerSignals) -> Result<Option<Psm>, MacosBleError> {
     if signals.gatt == PublicationState::Failed {
         crate::diagnostic_log::error!("bluetooth: GATT service publication failed at startup");
@@ -433,6 +440,7 @@ pub struct MacosBleBackend {
     manager_signals_open: bool,
     central_powered_generation: u64,
     inbound: tokio_mpsc::Receiver<GattLink>,
+    inbound_open: bool,
     sighting_events: tokio_mpsc::Receiver<()>,
     psm: Psm,
     seen: BoundedRecentSet<[u8; 6]>,
@@ -839,6 +847,7 @@ impl PreparedMacosBleBackend {
             manager_signals_open: true,
             central_powered_generation,
             inbound: self.inbound,
+            inbound_open: true,
             sighting_events: self.sighting_events,
             psm,
             seen: BoundedRecentSet::new(central_peripheral_capacity(MacosBleBackend::MAX_PEERS)),
@@ -927,9 +936,11 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                     }
                     continue;
                 }
-                inbound = self.inbound.recv() => match inbound {
-                    Some(link) => return BleEvent::Inbound(link),
-                    None => core::future::pending().await,
+                inbound = self.inbound.recv(), if self.inbound_open => {
+                    if let Some(link) = take_inbound_event(inbound, &mut self.inbound_open) {
+                        return BleEvent::Inbound(link);
+                    }
+                    continue;
                 },
                 Some(done) = self.dials.join_next(), if pending_dials => {
                     match done {
