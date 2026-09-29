@@ -4140,6 +4140,34 @@ public object FfiConverterTypeRemoteControlBeginRemoteControlControllerPairing: 
 
 
 
+class RemoteControlBufferTooShort {
+    override fun equals(other: Any?): Boolean {
+        return other is RemoteControlBufferTooShort
+    }
+
+    override fun hashCode(): Int {
+        return javaClass.hashCode()
+    }
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlBufferTooShort: FfiConverterRustBuffer<RemoteControlBufferTooShort> {
+    override fun read(buf: ByteBuffer): RemoteControlBufferTooShort {
+        return RemoteControlBufferTooShort()
+    }
+
+    override fun allocationSize(value: RemoteControlBufferTooShort) = 0UL
+
+    override fun write(value: RemoteControlBufferTooShort, buf: ByteBuffer) {
+    }
+}
+
+
+
 data class RemoteControlBuildVersion (
     var `value`: kotlin.String
 
@@ -13178,6 +13206,15 @@ public object FfiConverterTypeRemoteControlApproveRemoteControlTargetPairingCont
 
 sealed class RemoteControlApproveRemoteControlTargetPairingFailure {
 
+    data class AuthorizationPreparationFailed(
+        val `failure`: rs.reticulum.prns.host.bindings.RemoteControlTargetPairingPreparationFailure) : RemoteControlApproveRemoteControlTargetPairingFailure()
+
+    {
+
+
+        companion object
+    }
+
     data class Expired(
         val `expired`: rs.reticulum.prns.host.bindings.RemoteControlTargetPairingAborted,
         val `retiredLink`: rs.reticulum.prns.host.bindings.RemoteControlLinkId) : RemoteControlApproveRemoteControlTargetPairingFailure()
@@ -13254,25 +13291,28 @@ sealed class RemoteControlApproveRemoteControlTargetPairingFailure {
 public object FfiConverterTypeRemoteControlApproveRemoteControlTargetPairingFailure : FfiConverterRustBuffer<RemoteControlApproveRemoteControlTargetPairingFailure>{
     override fun read(buf: ByteBuffer): RemoteControlApproveRemoteControlTargetPairingFailure {
         return when(buf.getInt()) {
-            1 -> RemoteControlApproveRemoteControlTargetPairingFailure.Expired(
+            1 -> RemoteControlApproveRemoteControlTargetPairingFailure.AuthorizationPreparationFailed(
+                FfiConverterTypeRemoteControlTargetPairingPreparationFailure.read(buf),
+                )
+            2 -> RemoteControlApproveRemoteControlTargetPairingFailure.Expired(
                 FfiConverterTypeRemoteControlTargetPairingAborted.read(buf),
                 FfiConverterTypeRemoteControlLinkId.read(buf),
                 )
-            2 -> RemoteControlApproveRemoteControlTargetPairingFailure.NoActiveAttempt
-            3 -> RemoteControlApproveRemoteControlTargetPairingFailure.AttemptMismatch(
+            3 -> RemoteControlApproveRemoteControlTargetPairingFailure.NoActiveAttempt
+            4 -> RemoteControlApproveRemoteControlTargetPairingFailure.AttemptMismatch(
                 FfiConverterTypeRemoteControlPairingAttemptId.read(buf),
                 FfiConverterTypeRemoteControlPairingAttemptId.read(buf),
                 )
-            4 -> RemoteControlApproveRemoteControlTargetPairingFailure.OfferPendingDispatch(
+            5 -> RemoteControlApproveRemoteControlTargetPairingFailure.OfferPendingDispatch(
                 FfiConverterTypeRemoteControlPairingAttemptId.read(buf),
                 )
-            5 -> RemoteControlApproveRemoteControlTargetPairingFailure.AlreadyApproved(
+            6 -> RemoteControlApproveRemoteControlTargetPairingFailure.AlreadyApproved(
                 FfiConverterTypeRemoteControlPairingAttemptId.read(buf),
                 )
-            6 -> RemoteControlApproveRemoteControlTargetPairingFailure.FinalizationInProgress(
+            7 -> RemoteControlApproveRemoteControlTargetPairingFailure.FinalizationInProgress(
                 FfiConverterTypeRemoteControlPairingAttemptId.read(buf),
                 )
-            7 -> RemoteControlApproveRemoteControlTargetPairingFailure.CompletionRetentionExpired(
+            8 -> RemoteControlApproveRemoteControlTargetPairingFailure.CompletionRetentionExpired(
                 FfiConverterTypeRemoteControlPairingAttemptId.read(buf),
                 FfiConverterTypeRemoteControlLinkId.read(buf),
                 )
@@ -13281,6 +13321,13 @@ public object FfiConverterTypeRemoteControlApproveRemoteControlTargetPairingFail
     }
 
     override fun allocationSize(value: RemoteControlApproveRemoteControlTargetPairingFailure) = when(value) {
+        is RemoteControlApproveRemoteControlTargetPairingFailure.AuthorizationPreparationFailed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlTargetPairingPreparationFailure.allocationSize(value.`failure`)
+            )
+        }
         is RemoteControlApproveRemoteControlTargetPairingFailure.Expired -> {
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
@@ -13336,39 +13383,44 @@ public object FfiConverterTypeRemoteControlApproveRemoteControlTargetPairingFail
 
     override fun write(value: RemoteControlApproveRemoteControlTargetPairingFailure, buf: ByteBuffer) {
         when(value) {
-            is RemoteControlApproveRemoteControlTargetPairingFailure.Expired -> {
+            is RemoteControlApproveRemoteControlTargetPairingFailure.AuthorizationPreparationFailed -> {
                 buf.putInt(1)
+                FfiConverterTypeRemoteControlTargetPairingPreparationFailure.write(value.`failure`, buf)
+                Unit
+            }
+            is RemoteControlApproveRemoteControlTargetPairingFailure.Expired -> {
+                buf.putInt(2)
                 FfiConverterTypeRemoteControlTargetPairingAborted.write(value.`expired`, buf)
                 FfiConverterTypeRemoteControlLinkId.write(value.`retiredLink`, buf)
                 Unit
             }
             is RemoteControlApproveRemoteControlTargetPairingFailure.NoActiveAttempt -> {
-                buf.putInt(2)
+                buf.putInt(3)
                 Unit
             }
             is RemoteControlApproveRemoteControlTargetPairingFailure.AttemptMismatch -> {
-                buf.putInt(3)
+                buf.putInt(4)
                 FfiConverterTypeRemoteControlPairingAttemptId.write(value.`requested`, buf)
                 FfiConverterTypeRemoteControlPairingAttemptId.write(value.`active`, buf)
                 Unit
             }
             is RemoteControlApproveRemoteControlTargetPairingFailure.OfferPendingDispatch -> {
-                buf.putInt(4)
-                FfiConverterTypeRemoteControlPairingAttemptId.write(value.`attemptId`, buf)
-                Unit
-            }
-            is RemoteControlApproveRemoteControlTargetPairingFailure.AlreadyApproved -> {
                 buf.putInt(5)
                 FfiConverterTypeRemoteControlPairingAttemptId.write(value.`attemptId`, buf)
                 Unit
             }
-            is RemoteControlApproveRemoteControlTargetPairingFailure.FinalizationInProgress -> {
+            is RemoteControlApproveRemoteControlTargetPairingFailure.AlreadyApproved -> {
                 buf.putInt(6)
                 FfiConverterTypeRemoteControlPairingAttemptId.write(value.`attemptId`, buf)
                 Unit
             }
-            is RemoteControlApproveRemoteControlTargetPairingFailure.CompletionRetentionExpired -> {
+            is RemoteControlApproveRemoteControlTargetPairingFailure.FinalizationInProgress -> {
                 buf.putInt(7)
+                FfiConverterTypeRemoteControlPairingAttemptId.write(value.`attemptId`, buf)
+                Unit
+            }
+            is RemoteControlApproveRemoteControlTargetPairingFailure.CompletionRetentionExpired -> {
+                buf.putInt(8)
                 FfiConverterTypeRemoteControlPairingAttemptId.write(value.`attemptId`, buf)
                 FfiConverterTypeRemoteControlLinkId.write(value.`retiredLink`, buf)
                 Unit
@@ -13970,6 +14022,163 @@ public object FfiConverterTypeRemoteControlBluetoothIndication : FfiConverterRus
             is RemoteControlBluetoothIndication.Rssi -> {
                 buf.putInt(2)
                 FfiConverterTypeRemoteControlRssiDbm.write(value.`value`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class RemoteControlBuildOutgoingResourceError {
+
+    object DataTooLarge : RemoteControlBuildOutgoingResourceError()
+
+
+    object MetadataTooLarge : RemoteControlBuildOutgoingResourceError()
+
+
+    object SduTooSmall : RemoteControlBuildOutgoingResourceError()
+
+
+    data class Seal(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlBufferTooShort) : RemoteControlBuildOutgoingResourceError()
+
+    {
+
+
+        companion object
+    }
+
+    object HashmapBufferTooShort : RemoteControlBuildOutgoingResourceError()
+
+
+    object BufferShapeMismatch : RemoteControlBuildOutgoingResourceError()
+
+
+    object PreparedDigestInputMismatch : RemoteControlBuildOutgoingResourceError()
+
+
+    object SaltRerollsExhausted : RemoteControlBuildOutgoingResourceError()
+
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlBuildOutgoingResourceError : FfiConverterRustBuffer<RemoteControlBuildOutgoingResourceError>{
+    override fun read(buf: ByteBuffer): RemoteControlBuildOutgoingResourceError {
+        return when(buf.getInt()) {
+            1 -> RemoteControlBuildOutgoingResourceError.DataTooLarge
+            2 -> RemoteControlBuildOutgoingResourceError.MetadataTooLarge
+            3 -> RemoteControlBuildOutgoingResourceError.SduTooSmall
+            4 -> RemoteControlBuildOutgoingResourceError.Seal(
+                FfiConverterTypeRemoteControlBufferTooShort.read(buf),
+                )
+            5 -> RemoteControlBuildOutgoingResourceError.HashmapBufferTooShort
+            6 -> RemoteControlBuildOutgoingResourceError.BufferShapeMismatch
+            7 -> RemoteControlBuildOutgoingResourceError.PreparedDigestInputMismatch
+            8 -> RemoteControlBuildOutgoingResourceError.SaltRerollsExhausted
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteControlBuildOutgoingResourceError) = when(value) {
+        is RemoteControlBuildOutgoingResourceError.DataTooLarge -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlBuildOutgoingResourceError.MetadataTooLarge -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlBuildOutgoingResourceError.SduTooSmall -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlBuildOutgoingResourceError.Seal -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlBufferTooShort.allocationSize(value.`value`)
+            )
+        }
+        is RemoteControlBuildOutgoingResourceError.HashmapBufferTooShort -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlBuildOutgoingResourceError.BufferShapeMismatch -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlBuildOutgoingResourceError.PreparedDigestInputMismatch -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlBuildOutgoingResourceError.SaltRerollsExhausted -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: RemoteControlBuildOutgoingResourceError, buf: ByteBuffer) {
+        when(value) {
+            is RemoteControlBuildOutgoingResourceError.DataTooLarge -> {
+                buf.putInt(1)
+                Unit
+            }
+            is RemoteControlBuildOutgoingResourceError.MetadataTooLarge -> {
+                buf.putInt(2)
+                Unit
+            }
+            is RemoteControlBuildOutgoingResourceError.SduTooSmall -> {
+                buf.putInt(3)
+                Unit
+            }
+            is RemoteControlBuildOutgoingResourceError.Seal -> {
+                buf.putInt(4)
+                FfiConverterTypeRemoteControlBufferTooShort.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlBuildOutgoingResourceError.HashmapBufferTooShort -> {
+                buf.putInt(5)
+                Unit
+            }
+            is RemoteControlBuildOutgoingResourceError.BufferShapeMismatch -> {
+                buf.putInt(6)
+                Unit
+            }
+            is RemoteControlBuildOutgoingResourceError.PreparedDigestInputMismatch -> {
+                buf.putInt(7)
+                Unit
+            }
+            is RemoteControlBuildOutgoingResourceError.SaltRerollsExhausted -> {
+                buf.putInt(8)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -19177,6 +19386,69 @@ public object FfiConverterTypeRemoteControlPairingCompletedVerificationError : F
             }
             is RemoteControlPairingCompletedVerificationError.InvalidTargetSignature -> {
                 buf.putInt(3)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class RemoteControlPairingCompletionSigningError {
+
+    data class TargetIdentityMismatch(
+        val `expected`: rs.reticulum.prns.host.bindings.RemoteControlIdentityHash,
+        val `found`: rs.reticulum.prns.host.bindings.RemoteControlIdentityHash) : RemoteControlPairingCompletionSigningError()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlPairingCompletionSigningError : FfiConverterRustBuffer<RemoteControlPairingCompletionSigningError>{
+    override fun read(buf: ByteBuffer): RemoteControlPairingCompletionSigningError {
+        return when(buf.getInt()) {
+            1 -> RemoteControlPairingCompletionSigningError.TargetIdentityMismatch(
+                FfiConverterTypeRemoteControlIdentityHash.read(buf),
+                FfiConverterTypeRemoteControlIdentityHash.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteControlPairingCompletionSigningError) = when(value) {
+        is RemoteControlPairingCompletionSigningError.TargetIdentityMismatch -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlIdentityHash.allocationSize(value.`expected`)
+                + FfiConverterTypeRemoteControlIdentityHash.allocationSize(value.`found`)
+            )
+        }
+    }
+
+    override fun write(value: RemoteControlPairingCompletionSigningError, buf: ByteBuffer) {
+        when(value) {
+            is RemoteControlPairingCompletionSigningError.TargetIdentityMismatch -> {
+                buf.putInt(1)
+                FfiConverterTypeRemoteControlIdentityHash.write(value.`expected`, buf)
+                FfiConverterTypeRemoteControlIdentityHash.write(value.`found`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -25381,6 +25653,15 @@ sealed class RemoteControlSendRequestFailure {
         companion object
     }
 
+    data class RequestTransferFailed(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlSendResourceFailure) : RemoteControlSendRequestFailure()
+
+    {
+
+
+        companion object
+    }
+
     object ResourceCapacity : RemoteControlSendRequestFailure()
 
 
@@ -25411,7 +25692,10 @@ public object FfiConverterTypeRemoteControlSendRequestFailure : FfiConverterRust
             7 -> RemoteControlSendRequestFailure.ResponseTransferFailed(
                 FfiConverterTypeRemoteControlResourceFailureCause.read(buf),
                 )
-            8 -> RemoteControlSendRequestFailure.ResourceCapacity
+            8 -> RemoteControlSendRequestFailure.RequestTransferFailed(
+                FfiConverterTypeRemoteControlSendResourceFailure.read(buf),
+                )
+            9 -> RemoteControlSendRequestFailure.ResourceCapacity
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
         }
     }
@@ -25461,6 +25745,13 @@ public object FfiConverterTypeRemoteControlSendRequestFailure : FfiConverterRust
                 + FfiConverterTypeRemoteControlResourceFailureCause.allocationSize(value.`value`)
             )
         }
+        is RemoteControlSendRequestFailure.RequestTransferFailed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlSendResourceFailure.allocationSize(value.`value`)
+            )
+        }
         is RemoteControlSendRequestFailure.ResourceCapacity -> {
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
@@ -25501,8 +25792,13 @@ public object FfiConverterTypeRemoteControlSendRequestFailure : FfiConverterRust
                 FfiConverterTypeRemoteControlResourceFailureCause.write(value.`value`, buf)
                 Unit
             }
-            is RemoteControlSendRequestFailure.ResourceCapacity -> {
+            is RemoteControlSendRequestFailure.RequestTransferFailed -> {
                 buf.putInt(8)
+                FfiConverterTypeRemoteControlSendResourceFailure.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlSendRequestFailure.ResourceCapacity -> {
+                buf.putInt(9)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -25540,6 +25836,278 @@ public object FfiConverterTypeRemoteControlSendRequestRejection: FfiConverterRus
 
     override fun write(value: RemoteControlSendRequestRejection, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+sealed class RemoteControlSendResourceFailure {
+
+    data class Rejected(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlSendResourceRejection) : RemoteControlSendResourceFailure()
+
+    {
+
+
+        companion object
+    }
+
+    object WriteFailed : RemoteControlSendResourceFailure()
+
+
+    object RejectedByPeer : RemoteControlSendResourceFailure()
+
+
+    object Sequencing : RemoteControlSendResourceFailure()
+
+
+    object Timeout : RemoteControlSendResourceFailure()
+
+
+    object LinkClosed : RemoteControlSendResourceFailure()
+
+
+    object PredecessorFailed : RemoteControlSendResourceFailure()
+
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlSendResourceFailure : FfiConverterRustBuffer<RemoteControlSendResourceFailure>{
+    override fun read(buf: ByteBuffer): RemoteControlSendResourceFailure {
+        return when(buf.getInt()) {
+            1 -> RemoteControlSendResourceFailure.Rejected(
+                FfiConverterTypeRemoteControlSendResourceRejection.read(buf),
+                )
+            2 -> RemoteControlSendResourceFailure.WriteFailed
+            3 -> RemoteControlSendResourceFailure.RejectedByPeer
+            4 -> RemoteControlSendResourceFailure.Sequencing
+            5 -> RemoteControlSendResourceFailure.Timeout
+            6 -> RemoteControlSendResourceFailure.LinkClosed
+            7 -> RemoteControlSendResourceFailure.PredecessorFailed
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteControlSendResourceFailure) = when(value) {
+        is RemoteControlSendResourceFailure.Rejected -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlSendResourceRejection.allocationSize(value.`value`)
+            )
+        }
+        is RemoteControlSendResourceFailure.WriteFailed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlSendResourceFailure.RejectedByPeer -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlSendResourceFailure.Sequencing -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlSendResourceFailure.Timeout -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlSendResourceFailure.LinkClosed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlSendResourceFailure.PredecessorFailed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: RemoteControlSendResourceFailure, buf: ByteBuffer) {
+        when(value) {
+            is RemoteControlSendResourceFailure.Rejected -> {
+                buf.putInt(1)
+                FfiConverterTypeRemoteControlSendResourceRejection.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlSendResourceFailure.WriteFailed -> {
+                buf.putInt(2)
+                Unit
+            }
+            is RemoteControlSendResourceFailure.RejectedByPeer -> {
+                buf.putInt(3)
+                Unit
+            }
+            is RemoteControlSendResourceFailure.Sequencing -> {
+                buf.putInt(4)
+                Unit
+            }
+            is RemoteControlSendResourceFailure.Timeout -> {
+                buf.putInt(5)
+                Unit
+            }
+            is RemoteControlSendResourceFailure.LinkClosed -> {
+                buf.putInt(6)
+                Unit
+            }
+            is RemoteControlSendResourceFailure.PredecessorFailed -> {
+                buf.putInt(7)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class RemoteControlSendResourceRejection {
+
+    object NoSuchLink : RemoteControlSendResourceRejection()
+
+
+    object LinkNotActive : RemoteControlSendResourceRejection()
+
+
+    object LinkBusy : RemoteControlSendResourceRejection()
+
+
+    object TableFull : RemoteControlSendResourceRejection()
+
+
+    data class Build(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlBuildOutgoingResourceError) : RemoteControlSendResourceRejection()
+
+    {
+
+
+        companion object
+    }
+
+    object MetadataMisplaced : RemoteControlSendResourceRejection()
+
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlSendResourceRejection : FfiConverterRustBuffer<RemoteControlSendResourceRejection>{
+    override fun read(buf: ByteBuffer): RemoteControlSendResourceRejection {
+        return when(buf.getInt()) {
+            1 -> RemoteControlSendResourceRejection.NoSuchLink
+            2 -> RemoteControlSendResourceRejection.LinkNotActive
+            3 -> RemoteControlSendResourceRejection.LinkBusy
+            4 -> RemoteControlSendResourceRejection.TableFull
+            5 -> RemoteControlSendResourceRejection.Build(
+                FfiConverterTypeRemoteControlBuildOutgoingResourceError.read(buf),
+                )
+            6 -> RemoteControlSendResourceRejection.MetadataMisplaced
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteControlSendResourceRejection) = when(value) {
+        is RemoteControlSendResourceRejection.NoSuchLink -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlSendResourceRejection.LinkNotActive -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlSendResourceRejection.LinkBusy -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlSendResourceRejection.TableFull -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlSendResourceRejection.Build -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlBuildOutgoingResourceError.allocationSize(value.`value`)
+            )
+        }
+        is RemoteControlSendResourceRejection.MetadataMisplaced -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: RemoteControlSendResourceRejection, buf: ByteBuffer) {
+        when(value) {
+            is RemoteControlSendResourceRejection.NoSuchLink -> {
+                buf.putInt(1)
+                Unit
+            }
+            is RemoteControlSendResourceRejection.LinkNotActive -> {
+                buf.putInt(2)
+                Unit
+            }
+            is RemoteControlSendResourceRejection.LinkBusy -> {
+                buf.putInt(3)
+                Unit
+            }
+            is RemoteControlSendResourceRejection.TableFull -> {
+                buf.putInt(4)
+                Unit
+            }
+            is RemoteControlSendResourceRejection.Build -> {
+                buf.putInt(5)
+                FfiConverterTypeRemoteControlBuildOutgoingResourceError.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlSendResourceRejection.MetadataMisplaced -> {
+                buf.putInt(6)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
     }
 }
 
@@ -26417,6 +26985,141 @@ public object FfiConverterTypeRemoteControlTargetPairingApproval : FfiConverterR
                 buf.putInt(2)
                 FfiConverterTypeRemoteControlPairingAttemptId.write(value.`attemptId`, buf)
                 FfiConverterTypeRemoteControlControllerGrant.write(value.`grant`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class RemoteControlTargetPairingPreparationFailure {
+
+    data class TargetSignerUnavailable(
+        val `targetIdentity`: rs.reticulum.prns.host.bindings.RemoteControlIdentityHash) : RemoteControlTargetPairingPreparationFailure()
+
+    {
+
+
+        companion object
+    }
+
+    data class SigningFailed(
+        val `error`: rs.reticulum.prns.host.bindings.RemoteControlPairingCompletionSigningError) : RemoteControlTargetPairingPreparationFailure()
+
+    {
+
+
+        companion object
+    }
+
+    object DeadlineElapsed : RemoteControlTargetPairingPreparationFailure()
+
+
+    object NoAuthorizationOwed : RemoteControlTargetPairingPreparationFailure()
+
+
+    data class AttemptMismatch(
+        val `active`: rs.reticulum.prns.host.bindings.RemoteControlPairingAttemptId) : RemoteControlTargetPairingPreparationFailure()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlTargetPairingPreparationFailure : FfiConverterRustBuffer<RemoteControlTargetPairingPreparationFailure>{
+    override fun read(buf: ByteBuffer): RemoteControlTargetPairingPreparationFailure {
+        return when(buf.getInt()) {
+            1 -> RemoteControlTargetPairingPreparationFailure.TargetSignerUnavailable(
+                FfiConverterTypeRemoteControlIdentityHash.read(buf),
+                )
+            2 -> RemoteControlTargetPairingPreparationFailure.SigningFailed(
+                FfiConverterTypeRemoteControlPairingCompletionSigningError.read(buf),
+                )
+            3 -> RemoteControlTargetPairingPreparationFailure.DeadlineElapsed
+            4 -> RemoteControlTargetPairingPreparationFailure.NoAuthorizationOwed
+            5 -> RemoteControlTargetPairingPreparationFailure.AttemptMismatch(
+                FfiConverterTypeRemoteControlPairingAttemptId.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteControlTargetPairingPreparationFailure) = when(value) {
+        is RemoteControlTargetPairingPreparationFailure.TargetSignerUnavailable -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlIdentityHash.allocationSize(value.`targetIdentity`)
+            )
+        }
+        is RemoteControlTargetPairingPreparationFailure.SigningFailed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlPairingCompletionSigningError.allocationSize(value.`error`)
+            )
+        }
+        is RemoteControlTargetPairingPreparationFailure.DeadlineElapsed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlTargetPairingPreparationFailure.NoAuthorizationOwed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlTargetPairingPreparationFailure.AttemptMismatch -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlPairingAttemptId.allocationSize(value.`active`)
+            )
+        }
+    }
+
+    override fun write(value: RemoteControlTargetPairingPreparationFailure, buf: ByteBuffer) {
+        when(value) {
+            is RemoteControlTargetPairingPreparationFailure.TargetSignerUnavailable -> {
+                buf.putInt(1)
+                FfiConverterTypeRemoteControlIdentityHash.write(value.`targetIdentity`, buf)
+                Unit
+            }
+            is RemoteControlTargetPairingPreparationFailure.SigningFailed -> {
+                buf.putInt(2)
+                FfiConverterTypeRemoteControlPairingCompletionSigningError.write(value.`error`, buf)
+                Unit
+            }
+            is RemoteControlTargetPairingPreparationFailure.DeadlineElapsed -> {
+                buf.putInt(3)
+                Unit
+            }
+            is RemoteControlTargetPairingPreparationFailure.NoAuthorizationOwed -> {
+                buf.putInt(4)
+                Unit
+            }
+            is RemoteControlTargetPairingPreparationFailure.AttemptMismatch -> {
+                buf.putInt(5)
+                FfiConverterTypeRemoteControlPairingAttemptId.write(value.`active`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }

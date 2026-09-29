@@ -271,7 +271,17 @@ mod receive_tests {
         let (sender, inbound) = channel(2);
         assert!(sender.send(vec![1, 2, 3]).await.is_ok());
         assert!(sender.send(vec![0x17; BLE_WIRE_FRAME_LEN]).await.is_ok());
-        let mut source = AndroidBleSource { inbound };
+        let bridge = AndroidBleBridge::new();
+        assert!(bridge.link_up(7, [1; 6], None, true));
+        let owner = bridge.shared.links.lock().unwrap()[&7]
+            .active()
+            .unwrap()
+            .control_out
+            .clone();
+        let mut source = AndroidBleSource {
+            inbound,
+            _lease: LinkLease::new(bridge, 7, owner),
+        };
         let mut small = [0xA5; 2];
         assert!(matches!(
             source.recv_frame(&mut small).await,

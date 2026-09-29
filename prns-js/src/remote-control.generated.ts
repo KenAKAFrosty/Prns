@@ -1,6 +1,6 @@
 // Generated from public prns-core Remote Control declarations. Do not edit.
 import type { IdentityConfig } from "./contract.generated.js";
-export const REMOTE_CONTROL_SEMANTIC_FINGERPRINT = "becd93f1924c3ec2e50562f2df71a57b80c6cffb81f20399e616abbdc4e3df5c";
+export const REMOTE_CONTROL_SEMANTIC_FINGERPRINT = "1e391657f2f551490372385e1f85ee724e47111fb1ae26578d49c30be711f73e";
 export type RemoteControlRequest =
   | { readonly tag: "Describe" }
   | { readonly tag: "AnnounceSelf" }
@@ -396,6 +396,7 @@ export type RemoteControlSendRequestFailure =
   | { readonly tag: "LinkClosed" }
   | { readonly tag: "ResponseTooLarge" }
   | { readonly tag: "ResponseTransferFailed"; readonly data: { readonly value: RemoteControlResourceFailureCause } }
+  | { readonly tag: "RequestTransferFailed"; readonly data: { readonly value: RemoteControlSendResourceFailure } }
   | { readonly tag: "ResourceCapacity" };
 export type RemoteControlSendRequestRejection =
   | { readonly tag: "NoSuchLink" }
@@ -417,6 +418,31 @@ export type RemoteControlApplyHashmapUpdateError =
   | { readonly tag: "SkipsAhead" }
   | { readonly tag: "HashmapTooLong" }
   | { readonly tag: "HashmapRagged" };
+export type RemoteControlSendResourceFailure =
+  | { readonly tag: "Rejected"; readonly data: { readonly value: RemoteControlSendResourceRejection } }
+  | { readonly tag: "WriteFailed" }
+  | { readonly tag: "RejectedByPeer" }
+  | { readonly tag: "Sequencing" }
+  | { readonly tag: "Timeout" }
+  | { readonly tag: "LinkClosed" }
+  | { readonly tag: "PredecessorFailed" };
+export type RemoteControlSendResourceRejection =
+  | { readonly tag: "NoSuchLink" }
+  | { readonly tag: "LinkNotActive" }
+  | { readonly tag: "LinkBusy" }
+  | { readonly tag: "TableFull" }
+  | { readonly tag: "Build"; readonly data: { readonly value: RemoteControlBuildOutgoingResourceError } }
+  | { readonly tag: "MetadataMisplaced" };
+export type RemoteControlBuildOutgoingResourceError =
+  | { readonly tag: "DataTooLarge" }
+  | { readonly tag: "MetadataTooLarge" }
+  | { readonly tag: "SduTooSmall" }
+  | { readonly tag: "Seal"; readonly data: { readonly value: RemoteControlBufferTooShort } }
+  | { readonly tag: "HashmapBufferTooShort" }
+  | { readonly tag: "BufferShapeMismatch" }
+  | { readonly tag: "PreparedDigestInputMismatch" }
+  | { readonly tag: "SaltRerollsExhausted" };
+export type RemoteControlBufferTooShort = {  };
 export type RemoteControlResponseParseError =
   | { readonly tag: "Truncated" }
   | { readonly tag: "UnsupportedVersion"; readonly data: { readonly found: number } }
@@ -722,6 +748,7 @@ export type RemoteControlPairingControlErrorRemoteControlApproveRemoteControlTar
   | { readonly tag: "Busy" }
   | { readonly tag: "Failed"; readonly data: { readonly value: RemoteControlApproveRemoteControlTargetPairingFailure } };
 export type RemoteControlApproveRemoteControlTargetPairingFailure =
+  | { readonly tag: "AuthorizationPreparationFailed"; readonly data: { readonly failure: RemoteControlTargetPairingPreparationFailure } }
   | { readonly tag: "Expired"; readonly data: { readonly expired: RemoteControlTargetPairingAborted; readonly retiredLink: RemoteControlLinkId } }
   | { readonly tag: "NoActiveAttempt" }
   | { readonly tag: "AttemptMismatch"; readonly data: { readonly requested: RemoteControlPairingAttemptId; readonly active: RemoteControlPairingAttemptId } }
@@ -729,6 +756,14 @@ export type RemoteControlApproveRemoteControlTargetPairingFailure =
   | { readonly tag: "AlreadyApproved"; readonly data: { readonly attemptId: RemoteControlPairingAttemptId } }
   | { readonly tag: "FinalizationInProgress"; readonly data: { readonly attemptId: RemoteControlPairingAttemptId } }
   | { readonly tag: "CompletionRetentionExpired"; readonly data: { readonly attemptId: RemoteControlPairingAttemptId; readonly retiredLink: RemoteControlLinkId } };
+export type RemoteControlTargetPairingPreparationFailure =
+  | { readonly tag: "TargetSignerUnavailable"; readonly data: { readonly targetIdentity: RemoteControlIdentityHash } }
+  | { readonly tag: "SigningFailed"; readonly data: { readonly error: RemoteControlPairingCompletionSigningError } }
+  | { readonly tag: "DeadlineElapsed" }
+  | { readonly tag: "NoAuthorizationOwed" }
+  | { readonly tag: "AttemptMismatch"; readonly data: { readonly active: RemoteControlPairingAttemptId } };
+export type RemoteControlPairingCompletionSigningError =
+  | { readonly tag: "TargetIdentityMismatch"; readonly data: { readonly expected: RemoteControlIdentityHash; readonly found: RemoteControlIdentityHash } };
 export type RemoteControlApproveRemoteControlTargetPairingControlError =
   | { readonly tag: "NodeStopped" }
   | { readonly tag: "Busy" }
