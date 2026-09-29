@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Personal Hopspot ESP32 firmware: the Heltec V4 / V4-R8 and T-Beam Supreme (ESP32-S3) and the headless XIAO (ESP32-C6) faces."
+description = "Personal Hopspot ESP32 firmware: the Heltec V3 / V4 / V4-R8 and T-Beam Supreme (ESP32-S3) and the headless XIAO (ESP32-C6) faces."
 
 [workspace]
 members = [
     "boards/heltec-e290",
+    "boards/heltec-v3",
     "boards/heltec-v4",
     "boards/heltec-v4-r8",
     "boards/t-beam-supreme",
@@ -39,7 +40,13 @@ path = "src/lib.rs"
 [features]
 default = []
 display = ["personal-hopspot-core/display", "dep:embedded-graphics"]
-bluetooth-auto = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/bluetooth-auto"]
+# ESP32-S3's shared BTDM radio initializes its coexistence layer through the
+# Wi-Fi driver even when the Hopspot exposes no Wi-Fi interface. This enables
+# that driver only; `wifi-auto` remains the feature that starts LAN services.
+bluetooth-auto = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-radio/coex", "esp-radio/wifi", "esp-rtos/esp-radio", "personal-rns/bluetooth-auto"]
+jtag-console = ["esp-println/jtag-serial"]
+uart-console = ["esp-println/uart"]
+no-op-console = ["esp-println/no-op"]
 wifi-auto = ["esp-radio/wifi", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/wifi-auto"]
 esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/esp-now"]
 lora = ["personal-rns/lora"]
@@ -47,11 +54,18 @@ usb = ["personal-rns/usb"]
 tcp = ["wifi-auto", "personal-rns/tcp-dns", "embassy-net/dns"]
 # Developer-only interoperability fixture. Shipping board packages do not enable it.
 wifi-security-probe = []
+# Select the fixed, internal-SRAM storage profile for an ESP32-S3 board that
+# has no PSRAM. Board packages opt in explicitly.
+sram-storage = []
 
 [dependencies]
 cfg-if = "1.0"
 personal-hopspot-core = { path = "../../core", default-features = false, features = ["embedded"] }
 embedded-graphics = { version = "0.8", optional = true }
+embedded-io = { version = "0.7", default-features = false }
+embedded-io-async = { version = "0.7", default-features = false }
+embedded-io-06 = { package = "embedded-io", version = "0.6", default-features = false }
+embedded-io-async-06 = { package = "embedded-io-async", version = "0.6", default-features = false }
 heapless = { version = "0.8", default-features = false }
 embedded-storage = "0.3"
 embedded-storage-async = "0.4"
@@ -80,7 +94,7 @@ log = { version = "0.4", features = ["release_max_level_info"] }
 esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
 esp-phy = "0.2.0"
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
-esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "jtag-serial", "log-04"] }
+esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "log-04"] }
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
 ssd1306 = "0.9"
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }
@@ -111,8 +125,6 @@ embassy-executor = { version = "0.10", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 embassy-sync = { version = "0.8", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
-embedded-io = { version = "0.7", default-features = false }
-embedded-io-async = { version = "0.7", default-features = false }
 trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["default-packet-pool-size-32"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32c6", "unstable", "esp-alloc"] }
 

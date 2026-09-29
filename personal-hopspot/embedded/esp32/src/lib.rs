@@ -24,24 +24,18 @@ mod immediate_display;
     target_arch = "xtensa",
     not(all(
         feature = "bluetooth-auto",
-        feature = "esp-now",
-        feature = "tcp",
         feature = "usb",
-        feature = "wifi-auto"
+        any(
+            all(feature = "esp-now", feature = "tcp", feature = "wifi-auto"),
+            feature = "sram-storage"
+        )
     ))
 ))]
 compile_error!(
-    "ESP32-S3 firmware is built through a board package, which selects bluetooth-auto, esp-now, tcp, usb, and wifi-auto (plus lora on boards with an SX1262)"
+    "ESP32-S3 board firmware selects bluetooth-auto and usb. PSRAM boards additionally select esp-now, tcp, and wifi-auto; the SRAM-only Heltec V3 selects sram-storage instead."
 );
 
-#[cfg(all(
-    target_arch = "xtensa",
-    feature = "bluetooth-auto",
-    feature = "esp-now",
-    feature = "tcp",
-    feature = "usb",
-    feature = "wifi-auto"
-))]
+#[cfg(all(target_arch = "xtensa", feature = "bluetooth-auto", feature = "usb"))]
 pub mod s3;
 
 #[cfg(all(

@@ -3,6 +3,8 @@
 #[cfg(feature = "lora")]
 pub mod heltec_e290;
 #[cfg(feature = "lora")]
+pub mod heltec_v3;
+#[cfg(feature = "lora")]
 pub mod heltec_v4;
 #[cfg(feature = "lora")]
 pub mod heltec_v4_r8;

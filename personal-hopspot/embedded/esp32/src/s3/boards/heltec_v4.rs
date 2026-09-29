@@ -23,6 +23,7 @@ use super::heltec_frontend;
 use crate::s3::{
     self, BoardFace, Esp32S3Board, GnssProvider, GnssShared, ImmediateBoardDisplay,
     ImmediateDisplayDevice, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
+    S3UsbHardware,
 };
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
@@ -391,7 +392,7 @@ impl Esp32S3Board for HeltecBoard {
             },
             gnss,
             interface_hardware: S3InterfaceHardware {
-                usb_device: p.USB_DEVICE,
+                usb: S3UsbHardware::SerialJtag(p.USB_DEVICE),
                 lora_radio,
                 wifi: p.WIFI,
                 bluetooth: p.BT,

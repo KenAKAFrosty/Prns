@@ -12,7 +12,7 @@ pub mod lr1110 {
 pub mod sx126x {
     pub use prns_interfaces_embassy::radios::sx126x::{
         Bandwidth, BoardConfig, CodingRate, Error, ExternalPowerAmplifier, FrontendControl,
-        LoraPacket, Modulation, RadioConfig, ReceivedAirFrame, SpreadingFactor, Sx126x,
-        TcxoVoltage,
+        LoraPacket, Modulation, RadioActivityControl, RadioConfig, ReceivedAirFrame,
+        SpreadingFactor, Sx126x, TcxoVoltage,
     };
 }

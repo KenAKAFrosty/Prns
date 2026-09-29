@@ -226,6 +226,63 @@ impl FrontendControl {
     }
 }
 
+/// Board-owned indication of actual SX126x transmit and receive activity.
+///
+/// Receive activity begins when the radio reports a preamble or valid header and ends when
+/// that reception completes or fails. Transmit activity spans the complete transmit attempt,
+/// including error and cancellation paths.
+#[derive(Debug, Clone, Copy)]
+pub enum RadioActivityControl {
+    None,
+    TxRx {
+        enter_transmit: fn(),
+        leave_transmit: fn(),
+        enter_receive: fn(),
+        leave_receive: fn(),
+    },
+}
+
+impl RadioActivityControl {
+    fn enter_transmit(self) {
+        if let Self::TxRx { enter_transmit, .. } = self {
+            enter_transmit();
+        }
+    }
+
+    fn leave_transmit(self) {
+        if let Self::TxRx { leave_transmit, .. } = self {
+            leave_transmit();
+        }
+    }
+
+    fn enter_receive(self) {
+        if let Self::TxRx { enter_receive, .. } = self {
+            enter_receive();
+        }
+    }
+
+    fn leave_receive(self) {
+        if let Self::TxRx { leave_receive, .. } = self {
+            leave_receive();
+        }
+    }
+}
+
+struct TransmitActivityGuard(RadioActivityControl);
+
+impl TransmitActivityGuard {
+    fn enter(control: RadioActivityControl) -> Self {
+        control.enter_transmit();
+        Self(control)
+    }
+}
+
+impl Drop for TransmitActivityGuard {
+    fn drop(&mut self) {
+        self.0.leave_transmit();
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BoardConfig {
     /// `Some(v)` if a TCXO is fed from DIO3 at voltage `v`; `None` for a bare XTAL.
@@ -298,6 +355,7 @@ pub struct Sx126x<SPI, BUSY, DIO1, RST, DLY> {
     reset: RST,
     delay: DLY,
     config: BoardConfig,
+    radio_activity_control: RadioActivityControl,
     freq_hz: u32,
     modulation: Modulation,
     packet: LoraPacket,
@@ -329,6 +387,7 @@ where
             reset,
             delay,
             config,
+            radio_activity_control: RadioActivityControl::None,
             freq_hz: 915_000_000,
             modulation: Modulation::Lora {
                 spreading_factor: SpreadingFactor::Sf7,
@@ -344,6 +403,11 @@ where
             tx_power_dbm: 14,
             tx_staging: [0u8; MAX_LORA_PAYLOAD],
         }
+    }
+
+    pub fn with_radio_activity_control(mut self, control: RadioActivityControl) -> Self {
+        self.radio_activity_control = control;
+        self
     }
 
     async fn wait_busy(&mut self) -> Result<(), Error> {
@@ -554,7 +618,9 @@ where
         // EasyDMA (and most SPI DMA) can only source from RAM; the caller's payload may be flash-resident (`&'static`), so stage it through the RAM `tx_staging` field.
         self.tx_staging[..len].copy_from_slice(payload);
 
+        self.radio_activity_control.leave_receive();
         self.config.frontend_control.enter_transmit();
+        let _activity = TransmitActivityGuard::enter(self.radio_activity_control);
         self.standby().await?;
         self.set_packet_params(len as u8).await?;
         self.write_tx_payload(len).await?;
@@ -589,6 +655,7 @@ where
 
     /// Arm continuous RX: restamp the RX-side max payload length, clear stale IRQs, enter SetRx continuous. [`read_frame`](Self::read_frame) waits WITHOUT re-arming, so a host-side select that cancels the read mid-listen leaves the radio receiving (the RxDone IRQ latches) rather than guillotining an in-flight multi-hundred-ms LoRa frame.
     pub async fn arm_rx(&mut self) -> Result<(), Error> {
+        self.radio_activity_control.leave_receive();
         self.config.frontend_control.enter_receive();
         self.standby().await?;
         self.set_packet_params(0xFF).await?;
@@ -625,6 +692,7 @@ where
     ) -> Result<RadioEvent, Error> {
         match classify_rx_irq(flags) {
             IrqEventKind::Frame => {
+                self.radio_activity_control.leave_receive();
                 let mut status = [0u8; 3];
                 self.read_command(op::GET_RX_BUFFER_STATUS, &mut status)
                     .await?;
@@ -649,11 +717,26 @@ where
                 self.read_buffer(offset, &mut buf[..len]).await?;
                 Ok(RadioEvent::Frame(ReceivedAirFrame { len, phy }))
             }
-            IrqEventKind::PreambleDetected => Ok(RadioEvent::PreambleDetected),
-            IrqEventKind::HeaderValid => Ok(RadioEvent::HeaderValid),
-            IrqEventKind::HeaderError => Ok(RadioEvent::HeaderError),
-            IrqEventKind::CrcError => Ok(RadioEvent::CrcError),
-            IrqEventKind::Timeout => Ok(RadioEvent::Timeout),
+            IrqEventKind::PreambleDetected => {
+                self.radio_activity_control.enter_receive();
+                Ok(RadioEvent::PreambleDetected)
+            }
+            IrqEventKind::HeaderValid => {
+                self.radio_activity_control.enter_receive();
+                Ok(RadioEvent::HeaderValid)
+            }
+            IrqEventKind::HeaderError => {
+                self.radio_activity_control.leave_receive();
+                Ok(RadioEvent::HeaderError)
+            }
+            IrqEventKind::CrcError => {
+                self.radio_activity_control.leave_receive();
+                Ok(RadioEvent::CrcError)
+            }
+            IrqEventKind::Timeout => {
+                self.radio_activity_control.leave_receive();
+                Ok(RadioEvent::Timeout)
+            }
             IrqEventKind::Other => Ok(RadioEvent::SpuriousInterrupt),
         }
     }
@@ -964,6 +1047,36 @@ mod tests {
     use embedded_hal_async::digital::Wait;
     use embedded_hal_async::spi::SpiDevice;
     use prns_core::interfaces::lora::{TxPower, DEFAULT_915_PROFILE};
+
+    static TX_ACTIVITY_STARTED: AtomicU8 = AtomicU8::new(0);
+    static TX_ACTIVITY_FINISHED: AtomicU8 = AtomicU8::new(0);
+    static RX_ACTIVITY_STARTED: AtomicU8 = AtomicU8::new(0);
+    static RX_ACTIVITY_FINISHED: AtomicU8 = AtomicU8::new(0);
+
+    fn tx_activity_started() {
+        TX_ACTIVITY_STARTED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn tx_activity_finished() {
+        TX_ACTIVITY_FINISHED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn rx_activity_started() {
+        RX_ACTIVITY_STARTED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn rx_activity_finished() {
+        RX_ACTIVITY_FINISHED.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn activity_control() -> RadioActivityControl {
+        RadioActivityControl::TxRx {
+            enter_transmit: tx_activity_started,
+            leave_transmit: tx_activity_finished,
+            enter_receive: rx_activity_started,
+            leave_receive: rx_activity_finished,
+        }
+    }
 
     #[derive(Debug)]
     struct MockErr;
@@ -1638,5 +1751,44 @@ mod tests {
             result,
             Err(Error::UnexpectedTransmitInterrupt(irq::HEADER_ERR))
         );
+    }
+
+    #[test]
+    fn board_activity_callbacks_span_transmit_and_received_airtime() {
+        TX_ACTIVITY_STARTED.store(0, Ordering::Relaxed);
+        TX_ACTIVITY_FINISHED.store(0, Ordering::Relaxed);
+        RX_ACTIVITY_STARTED.store(0, Ordering::Relaxed);
+        RX_ACTIVITY_FINISHED.store(0, Ordering::Relaxed);
+
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi::new(log),
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        )
+        .with_radio_activity_control(activity_control());
+
+        assert_eq!(block_on(radio.transmit(b"activity")), Ok(()));
+        assert_eq!(TX_ACTIVITY_STARTED.load(Ordering::Relaxed), 1);
+        assert_eq!(TX_ACTIVITY_FINISHED.load(Ordering::Relaxed), 1);
+        RX_ACTIVITY_FINISHED.store(0, Ordering::Relaxed);
+
+        radio.spi.irq_flags = irq::PREAMBLE_DETECTED;
+        let mut received = [0u8; MAX_LORA_PAYLOAD];
+        assert!(matches!(
+            block_on(radio.read_event(&mut received)),
+            Ok(RadioEvent::PreambleDetected)
+        ));
+        assert_eq!(RX_ACTIVITY_STARTED.load(Ordering::Relaxed), 1);
+
+        radio.spi.irq_flags = irq::RX_DONE;
+        assert!(matches!(
+            block_on(radio.read_event(&mut received)),
+            Ok(RadioEvent::Frame(_))
+        ));
+        assert_eq!(RX_ACTIVITY_FINISHED.load(Ordering::Relaxed), 1);
     }
 }
