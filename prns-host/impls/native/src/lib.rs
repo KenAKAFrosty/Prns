@@ -28,6 +28,7 @@ use personal_rns::engine::{
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::manifold::reconnect::ReconnectPolicy;
+use personal_rns::persistence::FileStore;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::resources::table::ApplyHashmapUpdateError;
@@ -1138,7 +1139,9 @@ fn lock_persistence_directory(
             },
         })
     };
-    std::fs::create_dir_all(path).map_err(map_error)?;
+    FileStore::new(path)
+        .prepare_directory()
+        .map_err(|error| map_error(error.into()))?;
     let lock = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
