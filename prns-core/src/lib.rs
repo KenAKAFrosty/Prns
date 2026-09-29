@@ -18,6 +18,7 @@ pub mod interfaces;
 pub mod lemire_index;
 #[cfg(any(
     feature = "rnx",
+    feature = "rns-management-wire",
     feature = "shared-instance-rpc",
     feature = "signed-artifact"
 ))]

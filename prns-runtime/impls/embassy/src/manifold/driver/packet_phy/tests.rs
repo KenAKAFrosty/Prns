@@ -22,7 +22,7 @@ fn packet_phy_retention_reuses_the_classified_packet_hash() {
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let expected = crate::routing::dedup::PacketHash::of_wire_packet(&raw)
         .expect("the fixture is a wire packet");
-    let packet = ClassifiedInboundPacket::classify(InboundPacket {
+    let mut packet = ClassifiedInboundPacket::classify(InboundPacket {
         arrived_at: InstantMillis(7),
         source_interface: InterfaceId::new([0xC7; 8]),
         bytes: &mut raw,
@@ -33,7 +33,7 @@ fn packet_phy_retention_reuses_the_classified_packet_hash() {
         quality: crate::interfaces::SignalQualityTenthsPercent::new(731),
     };
 
-    retain_packet_phy(&store, &packet, packet_phy);
+    retain_packet_phy(&store, &mut packet, packet_phy);
 
     assert_eq!(packet.packet_hash(), Some(expected));
     assert_eq!(store.packet_phy(expected), Some(packet_phy));

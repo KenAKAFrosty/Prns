@@ -78,7 +78,7 @@ test("protocol crypto worker unavailability resumes the retained WASM operation 
   const calls = [];
   let taken = false;
   const runtime = protocolRuntime({
-    takeProtocolCryptoJob() {
+    takeBrowserWork() {
       if (taken) {
         return undefined;
       }
@@ -93,8 +93,8 @@ test("protocol crypto worker unavailability resumes the retained WASM operation 
         },
       };
     },
-    completeProtocolCryptoInline(...values) {
-      calls.push(values);
+    completeBrowserWork(options) {
+      calls.push(options);
     },
   });
   const executor = {
@@ -105,18 +105,19 @@ test("protocol crypto worker unavailability resumes the retained WASM operation 
 
   assert.deepEqual(host.ingest(id, packetFrame(Uint8Array.of(0x21))), Tag("Accepted"));
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(calls, [[
-    7,
-    42,
-    Uint8Array.from({ length: 128 }, () => 0x31),
-  ]]);
+  assert.deepEqual(calls, [{
+    id: 7,
+    outcome: "Unavailable",
+    nowMs: 42,
+    entropy: Uint8Array.from({ length: 128 }, () => 0x31),
+  }]);
 });
 
 test("protocol link proof settlement lands the worker-derived shared secret", async () => {
   const calls = [];
   let taken = false;
   const runtime = protocolRuntime({
-    takeProtocolCryptoJob() {
+    takeBrowserWork() {
       if (taken) {
         return undefined;
       }
@@ -133,8 +134,8 @@ test("protocol link proof settlement lands the worker-derived shared secret", as
         },
       };
     },
-    completeProtocolLinkProofValid(...values) {
-      calls.push(values);
+    completeBrowserWork(options) {
+      calls.push(options);
     },
   });
   const sharedSecret = new Uint8Array(32).fill(0x44);
@@ -146,30 +147,122 @@ test("protocol link proof settlement lands the worker-derived shared secret", as
 
   assert.deepEqual(host.ingest(id, packetFrame(Uint8Array.of(0x21))), Tag("Accepted"));
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(calls, [[
-    9,
+  assert.deepEqual(calls, [{
+    id: 9,
+    outcome: "Verified",
     sharedSecret,
-    42,
-    Uint8Array.from({ length: 128 }, () => 0x31),
-  ]]);
+    nowMs: 42,
+    entropy: Uint8Array.from({ length: 128 }, () => 0x31),
+  }]);
+});
+
+test("resource seal work returns its worker bytes through the unified completion", async () => {
+  const calls = [];
+  let taken = false;
+  const sealed = Uint8Array.of(7, 8, 9);
+  const runtime = protocolRuntime({
+    takeBrowserWork() {
+      if (taken) {
+        return undefined;
+      }
+      taken = true;
+      return {
+        tag: "ResourceSeal",
+        data: {
+          id: 11,
+          linkId: new Uint8Array(16),
+          noncePrefixedBytes: 4,
+          totalSegments: 1,
+          plaintext: Uint8Array.of(1, 2, 3, 4),
+          signingKey: new Uint8Array(32),
+          encryptionKey: new Uint8Array(32),
+          sealIv: new Uint8Array(16),
+          salts: new Uint8Array(32),
+        },
+      };
+    },
+    completeBrowserWork(options) {
+      calls.push(options);
+      return { tag: "Applied" };
+    },
+  });
+  const executor = {
+    seal: async ({ plaintext }) => Tag("Sealed", { sealed, plaintext }),
+  };
+  const host = runtimeHost(runtime, executor);
+  const id = interfaceId(Uint8Array.of(23, 1, 2, 3, 4, 5, 6, 7));
+
+  assert.deepEqual(host.ingest(id, packetFrame(Uint8Array.of(0x21))), Tag("Accepted"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls, [{
+    id: 11,
+    outcome: "Sealed",
+    sealed,
+    nowMs: 42,
+    entropy: Uint8Array.from({ length: 128 }, () => 0x31),
+  }]);
+});
+
+test("an invalid resource open landing retries through the retained inline work", async () => {
+  const calls = [];
+  let taken = false;
+  const plaintext = Uint8Array.of(4, 3, 2, 1);
+  const runtime = protocolRuntime({
+    takeBrowserWork() {
+      if (taken) {
+        return undefined;
+      }
+      taken = true;
+      return {
+        tag: "WholeResourceOpen",
+        data: {
+          id: 13,
+          linkId: new Uint8Array(16),
+          hash: new Uint8Array(32),
+          signingKey: new Uint8Array(32),
+          encryptionKey: new Uint8Array(32),
+          sealed: Uint8Array.of(9),
+          hashPlan: { tag: "AfterDecompression", data: undefined },
+          totalSegments: 1,
+        },
+      };
+    },
+    completeBrowserWork(options) {
+      calls.push(options);
+      return { tag: calls.length === 1 ? "Invalid" : "Applied" };
+    },
+  });
+  const executor = {
+    open: async () => Tag("Opened", plaintext),
+  };
+  const host = runtimeHost(runtime, executor);
+  const id = interfaceId(Uint8Array.of(23, 1, 2, 3, 4, 5, 6, 7));
+
+  assert.deepEqual(host.ingest(id, packetFrame(Uint8Array.of(0x21))), Tag("Accepted"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls, [
+    {
+      id: 13,
+      outcome: "Opened",
+      plaintext,
+      nowMs: 42,
+      entropy: Uint8Array.from({ length: 128 }, () => 0x31),
+    },
+    {
+      id: 13,
+      outcome: "Unavailable",
+      nowMs: 42,
+      entropy: Uint8Array.from({ length: 128 }, () => 0x31),
+    },
+  ]);
 });
 
 function protocolRuntime(overrides) {
   return {
     ingestDirect() {},
-    enableResourceWebCrypto() {},
-    enableProtocolWebCrypto() {},
-    takeResourceOpenJob() {},
-    completeResourceOpen() {},
-    completeResourceOpenDigests() {},
-    rejectResourceOpen() {},
-    retryResourceOpen() {},
-    takeProtocolCryptoJob() {},
-    completeProtocolAnnounceValid() {},
-    completeProtocolAnnounceInvalid() {},
-    completeProtocolLinkProofValid() {},
-    completeProtocolLinkProofInvalid() {},
-    completeProtocolCryptoInline() {},
+    configureBrowserWork() {},
+    takeBrowserWork() {},
+    completeBrowserWork() {},
     ...overrides,
   };
 }
@@ -177,7 +270,12 @@ function protocolRuntime(overrides) {
 function runtimeHost(runtime, cryptoExecutor) {
   return new RuntimeHost(
     {},
-    runtime,
+    {
+      configureBrowserWork() {},
+      takeBrowserWork() {},
+      completeBrowserWork() {},
+      ...runtime,
+    },
     (length) => Tag("Filled", Uint8Array.from({ length }, () => 0x31)),
     () => 42,
     Tag("Available", new Uint8Array(16)),

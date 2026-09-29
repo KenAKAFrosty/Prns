@@ -1,10 +1,12 @@
 use crate::engine::{
     CryptoOwed, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, OwedWork,
-    PrnsCommand, Respond, RespondData, SendRequest, SendRequestData, WakeSchedules,
+    PrnsCommand, Respond, RespondData, SendRequest, SendRequestData, SendRequestFailure,
+    Settlement, WakeSchedules,
 };
-use crate::interfaces::InterfaceIfac;
 use crate::manifold::Host;
-use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
+use crate::routing::links::request::{
+    write_request_plaintext, RequestId, RequestTransport, REQUEST_WIRE_OVERHEAD,
+};
 use crate::routing::links::resources::{
     ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSegment, ResourceSend,
 };
@@ -20,10 +22,12 @@ use prns_runtime::runtime::persistence_snapshots;
 
 use super::crypto_pool::CryptoPool;
 use super::egress::{
-    clear_announce_queues, route_reaction, route_reaction_with_work, Egress, InterfacePacer,
-    WireScratch,
+    clear_announce_queues, route_reaction, route_reaction_with_work, Egress, InterfaceIfacs,
+    InterfacePacers, WireScratch,
 };
-use super::host_protocol::{HostCommand, HostResourcePayload, RequestAnyHostCommand};
+use super::host_protocol::{
+    HostCommand, HostResourceDigestPreparation, HostResourcePayload, RequestAnyHostCommand,
+};
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
 use super::owed_work::PendingOwedWork;
@@ -34,8 +38,8 @@ use super::owed_work::PendingOwedWork;
 fn route_command_reaction_with_owed_work<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     owed_work: &mut PendingOwedWork,
@@ -59,8 +63,8 @@ fn route_command_reaction_with_owed_work<J>(
 fn route_command_reaction<J>(
     reaction: EngineReaction<'_>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     now: InstantMillis,
@@ -104,6 +108,8 @@ where
     pub(super) journal: &'a mut JournalDispatch<J>,
     pub(super) crypto_pool: Option<&'a CryptoPool>,
     pub(super) owed_work: &'a mut PendingOwedWork,
+    #[cfg(feature = "runtime-metrics")]
+    pub(super) manifold_metrics: &'a super::scheduling_metrics::ManifoldMetrics,
 }
 
 impl<S, H, J> CommandDispatch<'_, S, H, J>
@@ -121,9 +127,11 @@ where
             journal,
             crypto_pool,
             owed_work,
+            #[cfg(feature = "runtime-metrics")]
+            manifold_metrics,
         } = self;
-        macro_rules! defer_whole_resource {
-            ($send:expr, $segment:expr) => {{
+        macro_rules! defer_resource {
+            ($send:expr, $segment:expr, $digest:expr) => {{
                 let correlation = $send.request_id.map_or(
                     ResourceCorrelation::Unsolicited,
                     ResourceCorrelation::Response,
@@ -155,9 +163,18 @@ where
                             &mut |journaled| journal.route(journaled),
                             &mut |work| match work {
                                 OwedWork::ResourceBuild(owed) => plan = Some(owed.into_plan()),
+                                OwedWork::ResourceSeal(owed) => {
+                                    owed_work.push(OwedWork::ResourceSeal(owed), crypto_pool);
+                                }
+                                OwedWork::ResourcePartHash(owed) => {
+                                    owed_work.push(OwedWork::ResourcePartHash(owed), crypto_pool);
+                                }
                                 OwedWork::Crypto(owed) => owed_work.push_crypto(owed),
                                 OwedWork::ResourceOpen(owed) => {
                                     owed_work.push_resource_open(owed, crypto_pool);
+                                }
+                                OwedWork::WholeResourceOpen(owed) => {
+                                    owed_work.push(OwedWork::WholeResourceOpen(owed), crypto_pool);
                                 }
                                 OwedWork::ResourceDecompression(owed) => {
                                     owed_work
@@ -168,11 +185,14 @@ where
                     },
                 );
                 if let Some(plan) = plan {
+                    let workspace = engine.take_resource_build_workspace(plan.reservation());
                     owed_work.push_resource_build(
                         plan,
+                        workspace,
                         $send.data,
                         $send.compressed_candidate,
                         $send.metadata,
+                        $digest,
                     );
                 }
                 CommandEffect::UNCHANGED
@@ -275,7 +295,7 @@ where
             HostCommand::SendResource(send) => match crypto_pool {
                 Some(_) => {
                     let segment = ResourceSegment::whole(send.data.len() as u64);
-                    defer_whole_resource!(send, segment)
+                    defer_resource!(send, segment, HostResourceDigestPreparation::Calculate)
                 }
                 None => CommandEffect::Delta(
                     engine.ingest_send_resource_into(
@@ -313,16 +333,14 @@ where
             },
             HostCommand::SendResourceSegment(send) => {
                 journal.register_completion(send.id, send.completion);
-                if crypto_pool
-                    .filter(|_| send.segment_index == 1 && send.total_segments == 1)
-                    .is_some()
-                {
+                if crypto_pool.is_some() {
                     let segment = ResourceSegment {
                         index: send.segment_index,
                         total_segments: send.total_segments,
                         total_data_bytes: send.total_data_bytes,
                     };
-                    defer_whole_resource!(send, segment)
+                    let digest = send.digest;
+                    defer_resource!(send, segment, digest)
                 } else {
                     CommandEffect::Delta(
                         engine.ingest_send_resource_segment_into(
@@ -441,8 +459,17 @@ where
                 } = request;
                 journal.register_request(id, completion);
                 let payload = data.as_slice();
-                let delta = if engine.request_fits_packet(&link_id, payload) {
-                    match SendRequestData::from_slice(payload) {
+                let delta = match engine.plan_request_transport(&link_id, payload.len()) {
+                    Err(rejection) => {
+                        journal.route(Journaled::CommandSettled {
+                            id,
+                            settlement: Settlement::SendRequest(Err(SendRequestFailure::Rejected(
+                                rejection,
+                            ))),
+                        });
+                        WakeSchedules::UNCHANGED
+                    }
+                    Ok(RequestTransport::Packet) => match SendRequestData::from_slice(payload) {
                         Ok(send_data) => engine.ingest_command_into(
                             IssuedCommand {
                                 id,
@@ -470,44 +497,46 @@ where
                             },
                         ),
                         Err(_) => journal.fail_request(id),
-                    }
-                } else {
-                    let mut packed = std::vec![0u8; REQUEST_WIRE_OVERHEAD + payload.len().max(1)];
-                    match write_request_plaintext(now, &path_hash, payload, &mut packed) {
-                        Ok(plain_len) => {
-                            let packed_request = &packed[..plain_len];
-                            let request_id = RequestId::of_request_data(packed_request);
-                            engine.ingest_send_resource_into(
-                                &ResourceSend {
-                                    id,
-                                    link_id,
-                                    body: ResourceBody {
-                                        data: packed_request,
-                                        compressed_candidate: None,
-                                        metadata: ResourceMetadata::None,
+                    },
+                    Ok(RequestTransport::Resource) => {
+                        let mut packed =
+                            std::vec![0u8; REQUEST_WIRE_OVERHEAD + payload.len().max(1)];
+                        match write_request_plaintext(now, &path_hash, payload, &mut packed) {
+                            Ok(plain_len) => {
+                                let packed_request = &packed[..plain_len];
+                                let request_id = RequestId::of_request_data(packed_request);
+                                engine.ingest_send_resource_into(
+                                    &ResourceSend {
+                                        id,
+                                        link_id,
+                                        body: ResourceBody {
+                                            data: packed_request,
+                                            compressed_candidate: None,
+                                            metadata: ResourceMetadata::None,
+                                        },
+                                        correlation: ResourceCorrelation::Request {
+                                            id: request_id,
+                                            response_timeout,
+                                            maximum_response_bytes,
+                                        },
                                     },
-                                    correlation: ResourceCorrelation::Request {
-                                        id: request_id,
-                                        response_timeout,
-                                        maximum_response_bytes,
+                                    now,
+                                    &mut |entropy| host.fill_random(entropy),
+                                    &mut |reaction| {
+                                        route_command_reaction(
+                                            reaction,
+                                            &mut topology.egress,
+                                            &topology.ifacs,
+                                            &mut topology.pacers,
+                                            wire_scratch,
+                                            journal,
+                                            now,
+                                        )
                                     },
-                                },
-                                now,
-                                &mut |entropy| host.fill_random(entropy),
-                                &mut |reaction| {
-                                    route_command_reaction(
-                                        reaction,
-                                        &mut topology.egress,
-                                        &topology.ifacs,
-                                        &mut topology.pacers,
-                                        wire_scratch,
-                                        journal,
-                                        now,
-                                    )
-                                },
-                            )
+                                )
+                            }
+                            Err(_) => journal.fail_request(id),
                         }
-                        Err(_) => journal.fail_request(id),
                     }
                 };
                 CommandEffect::Delta(delta)
@@ -520,6 +549,7 @@ where
                         plaintext: provide.plaintext.as_slice(),
                     },
                     now,
+                    &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
                         route_command_reaction(
                             reaction,
@@ -779,6 +809,7 @@ where
                     engine: engine.metrics_snapshot(),
                     egress: topology.egress.metrics_snapshot(&topology.pacers, now),
                     crypto: crypto_pool.map(CryptoPool::metrics_snapshot),
+                    manifold: manifold_metrics.snapshot(),
                     reliability: journal.reliability_metrics(),
                 });
                 CommandEffect::UNCHANGED

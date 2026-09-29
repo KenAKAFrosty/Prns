@@ -136,7 +136,7 @@ dependencies = [
  "libc",
  "log",
  "macaddr",
- "nix",
+ "nix 0.29.0",
  "num-derive",
  "num-traits",
  "pin-project",
@@ -1391,6 +1391,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
 name = "nrf-pac"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1592,6 +1604,7 @@ checksum = "a513e167849a384b7f9b746e517604398518590a9142f4846a32e3c2a4de7b11"
 name = "personal-hopspot-core"
 version = "0.1.0"
 dependencies = [
+ "embassy-sync",
  "embedded-graphics",
  "embedded-storage",
  "embedded-storage-async",
@@ -1600,7 +1613,12 @@ dependencies = [
  "prns-core",
  "prns-macros",
  "sha2",
+ "zeroize",
 ]
+
+[[package]]
+name = "personal-hopspot-memory"
+version = "0.1.0"
 
 [[package]]
 name = "personal-rns"
@@ -1681,6 +1699,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "hybrid-array",
+ "memchr",
  "prns-macros",
  "rand_core 0.10.1",
  "roaring",
@@ -1695,6 +1714,7 @@ version = "0.3.7"
 dependencies = [
  "cfg-if",
  "dispatch2",
+ "libc",
  "objc2",
  "objc2-core-bluetooth",
  "objc2-core-foundation",
@@ -1777,6 +1797,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "heapless 0.8.0",
+ "nix 0.31.3",
  "prns-core",
  "prns-runtime",
  "rtrb",
@@ -2186,6 +2207,7 @@ dependencies = [
  "nrf-softdevice",
  "panic-halt",
  "personal-hopspot-core",
+ "personal-hopspot-memory",
  "personal-rns",
  "prns-core",
  "static_cell",

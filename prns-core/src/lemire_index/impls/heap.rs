@@ -5,6 +5,11 @@ pub struct HeapLemireIndex {
     slots: alloc::vec::Vec<u32>,
 }
 
+enum ProbePosition {
+    Occupied(usize),
+    Vacant,
+}
+
 impl Default for HeapLemireIndex {
     fn default() -> Self {
         let mut slots = alloc::vec::Vec::new();
@@ -22,18 +27,25 @@ impl HeapLemireIndex {
         ((key as u128 * self.slots.len() as u128) >> u64::BITS) as usize
     }
 
-    fn position<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> Option<usize> {
+    fn probe<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> ProbePosition {
         let n = self.slots.len();
         let mut pos = self.bucket(target.lemire_key());
         loop {
             let slot = self.slots[pos];
             if slot == Self::EMPTY {
-                return None;
+                return ProbePosition::Vacant;
             }
             if rows[slot as usize].index_key() == target {
-                return Some(pos);
+                return ProbePosition::Occupied(pos);
             }
             pos = (pos + 1) % n;
+        }
+    }
+
+    fn position<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> Option<usize> {
+        match self.probe(target, rows) {
+            ProbePosition::Occupied(position) => Some(position),
+            ProbePosition::Vacant => None,
         }
     }
 

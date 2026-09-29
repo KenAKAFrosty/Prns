@@ -13,13 +13,14 @@ pub use prns_runtime::runtime::{
     IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
     IdentityBlackholeSourceError, InitiateRemoteControlControllerPairing,
     InitiateRemoteControlControllerPairingError, ManuallyAttached, Message, NoPersistence,
-    OpenRemoteControlPairingControlError, PreConfiguredDestination, PrnsEvent, PrnsNodeApi,
-    PrnsNodeRecipe, RejectRemoteControlControllerPairingControlError,
+    NoRemoteControlHostControls, OpenRemoteControlPairingControlError, PreConfiguredDestination,
+    PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RejectRemoteControlControllerPairingControlError,
     RejectRemoteControlTargetPairingControlError, RemoteControlAnnounceSelf,
     RemoteControlAnnounceSelfFailure, RemoteControlControllerGrantControl,
     RemoteControlControllerPairingConfirmation, RemoteControlControllerPairingInitiationControl,
     RemoteControlControllerPairingInitiationTransport, RemoteControlDescribe, RemoteControlError,
-    RemoteControlPairingConfirmation, RemoteControlPairingControl,
+    RemoteControlHostCommand, RemoteControlHostCommandError, RemoteControlHostControls,
+    RemoteControlHostResponse, RemoteControlPairingConfirmation, RemoteControlPairingControl,
     RemoteControlPairingControlError, RemoteControlPairingLinkCleanupOutcome,
     RemoteControlTargetAccessControl, RemoteControlTargetConnection,
     RemoteControlTargetConnectionControl, RemoteControlTargetConnectionTransport,
@@ -43,11 +44,12 @@ pub use prns_runtime::runtime::{
 pub use prns_runtime::runtime::{
     AnnounceBackpressureCounts, AnnounceBackpressureEvent, AnnounceEgressCounts,
     AnnounceEgressMetricsSnapshot, AnnounceEgressOutcome, AnnounceOriginCounts,
-    CryptoMetricsSnapshot, EgressInterfaceKindCounts, EgressLaneMetricsSnapshot,
-    EgressMetricsSnapshot, InterfaceAnnounceEgressMetricsSnapshot, ReliabilityMetricsSnapshot,
-    RuntimeLinkClosure, RuntimeLinkClosureCounts, RuntimeMetricsSnapshot, RuntimeOperation,
-    RuntimeOperationCounts, RuntimeOperationOutcome, RuntimeResourceFailure,
-    RuntimeResourceFailureCounts, RuntimeRouteRemoval, RuntimeRouteRemovalCounts,
+    CryptoMetricsSnapshot, CryptoWorkClassMetricsSnapshot, EgressInterfaceKindCounts,
+    EgressLaneMetricsSnapshot, EgressMetricsSnapshot, InterfaceAnnounceEgressMetricsSnapshot,
+    ManifoldMetricsSnapshot, ReliabilityMetricsSnapshot, RuntimeLinkClosure,
+    RuntimeLinkClosureCounts, RuntimeMetricsSnapshot, RuntimeOperation, RuntimeOperationCounts,
+    RuntimeOperationOutcome, RuntimeResourceFailure, RuntimeResourceFailureCounts,
+    RuntimeRouteRemoval, RuntimeRouteRemovalCounts,
 };
 
 #[cfg(feature = "rnx")]
@@ -64,21 +66,28 @@ pub use prns_runtime_tokio::runtime::{
     load_or_create_browser_rendezvous_id, load_or_create_browser_selection_seed,
     load_or_create_identity_secret, try_generate_identity_secret, wall_clock_timeline_origin,
     AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, ByteStreamReader,
-    ByteStreamWriter, CryptoPoolConfig, DefaultLocationError, DestinationIdentitySeedReport,
-    DetachedFleet, Fleet, FlushError, FlushFailurePolicy, FlushMark, FlushReport,
-    IdentitySecretFileError, InterfaceAttachmentMetadata, InterfaceStore, InterfaceSupervisor,
-    LocalIdentityFileError, NodePersistence, NodeRunError, NonRoutingIdentityError, OsEntropyError,
-    OsRuntimeEntropy, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
-    PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PoolWorkers,
-    PrepareFlushError, PreparedFlush, PreparedResourceReceiver, PrnsNode, PrnsNodeHandle,
-    PrnsNodeLocalHandle, RatchetSeedReport, RegionFlush, RegisterRequestEndpointError,
+    ByteStreamWriter, CryptoPoolConfig, CryptoWorkerPlacement, DefaultLocationError,
+    DestinationIdentitySeedReport, DetachedFleet, Fleet, FlushError, FlushFailurePolicy, FlushMark,
+    FlushReport, IdentitySecretFileError, InterfaceArbitration, InterfaceAttachmentMetadata,
+    InterfaceEventSource, InterfaceStore, InterfaceSupervisor, LocalIdentityFileError,
+    NodePersistence, NodeRunError, NonRoutingIdentityError, OsEntropyError, OsRuntimeEntropy,
+    PersistenceEvent, PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport,
+    PersistenceTrigger, PersistenceWorker, PoolWorkers, PrepareFlushError, PreparedFlush,
+    PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, PrnsNodeLocalHandle, RatchetSeedReport,
+    RegionFlush, RegisterRequestEndpointError, RemoteControlAuthorizationPersistence,
     RemoteControlAuthorizationPersistenceFailure, RemoteControlAuthorizationSeedReport,
     RemoteControlFileIdentityBootstrapError, RemoteControlHandle, RemoteControlIdentityDirectory,
     RemoteControlTargetHandle, RequestOptions, RequestPathError, ResourceAdmissionPeer,
     ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress, ResourceReceipt,
     ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
     RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring, SegmentCompression,
-    SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
+    SharedInstanceIdentityError, StreamId, Subscription, TokioHandleEntropy, TunnelSeedReport,
+    AUTO_COMPRESS_MAX_LEN,
+};
+
+#[cfg(all(feature = "tokio-host", feature = "scheduler-tuning"))]
+pub use prns_runtime_tokio::runtime::{
+    SchedulerPolicy, SchedulerPolicyError, SchedulerPolicyInput,
 };
 
 #[cfg(all(feature = "rnx", feature = "tokio-host"))]
@@ -86,11 +95,13 @@ pub use prns_runtime_tokio::runtime::ProcessCommands;
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_runtime_embassy::runtime::{
-    minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
-    EmbassyFleet, EmbassyInterfaceStore, EmbeddedCompactionPolicy, EmbeddedFlashPersistence,
-    EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
-    EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget,
-    EmbeddedRemoteControlControllerPairingFinalization,
+    minimum_interface_store_capacity, minimum_manifold_notification_capacity,
+    restored_discovery_group_configuration, restored_discovery_group_configuration_now,
+    restored_discovery_groups, restored_discovery_groups_now, store_discovery_group_configuration,
+    CompletionPool, DiscoveryGroupConfigurationChange, EmbassyFleet, EmbassyInterfaceStore,
+    EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
+    EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
+    EmbeddedPersistenceTarget, EmbeddedRemoteControlControllerPairingFinalization,
     EmbeddedRemoteControlPairingPersistenceFailure,
     EmbeddedRemoteControlPairingPersistenceOperation,
     EmbeddedRemoteControlTargetPairingFinalization, EntropyHandle, FixedRouteSnapshotKeys, Fleet,
@@ -103,11 +114,13 @@ pub use prns_runtime_embassy::runtime::{
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
 pub use prns_runtime_embassy::runtime::{
-    minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
-    EmbassyFleet, EmbassyInterfaceStore, EmbeddedCompactionPolicy, EmbeddedFlashPersistence,
-    EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
-    EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget,
-    EmbeddedRemoteControlControllerPairingFinalization,
+    minimum_interface_store_capacity, minimum_manifold_notification_capacity,
+    restored_discovery_group_configuration, restored_discovery_group_configuration_now,
+    restored_discovery_groups, restored_discovery_groups_now, store_discovery_group_configuration,
+    CompletionPool, DiscoveryGroupConfigurationChange, EmbassyFleet, EmbassyInterfaceStore,
+    EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
+    EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
+    EmbeddedPersistenceTarget, EmbeddedRemoteControlControllerPairingFinalization,
     EmbeddedRemoteControlPairingPersistenceFailure,
     EmbeddedRemoteControlPairingPersistenceOperation,
     EmbeddedRemoteControlTargetPairingFinalization, EntropyHandle, FixedRouteSnapshotKeys,

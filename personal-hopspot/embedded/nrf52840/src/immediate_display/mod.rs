@@ -186,11 +186,16 @@ impl<D: ImmediateDisplayDevice> ImmediateDisplayRuntime<D> {
         self.apply_blanking(decision, completed_at).await
     }
 
-    pub(crate) fn toggle_auto_off(
+    pub(crate) fn set_auto_off(
         &mut self,
+        auto_off: DisplayAutoOff,
         now: MonotonicMillis,
     ) -> Result<DisplayAutoOff, BlankingError> {
-        self.coordinator.toggle_auto_off(now)
+        self.coordinator.set_auto_off(auto_off, now)
+    }
+
+    pub(crate) fn auto_off(&self) -> Result<DisplayAutoOff, BlankingError> {
+        self.coordinator.auto_off()
     }
 
     async fn apply_blanking(

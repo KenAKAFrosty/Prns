@@ -18,7 +18,7 @@ async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
     let (b_to_a_tx, b_to_a_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
 
     let initiator_engine = EngineState::<TestStorageLayout>::new(second_secret_key());
-    let (a_notify_tx, a_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (a_wake_tx, a_wake_rx) = manifold_wake();
     let (a_in_tx, a_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (a_out_tx, a_out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let a_iface = LoopbackInterface {
@@ -26,7 +26,7 @@ async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
         wire_in: b_to_a_rx,
         wire_out: a_to_b_tx,
     };
-    let a_seam = TokioInterfaceSeam::new(initiator_iface, a_in_tx, a_notify_tx, a_out_rx);
+    let a_seam = TokioInterfaceSeam::new(initiator_iface, a_in_tx, a_wake_tx, a_out_rx);
     let a_egress = Egress::new(std::vec![(initiator_iface, a_out_tx)]);
     let (a_command_tx, a_command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (a_heard_tx, mut a_heard_rx) = mpsc::unbounded_channel::<()>();
@@ -63,7 +63,7 @@ async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
             .expect("registers the proving destination");
         engine
     };
-    let (b_notify_tx, b_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (b_wake_tx, b_wake_rx) = manifold_wake();
     let (b_in_tx, b_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (b_out_tx, b_out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let b_iface = LoopbackInterface {
@@ -71,7 +71,7 @@ async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
         wire_in: a_to_b_rx,
         wire_out: b_to_a_tx,
     };
-    let b_seam = TokioInterfaceSeam::new(responder_iface, b_in_tx, b_notify_tx, b_out_rx);
+    let b_seam = TokioInterfaceSeam::new(responder_iface, b_in_tx, b_wake_tx, b_out_rx);
     let b_egress = Egress::new(std::vec![(responder_iface, b_out_tx)]);
     let (b_command_tx, b_command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (b_established_tx, mut b_established_rx) = mpsc::unbounded_channel::<LinkEstablished>();
@@ -97,7 +97,7 @@ async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
         ManifoldWiring {
             interfaces: std::vec![descriptor(initiator_iface)],
             ifacs: std::vec![],
-            notify: a_notify_rx,
+            wake: a_wake_rx,
             inbound_lanes: std::vec![(initiator_iface, a_in_rx)],
             commands: a_command_rx,
             egress: a_egress,
@@ -110,7 +110,7 @@ async fn a_link_establishes_and_carries_data_across_two_live_manifolds() {
         ManifoldWiring {
             interfaces: std::vec![descriptor(responder_iface)],
             ifacs: std::vec![],
-            notify: b_notify_rx,
+            wake: b_wake_rx,
             inbound_lanes: std::vec![(responder_iface, b_in_rx)],
             commands: b_command_rx,
             egress: b_egress,

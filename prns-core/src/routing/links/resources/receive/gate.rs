@@ -8,7 +8,7 @@ use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome
 use crate::routing::ingress::{DataPacket, IgnoreReason, IngestPacketOutcome};
 use crate::routing::links::data::{link_data_frame_ceiling, write_link_packet};
 use crate::routing::links::resources::advertisement::ResourceAdvertisement;
-use crate::routing::links::resources::assembly::SegmentFit;
+use crate::routing::links::resources::assembly::{AssemblyCorrelation, SegmentFit};
 use crate::routing::links::resources::control::write_cancel_plaintext;
 use crate::routing::links::resources::pending::{
     PendingResourceOffer, PendingResourceOfferError, QueuePendingResourceOfferOutcome,
@@ -31,6 +31,10 @@ pub(crate) enum AcceptedResourceAdmission {
         hash: ResourceHash,
     },
     Pending,
+    SupersededResponse {
+        link_id: LinkId,
+        hash: ResourceHash,
+    },
     CapacityRejected {
         link_id: LinkId,
         hash: ResourceHash,
@@ -46,6 +50,9 @@ impl<'packet> From<AcceptedResourceAdmission> for IngestPacketOutcome<'packet> {
                 Self::OwesResourcePull { link_id, hash }
             }
             AcceptedResourceAdmission::Pending => Self::ResourceAdmissionPending,
+            AcceptedResourceAdmission::SupersededResponse { link_id, hash } => {
+                Self::ResourceResponseSuperseded { link_id, hash }
+            }
             AcceptedResourceAdmission::CapacityRejected {
                 link_id,
                 hash,
@@ -61,6 +68,22 @@ impl<'packet> From<AcceptedResourceAdmission> for IngestPacketOutcome<'packet> {
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    pub(super) fn whole_response_is_superseded(
+        &self,
+        link_id: &LinkId,
+        total_segments: u64,
+        correlation: ResourceCorrelation,
+    ) -> bool {
+        total_segments == 1
+            && match correlation {
+                ResourceCorrelation::Response(id) => {
+                    self.incoming_assemblies.correlation(link_id)
+                        == Some(AssemblyCorrelation::Response(id))
+                }
+                ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => false,
+            }
+    }
+
     pub(crate) fn ingest_set_resource_strategy(
         &mut self,
         id: CommandId,
@@ -150,6 +173,30 @@ impl<S: StorageLayout> EngineState<S> {
             (false, true, Some(id)) => ResourceCorrelation::Response(id),
             _ => ResourceCorrelation::Unsolicited,
         };
+        if self.whole_response_is_superseded(&link_id, advertisement.total_segments, correlation) {
+            return IngestPacketOutcome::ResourceResponseSuperseded {
+                link_id,
+                hash: advertisement.hash,
+            };
+        }
+        // Refuse a retargeted continuation before policy can settle the request
+        // it names. Admission repeats this check after application/queue waits.
+        let multi_segment = advertisement.total_segments > 1;
+        if multi_segment
+            && advertisement.segment_index > 1
+            && self.incoming_assemblies.fit(
+                &link_id,
+                &advertisement.original_hash,
+                crate::routing::links::resources::ResourceSegment {
+                    index: advertisement.segment_index,
+                    total_segments: advertisement.total_segments,
+                    total_data_bytes: advertisement.data_bytes,
+                },
+                correlation.into(),
+            ) == SegmentFit::Unexpected
+        {
+            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
+        }
         if let ResourceCorrelation::Request { .. } = correlation {
             let maximum_request_bytes = responder_destination
                 .and_then(|destination| self.upstream_app_destinations.lookup_single(&destination))
@@ -164,14 +211,15 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         if let ResourceCorrelation::Response(id) = correlation {
-            let Some(maximum_response_bytes) = self.receipts.pending_request_response_limit(id)
+            let Some(maximum_response_bytes) =
+                self.receipts.pending_request_response_limit(&link_id, id)
             else {
                 return IngestPacketOutcome::Ignored(IgnoreReason::UnmatchedResponse);
             };
-            if self.receipts.pending_request_intent(id)
+            if self.receipts.pending_request_intent(&link_id, id)
                 == Some(crate::engine::SendRequestIntent::RemoteControlControllerPairing)
             {
-                let Some(settled_request) = self.receipts.settle_by_request_id(id) else {
+                let Some(settled_request) = self.receipts.settle_by_request_id(&link_id, id) else {
                     return IngestPacketOutcome::Ignored(IgnoreReason::UnmatchedResponse);
                 };
                 return IngestPacketOutcome::PairingResponseResourceUnsupported {
@@ -180,11 +228,27 @@ impl<S: StorageLayout> EngineState<S> {
                     settled_request: settled_request.command_id,
                 };
             }
-            if !maximum_response_bytes.allows(advertisement.data_bytes) {
-                let settled_request = self
-                    .receipts
-                    .settle_by_request_id(id)
-                    .map(|proven| proven.command_id);
+            // Split values are budgeted cumulatively after verified framing is
+            // removed. Metadata length is also unknown until opening. Independent
+            // stream/storage ceilings below still bound admission.
+            let minimum_value_bytes = match (
+                advertisement.total_segments,
+                advertisement.flags.has_metadata,
+            ) {
+                (1, true) => 0,
+                (1, false) => advertisement
+                    .data_bytes
+                    .saturating_sub(crate::routing::links::request::RESPONSE_WIRE_OVERHEAD as u64),
+                _ => 0,
+            };
+            if !maximum_response_bytes.allows(minimum_value_bytes) {
+                let settled_request =
+                    self.receipts
+                        .settle_by_request_id(&link_id, id)
+                        .map(|proven| {
+                            self.retire_response_assembly(link_id, id);
+                            proven.command_id
+                        });
                 return IngestPacketOutcome::ResourceTooLarge {
                     link_id,
                     hash: advertisement.hash,
@@ -227,17 +291,6 @@ impl<S: StorageLayout> EngineState<S> {
             if compression == ResourceCompression::Bz2 {
                 return IngestPacketOutcome::Ignored(IgnoreReason::StrategyDeclined);
             }
-        }
-        let multi_segment = advertisement.total_segments > 1;
-        if multi_segment
-            && advertisement.segment_index > 1
-            && self.incoming_assemblies.fit(
-                &link_id,
-                &advertisement.original_hash,
-                advertisement.segment_index,
-            ) == SegmentFit::Unexpected
-        {
-            return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
         if let GatePolicy::Admit {
             max_uncompressed_bytes,
@@ -311,6 +364,16 @@ impl<S: StorageLayout> EngineState<S> {
         accepted: AcceptedResource<'_>,
         arrived_at: InstantMillis,
     ) -> AcceptedResourceAdmission {
+        if self.whole_response_is_superseded(
+            &link_id,
+            accepted.total_segment_count,
+            accepted.correlation,
+        ) {
+            return AcceptedResourceAdmission::SupersededResponse {
+                link_id,
+                hash: accepted.hash,
+            };
+        }
         match self.incoming_resources.admission_for(&link_id, accepted) {
             IncomingResourceAdmission::Available | IncomingResourceAdmission::AlreadyReceiving => {
                 self.admit_accepted_resource(link_id, original_hash, accepted, arrived_at)
@@ -378,8 +441,11 @@ impl<S: StorageLayout> EngineState<S> {
         let settled_request = match correlation {
             ResourceCorrelation::Response(request_id) => self
                 .receipts
-                .settle_by_request_id(request_id)
-                .map(|receipt| receipt.command_id),
+                .settle_by_request_id(&link_id, request_id)
+                .map(|receipt| {
+                    self.retire_response_assembly(link_id, request_id);
+                    receipt.command_id
+                }),
             ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => None,
         };
         AcceptedResourceAdmission::CapacityRejected {
@@ -400,6 +466,26 @@ impl<S: StorageLayout> EngineState<S> {
         let correlation = accepted.correlation;
         let segment_index = accepted.segment_index;
         let total_segment_count = accepted.total_segment_count;
+        if self.whole_response_is_superseded(&link_id, total_segment_count, correlation) {
+            return AcceptedResourceAdmission::SupersededResponse { link_id, hash };
+        }
+        // Admission can follow an application decision or a queue wait. Neither
+        // reserves the split assembly, so recheck before allocating or claiming.
+        if total_segment_count > 1
+            && segment_index > 1
+            && self.incoming_assemblies.fit(
+                &link_id,
+                &original_hash,
+                crate::routing::links::resources::ResourceSegment {
+                    index: segment_index,
+                    total_segments: total_segment_count,
+                    total_data_bytes: accepted.uncompressed_data_bytes,
+                },
+                correlation.into(),
+            ) == SegmentFit::Unexpected
+        {
+            return AcceptedResourceAdmission::Ignored(IgnoreReason::Malformed);
+        }
         let inherited = match self.links.phase_for(&link_id) {
             Some(LinkPhase::Active {
                 last_resource_window,
@@ -411,7 +497,10 @@ impl<S: StorageLayout> EngineState<S> {
             ),
             _ => (None, None),
         };
-        let index = match self.incoming_resources.accept(link_id, accepted) {
+        let index = match self
+            .incoming_resources
+            .accept(link_id, original_hash, accepted)
+        {
             Ok(index) => index,
             Err(
                 AcceptIncomingResourceError::TableFull
@@ -444,11 +533,16 @@ impl<S: StorageLayout> EngineState<S> {
             state.inherited_eifr = inherited.1;
         }
         if total_segment_count > 1 && segment_index == 1 {
-            self.incoming_assemblies
-                .begin(link_id, original_hash, total_segment_count);
+            self.incoming_assemblies.begin(
+                link_id,
+                original_hash,
+                total_segment_count,
+                accepted.uncompressed_data_bytes,
+                correlation.into(),
+            );
         }
         if let ResourceCorrelation::Response(id) = correlation {
-            self.receipts.claim_request_for_transfer(id);
+            self.claim_resource_response(&link_id, id);
         }
         self.links.note_inbound(&link_id, arrived_at);
         AcceptedResourceAdmission::Pull { link_id, hash }
@@ -644,7 +738,9 @@ mod tests {
             CommandId(42),
             1_800,
             20_000,
-            ByteLimit::Maximum(data.len() as u64 - 1),
+            ByteLimit::Maximum(
+                (data.len() - crate::routing::links::request::RESPONSE_WIRE_OVERHEAD - 1) as u64,
+            ),
         );
         let mut sender = engine_with_active_link();
         let mut advertisement = None;
@@ -684,7 +780,9 @@ mod tests {
             )],
         );
         assert!(receiver.incoming_resources.is_empty());
-        assert!(!receiver.receipts.has_pending_request(request_id));
+        assert!(!receiver
+            .receipts
+            .has_pending_request(&link_id(), request_id));
     }
 
     #[test]
@@ -917,7 +1015,9 @@ mod tests {
         );
 
         assert!(
-            requester.receipts.has_pending_request(request_id),
+            requester
+                .receipts
+                .has_pending_request(&link_id(), request_id),
             "the request resource books the pending row its response will settle",
         );
     }
@@ -1639,7 +1739,9 @@ mod tests {
             )],
         );
         assert!(receiver.pending_resource_offers.is_empty());
-        assert!(!receiver.receipts.has_pending_request(request_id));
+        assert!(!receiver
+            .receipts
+            .has_pending_request(&link_id(), request_id));
         #[cfg(feature = "runtime-metrics")]
         {
             let events = receiver.metrics_snapshot().resources.admission_events;

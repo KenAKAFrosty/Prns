@@ -33,6 +33,14 @@ pub struct SendRequest {
     pub path_hash: RequestPathHash,
     pub data: SendRequestData,
     pub response_timeout: RequestResponseTimeout,
+    /// Packet and metadata-free whole Resource responses count the complete
+    /// value after the outer request-ID envelope, before application decoding.
+    /// Binary value headers and the one-byte nil value count. Legacy raw
+    /// Resource bodies count in full; compressed bodies count after inflation.
+    /// Whole metadata-bearing responses count literal file bytes, excluding
+    /// metadata and its framing. Independent transfer/storage ceilings apply.
+    /// Segmented Resources retain a stricter admission bound on the entire
+    /// advertised uncompressed stream, including envelope and metadata.
     pub maximum_response_bytes: ByteLimit,
 }
 
@@ -57,6 +65,7 @@ pub enum SendRequestFailure {
     LinkClosed,
     ResponseTooLarge,
     ResponseTransferFailed(ResourceFailureCause),
+    RequestTransferFailed(SendResourceFailure),
     /// A valid Resource response could not be admitted within the receiver's
     /// bounded memory and pending-offer limits.
     ResourceCapacity,

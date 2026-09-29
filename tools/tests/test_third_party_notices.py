@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
 from io import StringIO
 import json
@@ -21,6 +21,73 @@ SPEC.loader.exec_module(notices)
 
 
 class ThirdPartyNoticeTests(unittest.TestCase):
+    def test_input_fingerprint_covers_checked_in_manifests_locks_and_notice_sources(
+        self,
+    ) -> None:
+        relative = {
+            path.relative_to(ROOT).as_posix()
+            for path in notices.notice_input_paths()
+        }
+
+        self.assertIn("Cargo.toml", relative)
+        self.assertIn("Cargo.lock", relative)
+        self.assertIn("prnsd/Cargo.toml", relative)
+        self.assertIn("prnsd/Cargo.lock", relative)
+        self.assertIn("about.toml", relative)
+        self.assertIn("docs/website/package-lock.json", relative)
+        self.assertIn("release/licenses/pako-Zlib.txt", relative)
+        self.assertIn("release/licenses/mbedtls-Apache-2.0.txt", relative)
+        self.assertNotIn("docs/website/node_modules/atob-lite/LICENSE.md", relative)
+        self.assertFalse(any("node_modules" in Path(path).parts for path in relative))
+
+    def test_fast_input_check_accepts_the_exact_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "THIRD_PARTY_NOTICES.md"
+            output.write_text(
+                f"{notices.INPUT_FINGERPRINT_PREFIX}{notices.notice_input_fingerprint()}`.\n",
+                encoding="utf-8",
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                self.assertTrue(notices.check_notice_inputs(output))
+
+        self.assertIn("input fingerprint matches", stdout.getvalue())
+
+    def test_fast_input_check_rejects_stale_or_missing_fingerprints(self) -> None:
+        for content, diagnostic in (
+            (
+                f"{notices.INPUT_FINGERPRINT_PREFIX}{'0' * 64}`.\n",
+                "notice inputs changed",
+            ),
+            ("# Third-Party Notices\n", "has no input fingerprint"),
+        ):
+            with self.subTest(diagnostic=diagnostic), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "THIRD_PARTY_NOTICES.md"
+                output.write_text(content, encoding="utf-8")
+                stderr = StringIO()
+                with redirect_stderr(stderr):
+                    self.assertFalse(notices.check_notice_inputs(output))
+                self.assertIn(diagnostic, stderr.getvalue())
+
+    def test_fast_input_mode_does_not_generate_the_notice_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "THIRD_PARTY_NOTICES.md"
+            output.write_text(
+                f"{notices.INPUT_FINGERPRINT_PREFIX}{notices.notice_input_fingerprint()}`.\n",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(notices, "notice_bundle") as generate,
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    ["generator", "--check-inputs", "--output", str(output)],
+                ),
+                redirect_stdout(StringIO()),
+            ):
+                self.assertEqual(notices.main(), 0)
+            generate.assert_not_called()
+
     def test_esp32s3_mbedtls_archive_is_in_the_vendored_inventory(self) -> None:
         entries = {
             package: (identifier, relative, graphs)

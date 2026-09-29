@@ -11,7 +11,7 @@ mod test_manifold;
 #[cfg(test)]
 pub(crate) use test_manifold::drive_packet_to_quiescence;
 
-pub use packet_dispatch::{IngestIo, IngestPacketReport};
+pub use packet_dispatch::{IngestIo, IngestPacketReport, RequestIngressDiagnostic};
 
 use crate::engine::Journaled;
 use crate::routing::RemovedRoute;

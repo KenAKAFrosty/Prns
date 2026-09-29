@@ -1,5 +1,6 @@
 use heapless::Vec as HVec;
 
+use super::receive::{validate_received_frame_length, BleReceiveError};
 use crate::routing::links::MAX_LINK_MTU;
 
 pub const FRAGMENT_HEADER_LEN: usize = 5;
@@ -8,6 +9,9 @@ pub const BLE_HW_MTU: usize = if 500 < MAX_LINK_MTU {
 } else {
     MAX_LINK_MTU
 };
+
+/// The packet MTU plus the largest interface authentication code on the wire.
+pub const BLE_WIRE_FRAME_LEN: usize = BLE_HW_MTU + crate::interfaces::IFAC_MAX_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FragmentKind {
@@ -158,10 +162,15 @@ impl<const N: usize> StreamDeframer<N> {
         self.buf.extend_from_slice(bytes).is_ok()
     }
 
-    pub fn next_frame(&mut self, out: &mut [u8]) -> Option<usize> {
+    /// Returns the length declared by the next frame prefix, even when its body is incomplete.
+    pub fn pending_frame_len(&self) -> Option<usize> {
         let prefix: [u8; STREAM_FRAME_PREFIX_LEN] =
             self.buf.get(..STREAM_FRAME_PREFIX_LEN)?.try_into().ok()?;
-        let len = u16::from_be_bytes(prefix) as usize;
+        Some(u16::from_be_bytes(prefix) as usize)
+    }
+
+    pub fn next_frame(&mut self, out: &mut [u8]) -> Option<usize> {
+        let len = self.pending_frame_len()?;
         let total = STREAM_FRAME_PREFIX_LEN + len;
         if self.buf.len() < total {
             return None;
@@ -171,6 +180,15 @@ impl<const N: usize> StreamDeframer<N> {
         self.buf.copy_within(total.., 0);
         self.buf.truncate(self.buf.len() - total);
         Some(len)
+    }
+
+    /// Rejects an unrepresentable declared length without waiting for its body.
+    /// Refusal preserves the buffered frame and leaves `out` unchanged.
+    pub fn next_frame_checked(&mut self, out: &mut [u8]) -> Result<Option<usize>, BleReceiveError> {
+        if let Some(length) = self.pending_frame_len() {
+            validate_received_frame_length(length, out.len())?;
+        }
+        Ok(self.next_frame(out))
     }
 }
 

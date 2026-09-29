@@ -1,0 +1,275 @@
+mod build;
+mod build_only;
+mod recipe;
+#[cfg(test)]
+mod tests;
+
+use std::collections::BTreeSet;
+
+use personal_hopspot_builder::architecture::{adapter_for, Adapter};
+use personal_hopspot_builder::BuildError;
+use personal_hopspot_memory::{MemoryProfile, ValidationError};
+use prns_flash_manifest::{
+    BoardBuild, BoardCatalog, BoardCatalogEntry, EspBuild, MemoryProfileReferenceError,
+    NrfSerialDfuBuild, Uf2Build, Uf2BuildVariant,
+};
+use thiserror::Error;
+
+pub(crate) use build::BuildEvidence;
+pub(crate) use recipe::RecipeIdentity;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalTarget {
+    id: String,
+    display_name: String,
+    memory_profile: String,
+    rust_target: String,
+    architecture_adapter: String,
+}
+
+impl CanonicalTarget {
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    #[must_use]
+    pub fn memory_profile(&self) -> &str {
+        &self.memory_profile
+    }
+
+    #[must_use]
+    pub fn rust_target(&self) -> &str {
+        &self.rust_target
+    }
+
+    #[must_use]
+    pub fn architecture_adapter(&self) -> &str {
+        &self.architecture_adapter
+    }
+}
+
+pub(crate) struct Matrix<'a> {
+    targets: Vec<Target<'a>>,
+}
+
+pub(crate) struct Target<'a> {
+    id: String,
+    display_name: String,
+    profile: &'static MemoryProfile,
+    adapter: &'static Adapter,
+    recipe: TargetRecipe<'a>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TargetPlatform {
+    Esp,
+    Nrf52840,
+}
+
+#[derive(Clone, Copy)]
+enum TargetRecipe<'a> {
+    Esp {
+        board: &'a BoardCatalogEntry,
+        recipe: &'a EspBuild,
+    },
+    Uf2 {
+        board: &'a BoardCatalogEntry,
+        recipe: &'a Uf2Build,
+        variant: &'a Uf2BuildVariant,
+    },
+    SerialDfu {
+        board: &'a BoardCatalogEntry,
+        recipe: &'a NrfSerialDfuBuild,
+    },
+    BuildOnly(&'static build_only::BuildOnlyTarget),
+}
+
+#[derive(Debug, Error)]
+pub enum MatrixError {
+    #[error("resource target {target:?} has an invalid memory profile: {source}")]
+    CatalogProfile {
+        target: String,
+        #[source]
+        source: MemoryProfileReferenceError,
+    },
+    #[error("build-only resource target {target:?} has an invalid memory profile: {error}")]
+    BuildOnlyProfile {
+        target: &'static str,
+        error: ValidationError,
+    },
+    #[error("resource target ID {0:?} is duplicated")]
+    DuplicateTarget(String),
+    #[error("unknown resource target {0:?}")]
+    UnknownTarget(String),
+    #[error("failed to build resource target {target:?}: {source}")]
+    Build {
+        target: String,
+        #[source]
+        source: BuildError,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum CanonicalMatrixError {
+    #[error(transparent)]
+    Catalog(#[from] prns_flash_manifest::CatalogError),
+    #[error(transparent)]
+    Matrix(#[from] MatrixError),
+}
+
+pub fn canonical_targets() -> Result<Vec<CanonicalTarget>, CanonicalMatrixError> {
+    let catalog = prns_flash_manifest::board_catalog()?;
+    let matrix = Matrix::from_catalog(&catalog)?;
+    Ok(matrix
+        .iter()
+        .map(|target| CanonicalTarget {
+            id: target.id().to_string(),
+            display_name: target.display_name().to_string(),
+            memory_profile: target.profile().id.0.to_string(),
+            rust_target: target.adapter().rust_target().to_string(),
+            architecture_adapter: target.adapter().id().as_str().to_string(),
+        })
+        .collect())
+}
+
+impl<'a> Matrix<'a> {
+    pub(crate) fn from_catalog(catalog: &'a BoardCatalog) -> Result<Self, MatrixError> {
+        let mut targets = Vec::new();
+        for board in &catalog.boards {
+            match &board.build {
+                BoardBuild::Esp(recipe) => {
+                    let memory =
+                        recipe
+                            .memory_layout()
+                            .map_err(|source| MatrixError::CatalogProfile {
+                                target: board.slug.clone(),
+                                source,
+                            })?;
+                    targets.push(Target {
+                        id: memory.id().0.to_string(),
+                        display_name: board.display_name.clone(),
+                        profile: memory.profile(),
+                        adapter: adapter_for(memory.architecture()),
+                        recipe: TargetRecipe::Esp { board, recipe },
+                    });
+                }
+                BoardBuild::Uf2(recipe) => {
+                    for variant in &recipe.variants {
+                        let memory = variant.memory_layout().map_err(|source| {
+                            MatrixError::CatalogProfile {
+                                target: variant.memory_profile.as_str().to_string(),
+                                source,
+                            }
+                        })?;
+                        if build_only::is_build_only(memory.id().0) {
+                            continue;
+                        }
+                        targets.push(Target {
+                            id: memory.id().0.to_string(),
+                            display_name: format!(
+                                "{} S140 {}",
+                                board.display_name, variant.softdevice_version
+                            ),
+                            profile: memory.profile(),
+                            adapter: adapter_for(memory.architecture()),
+                            recipe: TargetRecipe::Uf2 {
+                                board,
+                                recipe,
+                                variant,
+                            },
+                        });
+                    }
+                }
+                BoardBuild::NrfSerialDfu(recipe) => {
+                    let memory =
+                        recipe
+                            .memory_layout()
+                            .map_err(|source| MatrixError::CatalogProfile {
+                                target: board.slug.clone(),
+                                source,
+                            })?;
+                    targets.push(Target {
+                        id: memory.id().0.to_string(),
+                        display_name: board.display_name.clone(),
+                        profile: memory.profile(),
+                        adapter: adapter_for(memory.architecture()),
+                        recipe: TargetRecipe::SerialDfu { board, recipe },
+                    });
+                }
+            }
+        }
+
+        for target in &build_only::TARGETS {
+            target
+                .profile
+                .validate()
+                .map_err(|error| MatrixError::BuildOnlyProfile {
+                    target: target.id,
+                    error,
+                })?;
+            targets.push(Target {
+                id: target.id.to_string(),
+                display_name: target.display_name.to_string(),
+                profile: target.profile,
+                adapter: adapter_for(target.profile.architecture),
+                recipe: TargetRecipe::BuildOnly(target),
+            });
+        }
+
+        let mut ids = BTreeSet::new();
+        for target in &targets {
+            if !ids.insert(target.id.as_str()) {
+                return Err(MatrixError::DuplicateTarget(target.id.clone()));
+            }
+        }
+        Ok(Self { targets })
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &Target<'a>> {
+        self.targets.iter()
+    }
+
+    pub(crate) fn target(&self, id: &str) -> Result<&Target<'a>, MatrixError> {
+        self.targets
+            .iter()
+            .find(|target| target.id == id)
+            .ok_or_else(|| MatrixError::UnknownTarget(id.to_string()))
+    }
+}
+
+impl Target<'_> {
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub(crate) fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    pub(crate) const fn profile(&self) -> &'static MemoryProfile {
+        self.profile
+    }
+
+    pub(crate) const fn adapter(&self) -> &'static Adapter {
+        self.adapter
+    }
+
+    pub(crate) const fn platform(&self) -> TargetPlatform {
+        match self.recipe {
+            TargetRecipe::Esp { .. } => TargetPlatform::Esp,
+            TargetRecipe::Uf2 { .. }
+            | TargetRecipe::SerialDfu { .. }
+            | TargetRecipe::BuildOnly(_) => TargetPlatform::Nrf52840,
+        }
+    }
+
+    pub(crate) fn recipe_identity(&self) -> RecipeIdentity<'_> {
+        self.recipe.identity()
+    }
+}

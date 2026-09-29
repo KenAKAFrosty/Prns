@@ -65,6 +65,12 @@ struct AvailableRemoteControl {
 }
 
 impl AssembledRemoteControl {
+    /// Disable authorization after an inconsistent committed activation. Recovery requires
+    /// constructing a fresh service and restoring its durable authorization snapshots.
+    pub fn require_authorization_recovery(&mut self) {
+        self.available = None;
+    }
+
     #[must_use]
     pub const fn is_available(&self) -> bool {
         self.available.is_some()
@@ -165,6 +171,29 @@ impl AssembledRemoteControl {
         ))
     }
 
+    #[must_use]
+    pub fn request_configuration_mut(
+        &mut self,
+        destination: DestinationHash,
+        path: RequestPathHash,
+    ) -> Option<(
+        &mut FixedRemoteControlControllerGrantTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
+        RemoteControlRequestSet,
+        RemoteControlSelfAnnouncement,
+    )> {
+        let available = self.available.as_mut()?;
+        if destination != available.target_endpoint.destination_hash()
+            || path != available.request_endpoint_id
+        {
+            return None;
+        }
+        Some((
+            &mut available.controller_grants,
+            available.available_requests,
+            available.self_announcement,
+        ))
+    }
+
     pub fn set_controller_grant(
         &mut self,
         grant: crate::remote_control::RemoteControlControllerGrant,
@@ -241,12 +270,22 @@ impl AssembledRemoteControl {
         crate::remote_control::ForgetRemoteControlTargetOutcome,
         ForgetRemoteControlTargetServiceError,
     > {
+        self.forget_target_by_hash(target.identity_hash())
+    }
+
+    pub fn forget_target_by_hash(
+        &mut self,
+        target: crate::identity::IdentityHash,
+    ) -> Result<
+        crate::remote_control::ForgetRemoteControlTargetOutcome,
+        ForgetRemoteControlTargetServiceError,
+    > {
         Ok(self
             .available
             .as_mut()
             .ok_or(ForgetRemoteControlTargetServiceError::Unavailable)?
             .target_accesses
-            .forget_target(target))
+            .forget_by_identity_hash(&target))
     }
 
     pub fn restore_controller_grants(
@@ -335,6 +374,7 @@ pub enum ConfigurePreconfiguredDestinationError {
     RegisterRequestHandler(TablePushError),
     SeedRequester(RequestHandlerError),
     ServesEmptyEndpointSet,
+    RequestEndpointNotInSet(&'static str),
 }
 
 struct SingleDestinationConfiguration<'a> {
@@ -448,6 +488,7 @@ where
     R: RequestEndpointSet<St>,
     S: StorageLayout,
 {
+    validate_request_endpoint_selection::<St, R>(request_endpoints)?;
     let SingleDestinationConfiguration {
         app_name,
         aspects,
@@ -475,21 +516,59 @@ where
         .map_err(ConfigurePreconfiguredDestinationError::Register)?;
     engine.set_default_resource_strategy(&destination, resource_strategy);
     engine.set_maximum_request_bytes(&destination, maximum_request_bytes);
-    if matches!(request_endpoints, ServeMyRequestEndpoints::Yes) {
-        register_request_routes_for::<St, R, S>(engine, destination)?;
+    if request_endpoints.serves_any() {
+        register_request_routes_for::<St, R, S>(engine, destination, request_endpoints)?;
     }
     Ok(destination)
+}
+
+fn validate_request_endpoint_selection<St, R>(
+    selection: ServeMyRequestEndpoints,
+) -> Result<(), ConfigurePreconfiguredDestinationError>
+where
+    R: RequestEndpointSet<St>,
+{
+    match selection {
+        ServeMyRequestEndpoints::No => Ok(()),
+        ServeMyRequestEndpoints::Yes => {
+            if R::REGISTRATIONS.is_empty() {
+                Err(ConfigurePreconfiguredDestinationError::ServesEmptyEndpointSet)
+            } else {
+                Ok(())
+            }
+        }
+        ServeMyRequestEndpoints::Selected(selected) => {
+            if selected.is_empty() {
+                return Err(ConfigurePreconfiguredDestinationError::ServesEmptyEndpointSet);
+            }
+            for path in selected {
+                if !R::REGISTRATIONS
+                    .iter()
+                    .any(|(registered, _)| registered == path)
+                {
+                    return Err(
+                        ConfigurePreconfiguredDestinationError::RequestEndpointNotInSet(path),
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 fn register_request_routes_for<St, R, S>(
     engine: &mut EngineState<S>,
     destination: DestinationHash,
+    selection: ServeMyRequestEndpoints,
 ) -> Result<(), ConfigurePreconfiguredDestinationError>
 where
     R: RequestEndpointSet<St>,
     S: StorageLayout,
 {
     for (path, policy) in R::REGISTRATIONS {
+        if !selection.includes(path) {
+            continue;
+        }
         engine
             .register_request_handler(&destination, path, policy.engine_policy())
             .map_err(ConfigurePreconfiguredDestinationError::RegisterRequestHandler)?;
@@ -598,19 +677,20 @@ fn configure_assembled_node<'a, D, St, R, F, S>(
     let mut any_destination_serves = false;
     for destination in pre_configured_destinations {
         any_destination_declared = true;
-        any_destination_serves |= matches!(
-            destination,
+        any_destination_serves |= match &destination {
             PreConfiguredDestination::Single {
-                request_endpoints: ServeMyRequestEndpoints::Yes,
-                ..
+                request_endpoints, ..
+            } => request_endpoints.serves_any(),
+            PreConfiguredDestination::Plain { .. } | PreConfiguredDestination::Group { .. } => {
+                false
             }
-        );
+        };
         configure_preconfigured_destination::<St, R, S>(&mut node.engine, destination)
             .expect("recipe destination is valid and fits the store");
     }
     assert!(
         R::REGISTRATIONS.is_empty() || any_destination_serves || !any_destination_declared,
-        "the recipe declares request endpoints but no destination serves them; set request_endpoints: ServeMyRequestEndpoints::Yes on a destination"
+        "the recipe declares request endpoints but no destination serves them; set request_endpoints to Yes or Selected on a destination"
     );
 
     if let Some(secret) = transport_identity {
@@ -627,20 +707,30 @@ fn configure_assembled_node<'a, D, St, R, F, S>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::routable_descriptor;
+    use crate::engine::{
+        CommandId, EgressTarget, EngineReaction, IssuedCommand, Journaled,
+        OpenRemoteControlPairing, PrnsCommand, Settlement,
+    };
     use crate::identity::vault::IdentitySecretKey;
     use crate::identity::IdentityHash;
+    use crate::interfaces::{AttachedInterfaces, InterfaceId};
     use crate::remote_control::{
         RemoteControlControllerGrant, RemoteControlControllerGrants,
         RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
         RemoteControlInitialControllerGrants, RemoteControlNodeIdentitySecrets,
-        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlStorageRequirements,
-        RemoteControlTargetAccess, RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
+        RemoteControlPairingAttemptTimeout, RemoteControlPairingExpiresAfter,
+        RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+        RemoteControlPairingView, RemoteControlRequestKind, RemoteControlRequestSet,
+        RemoteControlStorageRequirements, RemoteControlTargetAccess,
+        RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
         RemoteControlTargetIdentitySecret, REMOTE_CONTROL_NODE_IDENTITY_COUNT,
     };
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
     use crate::runtime::{ManuallyAttached, NoPersistence};
-    use crate::storage::TestFixedStorage;
+    use crate::storage::{StorageCapacity, StorageLayout, TestFixedStorage};
+    use crate::units::{DurationMillis, InstantMillis};
 
     type Storage = TestFixedStorage<4, 4, 128, 4, 4, 4, 2, 2, 2, 2, 2, 2>;
     type RemoteControlOnlyStorage = TestFixedStorage<
@@ -656,6 +746,7 @@ mod tests {
         2,
         2,
         2,
+        { RemoteControlStorageRequirements::AVAILABLE.request_handlers() },
     >;
 
     struct Routes;
@@ -684,6 +775,7 @@ mod tests {
     fn remote_control_grant(fill: u8) -> RemoteControlControllerGrant {
         RemoteControlControllerGrant::new(
             remote_control_controller(fill),
+            crate::remote_control::RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         )
         .unwrap()
@@ -697,6 +789,7 @@ mod tests {
     fn remote_control_target_access(fill: u8) -> RemoteControlTargetAccess {
         RemoteControlTargetAccess::new(
             remote_control_target(fill),
+            crate::remote_control::RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         )
         .unwrap()
@@ -711,11 +804,28 @@ mod tests {
     }
 
     impl RequestEndpointSet<()> for Routes {
-        const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
-            &[("/test", RequestEndpointPolicy::AllowList(&[]))];
+        const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
+            ("/test", RequestEndpointPolicy::AllowList(&[])),
+            ("/other", RequestEndpointPolicy::AllowList(&[])),
+        ];
 
         async fn dispatch(
             _cx: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+            _path_hash: RequestPathHash,
+        ) -> Result<(), Decline> {
+            Err(Decline::Ignore)
+        }
+    }
+
+    impl RequestEndpointSet<crate::runtime::NoRemoteControlHostControls> for Routes {
+        const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
+            ("/test", RequestEndpointPolicy::AllowList(&[])),
+            ("/other", RequestEndpointPolicy::AllowList(&[])),
+        ];
+
+        async fn dispatch(
+            _cx: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             _node: &impl crate::runtime::PrnsNodeApi,
             _path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
@@ -770,6 +880,50 @@ mod tests {
     }
 
     #[test]
+    fn selected_attaches_only_named_routes_to_the_destination() {
+        let (mut engine, destination) = configured_engine(
+            ServeMyRequestEndpoints::Selected(&["/test"]),
+            ByteLimit::Unlimited,
+        );
+        let requester = IdentityHash::new([0x22; 16]);
+
+        assert_eq!(
+            engine.allow_requester(&destination, "/test", requester),
+            Ok(())
+        );
+        assert_eq!(
+            engine.allow_requester(&destination, "/other", requester),
+            Err(RequestHandlerError::NoSuchHandler)
+        );
+    }
+
+    #[test]
+    fn selected_rejects_a_path_outside_the_endpoint_set_before_registration() {
+        let mut engine = EngineState::<Storage>::default();
+        let result = configure_preconfigured_destination::<(), Routes, Storage>(
+            &mut engine,
+            PreConfiguredDestination::Single {
+                app_name: "test",
+                aspects: &["requests"],
+                identity: Zeroizing::new([0x11; IDENTITY_SECRET_KEY_LEN]),
+                announce_app_data: &[],
+                proof: ProofStrategy::ProveAll,
+                link_requests: LinkRequestPolicy::AcceptAll,
+                ratchet: RatchetPolicy::NoRatchets,
+                resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes: ByteLimit::Unlimited,
+                request_endpoints: ServeMyRequestEndpoints::Selected(&["/missing"]),
+            },
+        );
+
+        assert_eq!(
+            result,
+            Err(ConfigurePreconfiguredDestinationError::RequestEndpointNotInSet("/missing"))
+        );
+        assert_eq!(engine.upstream_app_destinations().count(), 0);
+    }
+
+    #[test]
     fn recipe_request_limit_reaches_the_registered_destination() {
         let (engine, destination) =
             configured_engine(ServeMyRequestEndpoints::No, ByteLimit::Maximum(1_024));
@@ -788,6 +942,60 @@ mod tests {
                 }),
             Some(ByteLimit::Maximum(1_024)),
         );
+    }
+
+    #[test]
+    fn authorization_recovery_disables_service_without_emitting_empty_snapshots() {
+        let mut engine = EngineState::<Storage>::default();
+        let mut remote =
+            configure_remote_control_service(&mut engine, remote_control_service()).unwrap();
+        let destination = remote.target_endpoint().unwrap().destination_hash();
+        let path = remote.request_endpoint_id().unwrap();
+        let grant = remote_control_grant(0x41);
+        let access = || remote_control_target_access(0x43);
+        remote.set_controller_grant(grant).unwrap();
+        remote.set_target_access(access()).unwrap();
+        for _ in 0..2 {
+            remote.require_authorization_recovery();
+            assert!(!remote.is_available());
+            assert!(remote.identities().is_none());
+            assert!(remote.target_endpoint().is_none());
+            assert!(remote.request_endpoint_id().is_none());
+            assert!(remote.self_announcement().is_none());
+            assert!(remote.pairing_availability_destination().is_none());
+            assert!(remote.controller_grants().is_none());
+            assert!(remote.target_accesses().is_none());
+            assert_eq!(
+                remote.available_requests(),
+                RemoteControlRequestSet::empty()
+            );
+            assert!(remote.request_configuration(destination, path).is_none());
+            assert!(remote
+                .request_configuration_mut(destination, path)
+                .is_none());
+            assert_eq!(remote.write_controller_grants_snapshot(&mut []), Ok(None));
+            assert_eq!(remote.write_target_accesses_snapshot(&mut []), Ok(None));
+            assert_eq!(
+                remote.set_controller_grant(grant),
+                Err(SetRemoteControlControllerGrantServiceError::Unavailable)
+            );
+            assert_eq!(
+                remote.revoke_controller(grant.controller()),
+                Err(RevokeRemoteControlControllerServiceError::Unavailable)
+            );
+            assert_eq!(
+                remote.set_target_access(access()),
+                Err(SetRemoteControlTargetAccessServiceError::Unavailable)
+            );
+            assert_eq!(
+                remote.restore_controller_grants([grant]),
+                Err(RemoteControlAuthorizationRestoreError::Unavailable)
+            );
+            assert_eq!(
+                remote.restore_target_accesses([access()]),
+                Err(RemoteControlAuthorizationRestoreError::Unavailable)
+            );
+        }
     }
 
     #[test]
@@ -934,6 +1142,7 @@ mod tests {
         let first = remote_control_target_access(0x21);
         let second = RemoteControlTargetAccess::new(
             remote_control_target(0x31),
+            crate::remote_control::RemoteControlControllerAuthority::Administrator,
             RemoteControlRequestSet::all(),
         )
         .unwrap();
@@ -970,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn available_remote_control_fits_its_storage_requirements() {
+    fn available_remote_control_and_open_pairing_fit_their_storage_requirements() {
         let requirements = &RemoteControlStorageRequirements::AVAILABLE;
         let mut engine = EngineState::<RemoteControlOnlyStorage>::default();
         let configured = configure_remote_control_service(&mut engine, remote_control_service())
@@ -980,16 +1189,64 @@ mod tests {
         assert!(configured.request_endpoint_id().is_some());
         assert_eq!(
             (
-                <RemoteControlOnlyStorage as crate::storage::StorageLayout>::LIMITS.held_identities,
-                <RemoteControlOnlyStorage as crate::storage::StorageLayout>::LIMITS
-                    .upstream_app_destinations,
+                <RemoteControlOnlyStorage as StorageLayout>::LIMITS.held_identities,
+                <RemoteControlOnlyStorage as StorageLayout>::LIMITS.upstream_app_destinations,
             ),
             (
-                crate::storage::StorageCapacity::Fixed(requirements.held_identities()),
-                crate::storage::StorageCapacity::Fixed(requirements.upstream_app_destinations()),
+                StorageCapacity::Fixed(requirements.held_identities()),
+                StorageCapacity::Fixed(requirements.upstream_app_destinations()),
             ),
         );
-        assert_eq!(requirements.request_handlers(), 1);
+        assert_eq!(requirements.request_handlers(), 2);
+
+        let interfaces = [routable_descriptor(InterfaceId::new([0x91; 8]))];
+        let mut pairing_result = None;
+        let _ = engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(1),
+                command: PrnsCommand::OpenRemoteControlPairing(OpenRemoteControlPairing {
+                    target: EgressTarget::AllInterfaces,
+                    expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(
+                        60_000,
+                    ))
+                    .unwrap(),
+                    attempt_timeout: RemoteControlPairingAttemptTimeout::try_from(DurationMillis(
+                        30_000,
+                    ))
+                    .unwrap(),
+                    permissions: RemoteControlPairingPermissions::try_from(
+                        RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+                    )
+                    .unwrap(),
+                    public_app_data: RemoteControlPairingPublicAppDataBytes::try_from(
+                        b"fixed storage".as_slice(),
+                    )
+                    .unwrap(),
+                }),
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(1_000),
+            &mut |bytes| bytes.fill(0xA1),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::CommandSettled {
+                    settlement: Settlement::OpenRemoteControlPairing(result),
+                    ..
+                }) = reaction
+                {
+                    pairing_result = Some(result);
+                }
+            },
+        );
+        let opened = pairing_result
+            .expect("open pairing command settles")
+            .expect("open pairing fits the advertised storage requirements");
+
+        assert_eq!(engine.held_identity_hashes().len(), 3);
+        assert_eq!(engine.upstream_app_destinations().count(), 3);
+        assert!(matches!(
+            engine.remote_control_pairing_view(),
+            RemoteControlPairingView::Open(session) if session.endpoint() == opened.endpoint
+        ));
     }
 
     #[test]
@@ -1033,6 +1290,7 @@ mod tests {
         let initial = remote_control_grant(0x41);
         let updated = RemoteControlControllerGrant::new(
             *initial.controller(),
+            crate::remote_control::RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
         )
         .unwrap();
@@ -1080,7 +1338,7 @@ mod tests {
                     app_name: "test",
                     aspects: &["plain"],
                 }],
-                app_state: (),
+                app_state: crate::runtime::NoRemoteControlHostControls,
                 storage,
                 request_endpoints: (),
                 interfaces: ManuallyAttached,
@@ -1152,7 +1410,7 @@ mod tests {
                     app_name: "test",
                     aspects: &["plain"],
                 }],
-                app_state: (),
+                app_state: crate::runtime::NoRemoteControlHostControls,
                 storage,
                 request_endpoints: Routes,
                 interfaces: ManuallyAttached,

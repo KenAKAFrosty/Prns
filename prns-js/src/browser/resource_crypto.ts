@@ -6,9 +6,8 @@ export type ResourceCryptoExecution = CryptoExecution;
 type OwnedBytes = Uint8Array<ArrayBuffer>;
 
 export type ResourceSealJob = {
-  readonly commandId: bigint;
+  readonly id: number;
   readonly linkId: OwnedBytes;
-  readonly streamNonce: OwnedBytes;
   readonly noncePrefixedBytes: number;
   readonly totalSegments: number;
   readonly plaintext: OwnedBytes;
@@ -16,7 +15,6 @@ export type ResourceSealJob = {
   readonly encryptionKey: OwnedBytes;
   readonly sealIv: OwnedBytes;
   readonly salts: OwnedBytes;
-  readonly promotionEntropy: OwnedBytes;
 };
 
 export type ResourceSealCryptoJob = Pick<
@@ -24,11 +22,8 @@ export type ResourceSealCryptoJob = Pick<
   "linkId" | "plaintext" | "signingKey" | "encryptionKey" | "sealIv"
 >;
 
-export type ResourceSealBegin =
-  | Tag<"Inline", { readonly commandId: bigint }>
-  | Tag<"Seal", ResourceSealJob>;
-
 export type ResourceOpenJob = {
+  readonly id: number;
   readonly linkId: OwnedBytes;
   readonly hash: OwnedBytes;
   readonly signingKey: OwnedBytes;
@@ -242,20 +237,11 @@ export class WebCryptoResourceOpener {
   }
 }
 
-export function parseResourceSealBegin(raw: unknown): ResourceSealBegin {
-  const root = record(raw, "resource seal begin");
-  const tag = stringField(root, "tag");
-  const data = record(root.data, "resource seal begin data");
-  if (tag === "Inline") {
-    return Tag("Inline", { commandId: bigintField(data, "commandId") });
-  }
-  if (tag !== "Seal") {
-    throw new TypeError(`unknown resource seal begin tag ${tag}`);
-  }
+export function parseResourceSealJob(raw: unknown): ResourceSealJob {
+  const data = record(raw, "resource seal job");
   const job: ResourceSealJob = {
-    commandId: bigintField(data, "commandId"),
+    id: positiveIntegerField(data, "id"),
     linkId: bytesField(data, "linkId", 16),
-    streamNonce: bytesField(data, "streamNonce", 4),
     noncePrefixedBytes: positiveIntegerField(data, "noncePrefixedBytes"),
     totalSegments: positiveIntegerField(data, "totalSegments"),
     plaintext: bytesField(data, "plaintext"),
@@ -263,21 +249,14 @@ export function parseResourceSealBegin(raw: unknown): ResourceSealBegin {
     encryptionKey: bytesField(data, "encryptionKey", 32),
     sealIv: bytesField(data, "sealIv", 16),
     salts: bytesField(data, "salts", 32),
-    promotionEntropy: bytesField(data, "promotionEntropy", 16),
   };
   if (job.plaintext.length !== job.noncePrefixedBytes) {
     throw new TypeError("plaintext length must equal noncePrefixedBytes");
   }
-  if (!job.streamNonce.every((byte, index) => byte === job.plaintext[index])) {
-    throw new TypeError("streamNonce must prefix plaintext");
-  }
-  return Tag("Seal", job);
+  return job;
 }
 
-export function parseResourceOpenJob(raw: unknown): ResourceOpenJob | undefined {
-  if (raw === undefined) {
-    return undefined;
-  }
+export function parseResourceOpenJob(raw: unknown): ResourceOpenJob {
   const job = record(raw, "resource open job");
   const hashPlan = record(job.hashPlan, "resource open hash plan");
   const hashPlanTag = stringField(hashPlan, "tag");
@@ -292,6 +271,7 @@ export function parseResourceOpenJob(raw: unknown): ResourceOpenJob | undefined 
     throw new TypeError(`unknown resource open hash plan tag ${hashPlanTag}`);
   }
   return {
+    id: positiveIntegerField(job, "id"),
     linkId: bytesField(job, "linkId", 16),
     hash: bytesField(job, "hash", 32),
     signingKey: bytesField(job, "signingKey", 32),
@@ -321,14 +301,6 @@ function stringField(value: Record<string, unknown>, key: string): string {
   const field = value[key];
   if (typeof field !== "string") {
     throw new TypeError(`${key} must be a string`);
-  }
-  return field;
-}
-
-function bigintField(value: Record<string, unknown>, key: string): bigint {
-  const field = value[key];
-  if (typeof field !== "bigint") {
-    throw new TypeError(`${key} must be a bigint`);
   }
   return field;
 }

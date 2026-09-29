@@ -90,6 +90,7 @@ fn ui_state() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: GnssAvailability::Unavailable,
+        discovery_groups: personal_hopspot_core::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 

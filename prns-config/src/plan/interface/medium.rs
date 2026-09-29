@@ -8,7 +8,7 @@ pub use prns_core::interfaces::wifi_auto::{
     MulticastAddressType as AutoInterfaceMulticastAddressType,
 };
 use prns_core::interfaces::wifi_auto::{DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, GROUP_NAME};
-use prns_core::interfaces::{BitrateBps, InterfaceDefaults};
+use prns_core::interfaces::{BitrateBps, DiscoveryGroupId, DiscoveryGroupSet, InterfaceDefaults};
 
 use super::PlanErrorKind;
 use crate::plan::rnode::RNodeTransportPlan;
@@ -276,18 +276,7 @@ impl I2pReachabilityPlan {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AutoInterfaceGroupId(String);
-
-impl AutoInterfaceGroupId {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        self.0.as_bytes()
-    }
-}
+pub type AutoInterfaceGroupId = DiscoveryGroupId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AutoInterfaceDiscoveryPort(u16);
@@ -337,7 +326,7 @@ impl AutoInterfaceDevicePolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoInterfacePlan {
-    group_id: AutoInterfaceGroupId,
+    group_ids: DiscoveryGroupSet,
     discovery_scope: AutoInterfaceDiscoveryScope,
     discovery_port: AutoInterfaceDiscoveryPort,
     data_port: AutoInterfaceDataPort,
@@ -347,7 +336,14 @@ pub struct AutoInterfacePlan {
 
 impl AutoInterfacePlan {
     pub fn group_id(&self) -> &AutoInterfaceGroupId {
-        &self.group_id
+        self.group_ids
+            .iter()
+            .next()
+            .expect("DiscoveryGroupSet is always nonempty")
+    }
+
+    pub const fn group_ids(&self) -> &DiscoveryGroupSet {
+        &self.group_ids
     }
 
     pub const fn discovery_scope(&self) -> AutoInterfaceDiscoveryScope {
@@ -368,6 +364,17 @@ impl AutoInterfacePlan {
 
     pub const fn multicast_address_type(&self) -> AutoInterfaceMulticastAddressType {
         self.multicast_address_type
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BluetoothAutoPlan {
+    group_ids: DiscoveryGroupSet,
+}
+
+impl BluetoothAutoPlan {
+    pub const fn group_ids(&self) -> &DiscoveryGroupSet {
+        &self.group_ids
     }
 }
 
@@ -461,7 +468,7 @@ pub enum PlannedMedium {
         device: String,
     },
     PrnsUsbAuto,
-    PrnsBluetoothAuto,
+    PrnsBluetoothAuto(BluetoothAutoPlan),
     PrnsWebSocketClient {
         target: WebSocketTargetPlan,
         framing: WebSocketFramingSelection,
@@ -488,6 +495,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
     match &interface.params {
         ReferenceConfigParams::Auto {
             group_id,
+            group_ids,
             discovery_scope,
             discovery_port,
             data_port,
@@ -496,6 +504,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
             multicast_address_type,
         } => Ok(PlannedMedium::AutoWifi(auto_interface_plan(
             group_id,
+            group_ids,
             discovery_scope,
             *discovery_port,
             *data_port,
@@ -811,7 +820,12 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
             })?,
         }),
         ReferenceConfigParams::PrnsUsbAuto => Ok(PlannedMedium::PrnsUsbAuto),
-        ReferenceConfigParams::PrnsBluetoothAuto => Ok(PlannedMedium::PrnsBluetoothAuto),
+        ReferenceConfigParams::PrnsBluetoothAuto {
+            group_id,
+            group_ids,
+        } => Ok(PlannedMedium::PrnsBluetoothAuto(BluetoothAutoPlan {
+            group_ids: discovery_group_set(group_id, group_ids)?,
+        })),
         ReferenceConfigParams::PrnsWebSocketClient { target, framing } => {
             let target = target.clone().ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::TARGET,
@@ -864,6 +878,7 @@ fn websocket_framing_selection(
 #[allow(clippy::too_many_arguments)]
 fn auto_interface_plan(
     group_id: &Option<String>,
+    group_ids: &Option<Vec<String>>,
     discovery_scope: &Option<String>,
     discovery_port: Option<u16>,
     data_port: Option<u16>,
@@ -903,7 +918,7 @@ fn auto_interface_plan(
         },
     )?;
     Ok(AutoInterfacePlan {
-        group_id: AutoInterfaceGroupId(group_id.clone().unwrap_or_else(|| GROUP_NAME.to_string())),
+        group_ids: discovery_group_set(group_id, group_ids)?,
         discovery_scope,
         discovery_port,
         data_port,
@@ -912,6 +927,39 @@ fn auto_interface_plan(
             ignored: ignored_devices.clone().unwrap_or_default(),
         },
         multicast_address_type,
+    })
+}
+
+fn discovery_group_set(
+    group_id: &Option<String>,
+    group_ids: &Option<Vec<String>>,
+) -> Result<DiscoveryGroupSet, PlanErrorKind> {
+    if group_id.is_some() && group_ids.is_some() {
+        return Err(PlanErrorKind::InvalidSetting {
+            key: interface_key::GROUP_IDS,
+        });
+    }
+    let configured = group_ids
+        .clone()
+        .or_else(|| group_id.clone().map(|group| vec![group]))
+        .unwrap_or_else(|| vec![GROUP_NAME.to_string()]);
+    let parsed = configured
+        .iter()
+        .map(|group| DiscoveryGroupId::parse(group))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| PlanErrorKind::InvalidSetting {
+            key: if group_ids.is_some() {
+                interface_key::GROUP_IDS
+            } else {
+                interface_key::GROUP_ID
+            },
+        })?;
+    DiscoveryGroupSet::try_from_slice(&parsed).map_err(|_| PlanErrorKind::InvalidSetting {
+        key: if group_ids.is_some() {
+            interface_key::GROUP_IDS
+        } else {
+            interface_key::GROUP_ID
+        },
     })
 }
 

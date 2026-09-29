@@ -1,0 +1,26 @@
+[package]
+name = "personal-hopspot-assurance"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Typed aggregation of embedded resource and executable proof evidence."
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+personal-hopspot-builder = { path = "../builder" }
+personal-hopspot-memory = { path = "../memory" }
+personal-hopspot-resources = { path = "../resources" }
+prns-flash-manifest = { path = "../../prns-flash-manifest" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[lints]
+workspace = true

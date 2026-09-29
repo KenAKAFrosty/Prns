@@ -7,6 +7,7 @@ use crate::engine::{
     EngineReaction, EngineState, InstantMillis, Journaled, SendRequestFailure, Settlement,
 };
 use crate::routing::links::request::RequestId;
+use crate::routing::links::resources::assembly::SegmentFit;
 use crate::routing::links::resources::table::{
     IncomingResourceStatus, IncomingResourceStorageAdmission,
 };
@@ -30,6 +31,13 @@ impl<S: StorageLayout> EngineState<S> {
             .offers()
             .iter()
             .map(|offer| {
+                if self.whole_response_is_superseded(
+                    &offer.link_id(),
+                    offer.accepted().total_segment_count,
+                    offer.correlation(),
+                ) {
+                    return InstantMillis(0);
+                }
                 if !matches!(
                     self.links.phase_for(&offer.link_id()),
                     Some(LinkPhase::Active { .. })
@@ -59,7 +67,7 @@ impl<S: StorageLayout> EngineState<S> {
         match offer.correlation() {
             ResourceCorrelation::Response(request_id) => self
                 .receipts
-                .pending_request_deadline(request_id)
+                .pending_request_deadline(&offer.link_id(), request_id)
                 .map_or(InstantMillis(0), |request_deadline| {
                     wait_deadline.min(request_deadline)
                 }),
@@ -88,6 +96,29 @@ impl<S: StorageLayout> EngineState<S> {
                     ) {
                         return Some((index, PendingOfferDueAction::Drop));
                     }
+                    let accepted = offer.accepted();
+                    if self.whole_response_is_superseded(
+                        &offer.link_id(),
+                        accepted.total_segment_count,
+                        accepted.correlation,
+                    ) {
+                        return Some((index, PendingOfferDueAction::Reject));
+                    }
+                    if accepted.total_segment_count > 1
+                        && accepted.segment_index > 1
+                        && self.incoming_assemblies.fit(
+                            &offer.link_id(),
+                            &offer.original_hash(),
+                            crate::routing::links::resources::ResourceSegment {
+                                index: accepted.segment_index,
+                                total_segments: accepted.total_segment_count,
+                                total_data_bytes: accepted.uncompressed_data_bytes,
+                            },
+                            accepted.correlation.into(),
+                        ) == SegmentFit::Unexpected
+                    {
+                        return Some((index, PendingOfferDueAction::Drop));
+                    }
                     let admission = self
                         .incoming_resources
                         .storage_admission_for(offer.accepted());
@@ -98,8 +129,9 @@ impl<S: StorageLayout> EngineState<S> {
                     let wait_deadline = offer.wait_deadline();
                     match offer.correlation() {
                         ResourceCorrelation::Response(request_id) => {
-                            let Some(request_deadline) =
-                                self.receipts.pending_request_deadline(request_id)
+                            let Some(request_deadline) = self
+                                .receipts
+                                .pending_request_deadline(&offer.link_id(), request_id)
                             else {
                                 return Some((index, PendingOfferDueAction::Reject));
                             };
@@ -170,9 +202,13 @@ impl<S: StorageLayout> EngineState<S> {
                         fill_random,
                         sink,
                     );
-                    let Some(receipt) = self.receipts.settle_by_request_id(request_id) else {
+                    let Some(receipt) = self
+                        .receipts
+                        .settle_by_request_id(&offer.link_id(), request_id)
+                    else {
                         continue;
                     };
+                    self.retire_response_assembly(offer.link_id(), request_id);
                     sink(EngineReaction::Journaled(Journaled::CommandSettled {
                         id: receipt.command_id,
                         settlement: Settlement::SendRequest(Err(failure)),
@@ -206,6 +242,9 @@ impl<S: StorageLayout> EngineState<S> {
                 super::gate::AcceptedResourceAdmission::Pending
                 | super::gate::AcceptedResourceAdmission::CapacityRejected { .. }
                 | super::gate::AcceptedResourceAdmission::Ignored(_) => {}
+                super::gate::AcceptedResourceAdmission::SupersededResponse { link_id, hash } => {
+                    self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
+                }
             }
         }
     }

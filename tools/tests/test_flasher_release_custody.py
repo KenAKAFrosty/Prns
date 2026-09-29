@@ -24,13 +24,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from script_command import script_command
 
 from flasher_build_metadata import EXPECTED_TOOLS, EXPECTED_WEB_PACKAGES
+from flasher_board_catalog import release_boards
 from flasher_reproducibility import SEPARATE_ENVELOPES, payload_identity, payload_manifest
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_manifest import (
+    validate_esp_artifact,
     validate_nrf_serial_dfu_recovery_artifact,
     validate_uf2_artifact,
 )
-from source_snapshot import package_source_snapshot
+from source_snapshot import REQUIRED_SOURCE_FILES, package_source_snapshot
 
 
 VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -52,26 +54,38 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ".tar.gz",
     "x86_64-pc-windows-msvc": ".zip",
 }
+SHIPPING_BOARDS = release_boards(SCRIPTS / "flasher_board_catalog.py").shipping
+CATALOG_INTERFACES = {
+    board["slug"]: board["interfaces"]
+    for board in json.loads(
+        (ROOT / "release" / "flash" / "boards.json").read_text(encoding="utf-8")
+    )["boards"]
+}
+
+
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def uf2_payload(application_base: int) -> bytes:
-    block = bytearray(512)
-    for offset, value in (
-        (0, 0x0A324655),
-        (4, 0x9E5D5157),
-        (8, 0x00002000),
-        (12, application_base),
-        (16, 256),
-        (20, 0),
-        (24, 1),
-        (28, 0xADA52840),
-        (508, 0x0AB16F30),
-    ):
-        block[offset : offset + 4] = value.to_bytes(4, "little")
-    block[32:288] = bytes(range(256))
-    return bytes(block)
+def uf2_payload(application_base: int, block_count: int = 1) -> bytes:
+    blocks = []
+    for index in range(block_count):
+        block = bytearray(512)
+        for offset, value in (
+            (0, 0x0A324655),
+            (4, 0x9E5D5157),
+            (8, 0x00002000),
+            (12, application_base + index * 256),
+            (16, 256),
+            (20, index),
+            (24, block_count),
+            (28, 0xADA52840),
+            (508, 0x0AB16F30),
+        ):
+            block[offset : offset + 4] = value.to_bytes(4, "little")
+        block[32:288] = bytes(range(256))
+        blocks.append(block)
+    return b"".join(blocks)
 
 
 def run_script(script: str, *arguments: object, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -128,8 +142,16 @@ exit 0
 
 
 class CandidateFixture:
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        source_repository: Path = ROOT,
+        source_commit: str = SOURCE_COMMIT,
+    ) -> None:
         self.root = root
+        self.source_repository = source_repository
+        self.source_commit = source_commit
         root.mkdir(parents=True)
         self.key = root.parent / "minisign.pub"
         self.repository_version = root.parent / "VERSION"
@@ -165,8 +187,8 @@ class CandidateFixture:
         browser_wasm.parent.mkdir(parents=True)
         browser_wasm.write_bytes(b"fixture source-enabled wasm")
         package_source_snapshot(
-            repository=ROOT,
-            commit=SOURCE_COMMIT,
+            repository=source_repository,
+            commit=source_commit,
             version=VERSION,
             output=root / "website" / "source.zip",
             metadata=root / "metadata" / "source.json",
@@ -181,7 +203,7 @@ class CandidateFixture:
             + b" "
             + source_metadata["sha256"].encode()
             + b" "
-            + SOURCE_COMMIT[:12].encode()
+            + source_commit[:12].encode()
             + b" /file/source.zip /file/source.zip.sha256"
         )
         (root / "LICENSE-APACHE").write_text("fixture Apache license\n", encoding="utf-8")
@@ -189,19 +211,7 @@ class CandidateFixture:
         (root / "THIRD_PARTY_NOTICES.md").write_text("fixture notices\n", encoding="utf-8")
         targets = []
         self.firmware_paths = []
-        for index, board in enumerate(
-            (
-                "heltec-v4",
-                "heltec-v4-r8",
-                "t-beam-supreme",
-                "xiao-esp32-c6",
-                "t-echo",
-                "t114",
-                "t096",
-                "t1000-e",
-            ),
-            start=1,
-        ):
+        for index, board in enumerate(SHIPPING_BOARDS, start=1):
             filenames = (
                 ("t-echo-s140-6.1.1.uf2", "t-echo-s140-7.3.0.uf2")
                 if board == "t-echo"
@@ -276,6 +286,7 @@ class CandidateFixture:
                 variants = []
             target = {
                 "board_slug": board,
+                "interfaces": CATALOG_INTERFACES[board],
                 "transport": (
                     "uf2-mass-storage"
                     if board in {"t-echo", "t114", "t096"}
@@ -294,8 +305,12 @@ class CandidateFixture:
                         "softdevice_family": "s140",
                         "softdevice_version": "7.3.0",
                         "fwid": "0x0123",
+                        "device_type": "0x0052",
+                        "device_revision": 52840,
+                        "application_version": "not-enforced",
                         "application_base": "0x00027000",
                         "application_end_exclusive": "0x000ea000",
+                        "bank_layout": "single",
                     },
                     "recovery": {
                         "mount_label": "T1000-E",
@@ -310,7 +325,7 @@ class CandidateFixture:
             {
                 "schema": 1,
                 "version": VERSION,
-                "commit": SOURCE_COMMIT,
+                "commit": source_commit,
                 "targets": [
                     {
                         "schema": 1,
@@ -320,16 +335,7 @@ class CandidateFixture:
                         "source": None,
                         "reserve_bytes": None,
                     }
-                    for board in (
-                        "heltec-v4",
-                        "heltec-v4-r8",
-                        "t-beam-supreme",
-                        "xiao-esp32-c6",
-                        "t-echo",
-                        "t114",
-                        "t096",
-                        "t1000-e",
-                    )
+                    for board in SHIPPING_BOARDS
                 ],
             },
         )
@@ -338,7 +344,7 @@ class CandidateFixture:
             "release": {
                 "version": VERSION,
                 "channel": "stable",
-                "commit": SOURCE_COMMIT,
+                "commit": source_commit,
             },
             "signing": {"key_id": KEY_ID},
             "targets": targets,
@@ -363,7 +369,7 @@ class CandidateFixture:
             root / "metadata" / "build.json",
             {
                 "schema": 2,
-                "source_commit": SOURCE_COMMIT,
+                "source_commit": source_commit,
                 "source_date_epoch": SOURCE_DATE_EPOCH,
                 "built_at_utc": datetime.fromtimestamp(
                     SOURCE_DATE_EPOCH, timezone.utc
@@ -417,7 +423,9 @@ class CandidateFixture:
             "create-flasher-acceptance.py": SCRIPTS / "create-flasher-acceptance.py",
             "validate-flasher-acceptance.py": SCRIPTS / "validate-flasher-acceptance.py",
             "flasher_acceptance_contract.py": SCRIPTS / "flasher_acceptance_contract.py",
+            "flasher_board_catalog.py": SCRIPTS / "flasher_board_catalog.py",
             "flasher_manifest.py": SCRIPTS / "flasher_manifest.py",
+            "flasher_memory_contracts.py": SCRIPTS / "flasher_memory_contracts.py",
             "serve-flasher-candidate.py": SCRIPTS / "serve-flasher-candidate.py",
             "verify-flasher-candidate-files.py": SCRIPTS / "verify-flasher-candidate-files.py",
             "validate-flasher-tester-roster.py": SCRIPTS / "validate-flasher-tester-roster.py",
@@ -433,6 +441,8 @@ class CandidateFixture:
             ("heltec-v4", "web"): ("linux", "x86_64"),
             ("heltec-v4-r8", "cli"): ("linux", "x86_64"),
             ("heltec-v4-r8", "web"): ("linux", "x86_64"),
+            ("heltec-wireless-stick-lite-v3", "cli"): ("linux", "x86_64"),
+            ("heltec-wireless-stick-lite-v3", "web"): ("linux", "x86_64"),
             ("t-beam-supreme", "cli"): ("macos", "aarch64"),
             ("t-beam-supreme", "web"): ("macos", "aarch64"),
             ("xiao-esp32-c6", "cli"): ("windows", "x86_64"),
@@ -448,6 +458,8 @@ class CandidateFixture:
         }
         physical_assignments = []
         for (board, surface), (os_name, architecture) in physical_hosts.items():
+            if board not in SHIPPING_BOARDS:
+                continue
             assignment = {
                 "board": board,
                 "surface": surface,
@@ -531,7 +543,7 @@ class CandidateFixture:
             root / "metadata" / "reproducibility.json",
             {
                 "schema": 1,
-                "release": {"version": VERSION, "source_commit": SOURCE_COMMIT},
+                "release": {"version": VERSION, "source_commit": source_commit},
                 "result": "matched",
                 "builds": [
                     {"name": "primary", "archive_sha256": "1" * 64},
@@ -584,7 +596,9 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             "validate-unsigned-flasher-candidate.py",
             self.fixture.root,
             "--expected-commit",
-            SOURCE_COMMIT,
+            self.fixture.source_commit,
+            "--source-repository",
+            self.fixture.source_repository,
             "--repository-version",
             self.fixture.repository_version,
             "--pinned-key",
@@ -747,10 +761,29 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         )
         variant = target["variants"][0]
         payload = bytearray((self.fixture.root / variant["path"]).read_bytes())
-        validate_uf2_artifact(variant, bytes(payload))
+        validate_uf2_artifact("t-echo", variant, bytes(payload))
         payload[0] = 0
         with self.assertRaisesRegex(ValueError, "invalid magic"):
-            validate_uf2_artifact(variant, bytes(payload))
+            validate_uf2_artifact("t-echo", variant, bytes(payload))
+
+    def test_release_boundary_rejects_legacy_uf2_transport_tail(self) -> None:
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "t-echo"
+        )
+        variant = target["variants"][0]
+        firmware_blocks = (0x000BF000 - 0x00026000) // 256
+        payload = uf2_payload(0x00026000, firmware_blocks + 1)
+        with self.assertRaisesRegex(ValueError, "firmware-owned region"):
+            validate_uf2_artifact("t-echo", variant, payload)
+        validate_uf2_artifact("t114", variant, payload)
+
+    def test_release_boundary_applies_esp_sector_occupancy(self) -> None:
+        part = {"kind": "bootloader", "offset": 0}
+        validate_esp_artifact("heltec-v4", part, bytes(0x8000))
+        with self.assertRaisesRegex(ValueError, "assigned memory region"):
+            validate_esp_artifact("heltec-v4", part, bytes(0x8001))
 
     def test_release_boundary_binds_nordic_recovery_to_dfu_application(self) -> None:
         target = next(
@@ -766,7 +799,56 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "disagrees with the exact DFU application"):
             validate_nrf_serial_dfu_recovery_artifact(target, tampered, recovery)
 
+    def test_release_boundary_rejects_nordic_transport_tail(self) -> None:
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "t1000-e"
+        )
+        recovery = target["nrf_serial_dfu"]["recovery"]
+        recovery_payload = (self.fixture.root / recovery["artifact"]["path"]).read_bytes()
+        firmware_bytes = 0x000E9000 - 0x00027000
+        with self.assertRaisesRegex(ValueError, "firmware-owned region"):
+            validate_nrf_serial_dfu_recovery_artifact(
+                target,
+                bytes(firmware_bytes + 1),
+                recovery_payload,
+            )
+
     def test_embedded_firmware_cannot_carry_the_hosted_source_archive(self) -> None:
+        # The real repository archive can outgrow a firmware partition. Use a
+        # small, commit-bound source tree so this tests source rejection rather
+        # than failing earlier at the independent firmware-size boundary.
+        repository = self.workspace / "source-repository"
+        repository.mkdir()
+        for relative in REQUIRED_SOURCE_FILES:
+            path = repository / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                f"{VERSION}\n" if relative == "VERSION" else f"fixture {relative}\n",
+                encoding="utf-8",
+            )
+        for arguments in (
+            ("init", "--quiet"),
+            ("add", "."),
+            (
+                "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Fixture source",
+            ),
+        ):
+            subprocess.run(("git", *arguments), cwd=repository, check=True, capture_output=True)
+        commit = subprocess.run(
+            ("git", "rev-parse", "HEAD"), cwd=repository, check=True,
+            text=True, capture_output=True,
+        ).stdout.strip()
+        self.fixture = CandidateFixture(
+            self.workspace / "bounded-candidate",
+            source_repository=repository,
+            source_commit=commit,
+        )
+        result = self.validate_unsigned()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
         target = next(
             target
             for target in self.fixture.manifest["targets"]
@@ -777,7 +859,9 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         )
         application_path = self.fixture.root / application["path"]
         source_archive = (self.fixture.root / "website" / "source.zip").read_bytes()
-        application_path.write_bytes(application_path.read_bytes() + source_archive)
+        payload = application_path.read_bytes() + source_archive
+        validate_esp_artifact(target["board_slug"], application, payload)
+        application_path.write_bytes(payload)
         application["size"] = application_path.stat().st_size
         application["sha256"] = sha256(application_path)
         hosted = self.fixture.root / "website" / "releases" / VERSION / application["path"]
@@ -1506,8 +1590,10 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.root / "qualification" / "create-flasher-acceptance.py",
             self.fixture.root / "qualification" / "validate-flasher-acceptance.py",
             self.fixture.root / "qualification" / "flasher_acceptance_contract.py",
+            self.fixture.root / "qualification" / "flasher_board_catalog.py",
             self.fixture.root / "qualification" / "flasher_hotfix.py",
             self.fixture.root / "qualification" / "flasher_manifest.py",
+            self.fixture.root / "qualification" / "flasher_memory_contracts.py",
             self.fixture.root / "qualification" / "serve-flasher-candidate.py",
             self.fixture.root / "qualification" / "verify-flasher-candidate-files.py",
             self.fixture.root / "qualification" / "validate-flasher-tester-roster.py",
@@ -1704,6 +1790,22 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
 
         schema_three = module.expected_candidate_assets(self.fixture.root, VERSION)
         self.assertIn("flasher_manifest.py", schema_three)
+        self.assertIn("flasher_memory_contracts.py", schema_three)
+
+        memory_contracts = (
+            self.fixture.root / "qualification" / "flasher_memory_contracts.py"
+        )
+        memory_contracts.unlink()
+        with self.assertRaisesRegex(ValueError, "flasher_memory_contracts.py"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+        manifest_helper = self.fixture.root / "qualification" / "flasher_manifest.py"
+        manifest_helper.write_text("FLASH_MANIFEST_SCHEMA = 3\n", encoding="utf-8")
+        historical_schema_three = module.expected_candidate_assets(
+            self.fixture.root, VERSION
+        )
+        self.assertNotIn("flasher_memory_contracts.py", historical_schema_three)
+        shutil.copy2(SCRIPTS / "flasher_manifest.py", manifest_helper)
+        shutil.copy2(SCRIPTS / "flasher_memory_contracts.py", memory_contracts)
 
         self.fixture.manifest["schema"] = 2
         write_json(self.fixture.manifest_path, self.fixture.manifest)

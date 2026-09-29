@@ -7,7 +7,6 @@ mod events;
 mod nrf_serial_dfu;
 mod release;
 mod splash;
-mod toolchain;
 mod uf2;
 mod ui;
 mod wifi;
@@ -17,15 +16,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{error::ErrorKind, Parser};
+use personal_hopspot_builder::{default_artifact_root, BuildVersion};
 use prns_flash_manifest::{
     board_catalog, BoardCatalog, BoardCatalogEntry, ProvisioningAction, Transport,
 };
 use serde::Serialize;
 
-use build::{
-    assemble_manifest, build_board, build_board_for_flash, default_artifact_root, BuildVersion,
-    ManifestTargetProfile,
-};
+use build::{assemble_manifest, build_board, build_board_for_flash, ManifestTargetProfile};
 use cli::{CacheCommand, ChannelArg, Cli, CommandMode, WifiMode};
 use error::AppError;
 use events::{Phase, Reporter};
@@ -915,6 +912,28 @@ mod doctor_tests {
             catalog.board("xiao-esp32-c6").expect("XIAO")
         )
         .is_empty());
+        assert_eq!(
+            indistinguishable_esp_boards(
+                &catalog,
+                catalog
+                    .board("heltec-wireless-stick-lite-v3")
+                    .expect("Wireless Stick Lite")
+            )
+            .into_iter()
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>(),
+            ["t-beam-supreme"]
+        );
+        assert_eq!(
+            indistinguishable_esp_boards(
+                &catalog,
+                catalog.board("t-beam-supreme").expect("T-Beam")
+            )
+            .into_iter()
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>(),
+            ["heltec-wireless-stick-lite-v3"]
+        );
 
         let mut two_board_catalog = catalog.clone();
         two_board_catalog

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 15e20c1c2ba7403cb3e704ca353aebbf869a0a9961221ca681d29da207ef849f # shrinks to body = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 101, 61, 32, 244, 134, 16, 10, 190, 142, 34, 234, 174, 108, 152, 15, 53, 55, 252, 148, 103, 101, 181, 244, 251, 28, 9, 55, 244, 42, 147, 255, 11, 123, 243, 200, 69, 163, 21, 247, 173, 222, 12, 219, 150, 18, 153, 57, 125, 173, 72, 33, 56, 229, 82, 153, 36, 215, 176, 207, 214, 80, 62, 114, 141, 130, 20, 198, 81, 123, 34, 244, 100, 24, 116, 114, 55, 180, 33, 109], maximum = 193

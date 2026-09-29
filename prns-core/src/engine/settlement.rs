@@ -4,7 +4,11 @@ use crate::engine::{
     RemoteControlControllerPairingRequestFailureCause, SendRequestFailure, SendRequestIntent,
     SendSinglePacketFailure, SendToLinkFailure, Settlement,
 };
-use crate::routing::delivery::receipts::{LinkOwnedReceiptKind, ReceiptKind};
+use crate::routing::delivery::receipts::{
+    CulledReceipt, ExpiredReceipt, LinkOwnedReceiptKind, ReceiptKind,
+};
+use crate::routing::links::request::RequestId;
+use crate::routing::links::resources::assembly::AssemblyCorrelation;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 
@@ -64,31 +68,45 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(super) fn culled_settlement(&mut self, kind: ReceiptKind) -> Settlement {
-        match kind {
+    pub(crate) fn culled_settlement(&mut self, culled: CulledReceipt) -> Settlement {
+        match culled.kind {
             ReceiptKind::SendSinglePacket { .. } => {
                 Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Culled))
             }
             ReceiptKind::SendToLink(_) => Settlement::SendToLink(Err(SendToLinkFailure::Culled)),
-            ReceiptKind::SendRequest { link_id, response } => self.failed_send_request_settlement(
-                link_id,
-                response.intent(),
-                SendRequestFailure::Culled,
-            ),
+            ReceiptKind::SendRequest { link_id, response } => {
+                self.retire_response_assembly(link_id, RequestId::of_packet(&culled.packet_hash));
+                self.failed_send_request_settlement(
+                    link_id,
+                    response.intent(),
+                    SendRequestFailure::Culled,
+                )
+            }
         }
     }
 
-    pub(super) fn timeout_settlement(&mut self, kind: ReceiptKind) -> Settlement {
-        match kind {
+    pub(super) fn timeout_settlement(&mut self, expired: ExpiredReceipt) -> Settlement {
+        match expired.kind {
             ReceiptKind::SendSinglePacket { .. } => {
                 Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Timeout))
             }
             ReceiptKind::SendToLink(_) => Settlement::SendToLink(Err(SendToLinkFailure::Timeout)),
-            ReceiptKind::SendRequest { link_id, response } => self.failed_send_request_settlement(
-                link_id,
-                response.intent(),
-                SendRequestFailure::Timeout,
-            ),
+            ReceiptKind::SendRequest { link_id, response } => {
+                self.retire_response_assembly(link_id, RequestId::of_packet(&expired.packet_hash));
+                self.failed_send_request_settlement(
+                    link_id,
+                    response.intent(),
+                    SendRequestFailure::Timeout,
+                )
+            }
+        }
+    }
+
+    pub(crate) fn retire_response_assembly(&mut self, link_id: LinkId, request: RequestId) {
+        if self.incoming_assemblies.correlation(&link_id)
+            == Some(AssemblyCorrelation::Response(request))
+        {
+            self.incoming_assemblies.clear(&link_id);
         }
     }
 }

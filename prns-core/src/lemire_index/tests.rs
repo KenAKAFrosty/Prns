@@ -63,13 +63,18 @@ mod heap {
         let mut index = HeapLemireIndex::default();
         let mut keys = std::vec::Vec::new();
         for n in 0..1_000u32 {
-            keys.push(dest_n(n));
+            let key = dest_n(n);
+            assert!(!index.contains(&key, &keys));
+            keys.push(key);
             index.insert(keys.len() - 1, &keys);
         }
         for (slot, key) in keys.iter().enumerate() {
             assert_eq!(index.get(key, &keys), Some(slot));
+            assert!(index.contains(key, &keys));
         }
-        assert_eq!(index.get(&dest_n(1_000), &keys), None);
+        let absent = dest_n(1_000);
+        assert_eq!(index.get(&absent, &keys), None);
+        assert!(!index.contains(&absent, &keys));
     }
 
     #[test]

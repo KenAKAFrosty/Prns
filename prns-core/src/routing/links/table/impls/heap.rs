@@ -28,8 +28,8 @@ impl LinkTable for HeapLinkTable {
     fn link_ids(&self) -> &[LinkId] {
         &self.link_ids
     }
-    fn timeout_ats(&self) -> &[Option<InstantMillis>] {
-        &self.timeout_ats
+    fn timeout_at(&self, index: usize) -> Option<InstantMillis> {
+        self.timeout_ats[index]
     }
     fn phases(&self) -> &[LinkPhase] {
         &self.phases

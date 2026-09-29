@@ -8,9 +8,9 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::IssuedCommand;
-#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
 use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
@@ -26,7 +26,7 @@ use personal_rns::runtime::{
 };
 use personal_rns::storage::{StorageCapacity, StorageLayout};
 use personal_rns::usb_auto::{
-    UsbAutoDevice, UsbAutoDeviceInput, WebUsbAutoClass, WebUsbAutoState,
+    ProtocolHostPresence, UsbAutoDevice, UsbAutoDeviceInput, WebUsbAutoClass, WebUsbAutoState,
     WEBUSB_AUTO_CONTROL_BUFFER_BYTES, WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
 };
 
@@ -41,13 +41,17 @@ use super::entropy::install_hal_runtime_entropy;
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    feature = "board-rak4631"
 ))]
 use super::entropy::install_softdevice_runtime_entropy;
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    feature = "board-rak4631"
 ))]
 use super::entropy::prepare_softdevice_runtime_entropy;
 use super::entropy::{runtime_entropy, seed_from_hal};
@@ -55,11 +59,27 @@ use super::entropy::{runtime_entropy, seed_from_hal};
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    feature = "board-rak4631"
 ))]
 mod bluetooth;
-#[cfg(feature = "board-mesh-tower-v2")]
-#[path = "mesh_tower_v2.rs"]
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+mod remote_control;
+#[cfg(any(
+    feature = "board-t1000e",
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    feature = "board-rak4631"
+))]
+#[path = "remote_control_headless.rs"]
+mod remote_control;
+#[cfg(any(
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    feature = "board-rak4631"
+))]
+#[path = "button_announce.rs"]
 mod selected;
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
 #[path = "display.rs"]
@@ -79,7 +99,9 @@ const LORA_OUTBOUND_DEPTH: usize = Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAME
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    feature = "board-rak4631"
 ))]
 const BLE_OUTBOUND_DEPTH: usize = Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
@@ -98,7 +120,9 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    feature = "board-rak4631"
 ))]
 const _: () = assert!(Storage::LINK_SESSIONS > bluetooth::MEMBERS);
 
@@ -109,10 +133,13 @@ type InterfaceStore = EmbassyInterfaceStore<
     PACKET_PHY_RETENTION_CAPACITY,
     PACKET_PHY_INDEX_BUCKETS,
 >;
+const REMOTE_CONTROL_COMMAND_DEPTH: usize = 1;
+type AppState = hopspot::HopspotCommandHandle<REMOTE_CONTROL_COMMAND_DEPTH>;
+
 type Node = PrnsNode<
-    (),
+    AppState,
     hopspot::node_pages::NodePageRoutes,
-    for<'a> fn(PrnsEvent<'a>, &()),
+    for<'a> fn(PrnsEvent<'a>, &AppState),
     Storage,
     EmbassyHost<Mtx, super::entropy::NrfEntropySource>,
     Mtx,
@@ -125,12 +152,13 @@ type Node = PrnsNode<
 >;
 type ManifoldLanes = ManifoldLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
 
-static LORA_CONTROL: LoRaControl = LoRaControl::new();
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
+static REMOTE_CONTROL_COMMANDS: hopspot::HopspotCommandMailbox<REMOTE_CONTROL_COMMAND_DEPTH> =
+    hopspot::HopspotCommandMailbox::new();
 static LORA_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
     LORA_MAX_PAYLOAD,
@@ -140,7 +168,9 @@ static LORA_MANIFOLD_LANE: StaticManifoldLane<
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-muzi-base-duo",
+    feature = "board-rak4631"
 ))]
 static BLE_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
@@ -177,7 +207,9 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     ))]
     let ((node_bootstrap, remote_control_bootstrap, ble_bootstrap, entropy), hardware) =
         Board::initialize(|nvmc, rng| {
@@ -204,7 +236,9 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     ))]
     let ble_identity = Some(ble_bootstrap.into_identity());
     #[cfg(feature = "board-t096")]
@@ -238,7 +272,11 @@ pub async fn run(spawner: Spawner) -> ! {
     } = hardware;
     #[cfg(feature = "board-t1000e")]
     install_hal_runtime_entropy(entropy);
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
+    ))]
     let Hardware {
         usb: usb_driver,
         vbus,
@@ -279,26 +317,39 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     ))]
     let entropy = prepare_softdevice_runtime_entropy(entropy);
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     ))]
     let sd = bluetooth::enable(spawner, vbus, ble_identity);
+    // The SoftDevice task and GATT workers are spawned above, but they cannot run until this
+    // executor task yields. RAK4631 reaches this point without an intervening asynchronous flash
+    // load, so settle S140 before consuming its entropy/flash services or starting USB.
+    #[cfg(feature = "board-rak4631")]
+    Timer::after_millis(100).await;
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     ))]
     install_softdevice_runtime_entropy(entropy, sd);
 
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     ))]
     let shared_flash = super::learned_state::take_flash(sd);
     #[cfg(feature = "board-t1000e")]
@@ -316,33 +367,37 @@ pub async fn run(spawner: Spawner) -> ! {
     .expect("the hopspot destination names are valid")
     .node_page;
     let self_announcement = RemoteControlSelfAnnouncement::Destination(node_page_destination);
-    let remote_control = RemoteControlService::new(
+    let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
         self_announcement,
+        remote_control::capabilities(),
     );
     let mut manifold_lanes = ManifoldLanes::new();
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
-    let loaded_lora_profile = selected::load_profile(shared_flash).await;
+    let loaded_subg_configuration = selected::load_subg_configuration(shared_flash).await;
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
-    let lora_profile = loaded_lora_profile.profile;
+    let subg_configuration = loaded_subg_configuration.state;
     #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-    let lora_profile = DEFAULT_915_PROFILE;
-    let lora_id = LoraInterface::interface_id(&lora_profile);
+    let subg_configuration = SubGConfigurationState::Unconfigured;
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
-    let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
-        EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing),
-    );
+    let lora_status: &'static EmbassyInterfaceStatus =
+        LORA_STATUS.init(EmbassyInterfaceStatus::new_accounted(
+            LoraInterface::unconfigured_interface_id(),
+            ConnectionState::Initializing,
+        ));
     static LORA_SPECTRUM: StaticCell<LoRaSpectrumStatus> = StaticCell::new();
     let lora_spectrum: &'static LoRaSpectrumStatus = LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
     static LORA_TX_QUEUE: ConstStaticCell<[u8; LORA_TX_QUEUE_BYTES]> =
         ConstStaticCell::new([0; LORA_TX_QUEUE_BYTES]);
+    static LORA_CONTROL: StaticCell<LoRaControl> = StaticCell::new();
+    let (lora_controller, lora_control) = LORA_CONTROL.init(LoRaControl::new()).split();
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio,
-        profile: lora_profile,
+        configuration: subg_configuration,
         airtime_policy: AirtimePolicy::Regional,
         tx_queue: LORA_TX_QUEUE.take(),
-        control: &LORA_CONTROL,
+        control: lora_control,
         status: lora_status,
         spectrum: lora_spectrum,
         lifecycle: LIFECYCLE.dyn_sender(),
@@ -350,6 +405,7 @@ pub async fn run(spawner: Spawner) -> ! {
         Ok(lora) => lora,
         Err(_) => panic!("the built-in LoRa profile and regional policy must be valid"),
     };
+    lora_status.set_id(lora.id());
 
     let (usb_tx, usb_rx) = class.split();
     static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
@@ -360,7 +416,8 @@ pub async fn run(spawner: Spawner) -> ! {
         rx: usb_rx,
         tx: usb_tx,
         status: usb_status,
-        host_present: || true,
+        bitrate: personal_rns::interfaces::usb_auto::DEVICE_USB_BITRATE_BPS,
+        host_presence: ProtocolHostPresence::new(),
     });
 
     let lora_lane = manifold_lanes
@@ -369,7 +426,9 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     ))]
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
         manifold_lanes
@@ -393,6 +452,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let entropy = runtime_entropy();
     let host = EmbassyHost::new(entropy);
     static NODE: StaticCell<Node> = StaticCell::new();
+    let app_state = REMOTE_CONTROL_COMMANDS.handle();
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
         remote_control,
@@ -402,12 +462,12 @@ pub async fn run(spawner: Spawner) -> ! {
             NODE_ANNOUNCE_APP_DATA,
         )
         .into_preconfigured_destinations(),
-        app_state: (),
+        app_state,
         storage: Storage,
         request_endpoints: hopspot::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
         persistence,
-        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &AppState),
     };
     let (node, persistence) =
         PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
@@ -415,16 +475,19 @@ pub async fn run(spawner: Spawner) -> ! {
     static PERSISTENCE: StaticCell<super::learned_state::BoardPersistence> = StaticCell::new();
     let persistence = PERSISTENCE.init(persistence);
     spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
-
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), entropy);
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), entropy);
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     ))]
     let bluetooth = bluetooth::prepare(ble_identity, ble_supervisor_lane);
     let heartbeat = async move {
+        #[cfg(feature = "board-rak4631")]
+        status_led.boot_splash().await;
         loop {
             status_led.illuminate();
             let timing = selected::heartbeat_timing();
@@ -445,13 +508,14 @@ pub async fn run(spawner: Spawner) -> ! {
         let face = selected::face(selected::FaceInput {
             display,
             battery,
-            profile_store: loaded_lora_profile.store,
+            subg_configuration_store: loaded_subg_configuration.store,
             identity_startup_notice,
-            profile_startup_notice: loaded_lora_profile.startup_notice,
-            lora_profile,
+            subg_startup_notice: loaded_subg_configuration.startup_notice,
+            subg_configuration,
             lora_status,
             usb_status,
             lora_spectrum,
+            lora_controller,
             node_page_destination,
         });
         selected::run(
@@ -469,13 +533,14 @@ pub async fn run(spawner: Spawner) -> ! {
         let face = selected::face(selected::FaceInput {
             display,
             battery,
-            profile_store: loaded_lora_profile.store,
+            subg_configuration_store: loaded_subg_configuration.store,
             identity_startup_notice,
-            profile_startup_notice: loaded_lora_profile.startup_notice,
-            lora_profile,
+            subg_startup_notice: loaded_subg_configuration.startup_notice,
+            subg_configuration,
             lora_status,
             usb_status,
             lora_spectrum,
+            lora_controller,
             node_page_destination,
         });
         selected::run(
@@ -488,12 +553,23 @@ pub async fn run(spawner: Spawner) -> ! {
         .await;
     }
     #[cfg(feature = "board-t1000e")]
-    selected::run(io, lora.run(lora_seam), gnss).await;
-    #[cfg(feature = "board-mesh-tower-v2")]
+    selected::run(
+        io,
+        lora.run(lora_seam),
+        remote_control::run_headless(lora_status, usb_status, lora_controller, subg_configuration),
+        gnss,
+    )
+    .await;
+    #[cfg(any(
+        feature = "board-mesh-tower-v2",
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
+    ))]
     selected::run(
         io,
         lora.run(lora_seam),
         bluetooth::run(sd, bluetooth),
+        remote_control::run_headless(lora_status, usb_status, lora_controller, subg_configuration),
         button,
         node_page_destination,
     )
@@ -501,4 +577,4 @@ pub async fn run(spawner: Spawner) -> ! {
     core::future::pending().await
 }
 
-fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
+fn ignore_events(_event: PrnsEvent<'_>, _state: &AppState) {}

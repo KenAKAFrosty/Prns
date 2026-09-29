@@ -483,14 +483,11 @@ mod tests {
             .variants
             .iter()
             .map(|variant| {
-                let base = u32::from_str_radix(
-                    variant
-                        .application_base
-                        .strip_prefix("0x")
-                        .expect("hex base"),
-                    16,
-                )
-                .expect("base");
+                let base = variant
+                    .memory_layout()
+                    .expect("UF2 memory profile")
+                    .transport_envelope()
+                    .start();
                 let family = u32::from_str_radix(
                     variant.family_id.strip_prefix("0x").expect("hex family"),
                     16,
@@ -517,15 +514,21 @@ mod tests {
                 .variants
                 .iter()
                 .zip(&artifacts)
-                .map(|(variant, bytes)| Uf2VariantManifest {
-                    softdevice_family: variant.softdevice_family.clone(),
-                    softdevice_version: variant.softdevice_version.clone(),
-                    fwid: variant.fwid.clone(),
-                    application_base: variant.application_base.clone(),
-                    family_id: variant.family_id.clone(),
-                    path: format!("firmware/hopspot/t-echo/0.2.6/{}", variant.filename),
-                    size: bytes.len() as u64,
-                    sha256: sha256_hex(bytes),
+                .map(|(variant, bytes)| {
+                    let application = variant
+                        .memory_layout()
+                        .expect("UF2 memory profile")
+                        .transport_envelope();
+                    Uf2VariantManifest {
+                        softdevice_family: variant.softdevice_family.clone(),
+                        softdevice_version: variant.softdevice_version.clone(),
+                        fwid: variant.fwid.clone(),
+                        application_base: format!("0x{:08x}", application.start()),
+                        family_id: variant.family_id.clone(),
+                        path: format!("firmware/hopspot/t-echo/0.2.6/{}", variant.filename),
+                        size: bytes.len() as u64,
+                        sha256: sha256_hex(bytes),
+                    }
                 })
                 .collect(),
             nrf_serial_dfu: None,
@@ -585,7 +588,9 @@ mod tests {
             variants: Vec::new(),
             nrf_serial_dfu: Some(NrfSerialDfuManifest {
                 serial: build.serial.clone(),
-                compatibility: build.compatibility.clone(),
+                compatibility: build
+                    .manifest_compatibility()
+                    .expect("Nordic serial DFU memory profile"),
                 application: artifact(
                     FlashPartKind::DfuApplication,
                     &build.application_filename,

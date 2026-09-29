@@ -26,7 +26,7 @@ pub use archive::{
 pub use autoconnect::{
     ActiveDiscoveredInterface, DiscoveredConnectionAccess, DiscoveredConnectionEndpoint,
     DiscoveredConnectionEndpointId, DiscoveredConnectionHealth, DiscoveredConnectionKind,
-    DiscoveredConnectionPlan, DiscoveredConnectionRegistrationError,
+    DiscoveredConnectionPlan, DiscoveredConnectionRegistrationError, AUTOCONNECT_BITRATE,
     DISCOVERED_INTERFACE_DETACH_AFTER,
 };
 pub use catalog::{

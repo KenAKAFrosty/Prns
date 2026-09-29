@@ -1,6 +1,4 @@
-use rmp::Marker;
-
-use super::super::message_pack::{MessagePackInteger, MessagePackReader};
+use super::super::message_pack::{Marker, MessagePackInteger, MessagePackReader};
 use super::super::{MessagePackEncoder, RnsManagementEncodeError};
 use super::{finish, RnsRemoteRequestDecodeError, REMOTE_REQUEST_MAXIMUM_DEPTH};
 

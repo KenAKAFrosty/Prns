@@ -441,6 +441,7 @@ fn interpret_params(
     Ok(match type_name {
         "AutoInterface" => ReferenceConfigParams::Auto {
             group_id: opt(rest, interface_key::GROUP_ID, interface, coerce_string)?,
+            group_ids: opt(rest, interface_key::GROUP_IDS, interface, coerce_list)?,
             discovery_scope: opt(
                 rest,
                 interface_key::DISCOVERY_SCOPE,
@@ -585,7 +586,10 @@ fn interpret_params(
             port: opt(rest, interface_key::PORT, interface, coerce_string)?,
         },
         "PrnsUsbAuto" => ReferenceConfigParams::PrnsUsbAuto,
-        "PrnsBluetoothAuto" => ReferenceConfigParams::PrnsBluetoothAuto,
+        "PrnsBluetoothAuto" => ReferenceConfigParams::PrnsBluetoothAuto {
+            group_id: opt(rest, interface_key::GROUP_ID, interface, coerce_string)?,
+            group_ids: opt(rest, interface_key::GROUP_IDS, interface, coerce_list)?,
+        },
         "PrnsWebSocketClient" => ReferenceConfigParams::PrnsWebSocketClient {
             target: opt(rest, interface_key::TARGET, interface, coerce_string)?,
             framing: opt(rest, interface_key::FRAMING, interface, coerce_string)?,

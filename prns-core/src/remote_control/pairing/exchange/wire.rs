@@ -1,8 +1,8 @@
 use crate::crypto::{Ed25519Signature, Ed25519Verifier, InvalidPublicKey};
 use crate::identity::{IdentityPublicKeys, PublicIdentityMaterial};
 use crate::remote_control::{
-    RemoteControlControllerIdentity, RemoteControlRequestKind, RemoteControlRequestSet,
-    RemoteControlTargetIdentity,
+    RemoteControlControllerAuthority, RemoteControlControllerIdentity, RemoteControlRequestKind,
+    RemoteControlRequestSet, RemoteControlTargetIdentity,
 };
 use crate::units::DurationMillis;
 
@@ -62,7 +62,7 @@ impl RemoteControlPairingRequest {
             });
         }
         let mut reader = PairingWireReader::new(bytes);
-        let kind = read_header(&mut reader)?;
+        let (protocol_version, kind) = read_header(&mut reader)?;
         let request = match kind {
             RemoteControlPairingMessageKind::Begin => {
                 let public_keys = read_identity_public_keys(
@@ -73,13 +73,17 @@ impl RemoteControlPairingRequest {
                 let invitation_proof =
                     RemoteControlPairingInvitationProof::from_wire(*reader.take()?);
                 Self::Begin(RemoteControlPairingBegin::from_wire(
+                    protocol_version,
                     RemoteControlControllerIdentity::new(public_keys),
                     invitation_proof,
                 ))
             }
             RemoteControlPairingMessageKind::Commit => {
                 let transcript = RemoteControlPairingTranscriptDigest(*reader.take()?);
-                Self::Commit(RemoteControlPairingCommit { transcript })
+                Self::Commit(RemoteControlPairingCommit {
+                    protocol_version,
+                    transcript,
+                })
             }
             RemoteControlPairingMessageKind::Offer | RemoteControlPairingMessageKind::Completed => {
                 return Err(RemoteControlPairingMessageParseError::UnexpectedKind {
@@ -98,7 +102,11 @@ impl RemoteControlPairingRequest {
     ) -> Result<usize, RemoteControlPairingMessageWriteError> {
         let encoded_len = self.encoded_len();
         let mut writer = PairingWireWriter::new(out, encoded_len)?;
-        write_header(&mut writer, self.kind())?;
+        let protocol_version = match self {
+            Self::Begin(begin) => begin.protocol_version,
+            Self::Commit(commit) => commit.protocol_version,
+        };
+        write_header(&mut writer, protocol_version, self.kind())?;
         match self {
             Self::Begin(begin) => {
                 writer.write(&begin.controller.public_keys().public_key_bytes())?;
@@ -154,7 +162,7 @@ impl RemoteControlPairingResponse {
             });
         }
         let mut reader = PairingWireReader::new(bytes);
-        let kind = read_header(&mut reader)?;
+        let (protocol_version, kind) = read_header(&mut reader)?;
         let response = match kind {
             RemoteControlPairingMessageKind::Offer => {
                 let target = RemoteControlTargetIdentity::new(read_identity_public_keys(
@@ -162,10 +170,11 @@ impl RemoteControlPairingResponse {
                     RemoteControlPairingIdentityRole::Target,
                     &mut validate_signing_public_key,
                 )?);
-                let permissions = read_permissions(&mut reader)?;
+                let permissions = read_permissions(&mut reader, protocol_version)?;
                 let attempt_timeout = read_attempt_timeout(&mut reader)?;
                 let signature = Ed25519Signature(*reader.take()?);
                 Self::Offer(RemoteControlPairingOffer {
+                    protocol_version,
                     target,
                     permissions,
                     attempt_timeout,
@@ -176,6 +185,7 @@ impl RemoteControlPairingResponse {
                 let transcript = RemoteControlPairingTranscriptDigest(*reader.take()?);
                 let signature = Ed25519Signature(*reader.take()?);
                 Self::Completed(RemoteControlPairingCompleted {
+                    protocol_version,
                     transcript,
                     signature,
                 })
@@ -197,11 +207,15 @@ impl RemoteControlPairingResponse {
     ) -> Result<usize, RemoteControlPairingMessageWriteError> {
         let encoded_len = self.encoded_len();
         let mut writer = PairingWireWriter::new(out, encoded_len)?;
-        write_header(&mut writer, self.kind())?;
+        let protocol_version = match self {
+            Self::Offer(offer) => offer.protocol_version,
+            Self::Completed(completed) => completed.protocol_version,
+        };
+        write_header(&mut writer, protocol_version, self.kind())?;
         match self {
             Self::Offer(offer) => {
                 writer.write(&offer.target.public_keys().public_key_bytes())?;
-                write_permissions(&mut writer, &offer.permissions)?;
+                write_permissions(&mut writer, offer.protocol_version, &offer.permissions)?;
                 writer.write(&offer.attempt_timeout.to_wire())?;
                 writer.write(&offer.signature.0)?;
             }
@@ -237,6 +251,18 @@ pub enum RemoteControlPairingMessageParseError {
     UnknownRequestKind {
         found: u8,
     },
+    UnknownAuthority {
+        found: u8,
+    },
+    TooManyPermissionsForVersion {
+        version: RemoteControlPairingProtocolVersion,
+        actual: usize,
+        maximum: usize,
+    },
+    RequestUnsupportedForVersion {
+        version: RemoteControlPairingProtocolVersion,
+        request: RemoteControlRequestKind,
+    },
     NonCanonicalPermissions,
     InvalidPermissions(RemoteControlPairingPermissionsError),
     InvalidAttemptTimeout(RemoteControlPairingAttemptTimeoutError),
@@ -252,21 +278,29 @@ pub enum RemoteControlPairingMessageWriteError {
 
 fn read_header(
     reader: &mut PairingWireReader<'_>,
-) -> Result<RemoteControlPairingMessageKind, RemoteControlPairingMessageParseError> {
+) -> Result<
+    (
+        RemoteControlPairingProtocolVersion,
+        RemoteControlPairingMessageKind,
+    ),
+    RemoteControlPairingMessageParseError,
+> {
     let &[version] = reader.take()?;
-    if RemoteControlPairingProtocolVersion::from_wire(version).is_none() {
+    let Some(version) = RemoteControlPairingProtocolVersion::from_wire(version) else {
         return Err(RemoteControlPairingMessageParseError::UnsupportedVersion { found: version });
-    }
+    };
     let &[kind] = reader.take()?;
-    RemoteControlPairingMessageKind::from_wire(kind)
-        .ok_or(RemoteControlPairingMessageParseError::UnknownKind { found: kind })
+    let kind = RemoteControlPairingMessageKind::from_wire(kind)
+        .ok_or(RemoteControlPairingMessageParseError::UnknownKind { found: kind })?;
+    Ok((version, kind))
 }
 
 fn write_header(
     writer: &mut PairingWireWriter<'_>,
+    protocol_version: RemoteControlPairingProtocolVersion,
     kind: RemoteControlPairingMessageKind,
 ) -> Result<(), RemoteControlPairingMessageWriteError> {
-    writer.write(&[RemoteControlPairingProtocolVersion::V2.wire_value()])?;
+    writer.write(&[protocol_version.wire_value()])?;
     writer.write(&[kind.wire_value()])
 }
 
@@ -287,8 +321,31 @@ where
 
 fn read_permissions(
     reader: &mut PairingWireReader<'_>,
+    protocol_version: RemoteControlPairingProtocolVersion,
 ) -> Result<RemoteControlPairingPermissions, RemoteControlPairingMessageParseError> {
+    let authority = match protocol_version {
+        RemoteControlPairingProtocolVersion::V2 => RemoteControlControllerAuthority::Operator,
+        RemoteControlPairingProtocolVersion::V3 | RemoteControlPairingProtocolVersion::V4 => {
+            let &[authority] = reader.take()?;
+            RemoteControlControllerAuthority::from_wire(authority).ok_or(
+                RemoteControlPairingMessageParseError::UnknownAuthority { found: authority },
+            )?
+        }
+    };
     let &[count] = reader.take()?;
+    if matches!(
+        protocol_version,
+        RemoteControlPairingProtocolVersion::V2 | RemoteControlPairingProtocolVersion::V3
+    ) && usize::from(count) > super::V2_V3_REQUEST_KIND_CAP
+    {
+        return Err(
+            RemoteControlPairingMessageParseError::TooManyPermissionsForVersion {
+                version: protocol_version,
+                actual: usize::from(count),
+                maximum: super::V2_V3_REQUEST_KIND_CAP,
+            },
+        );
+    }
     let kinds = reader.take_slice(usize::from(count))?;
     let mut requests = RemoteControlRequestSet::empty();
     let mut previous = None;
@@ -298,19 +355,38 @@ fn read_permissions(
                 found: *wire_value,
             });
         };
+        if matches!(
+            protocol_version,
+            RemoteControlPairingProtocolVersion::V2 | RemoteControlPairingProtocolVersion::V3
+        ) && usize::from(kind.wire_value()) > super::V2_V3_REQUEST_KIND_CAP
+        {
+            return Err(
+                RemoteControlPairingMessageParseError::RequestUnsupportedForVersion {
+                    version: protocol_version,
+                    request: kind,
+                },
+            );
+        }
         if previous.is_some_and(|value| value >= *wire_value) || !requests.insert(kind) {
             return Err(RemoteControlPairingMessageParseError::NonCanonicalPermissions);
         }
         previous = Some(*wire_value);
     }
-    RemoteControlPairingPermissions::try_from(requests)
+    RemoteControlPairingPermissions::new(authority, requests)
         .map_err(RemoteControlPairingMessageParseError::InvalidPermissions)
 }
 
 fn write_permissions(
     writer: &mut PairingWireWriter<'_>,
+    protocol_version: RemoteControlPairingProtocolVersion,
     permissions: &RemoteControlPairingPermissions,
 ) -> Result<(), RemoteControlPairingMessageWriteError> {
+    if matches!(
+        protocol_version,
+        RemoteControlPairingProtocolVersion::V3 | RemoteControlPairingProtocolVersion::V4
+    ) {
+        writer.write(&[permissions.authority().wire_value()])?;
+    }
     writer.write(&[permission_count(permissions)])?;
     for kind in permissions.permitted_requests().iter() {
         writer.write(&[kind.wire_value()])?;

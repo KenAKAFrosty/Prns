@@ -1,4 +1,5 @@
 mod descriptor;
+mod discovery_groups;
 mod framing;
 mod identity;
 mod packet;
@@ -17,10 +18,11 @@ pub mod local_network;
 pub mod lora;
 pub mod pipe;
 pub mod rnode;
-#[cfg(feature = "shared-instance-rpc")]
+#[cfg(feature = "rns-management-wire")]
 pub mod rns_management;
 pub mod serial;
 pub mod shared_instance;
+pub mod subghz;
 pub mod tcp;
 pub mod udp;
 pub mod usb_auto;
@@ -35,6 +37,15 @@ pub use descriptor::IndexedAttachedInterfaces;
 pub use descriptor::{
     hardware_mtu_for_bitrate, AttachedInterfaces, BitrateBps, Egress, InterfaceDescriptor,
 };
+pub use discovery_groups::{
+    DiscoveryGroupApplyOutcome, DiscoveryGroupConfigurationEntry,
+    DiscoveryGroupConfigurationSnapshot, DiscoveryGroupConfigurationSnapshotError,
+    DiscoveryGroupHash, DiscoveryGroupHashSet, DiscoveryGroupHashSetError, DiscoveryGroupId,
+    DiscoveryGroupIdError, DiscoveryGroupSet, DiscoveryGroupSetError, DEFAULT_DISCOVERY_GROUP_HASH,
+    DEFAULT_DISCOVERY_GROUP_NAME, DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN,
+    DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_VERSION, MAX_DISCOVERY_GROUPS,
+    MAX_DISCOVERY_GROUP_ID_LEN, MAX_DISCOVERY_GROUP_INTERFACES,
+};
 pub use identity::{InterfaceId, InterfaceKind, InterfaceOriginKind, MacAddress, INTERFACE_ID_LEN};
 pub use packet::{
     frame_cap_for, IfacContext, IfacMaskError, IfacSize, IfacSizeError, IfacUnmaskError,
@@ -47,12 +58,16 @@ pub use policy::{
     ConfiguredInterfacePolicy, EffectiveInterfacePolicy, EgressCapability, FrequencyMilliHertz,
     IngressCapability, IngressControlPolicy, InterfaceCapabilities, InterfaceCapabilitiesError,
     InterfaceCommonPolicy, InterfaceDefaults, InterfaceForwardingPolicy, InterfaceGravity,
-    InterfaceMode, MtuBytes, MtuPolicy, PathRequestEgressControl, RecursivePathRequestPolicy,
-    TransportCapability, LOCAL_INTERFACE_BITRATE_ESTIMATE, TRAVERSED_NETWORK_BITRATE_ESTIMATE,
+    InterfaceGravityDefault, InterfaceMode, MtuBytes, MtuPolicy, PathRequestEgressControl,
+    RecursivePathRequestPolicy, TransportCapability, LOCAL_INTERFACE_BITRATE_ESTIMATE,
+    TRAVERSED_NETWORK_BITRATE_ESTIMATE,
 };
+#[cfg(feature = "tokio-host")]
+pub use status::PeerDetailsNotify;
 pub use status::{
-    AirtimeUtilization, ConnectionState, FrameAccounting, InterfaceSnapshot, InterfaceStatus,
-    InterfaceVitals, Membership, TransferRates,
+    AirtimeUtilization, BluetoothIndication, ConnectionState, FrameAccounting, InterfaceSnapshot,
+    InterfaceStatus, InterfaceVitals, LoRaIndication, Membership, PeerDetails, RadioFamily,
+    RadioIndication, TransferRates, WifiIndication,
 };
 #[cfg(feature = "tokio-host")]
 pub use status::{

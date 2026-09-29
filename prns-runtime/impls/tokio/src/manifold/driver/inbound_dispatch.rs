@@ -1,48 +1,119 @@
-use tokio::sync::mpsc::UnboundedReceiver;
-
 use crate::engine::{
-    ClassifiedInboundPacket, CryptoOwed, EngineReaction, EngineState, IngestIo, InstantMillis,
-    Journaled, OwedWork, ProofRequest, WakeSchedules,
+    ClassifiedInboundPacket, CryptoOwed, Directive, EngineReaction, EngineState, IngestIo,
+    InstantMillis, Journaled, OwedWork, ProofRequest, WakeSchedules,
 };
 use crate::interfaces::{
-    FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, InterfaceIfac,
-    PacketPhyStats,
+    FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, PacketPhyStats,
 };
 use crate::manifold::wake_schedule::merge_wake_schedules_delta;
 use crate::manifold::Host;
-use crate::routing::dedup::PacketHash;
+use crate::routing::links::resources::receive::part_hash::ResourcePartHashPlan;
 use crate::routing::links::resources::ResourceOffer;
 use crate::routing::links::LinkId;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
+#[cfg(feature = "runtime-metrics")]
+use crate::wire::WireContext;
+use crate::wire::WirePacketHeader;
 
 use super::crypto_pool::{run_link_sign_job, CryptoPool, LinkSignCompleted, LinkSignJob};
 use super::egress::{
-    ifac_for, route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
+    forward_from_ingress, ifac_for, route_reaction, route_reaction_with_work, Egress,
+    ForwardedSlotOutcome, InterfaceIfacs, InterfacePacers, WireScratch,
 };
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
 use super::owed_work::PendingOwedWork;
 
+#[derive(Clone, Copy)]
+enum IngressBufferSource {
+    GrantSlot,
+    UnmaskScratch,
+}
+
+#[derive(Clone, Copy)]
+struct IngressPacketSpan {
+    start: usize,
+    len: usize,
+}
+
+impl IngressPacketSpan {
+    fn of(bytes: &[u8]) -> Self {
+        Self {
+            start: bytes.as_ptr() as usize,
+            len: bytes.len(),
+        }
+    }
+
+    fn locate(&self, part: &[u8]) -> Option<std::ops::Range<usize>> {
+        let start = (part.as_ptr() as usize).checked_sub(self.start)?;
+        let end = start.checked_add(part.len())?;
+        (end <= self.len).then_some(start..end)
+    }
+}
+
+struct DeferredResourcePartHash {
+    plan: ResourcePartHashPlan,
+    part: std::ops::Range<usize>,
+}
+
+struct DeferredForward {
+    target: InterfaceId,
+    header: WirePacketHeader,
+    payload: std::ops::Range<usize>,
+}
+
+#[cfg(feature = "runtime-metrics")]
+#[derive(Clone, Copy)]
+enum ResourceControlPacket {
+    Request(LinkId),
+    Reset(LinkId),
+}
+
 // Ingress adds ordering barriers to the common reaction route. Keeping those
 // borrowed queues explicit avoids a second, partially initialized router type.
 #[allow(clippy::too_many_arguments)]
-fn route_ingress_reaction<J>(
+fn route_ingress_reaction_with_owed_work<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     owed_work: &mut PendingOwedWork,
     crypto_pool: Option<&CryptoPool>,
     link_signs: &mut std::vec::Vec<LinkSignJob>,
     link_identity_barriers: &mut std::vec::Vec<(InterfaceId, LinkId)>,
+    packet_span: IngressPacketSpan,
+    deferred_forward: &mut Option<DeferredForward>,
+    deferred_resource_part_hash: &mut Option<DeferredResourcePartHash>,
     source: InterfaceId,
     now: InstantMillis,
 ) where
     J: for<'a> FnMut(Journaled<'a>),
 {
+    let reaction = match reaction {
+        EngineReaction::Directive(Directive::ForwardFrame {
+            target,
+            header,
+            payload,
+        }) if deferred_forward.is_none() => match packet_span.locate(payload) {
+            Some(payload) => {
+                *deferred_forward = Some(DeferredForward {
+                    target,
+                    header,
+                    payload,
+                });
+                return;
+            }
+            None => EngineReaction::Directive(Directive::ForwardFrame {
+                target,
+                header,
+                payload,
+            }),
+        },
+        reaction => reaction,
+    };
     route_reaction_with_work(
         reaction,
         egress,
@@ -72,7 +143,21 @@ fn route_ingress_reaction<J>(
             OwedWork::ResourceBuild(owed) => {
                 owed_work.push(OwedWork::ResourceBuild(owed), crypto_pool);
             }
+            OwedWork::ResourceSeal(owed) => {
+                owed_work.push(OwedWork::ResourceSeal(owed), crypto_pool);
+            }
+            OwedWork::ResourcePartHash(owed) => {
+                let (plan, part) = owed.into_parts();
+                if let Some(part) = packet_span.locate(part) {
+                    *deferred_resource_part_hash = Some(DeferredResourcePartHash { plan, part });
+                } else {
+                    owed_work.push_resource_part_hash_copy(plan, part);
+                }
+            }
             OwedWork::ResourceOpen(owed) => owed_work.push_resource_open(owed, crypto_pool),
+            OwedWork::WholeResourceOpen(owed) => {
+                owed_work.push(OwedWork::WholeResourceOpen(owed), crypto_pool);
+            }
             OwedWork::ResourceDecompression(owed) => {
                 owed_work.push(OwedWork::ResourceDecompression(owed), crypto_pool);
             }
@@ -81,29 +166,26 @@ fn route_ingress_reaction<J>(
 }
 
 pub(super) struct InboundDispatch {
-    ready_lanes: std::vec::Vec<InterfaceId>,
+    ready_lanes: super::indexed_rows::IndexedRows<InterfaceId>,
     unmask_scratch: std::boxed::Box<[u8]>,
     link_signs: std::vec::Vec<LinkSignJob>,
     inline_link_signs: std::vec::Vec<LinkSignJob>,
+    #[cfg(feature = "runtime-metrics")]
+    resource_request_frame_completions: std::vec::Vec<(LinkId, std::time::Instant)>,
     /// LINKIDENTIFY changes the authority attached to a link. Later frames from its ingress lane
     /// cannot overtake that verdict merely because signature verification ran on a worker.
     link_identity_barriers: std::vec::Vec<(InterfaceId, LinkId)>,
 }
 
-// The minimum sixteen-job admission depth exposes at most fifteen link signs while retaining
-// room for the next packet's possible second crypto job. Split that common backlog across the
-// manifold (seven immediate proofs) and the pool (up to eight jobs). Seven remains a fixed latency
-// bound on larger hosts; their additional backlog goes to their larger pool instead of blocking
-// the manifold. Neither side waits for work, and a lone signature stays entirely inline.
-const INLINE_LINK_SIGN_TRANCHE: usize = 7;
-
 impl InboundDispatch {
     pub(super) fn new(frame_capacity: usize) -> Self {
         Self {
-            ready_lanes: std::vec::Vec::new(),
+            ready_lanes: super::indexed_rows::IndexedRows::default(),
             unmask_scratch: std::vec![0u8; frame_capacity].into_boxed_slice(),
             link_signs: std::vec::Vec::new(),
             inline_link_signs: std::vec::Vec::new(),
+            #[cfg(feature = "runtime-metrics")]
+            resource_request_frame_completions: std::vec::Vec::new(),
             link_identity_barriers: std::vec::Vec::new(),
         }
     }
@@ -126,14 +208,14 @@ impl InboundDispatch {
     }
 
     pub(super) fn mark_ready(&mut self, source: InterfaceId) {
-        if !self.ready_lanes.contains(&source) {
-            self.ready_lanes.push(source);
-        }
+        self.ready_lanes.push(source);
     }
 
-    pub(super) fn collect_ready(&mut self, notify: &mut UnboundedReceiver<InterfaceId>) {
-        while let Ok(source) = notify.try_recv() {
-            self.mark_ready(source);
+    pub(super) fn discover_ready(&mut self, topology: &mut InterfaceTopology) {
+        for lane in topology.inbound_lanes.iter_mut() {
+            if lane.consumer.try_peek().is_some() {
+                self.ready_lanes.push(lane.id);
+            }
         }
     }
 
@@ -143,7 +225,10 @@ impl InboundDispatch {
         }
     }
 
-    pub(super) fn process<S, H, J, P, A>(&mut self, context: InboundContext<'_, S, H, J, P, A>)
+    pub(super) fn process<S, H, J, P, A>(
+        &mut self,
+        context: InboundContext<'_, S, H, J, P, A>,
+    ) -> usize
     where
         S: StorageLayout,
         H: Host,
@@ -163,7 +248,10 @@ impl InboundDispatch {
             should_prove,
             should_accept_resource,
             max_frames_per_lane,
+            max_frames_total,
             owed_work,
+            #[cfg(feature = "runtime-metrics")]
+            manifold_metrics,
             now,
         } = context;
         let Self {
@@ -171,9 +259,15 @@ impl InboundDispatch {
             unmask_scratch,
             link_signs,
             inline_link_signs,
+            #[cfg(feature = "runtime-metrics")]
+            resource_request_frame_completions,
             link_identity_barriers,
         } = self;
-        for &source in ready_lanes.iter() {
+        let mut processed_frames = 0;
+        'lanes: for &source in ready_lanes.iter() {
+            if processed_frames == max_frames_total {
+                break;
+            }
             if !link_identity_barriers.is_empty()
                 && link_identity_barriers
                     .iter()
@@ -184,19 +278,18 @@ impl InboundDispatch {
             debug_assert!(link_signs.is_empty());
             debug_assert!(inline_link_signs.is_empty());
             let frame_accounting = topology.frame_accounting_recorder(source);
-            let Some((_, lane)) = topology
-                .inbound_lanes
-                .iter_mut()
-                .find(|(id, _)| *id == source)
-            else {
+            let Some(inbound) = topology.inbound_lanes.get_mut(&source) else {
                 continue;
             };
-            lane.acknowledge();
+            let lane = &mut inbound.consumer;
             for _ in 0..max_frames_per_lane {
+                if processed_frames == max_frames_total {
+                    break;
+                }
                 if crypto_pool.is_some_and(|pool| {
                     !pool.has_queue_capacity(
                         owed_work
-                            .len()
+                            .pool_jobs_len()
                             .saturating_add(link_signs.len())
                             .saturating_add(2),
                     )
@@ -207,18 +300,22 @@ impl InboundDispatch {
                     break;
                 };
                 let packet_phy = slot.packet_phy;
-                let bytes = match ifac_for(&topology.ifacs, source) {
+                let (bytes, buffer_source) = match ifac_for(&topology.ifacs, source) {
                     Some(entry) => {
                         match entry
                             .context
                             .try_unmask_inbound(slot.frame(), unmask_scratch)
                         {
-                            Ok(clean_len) => &mut unmask_scratch[..clean_len],
+                            Ok(clean_len) => (
+                                &mut unmask_scratch[..clean_len],
+                                IngressBufferSource::UnmaskScratch,
+                            ),
                             Err(IfacUnmaskError::PacketTooShort) => {
                                 if let Some(recorder) = &frame_accounting {
                                     recorder.record(FrameAccountingEvent::ProtocolViolation);
                                 }
                                 lane.release();
+                                processed_frames += 1;
                                 continue;
                             }
                             Err(
@@ -227,21 +324,46 @@ impl InboundDispatch {
                                 | IfacUnmaskError::OutputTooSmall { .. },
                             ) => {
                                 lane.release();
+                                processed_frames += 1;
                                 continue;
                             }
                         }
                     }
-                    None => slot.frame_mut(),
+                    None => (slot.frame_mut(), IngressBufferSource::GrantSlot),
                 };
-                let packet = ClassifiedInboundPacket::classify(InboundPacket {
+                let packet_span = IngressPacketSpan::of(bytes);
+                #[cfg(feature = "runtime-metrics")]
+                let resource_control =
+                    WirePacketHeader::parse(bytes).ok().and_then(|(header, _)| {
+                        let link_id = LinkId::from_address(header.address);
+                        match header.context {
+                            WireContext::ResourceRequest => {
+                                Some(ResourceControlPacket::Request(link_id))
+                            }
+                            WireContext::ResourceProof
+                            | WireContext::ResourceInitiatorCancel
+                            | WireContext::ResourceReceiverCancel
+                            | WireContext::LinkClose => Some(ResourceControlPacket::Reset(link_id)),
+                            _ => None,
+                        }
+                    });
+                #[cfg(feature = "runtime-metrics")]
+                let resource_request_started_at = match resource_control {
+                    Some(ResourceControlPacket::Request(_)) => Some(std::time::Instant::now()),
+                    Some(ResourceControlPacket::Reset(_)) | None => None,
+                };
+                #[cfg(feature = "runtime-metrics")]
+                let mut resource_first_frame_elapsed = None;
+                #[cfg(feature = "runtime-metrics")]
+                let mut resource_last_frame_enqueued_at = None;
+                let mut packet = ClassifiedInboundPacket::classify(InboundPacket {
                     arrived_at: now,
                     source_interface: source,
                     bytes,
                 });
-                let packet_hash = packet.packet_hash();
-                if let Some(packet_hash) = packet_hash {
-                    retain_packet_phy(packet_phy_store, packet_hash, packet_phy);
-                }
+                retain_packet_phy(packet_phy_store, &mut packet, packet_phy);
+                let mut deferred_forward = None;
+                let mut deferred_resource_part_hash = None;
                 let ingest_report = engine.ingest_classified_into_report(
                     packet,
                     IngestIo {
@@ -251,7 +373,16 @@ impl InboundDispatch {
                         should_prove,
                         should_accept_resource,
                         sink: &mut |reaction| {
-                            route_ingress_reaction(
+                            #[cfg(feature = "runtime-metrics")]
+                            let resource_frame = resource_request_started_at.is_some()
+                                && matches!(
+                                    &reaction,
+                                    EngineReaction::Directive(
+                                        Directive::EmitFrame { .. }
+                                            | Directive::ForwardFrame { .. }
+                                    )
+                                );
+                            route_ingress_reaction_with_owed_work(
                                 reaction,
                                 &mut topology.egress,
                                 &topology.ifacs,
@@ -262,12 +393,59 @@ impl InboundDispatch {
                                 crypto_pool,
                                 link_signs,
                                 link_identity_barriers,
+                                packet_span,
+                                &mut deferred_forward,
+                                &mut deferred_resource_part_hash,
                                 source,
                                 now,
                             );
+                            #[cfg(feature = "runtime-metrics")]
+                            if resource_frame {
+                                let enqueued_at = std::time::Instant::now();
+                                if resource_first_frame_elapsed.is_none() {
+                                    resource_first_frame_elapsed = resource_request_started_at
+                                        .map(|started_at| enqueued_at.duration_since(started_at));
+                                }
+                                resource_last_frame_enqueued_at = Some(enqueued_at);
+                            }
                         },
                     },
                 );
+                #[cfg(feature = "runtime-metrics")]
+                if let Some(elapsed) = resource_first_frame_elapsed {
+                    manifold_metrics.record_resource_request_to_first_frame(elapsed);
+                }
+                #[cfg(feature = "runtime-metrics")]
+                match (resource_control, resource_last_frame_enqueued_at) {
+                    (
+                        Some(ResourceControlPacket::Request(link_id)),
+                        Some(last_frame_enqueued_at),
+                    ) => {
+                        if let Some(index) = resource_request_frame_completions
+                            .iter()
+                            .position(|(completed_link, _)| *completed_link == link_id)
+                        {
+                            let (_, previous_completion) =
+                                resource_request_frame_completions[index];
+                            if let Some(started_at) = resource_request_started_at {
+                                if let Some(elapsed) =
+                                    started_at.checked_duration_since(previous_completion)
+                                {
+                                    manifold_metrics.record_resource_request_round_gap(elapsed);
+                                }
+                            }
+                            resource_request_frame_completions[index].1 = last_frame_enqueued_at;
+                        } else {
+                            resource_request_frame_completions
+                                .push((link_id, last_frame_enqueued_at));
+                        }
+                    }
+                    (Some(ResourceControlPacket::Reset(link_id)), _) => {
+                        resource_request_frame_completions
+                            .retain(|(completed_link, _)| *completed_link != link_id);
+                    }
+                    (Some(ResourceControlPacket::Request(_)), None) | (None, _) => {}
+                }
                 if let (Some(recorder), Some(violation)) =
                     (&frame_accounting, ingest_report.protocol_violation)
                 {
@@ -277,7 +455,79 @@ impl InboundDispatch {
                         FrameAccountingEvent::ProtocolViolation
                     });
                 }
-                lane.release();
+                debug_assert!(deferred_forward.is_none() || deferred_resource_part_hash.is_none());
+                match (buffer_source, deferred_forward, deferred_resource_part_hash) {
+                    (IngressBufferSource::GrantSlot, Some(forward), _) => {
+                        if let Some(slot) = lane.take_peeked() {
+                            let outcome = if ifac_for(&topology.ifacs, forward.target).is_none() {
+                                topology.egress.try_move_forwarded_slot(
+                                    forward.target,
+                                    forward.header,
+                                    forward.payload.clone(),
+                                    slot,
+                                )
+                            } else {
+                                ForwardedSlotOutcome::CopyRequired { source: slot }
+                            };
+                            match outcome {
+                                ForwardedSlotOutcome::Moved { vacated } => {
+                                    lane.return_slot(vacated);
+                                }
+                                ForwardedSlotOutcome::CopyRequired { source: slot } => {
+                                    if let Some(payload) = slot.frame().get(forward.payload) {
+                                        forward_from_ingress(
+                                            &mut topology.egress,
+                                            &topology.ifacs,
+                                            forward.target,
+                                            forward.header,
+                                            payload,
+                                            wire_scratch,
+                                        );
+                                    }
+                                    lane.return_slot(slot);
+                                }
+                            }
+                        }
+                    }
+                    (IngressBufferSource::UnmaskScratch, Some(forward), _) => {
+                        if let Some(payload) = unmask_scratch.get(forward.payload) {
+                            forward_from_ingress(
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                forward.target,
+                                forward.header,
+                                payload,
+                                wire_scratch,
+                            );
+                        }
+                        lane.release();
+                    }
+                    (
+                        IngressBufferSource::GrantSlot,
+                        None,
+                        Some(DeferredResourcePartHash { plan, part }),
+                    ) => {
+                        if let Some(frame) = lane.take_peeked() {
+                            owed_work.push_resource_part_hash_grant_slot(plan, source, frame, part);
+                        }
+                    }
+                    (
+                        IngressBufferSource::UnmaskScratch,
+                        None,
+                        Some(DeferredResourcePartHash { plan, part }),
+                    ) => {
+                        owed_work.push_resource_part_hash_copy(plan, &unmask_scratch[part]);
+                        lane.release();
+                    }
+                    (
+                        IngressBufferSource::GrantSlot | IngressBufferSource::UnmaskScratch,
+                        None,
+                        None,
+                    ) => {
+                        lane.release();
+                    }
+                }
+                processed_frames += 1;
                 merge_wake_schedules_delta(
                     wake_schedules,
                     ingest_report.wake_schedules,
@@ -293,11 +543,7 @@ impl InboundDispatch {
                 }
             }
             {
-                let inline_signs = if crypto_pool.is_some() {
-                    INLINE_LINK_SIGN_TRANCHE
-                } else {
-                    usize::MAX
-                };
+                let inline_signs = crypto_pool.map_or(usize::MAX, |_| 0);
                 for _ in 0..inline_signs {
                     let Some(sign) = link_signs.pop() else {
                         break;
@@ -358,14 +604,20 @@ impl InboundDispatch {
                     }
                 }
             }
+            if processed_frames == max_frames_total {
+                break 'lanes;
+            }
         }
         ready_lanes.retain(|source| {
             topology
                 .inbound_lanes
-                .iter_mut()
-                .find(|(id, _)| id == source)
-                .is_some_and(|(_, lane)| lane.try_peek().is_some())
+                .get_mut(source)
+                .is_some_and(|lane| lane.consumer.try_peek().is_some())
         });
+        if ready_lanes.len() > 1 {
+            ready_lanes.rotate_left(1);
+        }
+        processed_frames
     }
 }
 
@@ -388,19 +640,25 @@ where
     pub(super) should_prove: &'a mut P,
     pub(super) should_accept_resource: &'a mut A,
     pub(super) max_frames_per_lane: usize,
+    pub(super) max_frames_total: usize,
     pub(super) owed_work: &'a mut PendingOwedWork,
+    #[cfg(feature = "runtime-metrics")]
+    pub(super) manifold_metrics: &'a mut super::scheduling_metrics::ManifoldMetrics,
     pub(super) now: InstantMillis,
 }
 
 fn retain_packet_phy(
     store: Option<&InterfaceStore>,
-    packet_hash: PacketHash,
+    packet: &mut ClassifiedInboundPacket<'_>,
     packet_phy: PacketPhyStats,
 ) {
     if packet_phy.is_empty() {
         return;
     }
     let Some(store) = store else {
+        return;
+    };
+    let Some(packet_hash) = packet.resolve_packet_hash() else {
         return;
     };
     store.remember_packet_phy(packet_hash, packet_phy);
@@ -411,6 +669,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::{bytes_from_hex, RNS_1_4_2_ANNOUNCE};
     use crate::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
+    use crate::routing::dedup::PacketHash;
 
     #[test]
     fn link_identity_verdict_blocks_only_its_ingress_lane_until_completion() {
@@ -439,19 +698,20 @@ mod tests {
         let store = InterfaceStore::new();
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let expected = PacketHash::of_wire_packet(&raw).expect("the fixture is a wire packet");
-        let packet = ClassifiedInboundPacket::classify(InboundPacket {
+        let mut packet = ClassifiedInboundPacket::classify(InboundPacket {
             arrived_at: crate::engine::InstantMillis(7),
             source_interface: InterfaceId::new([0xC7; 8]),
             bytes: &mut raw,
         });
-        let packet_hash = packet.packet_hash().expect("the packet was classified");
         let packet_phy = PacketPhyStats {
             rssi: Some(RssiDbm::new(-103)),
             snr: Some(SnrQuarterDb::new(-11)),
             quality: SignalQualityTenthsPercent::new(731),
         };
 
-        retain_packet_phy(Some(&store), packet_hash, packet_phy);
+        retain_packet_phy(Some(&store), &mut packet, packet_phy);
+
+        let packet_hash = packet.packet_hash().expect("the packet was classified");
 
         assert_eq!(packet_hash, expected);
         assert_eq!(store.packet_phy(packet_hash), Some(packet_phy));

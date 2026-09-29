@@ -16,6 +16,26 @@ use super::super::PrnsEvent;
 pub enum ServeMyRequestEndpoints {
     No,
     Yes,
+    /// Register only the named members of the node's [`RequestEndpointSet`](crate::runtime::request_endpoints::RequestEndpointSet).
+    Selected(&'static [&'static str]),
+}
+
+impl ServeMyRequestEndpoints {
+    pub(crate) fn includes(self, path: &str) -> bool {
+        match self {
+            Self::No => false,
+            Self::Yes => true,
+            Self::Selected(selected) => selected.contains(&path),
+        }
+    }
+
+    pub(crate) const fn serves_any(self) -> bool {
+        match self {
+            Self::No => false,
+            Self::Yes => true,
+            Self::Selected(selected) => !selected.is_empty(),
+        }
+    }
 }
 
 pub enum PreConfiguredDestination<'a> {

@@ -313,3 +313,18 @@ pub fn filled_frame(fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>) -> Option<
     scratch.truncate(len);
     Some(scratch)
 }
+
+pub fn forwarded_frame(
+    header: crate::wire::WirePacketHeader,
+    payload: &[u8],
+) -> Option<std::vec::Vec<u8>> {
+    let mut scratch =
+        std::vec![0u8; crate::routing::links::MAX_LINK_MTU + crate::interfaces::IFAC_MAX_SIZE];
+    let header_len = header.write(&mut scratch).ok()?;
+    let frame_len = header_len.checked_add(payload.len())?;
+    scratch
+        .get_mut(header_len..frame_len)?
+        .copy_from_slice(payload);
+    scratch.truncate(frame_len);
+    Some(scratch)
+}

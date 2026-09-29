@@ -110,7 +110,7 @@ impl<S: StorageLayout> EngineState<S> {
                             wake_schedule_changes.resource_deadlines =
                                 self.resource_deadlines_wake();
                         }
-                        let settlement = self.culled_settlement(culled.kind);
+                        let settlement = self.culled_settlement(culled);
                         settle(sink, culled.command_id, settlement);
                         wake_schedule_changes.remote_control_pairing =
                             self.remote_control_pairing_wake();
@@ -535,7 +535,7 @@ impl<S: StorageLayout> EngineState<S> {
                                 wake_schedule_changes.resource_deadlines =
                                     self.resource_deadlines_wake();
                             }
-                            let settlement = self.culled_settlement(culled.kind);
+                            let settlement = self.culled_settlement(culled);
                             settle(sink, culled.command_id, settlement);
                             wake_schedule_changes.remote_control_pairing =
                                 self.remote_control_pairing_wake();
@@ -699,15 +699,26 @@ impl<S: StorageLayout> EngineState<S> {
                     fill_random,
                     sink,
                 );
-                if let Ok(RemoteControlTargetPairingFinalization::CompletionDispatched {
-                    attempt_id,
-                }) = &result
-                {
-                    sink(EngineReaction::Journaled(
+                match &result {
+                    Ok(RemoteControlTargetPairingFinalization::CompletionDispatched {
+                        attempt_id,
+                    }) => sink(EngineReaction::Journaled(
                         Journaled::RemoteControlTargetPairingAuthorizationPersisted {
                             attempt_id: *attempt_id,
                         },
-                    ));
+                    )),
+                    Ok(RemoteControlTargetPairingFinalization::AuthorizationRollbackRequired {
+                        attempt_id,
+                        ..
+                    }) => sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlTargetPairingExpiredDuringAuthorization {
+                            attempt_id: *attempt_id,
+                        },
+                    )),
+                    Ok(RemoteControlTargetPairingFinalization::AuthorizationFailureRecorded {
+                        ..
+                    })
+                    | Err(_) => {}
                 }
                 settle(
                     sink,
@@ -777,16 +788,26 @@ impl<S: StorageLayout> EngineState<S> {
                     fill_random,
                     sink,
                 );
-                if let Ok(RemoteControlControllerPairingFinalization::Completed {
-                    attempt_id,
-                    ..
-                }) = &result
-                {
-                    sink(EngineReaction::Journaled(
+                match &result {
+                    Ok(RemoteControlControllerPairingFinalization::Completed {
+                        attempt_id,
+                        ..
+                    }) => sink(EngineReaction::Journaled(
                         Journaled::RemoteControlControllerPairingAuthorizationPersisted {
                             attempt_id: *attempt_id,
                         },
-                    ));
+                    )),
+                    Ok(
+                        RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
+                            attempt_id,
+                            ..
+                        },
+                    ) => sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+                            attempt_id: *attempt_id,
+                        },
+                    )),
+                    Err(_) => {}
                 }
                 settle(
                     sink,
@@ -906,7 +927,7 @@ impl<S: StorageLayout> EngineState<S> {
                                     wake_schedule_changes.resource_deadlines =
                                         self.resource_deadlines_wake();
                                 }
-                                let settlement = self.culled_settlement(culled.kind);
+                                let settlement = self.culled_settlement(culled);
                                 settle(sink, culled.command_id, settlement);
                                 wake_schedule_changes.remote_control_pairing =
                                     self.remote_control_pairing_wake();
@@ -1171,8 +1192,11 @@ impl<S: StorageLayout> EngineState<S> {
                     Err(_) => Settlement::CloseLink(Err(CloseLinkFailure::WriteFailed)),
                 };
                 settle(sink, id, settlement);
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
             }
             CommandOutcome::CloseLinkRejected { id, rejection } => {
                 settle(
@@ -1238,7 +1262,7 @@ impl<S: StorageLayout> EngineState<S> {
                 );
                 if let Some(culled) = dispatch.culled {
                     culled_request = matches!(culled.kind, ReceiptKind::SendRequest { .. });
-                    let settlement = self.culled_settlement(culled.kind);
+                    let settlement = self.culled_settlement(culled);
                     settle(sink, culled.command_id, settlement);
                 }
             }

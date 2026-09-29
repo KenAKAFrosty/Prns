@@ -43,6 +43,7 @@ cfg_if::cfg_if! {
             InterfaceAnnounceMetricsSnapshot, InterfaceKindCounts, PathRequestIngressCounts,
             PathRequestIngressOutcome, PathRequestRelayCounts, PathRequestRelayOutcome,
             ResourceAdmissionEvent, ResourceAdmissionEventCounts, ResourceDirectionMetricsSnapshot,
+            ResourceRoundIntervalMetricsSnapshot, ResourceRoundMetricsSnapshot,
         };
     }
 }
@@ -69,16 +70,26 @@ pub use crate::wire::WireError as EgressSerializeError;
 pub use command_execution::CommandTiming;
 pub use commands::*;
 pub use destination_retirement::RetireDestinationOutcome;
-pub use introspection::{ActiveLinkSnapshot, AnnounceRateState, RouteSnapshot};
+pub use introspection::{
+    ActiveLinkSnapshot, AnnounceRateState, BoundedRouteSnapshots, RouteSnapshot,
+};
 pub use node_egress::ReemitAnnounce;
 #[cfg(test)]
 pub(crate) use node_ingress::drive_packet_to_quiescence;
-pub use node_ingress::{IngestIo, IngestPacketReport};
+pub use node_ingress::{IngestIo, IngestPacketReport, RequestIngressDiagnostic};
+#[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+pub use reaction::ResourceOpenWorkspace;
 pub use reaction::{
     CryptoOwed, Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, NoOwedWork,
     OpenedResourceSpan, OwedWork, PersistenceFlushCause, PersistenceFlushTarget,
     ResourceDecompressionCompleted, ResourceDecompressionOwed, ResourceOpenCompleted,
-    ResourceOpenOwed,
+    ResourceOpenOwed, ResourceOpenSpanResidence,
+};
+#[cfg(feature = "resource-work-offload")]
+pub use reaction::{
+    StreamedResourceOpenReservation, WholeResourceOpenCompleted, WholeResourceOpenLanding,
+    WholeResourceOpenOutcome, WholeResourceOpenOwed, WholeResourceOpenPlan,
+    WholeResourceOpenReservation,
 };
 pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,
@@ -94,7 +105,8 @@ pub use remote_control::{
     RemoteControlControllerPairingResponseEffect, RemoteControlServiceConfiguration,
 };
 pub use remote_control_pairing::{
-    ConfigureRemoteControlPairingError, RemoteControlPairingResponseDispatchFailure,
+    ConfigureRemoteControlPairingError, RemoteControlPairingDispatchDiagnostic,
+    RemoteControlPairingRequestDiagnostic, RemoteControlPairingResponseDispatchFailure,
 };
 pub(crate) use settlement::settle;
 pub use state::{
@@ -125,9 +137,9 @@ pub use crate::routing::delivery::send_single::{
 };
 pub use crate::routing::ingress::{
     AcceptedAnnounce, AnnounceIngest, AnnounceVerification, AnnounceVerifyOwed,
-    ClassifiedInboundPacket, DataPacket, DecryptOwed, IgnoreReason, IngestPacketOutcome, Ingress,
-    InvalidAnnounce, LinkRttOwed, PacketToForward, ProtocolViolationKind, RatchetDecryptOwed,
-    RebroadcastDecision, VerifiedAnnounce,
+    ClassifiedInboundPacket, DataPacket, DataPacketHash, DecryptOwed, IgnoreReason,
+    IngestPacketOutcome, Ingress, InvalidAnnounce, LinkRttOwed, PacketToForward,
+    ProtocolViolationKind, RatchetDecryptOwed, RebroadcastDecision, VerifiedAnnounce,
 };
 pub use crate::routing::links::channel::send::{ChannelAckVerification, ChannelAckVerifyOwed};
 pub use crate::routing::links::data::{

@@ -8,16 +8,21 @@ extern crate std;
 
 mod destinations;
 mod flash_identity;
-mod flash_layout;
 mod identity;
 #[cfg(feature = "display")]
 mod mobile;
 pub mod node_pages;
 mod persistence;
-mod radio_profile_store;
+mod power_publish;
+mod remote_control;
+#[cfg(feature = "embedded")]
+mod remote_control_executor;
+mod remote_control_inventory;
 #[cfg(feature = "display")]
 mod screen;
 mod soft_ap;
+mod subg_configuration_store;
+mod wifi_configuration_store;
 
 pub use destinations::{
     hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
@@ -26,23 +31,6 @@ pub use destinations::{
 pub use flash_identity::{
     bootstrap_flash_ble_identity_with_runtime_entropy,
     bootstrap_flash_node_identity_with_runtime_entropy, FlashIdentityError,
-};
-pub use flash_layout::{
-    FirmwareAddressRange, HopspotS3FlashLayout, Nrf52840FirmwareMemory, ESP32_4_MIB_FLASH_CAPACITY,
-    ESP32_4_MIB_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET, HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY,
-    HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT, HELTEC_DISPLAY_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
-    HOPSPOT_FLASH_PAGE_BYTES, MESH_TOWER_V2_BLE_IDENTITY_FLASH_OFFSET,
-    MESH_TOWER_V2_FIRMWARE_MEMORY, MESH_TOWER_V2_JOURNAL_LAYOUT,
-    MESH_TOWER_V2_RADIO_PROFILE_FLASH_OFFSET, MESH_TOWER_V2_RECOVERY_BOOTLOADER_FLASH_OFFSET,
-    MESH_TOWER_V2_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET, NRF52840_BLE_IDENTITY_FLASH_OFFSET,
-    NRF52840_MIN_ARENA_BYTES, NRF52840_NODE_IDENTITY_FLASH_OFFSET, NRF52840_RADIO_PROFILE_PAGES,
-    S3_16_MIB_FLASH_LAYOUT, S3_8_MIB_FLASH_LAYOUT, T096_APPLICATION_DATA_END,
-    T096_FACTORY_RESERVED_FLASH_OFFSET, T096_RECOVERY_BOOTLOADER_FLASH_OFFSET,
-    T1000E_FIRMWARE_MEMORY, T1000E_JOURNAL_LAYOUT, T1000E_NODE_IDENTITY_FLASH_OFFSET,
-    T1000E_RECOVERY_BOOTLOADER_FLASH_OFFSET, T1000E_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
-    T114_RECOVERY_BOOTLOADER_FLASH_OFFSET, T_ECHO_BLE_IDENTITY_FLASH_OFFSET, T_ECHO_JOURNAL_LAYOUT,
-    T_ECHO_MIN_ARENA_BYTES, T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET, T_ECHO_RESERVED_FLASH_END,
-    T_ECHO_S140_V6_FIRMWARE_MEMORY, T_ECHO_S140_V7_FIRMWARE_MEMORY,
 };
 #[cfg(feature = "host")]
 pub use identity::{
@@ -55,11 +43,15 @@ pub use identity::{
 };
 #[cfg(feature = "display")]
 pub use mobile::{
-    expand_face_rgba, InvalidMobileInputCode, MobileActionCode, MobileEngineFailure,
-    MobileEngineState, MobileInputCode, MOBILE_DARK_RGBA, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT,
-    MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
+    encode_mobile_discovery_groups, expand_face_rgba, parse_mobile_discovery_groups,
+    InvalidMobileDiscoveryInterface, InvalidMobileInputCode, MobileActionCode,
+    MobileDiscoveryGroupOutcome, MobileDiscoveryGroupsCodecError, MobileDiscoveryInterface,
+    MobileEngineFailure, MobileEngineState, MobileInputCode, MOBILE_DARK_RGBA,
+    MOBILE_DISCOVERY_GROUPS_WIRE_MAX_LEN, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT, MOBILE_PANEL_WIDTH,
+    MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
 pub use persistence::PersistenceState;
+pub use power_publish::{latest_power_snapshot, publish_power_snapshot};
 pub use prns_core::capabilities::positioning::gnss::{
     GnssFix, GnssReceiverCommand, GnssSnapshot, NmeaParser,
 };
@@ -70,21 +62,50 @@ pub use prns_core::capabilities::power::{
     BatteryGauge, BatteryPercent, BatterySource, ChargingState, ExternalPowerState, NoBattery,
     PowerSnapshot,
 };
-pub use radio_profile_store::{
-    LoadedRadioProfile, RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError,
+pub use remote_control::{
+    full_remote_control_pairing_permissions, RemoteControlEventHandoff,
+    RemoteControlPairingAvailability, RemoteControlTargetPairingFailure,
+    RemoteControlTargetPairingPhase, RemoteControlTargetPairingState,
+    RemoteControlTargetPairingUpdate, StableTargetAnnouncementAction,
+    StableTargetAnnouncementStatus, StableTargetAnnouncer, STABLE_TARGET_ANNOUNCE_OFFSETS_MILLIS,
+};
+#[cfg(feature = "embedded")]
+pub use remote_control_executor::{
+    persist_discovery_group_replacement, rollback_discovery_group_replacement,
+    run_hopspot_command_executor, HopspotCommandExecutor, HopspotCommandHandle,
+    HopspotCommandMailbox, HopspotCommandToken, HopspotWifiCredentialCommand,
+    HopspotWifiCredentialMailbox, HopspotWifiCredentialUpdate, PendingHopspotCommand,
+    PreparedDiscoveryGroupReplacement,
+};
+pub use remote_control_inventory::{
+    bluetooth_auto_interface_name, decorate_hopspot_remote_control_card,
+    hopspot_remote_control_build_version, remote_control_interface_config_from_snapshots,
+    remote_control_interface_peers_from_snapshots, remote_control_inventory_from_snapshots,
+    singleton_discovery_group,
 };
 #[cfg(feature = "display")]
 pub use screen::{
-    apply_and_persist_radio_profile, card_label, card_label_max_chars, tcp_card_label,
-    AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind, CardLabel,
-    GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
-    PersistenceNotice, PresentedNoticeTimer, RadioProfileChangeResult, ScreenContent,
-    SharedInstanceConfigExport, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
-    WifiNetworkStatus, WifiStationStatus,
+    apply_and_persist_subg_configuration, card_label, card_label_max_chars, subg_card,
+    tcp_card_label, AccessPointState, ActiveSubGConfiguration, BluetoothRecoveryMenuDetails, Card,
+    CardActivityTracker, CardKind, CardLabel, DiscoveryGroupEditorAvailability,
+    DiscoveryGroupReplacement, GnssAvailability, InputEvent, InterfaceMenuDetails,
+    LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice, PresentedNoticeTimer,
+    ScreenContent, SharedInstanceConfigExport, SubGCardState, SubGConfigurationChangeResult,
+    SubGConfigurationPersistenceOutcome, SubGConfigurationStepOutcome, UiAction, UiConfiguration,
+    UiNotice, UiState, UserBlanking, WifiNetworkStatus, WifiStationStatus,
 };
 #[cfg(feature = "display")]
 pub use screen::{display, face_64x128};
 pub use soft_ap::SoftApLeaseTable;
+pub use subg_configuration_store::{
+    LoadedSubGConfiguration, SubGConfigurationCommitOutcome, SubGConfigurationFlashOperation,
+    SubGConfigurationLoadNotice, SubGConfigurationStore, SubGConfigurationStoreError,
+};
+pub use wifi_configuration_store::{
+    LoadedWifiConfiguration, WifiConfigurationCommitOutcome, WifiConfigurationFlashOperation,
+    WifiConfigurationStatus, WifiConfigurationStore, WifiConfigurationStoreError,
+    WifiConfigurationTransactionPhase, WIFI_CONFIGURATION_SEALING_DOMAIN,
+};
 
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
@@ -256,6 +277,8 @@ mod tests {
             links: 0,
             transported_links: 0,
             membership: Membership::Independent,
+            radio: personal_rns::interfaces::RadioIndication::for_kind(Some(kind)),
+            details: personal_rns::interfaces::PeerDetails::NotApplicable,
         }
     }
 
@@ -269,7 +292,10 @@ mod tests {
         ];
 
         let cards: heapless::Vec<Card, 4> = snapshots_to_cards(&snapshots, |id| match id.kind() {
-            Some(InterfaceKind::LoRa) => Some((CardKind::LoRa, card_label("LoRa"))),
+            Some(InterfaceKind::LoRa) => Some((
+                CardKind::SubG(SubGCardState::AutoLoRa),
+                card_label("AutoLoRa"),
+            )),
             Some(InterfaceKind::UsbAutoDevice) => Some((CardKind::Usb, card_label("USB"))),
             Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
             Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("LAN"))),
@@ -279,7 +305,12 @@ mod tests {
         let kinds: heapless::Vec<CardKind, 4> = cards.iter().map(|card| card.kind).collect();
         assert_eq!(
             kinds.as_slice(),
-            &[CardKind::LoRa, CardKind::Wifi, CardKind::Ble, CardKind::Usb]
+            &[
+                CardKind::SubG(SubGCardState::AutoLoRa),
+                CardKind::Wifi,
+                CardKind::Ble,
+                CardKind::Usb,
+            ]
         );
     }
 

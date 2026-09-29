@@ -126,6 +126,8 @@ pub trait BleLink {
 pub trait BleSource {
     type Error: core::fmt::Debug;
 
+    /// Receives a whole wire frame, returning its exact length including interface authentication.
+    /// Reject insufficient output capacity; never report a truncated prefix.
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, Self::Error>;
 }
 

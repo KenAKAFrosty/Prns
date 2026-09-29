@@ -294,7 +294,7 @@ fn render_machine_and_method(out: &mut String, host: &str) {
         let _ = writeln!(out, "{cpu}; {cores}; {memory}; {os}.\n");
     }
     out.push_str(
-        "Release binaries run over loopback for 30 seconds per sample, three samples per cell. Endpoint scenarios cover all four initiator/responder pairings; relay scenarios cover both implementations behind the same fixed bidirectional wire driver. Default-policy rows preserve each implementation's normal TCP bitrate and MTU policy. The controlled 1 Gbps resource rows change only that interface policy, both for real endpoint transfers and for transported-resource switching; the tiny raw SINGLE relay scenario remains default-policy-only. Tables show median throughput and latency; memory is the maximum peak RSS. Energy is optional: it is metered processor energy minus a fresh idle baseline (macOS CPU Power; Linux RAPL package) and appears only when all three samples are positive. Packet/request energy is per delivery; resource energy is normalized per application MiB. Initiator/responder energy is the combined package measurement attributed by each role's CPU-time share. Relay-scenario package energy is explicitly whole-cell energy; only CPU and RSS are relay-isolated. A check means every sample satisfied the scenario's accounting rule.\n",
+        "Release binaries run over loopback for 30 seconds per sample, three samples per cell. Endpoint scenarios cover all four initiator/responder pairings; relay scenarios cover both implementations behind the same fixed bidirectional wire driver. Linux uses Backbone for both implementations in default-policy profiles. Policy-matched profiles use TCP because stock RNS Backbone fixes its policy at 100 Mbps / 32 KiB; the fixed-500-byte-MTU request profile also uses TCP because Backbone has no fixed-MTU setting. macOS and Windows use TCP, the stock RNS fallback on hosts without Backbone support. Default-policy rows preserve each implementation's normal bitrate and MTU policy. Policy-matched resource rows configure both implementations for RNS TCP's 10 Mbps / 16 KiB tier; the tiny raw SINGLE relay scenario remains default-policy-only. Tables show median throughput and latency; memory is the maximum peak RSS. Energy is optional: it is metered processor energy minus a fresh idle baseline (macOS CPU Power; Linux RAPL package) and appears only when all three samples are positive. Packet/request energy is per delivery; resource energy is normalized per application MiB. Initiator/responder energy is the combined package measurement attributed by each role's CPU-time share. Relay-scenario package energy is explicitly whole-cell energy; only CPU and RSS are relay-isolated. A check means every sample satisfied the scenario's accounting rule.\n",
     );
 }
 
@@ -1015,7 +1015,7 @@ fn render_transport_table(
     implementations: &[ImplementationDescriptor],
 ) {
     out.push_str(
-        "| Relay | TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness source / sink / limit |\n\
+        "| Relay | Interface policy / MTU | Link MTU / payload | Conformance | Payload | Frames | Wire in / out | Relay CPU | Relay peak RSS | Harness source / sink / limit |\n\
          |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
     );
     let mut sorted = rows.to_vec();
@@ -1560,7 +1560,7 @@ mod tests {
     #[test]
     fn the_glance_chart_ships_light_and_dark_ratio_bars() {
         let mut rows = Vec::new();
-        for (implementation, rate) in [("personal-rns", 20.0), ("rns-1.4.2-compiled", 5.0)] {
+        for (implementation, rate) in [("personal-rns", 20.0), ("rns-1.5.4", 5.0)] {
             for sample in 0..3 {
                 let mut result = row(sample, Axis::Throughput, "delivered_per_sec", Some(rate));
                 result.subject = Subject::Direct {
@@ -1573,7 +1573,7 @@ mod tests {
         }
         let mut assets = Vec::new();
         let output = render_host("test-host", &rows, &load_implementations(), &mut assets);
-        assert!(output.contains("RNS 1.4.2 (compiled)"));
+        assert!(output.contains("RNS 1.5.4"));
         assert!(!output.contains("RNS 1.4.0 (compiled)"));
         assert!(output.contains("<picture>"));
         assert!(output.contains("assets/at-a-glance-test-host-light.svg"));
@@ -1619,7 +1619,7 @@ mod tests {
             &mut Vec::new(),
         );
         assert!(output.contains("RNS 1.4.0 (compiled)"));
-        assert!(!output.contains("RNS 1.4.2 (compiled)"));
+        assert!(!output.contains("RNS 1.5.4"));
     }
 
     #[test]
@@ -1628,6 +1628,7 @@ mod tests {
         for (reference, version) in [
             ("rns-1.4.0-compiled", "1.4.0"),
             ("rns-1.4.2-compiled", "1.4.2"),
+            ("rns-1.5.4", "1.5.4"),
         ] {
             let mut result = row(0, Axis::Throughput, "delivered_per_sec", Some(20.0));
             result.subject = Subject::Direct {
@@ -1638,8 +1639,8 @@ mod tests {
             let aggregates = aggregate(&[result]);
             let rows = aggregates.iter().collect::<Vec<_>>();
             assert_eq!(
-                render_note("compiled RNS {reference_version}", &rows, &implementations),
-                format!("compiled RNS {version}")
+                render_note("RNS {reference_version}", &rows, &implementations),
+                format!("RNS {version}")
             );
         }
     }
@@ -1649,7 +1650,7 @@ mod tests {
         let mut rows = Vec::new();
         for (implementation, initiator_rss, responder_rss) in [
             ("personal-rns", 10_485_760.0, 20_971_520.0),
-            ("rns-1.4.2-compiled", 104_857_600.0, 52_428_800.0),
+            ("rns-1.5.4", 104_857_600.0, 52_428_800.0),
         ] {
             for sample in 0..3 {
                 for (metric, value) in [
@@ -1769,20 +1770,20 @@ mod tests {
     #[test]
     fn transport_rendering_uses_relay_subjects_and_exposes_ceiling_evidence() {
         let mut rows = Vec::new();
-        for relay in ["personal-rns", "rns-1.4.2-compiled"] {
+        for relay in ["personal-rns", "rns-1.5.4"] {
             for sample in 0..3 {
                 for (axis, metric, value) in [
                     (Axis::Conformance, "settled_clean", 1.0),
                     (Axis::Conformance, "sent", 100.0),
                     (Axis::Conformance, "delivered", 100.0),
                     (Axis::Conformance, "harness_headroom", 1.0),
-                    (Axis::Conformance, "relay_bitrate_bps", 1_000_000_000.0),
-                    (Axis::Conformance, "relay_mtu_bytes", 524_288.0),
-                    (Axis::Conformance, "negotiated_link_mtu_bytes", 524_288.0),
+                    (Axis::Conformance, "relay_bitrate_bps", 10_000_000.0),
+                    (Axis::Conformance, "relay_mtu_bytes", 16_384.0),
+                    (Axis::Conformance, "negotiated_link_mtu_bytes", 16_384.0),
                     (
                         Axis::Conformance,
                         "resource_payload_bytes_per_frame",
-                        524_268.0,
+                        16_364.0,
                     ),
                     (
                         Axis::Throughput,
@@ -1811,8 +1812,8 @@ mod tests {
                     (Axis::Memory, "relay_peak_rss_bytes", 8_388_608.0),
                 ] {
                     let mut result = row(sample, axis, metric, Some(value));
-                    result.scenario = "transport-resource-throughput-unleashed".into();
-                    result.scenario_version = 2;
+                    result.scenario = "transport-resource-throughput-matched".into();
+                    result.scenario_version = 1;
                     result.subject = Subject::Direct {
                         initiator: "benchmark-wire-driver".into(),
                         responder: "benchmark-wire-driver".into(),
@@ -1827,16 +1828,16 @@ mod tests {
         let mut output = String::new();
         render_scenario(
             &mut output,
-            &Manifest::load("transport-resource-throughput-unleashed"),
+            &Manifest::load("transport-resource-throughput-matched"),
             &refs,
             &load_implementations(),
         );
         for expected in [
             "Prns relay",
-            "RNS 1.4.2 (compiled) relay",
-            "| TCP policy / MTU | Link MTU / payload | Conformance | Payload | Frames |",
-            "1 Gbps / 512 KiB",
-            "512 / 512 KiB",
+            "RNS 1.5.4 relay",
+            "| Interface policy / MTU | Link MTU / payload | Conformance | Payload | Frames |",
+            "10 Mbps / 16 KiB",
+            "16 / 16 KiB",
             "1.00 MB/s",
             "4.0k/s",
             "2.50 s",
@@ -1850,7 +1851,7 @@ mod tests {
         }
         assert!(comparison_subject(
             &aggregates,
-            "transport-resource-throughput-unleashed",
+            "transport-resource-throughput-matched",
             "personal-rns",
             ScenarioTopology::Relay,
         )

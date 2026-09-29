@@ -22,12 +22,7 @@ const UF2_BLOCK_BYTES = 512;
 const UF2_PAYLOAD_BYTES = 256;
 const UF2_DATA_OFFSET = 32;
 const UF2_DATA_BYTES = 476;
-const UF2_APPLICATION_ENDS = new Map([
-  ["t-echo", 0xc0000],
-  ["t114", 0xe9000],
-  ["t096", 0xe8000],
-  ["t1000-e", 0xea000],
-]);
+const NRF52840_FLASH_END_EXCLUSIVE = 0x100000;
 const UF2_COMPATIBILITIES = new Map([
   ["s140:6.1.1", Object.freeze({ fwid: 0x00b6, applicationBase: 0x26000, familyId: 0xada52840 })],
   ["s140:7.3.0", Object.freeze({ fwid: 0x0123, applicationBase: 0x27000, familyId: 0xada52840 })],
@@ -423,7 +418,10 @@ function validNrfSerialDfu(value, filters) {
 function validUf2Compatibility(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const fields = Object.keys(value).sort();
-  if (fields.join(",") !== "applicationBase,familyId,fwid,softdeviceFamily,softdeviceVersion") {
+  if (
+    fields.join(",")
+      !== "applicationBase,applicationEndExclusive,familyId,fwid,softdeviceFamily,softdeviceVersion"
+  ) {
     return false;
   }
   const expected = UF2_COMPATIBILITIES.get(
@@ -432,20 +430,21 @@ function validUf2Compatibility(value) {
   return expected !== undefined
     && value.fwid === expected.fwid
     && value.applicationBase === expected.applicationBase
+    && Number.isSafeInteger(value.applicationEndExclusive)
+    && value.applicationEndExclusive > value.applicationBase
+    && value.applicationEndExclusive <= NRF52840_FLASH_END_EXCLUSIVE
+    && value.applicationEndExclusive % 0x1000 === 0
     && value.familyId === expected.familyId;
 }
 
-export function validateUf2Artifact(bytes, compatibility, boardSlug) {
+export function validateUf2Artifact(bytes, compatibility) {
   if (!(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length % UF2_BLOCK_BYTES !== 0) {
     throw new FlashBridgeError("invalid_request", "The signed UF2 length is structurally invalid.");
   }
   if (!validUf2Compatibility(compatibility)) {
     throw new FlashBridgeError("invalid_request", "The signed UF2 compatibility identity is invalid.");
   }
-  const applicationEnd = UF2_APPLICATION_ENDS.get(boardSlug);
-  if (applicationEnd === undefined) {
-    throw new FlashBridgeError("invalid_request", "The signed UF2 board has no pinned application region.");
-  }
+  const applicationEnd = compatibility.applicationEndExclusive;
   const blocks = bytes.length / UF2_BLOCK_BYTES;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   for (let index = 0; index < blocks; index += 1) {

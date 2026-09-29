@@ -20,6 +20,8 @@ use crate::routing::links::channel::{ChannelSequence, MessageType};
 use crate::routing::links::handshake::{AcceptedLinkRequest, LinkProofVerifyOwed, LinkRttError};
 use crate::routing::links::identify::LinkIdentityVerifyOwed;
 use crate::routing::links::request::RequestId;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::receive::part_hash::ResourcePartHashOwed;
 use crate::routing::links::resources::table::AcceptedResource;
 use crate::routing::links::resources::{
     ResourceCorrelation, ResourceFailureCause, ResourceHash, ResourcePartRequest,
@@ -207,6 +209,8 @@ pub enum IngestPacketOutcome<'p> {
         packet_hash: PacketHash,
     },
     OwesResourceParts(ResourcePartRequest<'p>),
+    #[cfg(feature = "resource-work-offload")]
+    OwesResourcePartHash(ResourcePartHashOwed<'p>),
 
     ResourceDelivered {
         id: CommandId,
@@ -237,6 +241,10 @@ pub enum IngestPacketOutcome<'p> {
     /// A validated and policy-approved advertisement is waiting for an
     /// incoming Resource row, or a retry coalesced into that existing wait.
     ResourceAdmissionPending,
+    ResourceResponseSuperseded {
+        link_id: LinkId,
+        hash: ResourceHash,
+    },
     /// The offer cannot wait: it can never fit, this target has no pending
     /// queue, or the bounded queue is full.
     ResourceCapacityRejected {

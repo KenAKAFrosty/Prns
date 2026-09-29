@@ -186,7 +186,8 @@ impl InterfaceKind {
             Self::Backbone | Self::BackboneClient => interface_key::BACKBONE,
             Self::I2p => interface_key::I2P,
             Self::Weave => interface_key::WEAVE,
-            Self::PrnsUsbAuto | Self::PrnsBluetoothAuto => &[],
+            Self::PrnsUsbAuto => &[],
+            Self::PrnsBluetoothAuto => interface_key::PRNS_BLUETOOTH_AUTO,
             Self::PrnsWebSocketClient => interface_key::PRNS_WEBSOCKET_CLIENT,
             Self::PrnsWebSocketServer => interface_key::PRNS_WEBSOCKET_SERVER,
         };

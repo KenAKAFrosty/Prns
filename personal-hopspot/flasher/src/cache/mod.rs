@@ -887,6 +887,10 @@ mod tests {
                         .variants
                         .iter()
                         .map(|variant| {
+                            let application = variant
+                                .memory_layout()
+                                .expect("UF2 memory profile")
+                                .transport_envelope();
                             let relative = format!(
                                 "firmware/hopspot/{}/{version}/{}",
                                 board.slug, variant.filename
@@ -898,7 +902,7 @@ mod tests {
                                 softdevice_family: variant.softdevice_family.clone(),
                                 softdevice_version: variant.softdevice_version.clone(),
                                 fwid: variant.fwid.clone(),
-                                application_base: variant.application_base.clone(),
+                                application_base: format!("0x{:08x}", application.start()),
                                 family_id: variant.family_id.clone(),
                                 path: relative,
                                 size: bytes.len() as u64,
@@ -925,7 +929,9 @@ mod tests {
                         };
                         Some(NrfSerialDfuManifest {
                             serial: build.serial.clone(),
-                            compatibility: build.compatibility.clone(),
+                            compatibility: build
+                                .manifest_compatibility()
+                                .expect("Nordic serial DFU memory profile"),
                             application: artifact(
                                 &build.application_filename,
                                 FlashPartKind::DfuApplication,

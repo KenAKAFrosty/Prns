@@ -10,6 +10,7 @@ use esp_hal::rtc_cntl::Rtc;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
+use personal_hopspot_memory::{MemoryProfile, XIAO_ESP32_C6};
 use personal_rns::engine::InstantMillis;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::manifold::embassy::EmbassyTimebase;
@@ -17,6 +18,7 @@ use personal_rns::manifold::embassy::EmbassyTimebase;
 pub(crate) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc0";
 pub(crate) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot C6";
 pub(crate) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-c6");
+pub(crate) const MEMORY_PROFILE: &MemoryProfile = &XIAO_ESP32_C6;
 
 // Bluetooth LE needs heap for esp-radio's controller + trouble-host's boxed GATT clients/reassemblers; 64 KiB
 // covers it with margin. Kept off the larger end so the leftover linker `.stack` region stays big

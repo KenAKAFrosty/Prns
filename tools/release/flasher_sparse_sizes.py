@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from flasher_board_catalog import release_boards
 from flasher_manifest import target_artifacts
 
 
@@ -15,16 +18,7 @@ SPARSE_BASELINES = {
     board: MERGED_BASELINES[board]
     for board in ("heltec-v4", "heltec-v4-r8", "t-beam-supreme")
 }
-SHIPPING_BOARDS = {
-    "heltec-v4",
-    "heltec-v4-r8",
-    "t-beam-supreme",
-    "xiao-esp32-c6",
-    "t-echo",
-    "t114",
-    "t096",
-    "t1000-e",
-}
+SHIPPING_BOARDS = frozenset(release_boards(Path(__file__)).shipping)
 REQUIRED_REDUCTION_PERCENT = 60
 
 

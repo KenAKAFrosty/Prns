@@ -7,8 +7,13 @@
   "repo": "https://github.com/markqvist/Reticulum",
   "pinned_ref": "1.4.0",
   "license": "Reticulum License",
-  "notes": "RNS 1.4.0 loaded through the benchmark-local Cython object cache; runs are rejected unless RNS.compiled is true and native extension modules are loaded.",
+  "notes": "RNS 1.4.0 loaded through the benchmark-local Cython object cache. The load is gated on RNS.compiled being true and at least one native extension module being present. That gate does not establish which modules were compiled: measured on 2026-09-18 at Cython 3.2.8, this build produces 1 native extension module, the top-level RNS package, and leaves 43 interpreted, including Transport, Link, Packet, Identity, Destination, Resource and Reticulum. The proof record emitted by compiled_reference.py now lists all of them, so a run can be checked rather than assumed.",
   "participant": {
-    "command": ["{reference_python}", "-u", "{benchmark_dir}/reference/compiled_reference.py", "{benchmark_dir}/reference/participant_node.py"]
+    "command": [
+      "{reference_python}",
+      "-u",
+      "{benchmark_dir}/reference/compiled_reference.py",
+      "{benchmark_dir}/reference/participant_node.py"
+    ]
   }
 }

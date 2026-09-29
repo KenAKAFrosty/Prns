@@ -1,4 +1,9 @@
 use super::identity::BleIdentity;
+use crate::crypto::SHA256_OUTPUT_LEN;
+use crate::interfaces::{
+    DiscoveryGroupHash, DiscoveryGroupHashSet, DiscoveryGroupHashSetError,
+    DEFAULT_DISCOVERY_GROUP_HASH, MAX_DISCOVERY_GROUPS,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Psm(u16);
@@ -173,7 +178,14 @@ const GREETING_ID_AT: usize = 1;
 const GREETING_ENDPOINT_AT: usize = GREETING_ID_AT + CONTROL_IDENTITY_LEN;
 const GREETING_CAP_AT: usize = GREETING_ENDPOINT_AT + ENDPOINT_LEN;
 const GREETING_RSSI_AT: usize = GREETING_CAP_AT + CONTROL_CAP_LEN;
-pub const CONTROL_MAX_LEN: usize = GREETING_RSSI_AT + CONTROL_RSSI_LEN;
+const LEGACY_GREETING_WITHOUT_RSSI_LEN: usize = GREETING_RSSI_AT;
+const LEGACY_GREETING_LEN: usize = GREETING_RSSI_AT + CONTROL_RSSI_LEN;
+const DISCOVERY_GROUP_EXTENSION_VERSION: u8 = 1;
+const DISCOVERY_GROUP_EXTENSION_HEADER_LEN: usize = 2;
+const DISCOVERY_GROUP_EXTENSION_AT: usize = LEGACY_GREETING_LEN;
+pub const CONTROL_MAX_LEN: usize = LEGACY_GREETING_LEN
+    + DISCOVERY_GROUP_EXTENSION_HEADER_LEN
+    + MAX_DISCOVERY_GROUPS * SHA256_OUTPUT_LEN;
 
 fn encode_rssi(rssi: Option<i8>) -> u8 {
     rssi.filter(|&dbm| dbm != i8::MIN).unwrap_or(i8::MIN) as u8
@@ -349,18 +361,48 @@ impl CloseReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerDiscoveryGroups {
+    LegacyReticulum,
+    Explicit(DiscoveryGroupHashSet),
+}
+
+impl PeerDiscoveryGroups {
+    fn shares_group_with(self, local: &DiscoveryGroupHashSet) -> bool {
+        match self {
+            Self::LegacyReticulum => local.contains(&DEFAULT_DISCOVERY_GROUP_HASH),
+            Self::Explicit(peer) => local.shares_group_with(&peer),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlParseError {
+    Empty,
+    UnknownKind(u8),
+    InvalidLength,
+    InvalidEndpoint,
+    InvalidCapabilities,
+    InvalidCloseReason,
+    UnknownDiscoveryGroupVersion(u8),
+    InvalidDiscoveryGroupCount(u8),
+    InvalidDiscoveryGroups(DiscoveryGroupHashSetError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Control {
     Hello {
         identity: BleIdentity,
         endpoint: Endpoint,
         capabilities: LinkCapabilities,
         peer_rssi: Option<i8>,
+        discovery_groups: PeerDiscoveryGroups,
     },
     Welcome {
         identity: BleIdentity,
         endpoint: Endpoint,
         capabilities: LinkCapabilities,
         peer_rssi: Option<i8>,
+        discovery_groups: PeerDiscoveryGroups,
     },
     Close {
         reason: CloseReason,
@@ -375,25 +417,25 @@ impl Control {
                 endpoint,
                 capabilities,
                 peer_rssi,
-            } => encode_greeting(
-                CONTROL_HELLO,
-                identity,
-                *endpoint,
-                capabilities,
-                *peer_rssi,
-                out,
-            ),
-            Control::Welcome {
+                discovery_groups,
+            }
+            | Control::Welcome {
                 identity,
                 endpoint,
                 capabilities,
                 peer_rssi,
+                discovery_groups,
             } => encode_greeting(
-                CONTROL_WELCOME,
+                if matches!(self, Control::Hello { .. }) {
+                    CONTROL_HELLO
+                } else {
+                    CONTROL_WELCOME
+                },
                 identity,
                 *endpoint,
                 capabilities,
                 *peer_rssi,
+                *discovery_groups,
                 out,
             ),
             Control::Close { reason } => {
@@ -406,30 +448,39 @@ impl Control {
     }
 
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        let (tag, body) = bytes.split_first()?;
+        Self::try_decode(bytes).ok()
+    }
+
+    pub fn try_decode(bytes: &[u8]) -> Result<Self, ControlParseError> {
+        let (tag, body) = bytes.split_first().ok_or(ControlParseError::Empty)?;
         match *tag {
-            CONTROL_HELLO => {
-                let (identity, endpoint, capabilities, peer_rssi) = decode_greeting(body)?;
-                Some(Control::Hello {
-                    identity,
-                    endpoint,
-                    capabilities,
-                    peer_rssi,
-                })
+            kind @ (CONTROL_HELLO | CONTROL_WELCOME) => {
+                let (identity, endpoint, capabilities, peer_rssi, discovery_groups) =
+                    decode_greeting(body)?;
+                if kind == CONTROL_HELLO {
+                    Ok(Control::Hello {
+                        identity,
+                        endpoint,
+                        capabilities,
+                        peer_rssi,
+                        discovery_groups,
+                    })
+                } else {
+                    Ok(Control::Welcome {
+                        identity,
+                        endpoint,
+                        capabilities,
+                        peer_rssi,
+                        discovery_groups,
+                    })
+                }
             }
-            CONTROL_WELCOME => {
-                let (identity, endpoint, capabilities, peer_rssi) = decode_greeting(body)?;
-                Some(Control::Welcome {
-                    identity,
-                    endpoint,
-                    capabilities,
-                    peer_rssi,
-                })
-            }
-            CONTROL_CLOSE => Some(Control::Close {
-                reason: CloseReason::from_u8(*body.first()?)?,
+            CONTROL_CLOSE if body.len() == 1 => Ok(Control::Close {
+                reason: CloseReason::from_u8(body[0])
+                    .ok_or(ControlParseError::InvalidCloseReason)?,
             }),
-            _ => None,
+            CONTROL_CLOSE => Err(ControlParseError::InvalidLength),
+            unknown => Err(ControlParseError::UnknownKind(unknown)),
         }
     }
 }
@@ -440,9 +491,18 @@ fn encode_greeting(
     endpoint: Endpoint,
     capabilities: &LinkCapabilities,
     peer_rssi: Option<i8>,
+    discovery_groups: PeerDiscoveryGroups,
     out: &mut [u8],
 ) -> Option<usize> {
-    let slot = out.get_mut(..CONTROL_MAX_LEN)?;
+    let encoded_len = match discovery_groups {
+        PeerDiscoveryGroups::LegacyReticulum => LEGACY_GREETING_LEN,
+        PeerDiscoveryGroups::Explicit(groups) => {
+            LEGACY_GREETING_LEN
+                + DISCOVERY_GROUP_EXTENSION_HEADER_LEN
+                + groups.len() * SHA256_OUTPUT_LEN
+        }
+    };
+    let slot = out.get_mut(..encoded_len)?;
     slot[0] = tag;
     slot[GREETING_ID_AT..GREETING_ENDPOINT_AT].copy_from_slice(identity.as_bytes());
     slot[GREETING_ENDPOINT_AT..GREETING_CAP_AT].copy_from_slice(&endpoint_bytes(endpoint));
@@ -450,22 +510,98 @@ fn encode_greeting(
     capabilities.encode(&mut caps);
     slot[GREETING_CAP_AT..GREETING_RSSI_AT].copy_from_slice(&caps);
     slot[GREETING_RSSI_AT] = encode_rssi(peer_rssi);
-    Some(CONTROL_MAX_LEN)
+    if let PeerDiscoveryGroups::Explicit(groups) = discovery_groups {
+        slot[DISCOVERY_GROUP_EXTENSION_AT] = DISCOVERY_GROUP_EXTENSION_VERSION;
+        slot[DISCOVERY_GROUP_EXTENSION_AT + 1] = groups.len() as u8;
+        let mut at = DISCOVERY_GROUP_EXTENSION_AT + DISCOVERY_GROUP_EXTENSION_HEADER_LEN;
+        for hash in groups.iter() {
+            slot[at..at + SHA256_OUTPUT_LEN].copy_from_slice(hash.as_bytes());
+            at += SHA256_OUTPUT_LEN;
+        }
+    }
+    Some(encoded_len)
 }
 
-fn decode_greeting(body: &[u8]) -> Option<(BleIdentity, Endpoint, LinkCapabilities, Option<i8>)> {
+fn decode_greeting(
+    body: &[u8],
+) -> Result<
+    (
+        BleIdentity,
+        Endpoint,
+        LinkCapabilities,
+        Option<i8>,
+        PeerDiscoveryGroups,
+    ),
+    ControlParseError,
+> {
+    let full_len = body.len() + 1;
+    if full_len != LEGACY_GREETING_WITHOUT_RSSI_LEN && full_len != LEGACY_GREETING_LEN {
+        let minimum_extended = LEGACY_GREETING_LEN + DISCOVERY_GROUP_EXTENSION_HEADER_LEN;
+        if full_len < minimum_extended || full_len > CONTROL_MAX_LEN {
+            return Err(ControlParseError::InvalidLength);
+        }
+    }
     let id_end = CONTROL_IDENTITY_LEN;
     let endpoint_end = id_end + ENDPOINT_LEN;
     let cap_end = endpoint_end + CONTROL_CAP_LEN;
-    let identity_bytes: [u8; CONTROL_IDENTITY_LEN] = body.get(..id_end)?.try_into().ok()?;
-    let endpoint = decode_endpoint(body.get(id_end..endpoint_end)?)?;
-    let capabilities = LinkCapabilities::decode(body.get(endpoint_end..cap_end)?)?;
+    let identity_bytes: [u8; CONTROL_IDENTITY_LEN] = body
+        .get(..id_end)
+        .ok_or(ControlParseError::InvalidLength)?
+        .try_into()
+        .map_err(|_| ControlParseError::InvalidLength)?;
+    let endpoint = decode_endpoint(
+        body.get(id_end..endpoint_end)
+            .ok_or(ControlParseError::InvalidLength)?,
+    )
+    .ok_or(ControlParseError::InvalidEndpoint)?;
+    let capabilities = LinkCapabilities::decode(
+        body.get(endpoint_end..cap_end)
+            .ok_or(ControlParseError::InvalidLength)?,
+    )
+    .ok_or(ControlParseError::InvalidCapabilities)?;
     let peer_rssi = body.get(cap_end).copied().and_then(decode_rssi);
-    Some((
+    let discovery_groups = if full_len <= LEGACY_GREETING_LEN {
+        PeerDiscoveryGroups::LegacyReticulum
+    } else {
+        let extension_version = body[LEGACY_GREETING_LEN - 1];
+        if extension_version != DISCOVERY_GROUP_EXTENSION_VERSION {
+            return Err(ControlParseError::UnknownDiscoveryGroupVersion(
+                extension_version,
+            ));
+        }
+        let count = body[LEGACY_GREETING_LEN];
+        if count == 0 || usize::from(count) > MAX_DISCOVERY_GROUPS {
+            return Err(ControlParseError::InvalidDiscoveryGroupCount(count));
+        }
+        let expected_len = LEGACY_GREETING_LEN
+            + DISCOVERY_GROUP_EXTENSION_HEADER_LEN
+            + usize::from(count) * SHA256_OUTPUT_LEN;
+        if full_len != expected_len {
+            return Err(ControlParseError::InvalidLength);
+        }
+        let mut hashes =
+            [DiscoveryGroupHash::from_bytes([0; SHA256_OUTPUT_LEN]); MAX_DISCOVERY_GROUPS];
+        let first_hash_at = LEGACY_GREETING_LEN + 1;
+        let mut index = 0;
+        while index < usize::from(count) {
+            let at = first_hash_at + index * SHA256_OUTPUT_LEN;
+            let bytes: [u8; SHA256_OUTPUT_LEN] = body[at..at + SHA256_OUTPUT_LEN]
+                .try_into()
+                .map_err(|_| ControlParseError::InvalidLength)?;
+            hashes[index] = DiscoveryGroupHash::from_bytes(bytes);
+            index += 1;
+        }
+        PeerDiscoveryGroups::Explicit(
+            DiscoveryGroupHashSet::try_from_wire_array(hashes, count)
+                .map_err(ControlParseError::InvalidDiscoveryGroups)?,
+        )
+    };
+    Ok((
         BleIdentity::new(identity_bytes),
         endpoint,
         capabilities,
         peer_rssi,
+        discovery_groups,
     ))
 }
 
@@ -474,6 +610,7 @@ pub struct LocalPeer {
     pub identity: BleIdentity,
     pub endpoint: Endpoint,
     pub capabilities: LinkCapabilities,
+    pub discovery_groups: DiscoveryGroupHashSet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -507,7 +644,6 @@ pub struct HandshakeReaction {
 
 pub struct Handshake {
     role: HandshakeRole,
-    local: LocalPeer,
     measured_rssi: Option<i8>,
 }
 
@@ -523,20 +659,20 @@ impl Handshake {
                 endpoint: local.endpoint,
                 capabilities: local.capabilities,
                 peer_rssi: measured_rssi,
+                discovery_groups: PeerDiscoveryGroups::Explicit(local.discovery_groups),
             }),
             HandshakeRole::Listener => None,
         };
         (
             Self {
                 role,
-                local,
                 measured_rssi,
             },
             opening,
         )
     }
 
-    pub fn absorb(&mut self, msg: Control) -> HandshakeReaction {
+    pub fn absorb(&mut self, local: LocalPeer, msg: Control) -> HandshakeReaction {
         match (self.role, msg) {
             (
                 HandshakeRole::Listener,
@@ -545,17 +681,22 @@ impl Handshake {
                     endpoint,
                     capabilities,
                     peer_rssi,
+                    discovery_groups,
                 },
             ) => {
-                if identity == self.local.identity {
+                if identity == local.identity {
                     return self.we_close(CloseReason::SelfConnection);
+                }
+                if !discovery_groups.shares_group_with(&local.discovery_groups) {
+                    return self.we_close(CloseReason::Incompatible);
                 }
                 HandshakeReaction {
                     reply: Some(Control::Welcome {
-                        identity: self.local.identity,
-                        endpoint: self.local.endpoint,
-                        capabilities: self.local.capabilities,
+                        identity: local.identity,
+                        endpoint: local.endpoint,
+                        capabilities: local.capabilities,
                         peer_rssi: self.measured_rssi,
+                        discovery_groups: PeerDiscoveryGroups::Explicit(local.discovery_groups),
                     }),
                     outcome: HandshakeOutcome::Settled(EstablishedPeer {
                         identity,
@@ -574,10 +715,14 @@ impl Handshake {
                     endpoint,
                     capabilities,
                     peer_rssi,
+                    discovery_groups,
                 },
             ) => {
-                if identity == self.local.identity {
+                if identity == local.identity {
                     return self.we_close(CloseReason::SelfConnection);
+                }
+                if !discovery_groups.shares_group_with(&local.discovery_groups) {
+                    return self.we_close(CloseReason::Incompatible);
                 }
                 HandshakeReaction {
                     reply: None,
@@ -599,10 +744,53 @@ impl Handshake {
         }
     }
 
+    #[must_use]
+    pub const fn measured_rssi(&self) -> Option<i8> {
+        self.measured_rssi
+    }
+
     fn we_close(&self, reason: CloseReason) -> HandshakeReaction {
         HandshakeReaction {
             reply: Some(Control::Close { reason }),
             outcome: HandshakeOutcome::Aborted(reason),
         }
+    }
+}
+
+#[cfg_attr(mutants, mutants::skip)]
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(40)]
+    fn control_parser_handles_every_legacy_greeting_shape() {
+        let bytes: [u8; LEGACY_GREETING_LEN] = kani::any();
+        let _result = Control::try_decode(&bytes);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(40)]
+    fn control_parser_accepts_every_single_group_extension_shape() {
+        const SINGLE_GROUP_GREETING_LEN: usize =
+            LEGACY_GREETING_LEN + DISCOVERY_GROUP_EXTENSION_HEADER_LEN + SHA256_OUTPUT_LEN;
+        let mut bytes = [0u8; SINGLE_GROUP_GREETING_LEN];
+        bytes[0] = CONTROL_HELLO;
+        let identity: [u8; CONTROL_IDENTITY_LEN] = kani::any();
+        bytes[GREETING_ID_AT..GREETING_ENDPOINT_AT].copy_from_slice(&identity);
+        bytes[GREETING_ENDPOINT_AT] = 1;
+        bytes[GREETING_ENDPOINT_AT + 1] = AppleHost::MacOs as u8;
+        bytes[GREETING_CAP_AT] = 0;
+        let link_mtu: [u8; 2] = kani::any();
+        bytes[GREETING_CAP_AT + 1..GREETING_RSSI_AT].copy_from_slice(&link_mtu);
+        bytes[GREETING_RSSI_AT] = kani::any();
+        bytes[DISCOVERY_GROUP_EXTENSION_AT] = DISCOVERY_GROUP_EXTENSION_VERSION;
+        bytes[DISCOVERY_GROUP_EXTENSION_AT + 1] = 1;
+
+        let first_hash_at = DISCOVERY_GROUP_EXTENSION_AT + DISCOVERY_GROUP_EXTENSION_HEADER_LEN;
+        let hash: [u8; SHA256_OUTPUT_LEN] = kani::any();
+        bytes[first_hash_at..].copy_from_slice(&hash);
+
+        assert!(Control::try_decode(&bytes).is_ok());
     }
 }

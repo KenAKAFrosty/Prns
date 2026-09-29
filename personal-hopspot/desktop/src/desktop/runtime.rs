@@ -170,13 +170,13 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
         let mut node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(transport_secret),
             pre_configured_destinations: destinations.into_preconfigured_destinations(),
-            app_state: (),
+            app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: screen::node_pages::NodePageRoutes,
             remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
-            on_event: move |event, _state: &()| {
+            on_event: move |event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
                 if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event
                 {
                     let _ = rotated_tx.send(destination);

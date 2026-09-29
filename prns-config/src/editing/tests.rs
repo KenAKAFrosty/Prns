@@ -396,7 +396,14 @@ fn auto_setting_catalog_exposes_runtime_relevant_values_and_effective_defaults()
         Some("1000000000")
     );
     assert_eq!(bitrate.format_value("1000000000"), "1 Gbps");
-    assert_eq!(gravity.effective_value(planned).as_deref(), Some("0"));
+    assert_eq!(
+        gravity.effective_value(planned).as_deref(),
+        Some("1000000000")
+    );
+    assert_eq!(
+        gravity.default_hint(InterfaceKind::Auto),
+        Some("effective bitrate")
+    );
     assert!(matches!(
         gravity.parse(InterfaceKind::Auto, "-42").unwrap().value(),
         InterfaceSettingValue::Signed(-42)

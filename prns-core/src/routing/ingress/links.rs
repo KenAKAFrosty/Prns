@@ -1,4 +1,4 @@
-use super::classification::DataPacket;
+use super::classification::{DataPacket, DataPacketHash};
 use super::dispatch::IngressCryptoMode;
 use super::forward::PacketToForward;
 #[cfg(test)]
@@ -23,6 +23,7 @@ use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
 use crate::routing::links::request::{
     parse_request_plaintext, parse_response_plaintext, RequestId,
 };
+use crate::routing::links::resources::assembly::AssemblyCorrelation;
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::transported::{
     extra_link_proof_timeout_ms, TrackTransportedLinkError, TransportSwitch, TransportedLink,
@@ -87,7 +88,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub(super) fn ingest_link_addressed<'p>(
         &mut self,
         data: DataPacket<'p>,
-        packet_hash: PacketHash,
+        mut packet_hash: DataPacketHash,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
@@ -127,13 +128,20 @@ impl<S: StorageLayout> EngineState<S> {
                 self.ingest_link_rtt(link_id, data.payload, source_interface, arrived_at)
             }
             WireContext::None => {
+                let packet_hash = packet_hash.resolve(&data);
                 self.ingest_link_data(data, packet_hash, source_interface, arrived_at)
             }
             WireContext::KeepAlive => self.ingest_keepalive(link_id, data.payload, arrived_at),
             WireContext::LinkClose => self.ingest_link_close(data, arrived_at),
             WireContext::LinkIdentify => self.ingest_link_identify(data, arrived_at),
-            WireContext::Request => self.ingest_request_over_link(data, packet_hash, arrived_at),
-            WireContext::Response => self.ingest_response_over_link(data, packet_hash, arrived_at),
+            WireContext::Request => {
+                let packet_hash = packet_hash.resolve(&data);
+                self.ingest_request_over_link(data, packet_hash, arrived_at)
+            }
+            WireContext::Response => {
+                let packet_hash = packet_hash.resolve(&data);
+                self.ingest_response_over_link(data, packet_hash, arrived_at)
+            }
             WireContext::ResourceRequest => self.ingest_resource_request(data, arrived_at),
             WireContext::ResourceAdvertisement => {
                 self.ingest_resource_advertisement(data, arrived_at)
@@ -146,7 +154,10 @@ impl<S: StorageLayout> EngineState<S> {
             WireContext::ResourceReceiverCancel => {
                 self.ingest_resource_receiver_cancel(data, arrived_at)
             }
-            WireContext::Channel => self.ingest_channel_data(data, packet_hash, arrived_at),
+            WireContext::Channel => {
+                let packet_hash = packet_hash.resolve(&data);
+                self.ingest_channel_data(data, packet_hash, arrived_at)
+            }
             WireContext::ResourceProof
             | WireContext::CacheRequest
             | WireContext::PathResponse
@@ -787,13 +798,22 @@ impl<S: StorageLayout> EngineState<S> {
         let Ok((request_id, response_data)) = parse_response_plaintext(plaintext) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
-        let Some(maximum_response_bytes) = self.receipts.pending_request_response_limit(request_id)
+        if self.incoming_assemblies.correlation(&link_id)
+            == Some(AssemblyCorrelation::Response(request_id))
+        {
+            return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
+        }
+        let Some(maximum_response_bytes) = self
+            .receipts
+            .pending_request_response_limit(&link_id, request_id)
         else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
-        let response_size = response_data.len().saturating_sub(2) as u64;
+        // The response value is delivered verbatim, including any MessagePack
+        // binary header. Only parse_response_plaintext's outer envelope is gone.
+        let response_size = response_data.len() as u64;
         if !maximum_response_bytes.allows(response_size) {
-            let Some(proven) = self.receipts.settle_by_request_id(request_id) else {
+            let Some(proven) = self.receipts.settle_by_request_id(&link_id, request_id) else {
                 return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
             };
             self.links.note_inbound(&link_id, arrived_at);
@@ -804,7 +824,7 @@ impl<S: StorageLayout> EngineState<S> {
                 request_id,
             };
         }
-        let Some(proven) = self.receipts.settle_by_request_id(request_id) else {
+        let Some(proven) = self.receipts.settle_by_request_id(&link_id, request_id) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
         self.links.note_inbound(&link_id, arrived_at);

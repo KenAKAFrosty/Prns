@@ -37,6 +37,23 @@ typedef enum HopspotEngineFailure {
     HopspotEngineFailurePersistenceWrite = 9,
 } HopspotEngineFailure;
 
+typedef enum HopspotDiscoveryInterface {
+    HopspotDiscoveryBluetoothAuto = 0,
+    HopspotDiscoveryAutoWifi = 1,
+} HopspotDiscoveryInterface;
+
+typedef enum HopspotDiscoveryGroupOutcome {
+    HopspotDiscoveryGroupApplied = 0,
+    HopspotDiscoveryGroupUnchanged = 1,
+    HopspotDiscoveryGroupEngineUnavailable = 2,
+    HopspotDiscoveryGroupUnsupported = 3,
+    HopspotDiscoveryGroupInvalidInterface = 4,
+    HopspotDiscoveryGroupInvalidEncoding = 5,
+    HopspotDiscoveryGroupBufferTooShort = 6,
+    HopspotDiscoveryGroupApplyFailed = 7,
+    HopspotDiscoveryGroupBusy = 8,
+} HopspotDiscoveryGroupOutcome;
+
 int32_t hopspot_start_engine(const char *storage_directory_utf8);
 int32_t hopspot_stop_engine(void);
 int32_t hopspot_engine_state(void);
@@ -45,6 +62,13 @@ HopspotFace *hopspot_init(void);
 void hopspot_free(HopspotFace *handle);
 int32_t hopspot_post_input(HopspotFace *handle, int32_t code);
 void hopspot_announce(void);
+size_t hopspot_discovery_groups_wire_capacity(void);
+int32_t hopspot_discovery_groups(int32_t interface, uint8_t *out, size_t capacity);
+int32_t hopspot_replace_discovery_groups(
+    int32_t interface,
+    const uint8_t *encoded,
+    size_t len
+);
 void hopspot_render(HopspotFace *handle, uint8_t *ptr, size_t len);
 void hopspot_set_battery(HopspotFace *handle, int32_t percent, bool externally_powered);
 uint32_t hopspot_panel_width(void);

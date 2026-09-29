@@ -11,7 +11,7 @@ mod rnode_multi;
 pub use interface::{
     AddressFamilyPreference, AirtimeLimitCentiPercent, AutoInterfaceDataPort,
     AutoInterfaceDevicePolicy, AutoInterfaceDiscoveryPort, AutoInterfaceDiscoveryScope,
-    AutoInterfaceGroupId, AutoInterfaceMulticastAddressType, AutoInterfacePlan,
+    AutoInterfaceGroupId, AutoInterfaceMulticastAddressType, AutoInterfacePlan, BluetoothAutoPlan,
     ConfiguredInterfaceLifecycle, ConnectTimeoutSeconds, DiscoveryAdvertisementPlan,
     DiscoveryAnnouncementPlan, DiscoveryEncryption, DiscoveryIfacPublication,
     DiscoveryLocationPlan, DiscoveryPublicationProblem, I2pPeerPlan, I2pPeersPlan,

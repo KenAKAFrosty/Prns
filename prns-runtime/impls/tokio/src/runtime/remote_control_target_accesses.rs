@@ -5,7 +5,7 @@ use tokio::sync::{oneshot, Mutex, OwnedMutexGuard};
 
 use crate::identity::IdentityHash;
 use crate::remote_control::{
-    ForgetRemoteControlTargetOutcome, RemoteControlTargetAccess, RemoteControlTargetIdentity,
+    ForgetRemoteControlTargetOutcome, RemoteControlTargetAccess,
     SetRemoteControlTargetAccessOutcome,
 };
 
@@ -40,7 +40,7 @@ pub(super) enum RemoteControlTargetAccessCommand {
         >,
     },
     ForgetTarget {
-        target: RemoteControlTargetIdentity,
+        target: IdentityHash,
         completion: oneshot::Sender<
             Result<ForgetRemoteControlTargetOutcome, ForgetRemoteControlTargetServiceError>,
         >,
@@ -149,7 +149,7 @@ impl RemoteControlTargetAccessCommand {
                 if completion.is_closed() {
                     return;
                 }
-                let outcome = remote_control.forget_target(&target);
+                let outcome = remote_control.forget_target_by_hash(target);
                 let _completion = completion.send(outcome);
             }
             Self::Snapshot { completion } => {
@@ -177,7 +177,7 @@ impl RemoteControlTargetAccessCommand {
 }
 
 impl PrnsNodeHandle {
-    pub(super) async fn snapshot_remote_control_target_accesses(
+    pub async fn snapshot_remote_control_target_accesses(
         &self,
     ) -> Result<Option<std::vec::Vec<u8>>, super::PrepareFlushError> {
         let (completion, settled) = oneshot::channel();
@@ -271,7 +271,7 @@ impl RemoteControlTargetAccessControl for PrnsNodeHandle {
 
     async fn forget_remote_control_target(
         &self,
-        target: RemoteControlTargetIdentity,
+        target: IdentityHash,
     ) -> Result<ForgetRemoteControlTargetOutcome, ForgetRemoteControlTargetControlError> {
         let (completion, settled) = oneshot::channel();
         let _operation = match self

@@ -35,45 +35,57 @@ pub(super) async fn run_runtime_endpoint(
     let count_deliveries = role == "responder";
     let delivery_counters = Arc::new(DeliveryCounters::default());
     let callback_delivery_counters = delivery_counters.clone();
-    let on_event = move |event: PrnsEvent<'_>, _state: &()| {
-        let mapped = match event {
-            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
-                Some(Event::Heard(destination))
-            }
-            PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) => {
-                Some(Event::Settled(id, settlement))
-            }
-            PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
-            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { reason, .. }) => {
-                if reason != LinkClosedReason::PeerClosed {
-                    eprintln!("DIED role={event_role} mechanism=link reason={reason:?}");
+    let on_event =
+        move |event: PrnsEvent<'_>, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
+            let mapped = match event {
+                PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
+                    Some(Event::Heard(destination))
                 }
-                Some(Event::Closed)
-            }
-            PrnsEvent::Message(Message::Delivered(Delivery::Single(delivery))) => {
-                if count_deliveries && callback_delivery_counters.record(delivery.plaintext.len()) {
-                    Some(Event::FirstDelivered)
-                } else {
-                    None
+                PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) => {
+                    Some(Event::Settled(id, settlement))
                 }
-            }
-            PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
-                if count_deliveries && callback_delivery_counters.record(delivery.plaintext.len()) {
-                    Some(Event::FirstDelivered)
-                } else {
-                    None
+                PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
+                PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
+                    if reason != LinkClosedReason::PeerClosed {
+                        eprintln!("DIED role={event_role} mechanism=link reason={reason:?}");
+                    }
+                    Some(Event::Closed { link_id, reason })
                 }
+                PrnsEvent::Message(Message::Delivered(Delivery::Single(delivery))) => {
+                    if count_deliveries
+                        && callback_delivery_counters.record(delivery.plaintext.len())
+                    {
+                        Some(Event::FirstDelivered)
+                    } else {
+                        None
+                    }
+                }
+                PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
+                    if count_deliveries
+                        && callback_delivery_counters.record(delivery.plaintext.len())
+                    {
+                        Some(Event::FirstDelivered)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(event) = mapped {
+                send_event(&event_tx, event);
             }
-            _ => None,
         };
-        if let Some(event) = mapped {
-            send_event(&event_tx, event);
-        }
-    };
 
     if role == "responder" {
-        let (mut node, bound) =
-            build_responder_node(single, (), request_endpoints![], on_event, manifest, addr).await;
+        let (mut node, bound) = build_responder_node(
+            single,
+            personal_rns::runtime::NoRemoteControlHostControls,
+            request_endpoints![],
+            on_event,
+            manifest,
+            addr,
+        )
+        .await;
         let commands = node
             .take_local_handle()
             .expect("the endpoint owns its executor-local command lane");
@@ -295,7 +307,7 @@ async fn respond_link(
 ) {
     let mut links_up = 0usize;
     let mut measurement_ready = false;
-    let mut closed_links = 0usize;
+    let mut closed_links = std::collections::HashSet::with_capacity(expected_links);
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
     let report_at = tokio::time::Instant::now() + duration + drain + DRAIN_GRACE;
@@ -329,10 +341,16 @@ async fn respond_link(
                         }
                     }
                     Some(Event::FirstDelivered) => {}
-                    Some(Event::Closed) if closed_links + 1 < expected_links => {
-                        closed_links += 1;
+                    Some(Event::Closed { link_id, .. }) => {
+                        closed_links.insert(link_id);
+                        if closed_links.len() < expected_links {
+                            continue;
+                        }
+                        let (delivered, payload_bytes) = delivery_counters.snapshot();
+                        println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
+                        return;
                     }
-                    Some(Event::Closed) | None => {
+                    None => {
                         let (delivered, payload_bytes) = delivery_counters.snapshot();
                         println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
                         return;

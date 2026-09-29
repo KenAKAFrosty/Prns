@@ -14,7 +14,7 @@ pub use announce::{
     AcceptedAnnounce, AnnounceIngest, AnnounceVerification, AnnounceVerifyOwed, InvalidAnnounce,
     RebroadcastDecision, VerifiedAnnounce,
 };
-pub use classification::{ClassifiedInboundPacket, DataPacket, Ingress};
+pub use classification::{ClassifiedInboundPacket, DataPacket, DataPacketHash, Ingress};
 pub use forward::PacketToForward;
 pub use links::ForwardedLinkRequestBody;
 pub(crate) use outcome::{AcceptedAnnounceEffect, IngestEffects};

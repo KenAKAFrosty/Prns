@@ -65,7 +65,7 @@ evidence_work="$(mktemp -d)"
 trap 'rm -rf "$evidence_work"' EXIT HUP INT TERM
 python3 "$root/tools/release/extract-flasher-candidate.py" \
     "$qualification_evidence" "$evidence_work/root"
-python3 "$root/tools/release/validate-flasher-acceptance.py" \
+python3 "$candidate/qualification/validate-flasher-acceptance.py" \
     --acceptance "$acceptance" \
     --manifest "$candidate/flash-manifest.json" \
     --manifest-signature "$candidate/flash-manifest.json.minisig" \

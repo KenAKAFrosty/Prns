@@ -451,7 +451,7 @@ impl<S: StorageLayout> EngineState<S> {
     /// RNS 1.4.2 `Channel._update_packet_timeouts`: after every send and resend, each in-flight deadline is recomputed at the current ring size and only ever extended, never shortened.
     fn stretch_channel_deadlines(&mut self, index: usize, rtt: RttMillis) {
         let in_flight_count = self.channels.outstanding_count(index);
-        for outstanding_index in 0..in_flight_count {
+        for outstanding_index in (0..in_flight_count).rev() {
             let tries = self.channels.outstanding_tries(index, outstanding_index);
             let sent_at = self.channels.outstanding_sent_at(index, outstanding_index);
             let stretched = InstantMillis(sent_at.0.saturating_add(channel_retry_timeout_ms(

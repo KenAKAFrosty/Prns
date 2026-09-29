@@ -125,6 +125,7 @@ class MockRuntime extends MockRuntimeBase {
   snapshot(): unknown {
     return {
       type: "snapshot",
+      revision: 0n,
       ingestedPackets: 0,
       ingestedCommands: 0,
       routes: 0,

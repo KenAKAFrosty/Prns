@@ -17,41 +17,92 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 #[test]
-fn radio_profile_save_result_waits_for_apply_and_verified_persistence() {
+fn subg_configuration_save_waits_for_apply_and_verified_persistence() {
     let steps = RefCell::new(std::vec::Vec::new());
-    let result = block_on(apply_and_persist_radio_profile(
-        async {
+    let result = block_on(apply_and_persist_subg_configuration(
+        || async {
             steps.borrow_mut().push("applied");
-            true
+            SubGConfigurationStepOutcome::Succeeded
         },
         || async {
             assert_eq!(steps.borrow().as_slice(), ["applied"]);
             steps.borrow_mut().push("verified");
-            true
+            SubGConfigurationPersistenceOutcome::Committed
         },
+        || async { panic!("rollback must not run after verified persistence") },
     ));
 
-    assert_eq!(result, RadioProfileChangeResult::Saved);
+    assert_eq!(result, SubGConfigurationChangeResult::Saved);
     assert_eq!(result.notice(), UiNotice::Saved);
     assert_eq!(steps.into_inner(), ["applied", "verified"]);
 }
 
 #[test]
-fn radio_profile_save_result_distinguishes_apply_and_persistence_failures() {
-    let apply_failed = block_on(apply_and_persist_radio_profile(async { false }, || async {
-        panic!("persistence must not run after a rejected profile")
-    }));
-    assert_eq!(apply_failed, RadioProfileChangeResult::ApplyFailed);
-    assert!(!apply_failed.applied());
-
-    let persistence_failed = block_on(apply_and_persist_radio_profile(async { true }, || async {
-        false
-    }));
+fn subg_configuration_save_rolls_back_after_persistence_failure() {
+    let steps = RefCell::new(std::vec::Vec::new());
+    let persistence_failed = block_on(apply_and_persist_subg_configuration(
+        || async {
+            steps.borrow_mut().push("applied");
+            SubGConfigurationStepOutcome::Succeeded
+        },
+        || async {
+            steps.borrow_mut().push("persistence failed");
+            SubGConfigurationPersistenceOutcome::NotCommitted
+        },
+        || async {
+            steps.borrow_mut().push("rolled back");
+            SubGConfigurationStepOutcome::Succeeded
+        },
+    ));
     assert_eq!(
         persistence_failed,
-        RadioProfileChangeResult::ProfileNotSaved
+        SubGConfigurationChangeResult::PersistenceFailed
     );
-    assert!(persistence_failed.applied());
+    assert!(!persistence_failed.committed());
+    assert_eq!(
+        steps.into_inner(),
+        ["applied", "persistence failed", "rolled back"]
+    );
+}
+
+#[test]
+fn subg_configuration_save_distinguishes_apply_and_rollback_failures() {
+    let apply_failed = block_on(apply_and_persist_subg_configuration(
+        || async { SubGConfigurationStepOutcome::Failed },
+        || async { panic!("persistence must not run after a rejected configuration") },
+        || async { panic!("rollback must not run when apply was rejected") },
+    ));
+    assert_eq!(apply_failed, SubGConfigurationChangeResult::ApplyFailed);
+
+    let rollback_failed = block_on(apply_and_persist_subg_configuration(
+        || async { SubGConfigurationStepOutcome::Succeeded },
+        || async { SubGConfigurationPersistenceOutcome::NotCommitted },
+        || async { SubGConfigurationStepOutcome::Failed },
+    ));
+    assert_eq!(
+        rollback_failed,
+        SubGConfigurationChangeResult::RollbackFailed
+    );
+    assert_eq!(
+        rollback_failed.active_configuration(),
+        ActiveSubGConfiguration::Requested
+    );
+}
+
+#[test]
+fn indeterminate_persistence_does_not_rollback_the_active_request() {
+    let result = block_on(apply_and_persist_subg_configuration(
+        || async { SubGConfigurationStepOutcome::Succeeded },
+        || async { SubGConfigurationPersistenceOutcome::Indeterminate },
+        || async { panic!("indeterminate persistence must not claim rollback") },
+    ));
+
+    assert_eq!(result, SubGConfigurationChangeResult::PersistenceUncertain);
+    assert_eq!(
+        result.active_configuration(),
+        ActiveSubGConfiguration::Requested
+    );
+    assert_eq!(result.notice(), UiNotice::SubGUncertain);
 }
 
 #[test]
@@ -251,6 +302,64 @@ fn long_press_on_the_announce_item_returns_the_announce_action() {
 }
 
 #[test]
+#[cfg(feature = "remote-control-pairing")]
+fn remote_control_pairing_is_capability_gated_and_opens_then_cancels_from_the_screen() {
+    let cards = test_cards::<1>(CardKind::Usb);
+    let content = test_content(&cards);
+    let mut unavailable = test_ui_state();
+    unavailable.handle_input(InputEvent::LongPress, content);
+    assert_eq!(
+        unavailable
+            .global_menu_items()
+            .filter(|item| *item == GlobalMenuItem::PairRemoteControl)
+            .count(),
+        0
+    );
+
+    let mut state = test_ui_state_with_remote_control_pairing();
+    state.handle_input(InputEvent::LongPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(
+        state.global_menu_items().nth(1),
+        Some(GlobalMenuItem::PairRemoteControl)
+    );
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::OpenRemoteControlPairing
+    );
+    assert_eq!(state.mode, UiMode::RemoteControlPairing { approve: false });
+
+    let mut pairing = crate::RemoteControlTargetPairingState::new();
+    pairing.begin_opening();
+    pairing.opened(0x1234_ABCD, personal_rns::units::InstantMillis(60_000));
+    state.sync_remote_control(pairing, personal_rns::units::InstantMillis(10_000));
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::CloseRemoteControlPairing
+    );
+    assert!(state.global_selected());
+
+    state.remote_control_pairing_close_failed();
+    assert_eq!(state.mode, UiMode::RemoteControlPairing { approve: false });
+    assert!(!state.global_selected());
+}
+
+#[test]
+#[cfg(feature = "remote-control-pairing")]
+fn remote_control_pairing_menu_label_fits_the_display() {
+    let state = test_ui_state_with_remote_control_pairing();
+    let label = state.global_menu_item_label(GlobalMenuItem::PairRemoteControl);
+
+    assert_eq!(label, "Pair remote");
+    assert_eq!(menu_item_char_width(label), FONT_4X6_CHAR_W);
+    assert!(
+        menu_item_text_right(label) <= WIDTH,
+        "{label:?} ends at x={} beyond the {WIDTH}px display",
+        menu_item_text_right(label)
+    );
+}
+
+#[test]
 fn long_press_on_limits_opens_the_paged_limits_page() {
     let cards = test_cards::<4>(CardKind::Usb);
     let content = test_content(&cards);
@@ -438,7 +547,7 @@ fn supported_access_point_states_offer_the_radio_swap_action() {
 }
 
 #[test]
-fn non_lora_interface_menus_cycle_power_and_back_only() {
+fn non_subg_interface_menus_cycle_power_and_back_only() {
     let cards = test_cards::<1>(CardKind::Usb);
     let content = test_content(&cards);
     let mut state = test_ui_state();
@@ -529,8 +638,8 @@ fn unconfigured_wifi_menu_keeps_power_and_back_only() {
 }
 
 #[test]
-fn lora_interface_menu_keeps_tune_and_reset() {
-    let cards = test_cards::<1>(CardKind::LoRa);
+fn subg_interface_menu_keeps_configuration_and_clear() {
+    let cards = test_cards::<1>(CardKind::SubG(SubGCardState::AutoLoRa));
     let content = test_content(&cards);
     let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, content);
@@ -540,12 +649,12 @@ fn lora_interface_menu_keeps_tune_and_reset() {
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(
         state.interface_menu_selected_item(),
-        Some(LORA_TUNE_MENU_ITEM)
+        Some(SUBG_CONFIGURE_MENU_ITEM)
     );
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(
         state.interface_menu_selected_item(),
-        Some(LORA_RESET_MENU_ITEM)
+        Some(SUBG_CLEAR_MENU_ITEM)
     );
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(state.interface_menu_selected_item(), Some(3));
@@ -554,19 +663,43 @@ fn lora_interface_menu_keeps_tune_and_reset() {
 }
 
 #[test]
-fn lora_reset_is_distinct_from_saving_the_current_default_values() {
-    let cards = test_cards::<1>(CardKind::LoRa);
+fn unconfigured_subg_menu_offers_configuration_without_a_power_action() {
+    let cards = test_cards::<1>(CardKind::SubG(SubGCardState::Setup));
     let content = test_content(&cards);
     let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, content);
     state.handle_input(InputEvent::LongPress, content);
-    for _ in 0..LORA_RESET_MENU_ITEM {
+
+    assert_eq!(
+        state.interface_menu_selected_item(),
+        Some(SUBG_SETUP_CONFIGURE_MENU_ITEM)
+    );
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::OpenSubGEditor
+    );
+}
+
+#[test]
+fn subg_clear_requires_explicit_confirmation() {
+    let cards = test_cards::<1>(CardKind::SubG(SubGCardState::AutoLoRa));
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::LongPress, content);
+    for _ in 0..SUBG_CLEAR_MENU_ITEM {
         state.handle_input(InputEvent::ShortPress, content);
     }
 
     assert_eq!(
         state.handle_input(InputEvent::LongPress, content),
-        UiAction::ResetLoRaProfile
+        UiAction::None
+    );
+    assert_eq!(state.mode, UiMode::ConfirmSubGClear { confirm: false });
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::ClearSubGConfiguration
     );
 }
 

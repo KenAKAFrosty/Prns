@@ -513,35 +513,35 @@ mod tests {
         let node_a = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(Zeroizing::new([0xa1; IDENTITY_SECRET_KEY_LEN])),
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-            app_state: (),
+            app_state: prns_runtime::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: prns_runtime::request_endpoints![],
             remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
-            on_event: |_event, _state: &()| {},
+            on_event: |_event, _state: &prns_runtime::runtime::NoRemoteControlHostControls| {},
         });
         let node_b = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(Zeroizing::new([0xb2; IDENTITY_SECRET_KEY_LEN])),
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-            app_state: (),
+            app_state: prns_runtime::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: prns_runtime::request_endpoints![],
             remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
-            on_event: |_event, _state: &()| {},
+            on_event: |_event, _state: &prns_runtime::runtime::NoRemoteControlHostControls| {},
         });
         let node_c = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(Zeroizing::new([0xc3; IDENTITY_SECRET_KEY_LEN])),
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-            app_state: (),
+            app_state: prns_runtime::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: prns_runtime::request_endpoints![],
             remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
-            on_event: |_event, _state: &()| {},
+            on_event: |_event, _state: &prns_runtime::runtime::NoRemoteControlHostControls| {},
         });
         let ids = [
             BrowserRendezvousId::new([0x11; contract::ID_LEN]),

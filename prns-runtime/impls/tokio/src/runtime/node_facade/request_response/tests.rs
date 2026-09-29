@@ -1,7 +1,10 @@
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::RequestResponseTimeout;
+use crate::engine::RouteSnapshot;
 use crate::engine::Settlement;
+use crate::interfaces::rns_management::{write_route_snapshots, RnsRemotePathTableRequest};
+use crate::interfaces::{InterfaceId, InterfaceKind};
 use crate::manifold::compression;
 use crate::manifold::driver::{HostCommand, HostResourceMetadata};
 use crate::routing::links::request::{
@@ -10,8 +13,10 @@ use crate::routing::links::request::{
 };
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::routing::{NextHop, RouteRetention};
 use crate::runtime::request_endpoints::RespondToken;
 use crate::units::{ByteLimit, DurationMillis, RttMillis};
+use crate::wire::{DestinationHash, TransportId};
 
 use super::super::PrnsNodeHandle;
 use super::{RequestOptions, RESPONSE_PACKET_CEILING};
@@ -23,6 +28,50 @@ static MULTI_SEGMENT_STATIC_RESPONSE: [u8; super::STATIC_RESPONSE_SEGMENT_BYTES 
 fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
     let (commands, command_rx) = mpsc::unbounded_channel();
     (PrnsNodeHandle::over(commands), command_rx)
+}
+
+#[tokio::test]
+async fn rns_path_response_materializes_the_selected_live_routes() {
+    let (handle, mut command_rx) = handle();
+    let destination = DestinationHash::new([0x42; 16]);
+    let route = RouteSnapshot {
+        destination,
+        hops: 2,
+        via: NextHop::Via(TransportId::new([0x24; 16])),
+        learned_at: crate::units::InstantMillis(1_000),
+        last_route_activity_at: crate::units::InstantMillis(1_500),
+        expires_at: crate::units::InstantMillis(2_000),
+        interface: InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"remote"),
+        retention: RouteRetention::Network,
+    };
+    let responding = tokio::spawn(async move {
+        handle
+            .respond_rns_path_table(
+                RespondToken {
+                    link_id: LinkId::new([1; 16]),
+                    request_id: RequestId([2; 16]),
+                    rtt: RttMillis::new(3),
+                },
+                RnsRemotePathTableRequest::new(Some(destination), Some(2)),
+            )
+            .await
+    });
+
+    let HostCommand::NodeIntrospection(
+        crate::node_introspection::NodeIntrospectionRequest::Routes { reply },
+    ) = command_rx.recv().await.unwrap()
+    else {
+        panic!("route snapshot request");
+    };
+    reply.send(vec![route.clone()]).unwrap();
+    let HostCommand::RespondAny(response) = command_rx.recv().await.unwrap() else {
+        panic!("path-table response");
+    };
+    let mut expected = vec![0; 256];
+    let written = write_route_snapshots(&[route], &mut expected).unwrap();
+    expected.truncate(written);
+    assert_eq!(response.packed.as_slice(), expected);
+    assert!(responding.await.unwrap());
 }
 
 #[tokio::test]
@@ -151,6 +200,40 @@ async fn a_large_response_carries_a_bz2_candidate() {
         "a response past the packet ceiling rides a bz2 candidate matching the codec",
     );
     assert!(respond.compressed_candidate.is_some(), "a run compresses");
+}
+
+#[tokio::test]
+async fn a_dense_resource_response_is_queued_without_a_blocking_task() {
+    let (handle, mut command_rx) = handle();
+    let token = RespondToken {
+        link_id: LinkId::new([1; 16]),
+        request_id: RequestId([2; 16]),
+        rtt: RttMillis::new(50),
+    };
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let body = (0..4096)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect::<std::vec::Vec<_>>();
+
+    assert_eq!(
+        handle.respond_packed(token, &body),
+        Some(RttMillis::new(50))
+    );
+    let HostCommand::RespondAny(respond) = command_rx.try_recv().unwrap() else {
+        panic!("expected a RespondAny command");
+    };
+    assert!(respond.compressed_candidate.is_none());
+    let (enclosed_request, enclosed_body) =
+        parse_response_plaintext(respond.packed.as_slice()).unwrap();
+    assert_eq!(
+        (enclosed_request, enclosed_body),
+        (token.request_id, body.as_slice())
+    );
 }
 
 #[tokio::test]

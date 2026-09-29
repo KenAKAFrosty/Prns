@@ -1,5 +1,5 @@
 {
-  "schema": 4,
+  "schema": 5,
   "boards": [
     {
       "availability": "shipping",
@@ -30,6 +30,7 @@
         "kind": "esp",
         "chip": "esp32s3",
         "rust_target": "xtensa-esp32s3-none-elf",
+        "memory_profile": "heltec-v4",
         "partition_table": "partitions-hopspot-16mb.csv",
         "package": "hopspot-heltec-v4",
         "binary": "hopspot-heltec-v4",
@@ -69,6 +70,7 @@
         "kind": "esp",
         "chip": "esp32s3",
         "rust_target": "xtensa-esp32s3-none-elf",
+        "memory_profile": "heltec-v4-r8",
         "partition_table": "partitions-hopspot-16mb.csv",
         "package": "hopspot-heltec-v4-r8",
         "binary": "hopspot-heltec-v4-r8",
@@ -108,6 +110,7 @@
         "kind": "esp",
         "chip": "esp32s3",
         "rust_target": "xtensa-esp32s3-none-elf",
+        "memory_profile": "heltec-e290",
         "partition_table": "partitions-hopspot-16mb.csv",
         "package": "hopspot-heltec-e290",
         "binary": "hopspot-heltec-e290",
@@ -116,6 +119,33 @@
         "flash_frequency": "40m",
         "before_reset": "usb-reset",
         "after_reset": "watchdog-reset"
+      }
+    },
+    {
+      "availability": "qualification",
+      "slug": "heltec-wireless-stick-lite-v3",
+      "display_name": "Heltec Wireless Stick Lite V3",
+      "silicon": "ESP32-S3FN8 + SX1262",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "espressif",
+      "transport": "esp-serial",
+      "expected_chip": "esp32s3",
+      "flash_size": 8388608,
+      "preparation_profile": "esp-usb-boot",
+      "provisioning": null,
+      "build": {
+        "kind": "esp",
+        "chip": "esp32s3",
+        "rust_target": "xtensa-esp32s3-none-elf",
+        "memory_profile": "heltec-wireless-stick-lite-v3",
+        "partition_table": "partitions-hopspot-8mb.csv",
+        "package": "hopspot-heltec-wireless-stick-lite-v3",
+        "binary": "hopspot-heltec-wireless-stick-lite-v3",
+        "flash_size_label": "8mb",
+        "flash_mode": "dio",
+        "flash_frequency": "40m",
+        "before_reset": "default-reset",
+        "after_reset": "hard-reset"
       }
     },
     {
@@ -147,6 +177,7 @@
         "kind": "esp",
         "chip": "esp32s3",
         "rust_target": "xtensa-esp32s3-none-elf",
+        "memory_profile": "t-beam-supreme",
         "partition_table": "partitions-hopspot-8mb.csv",
         "package": "hopspot-t-beam-supreme",
         "binary": "hopspot-t-beam-supreme",
@@ -173,6 +204,7 @@
         "kind": "esp",
         "chip": "esp32c6",
         "rust_target": "riscv32imac-unknown-none-elf",
+        "memory_profile": "xiao-esp32-c6",
         "partition_table": "partitions-hopspot-4mb.csv",
         "package": "hopspot-xiao-esp32-c6",
         "binary": "hopspot-xiao-esp32-c6",
@@ -220,8 +252,7 @@
             "softdevice_family": "s140",
             "softdevice_version": "6.1.1",
             "fwid": "0x00b6",
-            "application_base": "0x00026000",
-            "application_end_exclusive": "0x000c0000",
+            "memory_profile": "t-echo-s140-v6",
             "family_id": "0xada52840",
             "application_link": "softdevice-s140-v6",
             "target_directory": "target/s140-v6",
@@ -231,8 +262,7 @@
             "softdevice_family": "s140",
             "softdevice_version": "7.3.0",
             "fwid": "0x0123",
-            "application_base": "0x00027000",
-            "application_end_exclusive": "0x000c0000",
+            "memory_profile": "t-echo-s140-v7",
             "family_id": "0xada52840",
             "application_link": "softdevice-s140-v7",
             "target_directory": "target/s140-v7",
@@ -261,7 +291,7 @@
         "rust_target": "thumbv7em-none-eabihf",
         "mount_label": "HT-n5262",
         "board_identity": {
-          "match": "exact",
+          "match": "exact-shared",
           "value": "ht-n5262"
         },
         "application_usb": {
@@ -278,12 +308,103 @@
             "softdevice_family": "s140",
             "softdevice_version": "6.1.1",
             "fwid": "0x00b6",
-            "application_base": "0x00026000",
-            "application_end_exclusive": "0x000e9000",
+            "memory_profile": "t114",
             "family_id": "0xada52840",
             "application_link": "bare-metal",
             "target_directory": "target/t114",
             "filename": "heltec-t114-s140-6.1.1.uf2"
+          }
+        ]
+      }
+    },
+    {
+      "availability": "qualification",
+      "slug": "mesh-pocket-5000",
+      "display_name": "Heltec MeshPocket 5000 mAh",
+      "silicon": "nRF52840 + SX1262 + 2.13-inch e-ink",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "mesh-pocket-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "heltec-mesh-pocket",
+        "board_feature": "board-mesh-pocket,mesh-pocket-battery-5000",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "HT-n5262",
+        "board_identity": {
+          "match": "exact-shared",
+          "value": "ht-n5262"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (MeshPocket 5000)",
+          "serial_number": "PERSONAL-RNS-MSPK5-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "memory_profile": "mesh-pocket-5000",
+            "family_id": "0xada52840",
+            "application_link": "bare-metal",
+            "target_directory": "target/mesh-pocket-5000",
+            "filename": "heltec-mesh-pocket-5000-s140-6.1.1.uf2"
+          }
+        ]
+      }
+    },
+    {
+      "availability": "qualification",
+      "slug": "mesh-pocket-10000",
+      "display_name": "Heltec MeshPocket 10000 mAh",
+      "silicon": "nRF52840 + SX1262 + 2.13-inch e-ink",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "mesh-pocket-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "heltec-mesh-pocket",
+        "board_feature": "board-mesh-pocket,mesh-pocket-battery-10000",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "HT-n5262",
+        "board_identity": {
+          "match": "exact-shared",
+          "value": "ht-n5262"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (MeshPocket 10000)",
+          "serial_number": "PERSONAL-RNS-MSPK10-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "memory_profile": "mesh-pocket-10000",
+            "family_id": "0xada52840",
+            "application_link": "bare-metal",
+            "target_directory": "target/mesh-pocket-10000",
+            "filename": "heltec-mesh-pocket-10000-s140-6.1.1.uf2"
           }
         ]
       }
@@ -325,12 +446,57 @@
             "softdevice_family": "s140",
             "softdevice_version": "6.1.1",
             "fwid": "0x00b6",
-            "application_base": "0x00026000",
-            "application_end_exclusive": "0x000e8000",
+            "memory_profile": "t096",
             "family_id": "0xada52840",
             "application_link": "softdevice-s140-v6",
             "target_directory": "target/t096",
             "filename": "t096-s140-6.1.1.uf2"
+          }
+        ]
+      }
+    },
+    {
+      "availability": "qualification",
+      "slug": "rak4631",
+      "display_name": "RAK WisBlock Starter Kit",
+      "silicon": "nRF52840 + SX1262",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "rak4631-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "rak4631",
+        "board_feature": "board-rak4631",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "RAK4631",
+        "board_identity": {
+          "match": "exact",
+          "value": "wisblock-rak4631-board"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (RAK WisBlock 4631)",
+          "serial_number": "PERSONAL-RNS-RAK4631-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "memory_profile": "rak4631",
+            "family_id": "0xada52840",
+            "application_link": "softdevice-s140-v6",
+            "target_directory": "target/rak4631",
+            "filename": "rak4631-s140-6.1.1.uf2"
           }
         ]
       }
@@ -352,6 +518,7 @@
         "package": "t-echo",
         "binary": "t1000e",
         "rust_target": "thumbv7em-none-eabihf",
+        "memory_profile": "t1000-e",
         "cargo_feature": "board-t1000e",
         "target_directory": "target/t1000e",
         "application_filename": "t1000e.bin",
@@ -394,8 +561,6 @@
           "device_type": "0x0052",
           "device_revision": 52840,
           "application_version": "not-enforced",
-          "application_base": "0x00027000",
-          "application_end_exclusive": "0x000ea000",
           "bank_layout": "single"
         },
         "recovery": {
@@ -407,6 +572,52 @@
           "family_id": "0xada52840",
           "filename": "t1000e.uf2"
         }
+      }
+    },
+    {
+      "availability": "qualification",
+      "slug": "muzi-base-duo",
+      "display_name": "muzi works Base Duo",
+      "silicon": "nRF52840 + LR1121",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "muzi-base-duo-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "muzi-base-duo",
+        "board_feature": "board-muzi-base-duo",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "muzi-Base",
+        "board_identity": {
+          "match": "exact",
+          "value": "muzi-base-board"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (muzi Base Duo)",
+          "serial_number": "PERSONAL-RNS-MBDUO-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "memory_profile": "muzi-base-duo",
+            "family_id": "0xada52840",
+            "application_link": "softdevice-s140-v6",
+            "target_directory": "target/muzi-base-duo",
+            "filename": "muzi-base-duo-s140-6.1.1.uf2"
+          }
+        ]
       }
     }
   ]

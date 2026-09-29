@@ -17,6 +17,7 @@ use crate::manifold::driver::{
 use crate::manifold::grant::ManifoldLaneReader;
 use crate::manifold::Host;
 use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
+use crate::runtime::DiscoveryGroupConfigurationStoreExchange;
 use crate::storage::StorageLayout;
 
 use super::super::remote_control_pairing_persistence::{
@@ -151,7 +152,7 @@ where
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
     H: Host,
-    M: RawMutex + 'static,
+    M: RawMutex + Sync + 'static,
 {
     pub fn new<'d, D>(
         recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
@@ -215,7 +216,7 @@ where
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
     H: Host,
-    M: RawMutex + 'static,
+    M: RawMutex + Sync + 'static,
 {
     pub fn init_static<'d, D>(
         cell: &'static StaticCell<Self>,
@@ -441,7 +442,10 @@ where
     }
 
     /// Runs the manifold with the caller's interface and supervisor tasks.
-    pub async fn run(self, drive: impl Future<Output = ()>) {
+    pub async fn run(self, drive: impl Future<Output = ()>)
+    where
+        St: prns_runtime::runtime::RemoteControlHostControls,
+    {
         self.run_with_inspection_store(&NoInterfaceInspectionStore, drive)
             .await;
     }
@@ -455,6 +459,7 @@ where
     pub async fn run_with_proof_decider<P>(self, should_prove: P, drive: impl Future<Output = ()>)
     where
         P: FnMut(&ProofRequest) -> bool,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         self.run_with_inspection_store_and_proof_decider(
             &NoInterfaceInspectionStore,
@@ -474,6 +479,7 @@ where
         drive: impl Future<Output = ()>,
     ) where
         M: Sync,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         const {
             assert!(
@@ -497,6 +503,7 @@ where
     ) where
         M: Sync,
         P: FnMut(&ProofRequest) -> bool,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         const {
             assert!(
@@ -511,6 +518,7 @@ where
     async fn run_with_inspection_store<Store>(self, store: &Store, drive: impl Future<Output = ()>)
     where
         Store: InterfaceInspectionStore,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         self.run_with_inspection_store_and_proof_decider(store, |_| false, drive)
             .await;
@@ -524,6 +532,7 @@ where
     ) where
         Store: InterfaceInspectionStore,
         P: FnMut(&ProofRequest) -> bool,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         let PrnsNode {
             node,
@@ -561,6 +570,7 @@ where
                 egress: &mut egress,
                 notify,
                 commands,
+                resource_responses: handle.resource_response_receiver(),
                 lifecycle,
             },
             |journaled| {
@@ -605,7 +615,10 @@ where
     }
 
     /// Runs only the manifold for boards that schedule interfaces separately.
-    pub async fn run_manifold(&mut self) {
+    pub async fn run_manifold(&mut self)
+    where
+        St: prns_runtime::runtime::RemoteControlHostControls,
+    {
         self.run_manifold_with_inspection_store(&NoInterfaceInspectionStore)
             .await;
     }
@@ -614,6 +627,7 @@ where
     pub async fn run_manifold_with_proof_decider<P>(&mut self, should_prove: P)
     where
         P: FnMut(&ProofRequest) -> bool,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         let mut persistence = NoManifoldPersistence;
         self.run_manifold_with_inspection_store_and_persistence_and_proof_decider(
@@ -633,6 +647,7 @@ where
         store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
     ) where
         M: Sync,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         const {
             assert!(
@@ -655,6 +670,7 @@ where
     ) where
         M: Sync,
         P: FnMut(&ProofRequest) -> bool,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         const {
             assert!(
@@ -674,6 +690,7 @@ where
     async fn run_manifold_with_inspection_store<Store>(&mut self, store: &Store)
     where
         Store: InterfaceInspectionStore,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         let mut persistence = NoManifoldPersistence;
         self.run_manifold_with_inspection_store_and_persistence(store, &mut persistence)
@@ -691,12 +708,19 @@ where
     >(
         &mut self,
         store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
-        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
+        persistence: &mut EmbeddedFlashPersistence<
+            Fl,
+            Keys,
+            Observe,
+            PENDING,
+            impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+        >,
     ) where
         M: Sync,
         Fl: NorFlash,
         Keys: RouteSnapshotKeys,
         Observe: FnMut(EmbeddedPersistenceDiagnostic),
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         const {
             assert!(
@@ -720,7 +744,13 @@ where
     >(
         &mut self,
         store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
-        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
+        persistence: &mut EmbeddedFlashPersistence<
+            Fl,
+            Keys,
+            Observe,
+            PENDING,
+            impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+        >,
         should_prove: Decide,
     ) where
         M: Sync,
@@ -728,6 +758,7 @@ where
         Keys: RouteSnapshotKeys,
         Observe: FnMut(EmbeddedPersistenceDiagnostic),
         Decide: FnMut(&ProofRequest) -> bool,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         const {
             assert!(
@@ -745,7 +776,13 @@ where
 
     pub async fn restore_embedded_persistence<Fl, Keys, Observe, const PENDING: usize>(
         &mut self,
-        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
+        persistence: &mut EmbeddedFlashPersistence<
+            Fl,
+            Keys,
+            Observe,
+            PENDING,
+            impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+        >,
     ) -> EmbeddedPersistenceRestoreReport
     where
         Fl: NorFlash,
@@ -771,6 +808,7 @@ where
     ) where
         Store: InterfaceInspectionStore,
         P: ManifoldPersistence<S>,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         self.run_manifold_with_inspection_store_and_persistence_and_proof_decider(
             store,
@@ -793,6 +831,7 @@ where
         Store: InterfaceInspectionStore,
         P: ManifoldPersistence<S>,
         Decide: FnMut(&ProofRequest) -> bool,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         let PrnsNode {
             node,
@@ -832,6 +871,7 @@ where
                 egress,
                 notify: *notify,
                 commands: *commands,
+                resource_responses: handle.resource_response_receiver(),
                 lifecycle: *lifecycle,
             },
             |journaled| {

@@ -3,10 +3,10 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
-use rmp::Marker;
-
 use crate::identity::IdentityHash;
-use crate::interfaces::rns_management::message_pack::{MessagePackInteger, MessagePackReader};
+use crate::interfaces::rns_management::message_pack::{
+    Marker, MessagePackInteger, MessagePackReader,
+};
 use crate::interfaces::rns_management::wire_names::{interface, transport};
 use crate::wire::DestinationHash;
 

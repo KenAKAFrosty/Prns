@@ -58,6 +58,7 @@ fn typed_reference_interfaces_use_the_same_effective_planner() {
     let plan = plan_reference_config(&config).unwrap();
     let planned = named(&plan, "Typed");
     assert_eq!(planned.policy.bitrate.get(), 1_000_000);
+    assert_eq!(planned.policy.gravity, InterfaceGravity::new(1_000_000));
     assert!(matches!(planned.medium, PlannedMedium::TcpClient { .. }));
 }
 
@@ -385,7 +386,13 @@ fn signed_interface_gravity_inherits_and_overrides_the_global_default() {
              enabled = Yes\n\
              target_host = overridden\n\
              target_port = 4242\n\
-             gravity = 17\n",
+             gravity = 17\n\
+             [[Explicit Zero]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = zeroed\n\
+             target_port = 4242\n\
+             gravity = 0\n",
     );
 
     assert_eq!(
@@ -396,6 +403,37 @@ fn signed_interface_gravity_inherits_and_overrides_the_global_default() {
         named(&plan, "Overridden").policy.gravity,
         InterfaceGravity::new(17)
     );
+    assert_eq!(
+        named(&plan, "Explicit Zero").policy.gravity,
+        InterfaceGravity::ZERO
+    );
+}
+
+#[test]
+fn omitted_gravity_follows_the_effective_interface_bitrate() {
+    let plan = plan_of(
+        "[interfaces]\n\
+             [[Estimated]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = estimated\n\
+             target_port = 4242\n\
+             [[Configured]]\n\
+             type = TCPClientInterface\n\
+             enabled = Yes\n\
+             target_host = configured\n\
+             target_port = 4242\n\
+             bitrate = 1234567\n",
+    );
+
+    for name in ["Estimated", "Configured"] {
+        let policy = named(&plan, name).policy;
+        assert_eq!(
+            policy.gravity,
+            InterfaceGravity::from_bitrate(policy.bitrate)
+        );
+    }
+    assert!(named(&plan, "Estimated").policy.gravity > named(&plan, "Configured").policy.gravity);
 }
 
 #[test]

@@ -1,9 +1,8 @@
-use rmp::Marker;
-
 use crate::wire::DestinationHash;
 
-use super::super::message_pack::{MessagePackInteger, MessagePackReader};
+use super::super::message_pack::{Marker, MessagePackInteger, MessagePackReader};
 use super::super::wire_names::remote_path;
+#[cfg(feature = "shared-instance-rpc")]
 use super::super::{MessagePackEncoder, RnsManagementEncodeError};
 use super::{finish, RnsRemoteRequestDecodeError, REMOTE_REQUEST_MAXIMUM_DEPTH};
 
@@ -62,6 +61,7 @@ impl RnsRemotePathTableRequest {
         }
     }
 
+    #[inline(never)]
     pub fn includes(&self, destination: DestinationHash, hops: u8) -> bool {
         self.destination.includes(destination) && self.hops.includes(hops)
     }
@@ -94,6 +94,7 @@ pub enum RnsRemotePathRequest {
 }
 
 impl RnsRemotePathRequest {
+    #[cfg(feature = "shared-instance-rpc")]
     pub fn encode_message_pack(self) -> Result<alloc::vec::Vec<u8>, RnsManagementEncodeError> {
         let mut encoder = MessagePackEncoder::new();
         match self {
@@ -113,6 +114,7 @@ impl RnsRemotePathRequest {
     }
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn encode_destination(
     encoder: &mut MessagePackEncoder,
     destination: DestinationSelection,
@@ -125,6 +127,7 @@ fn encode_destination(
     Ok(())
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn encode_hops(encoder: &mut MessagePackEncoder, hops: HopSelection) {
     match hops {
         HopSelection::All => encoder.nil(),
@@ -140,6 +143,7 @@ enum Command {
     InvalidShape,
 }
 
+#[inline(never)]
 pub fn decode_remote_path_request(
     bytes: &[u8],
 ) -> Result<RnsRemotePathRequest, RnsRemoteRequestDecodeError> {

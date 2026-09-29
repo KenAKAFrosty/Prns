@@ -41,7 +41,7 @@ pub(in crate::plan) enum MemberEgressPolicy {
 pub(in crate::plan) struct InheritedInterfacePolicy {
     pub common: InterfaceCommonPolicy,
     pub announce_rate: Option<AnnounceRateLimit>,
-    pub gravity: InterfaceGravity,
+    pub gravity: Option<InterfaceGravity>,
 }
 
 impl MemberEgressPolicy {
@@ -107,9 +107,10 @@ pub(in crate::plan) fn effective_policy(
     Ok(defaults.configured(ConfiguredInterfacePolicy {
         capabilities,
         mode: Some(planned_mode(interface, medium, discovery)),
-        gravity: Some(InterfaceGravity::new(
-            interface.gravity.unwrap_or(inherited.gravity.get()),
-        )),
+        gravity: interface
+            .gravity
+            .map(InterfaceGravity::new)
+            .or(inherited.gravity),
         bitrate,
         mtu,
         announce_rate_limit,
@@ -188,7 +189,7 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
         PlannedMedium::I2p { .. } => Ok(i2p_core::DEFAULTS),
         PlannedMedium::Weave { .. } => Ok(weave_core::DEFAULTS),
         PlannedMedium::PrnsUsbAuto => Ok(usb_auto::HOST_DEFAULTS),
-        PlannedMedium::PrnsBluetoothAuto => Ok(bluetooth_contract::defaults_for_bitrate(
+        PlannedMedium::PrnsBluetoothAuto(_) => Ok(bluetooth_contract::defaults_for_bitrate(
             bluetooth_contract::BLE_BITRATE_GUESS_BPS,
         )),
         PlannedMedium::PrnsWebSocketClient { .. } | PlannedMedium::PrnsWebSocketServer { .. } => {

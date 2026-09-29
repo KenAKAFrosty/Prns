@@ -1,15 +1,34 @@
-pub(in crate::screen) mod lora;
+pub(in crate::screen) mod groups;
+pub(in crate::screen) mod subg;
 
 use core::future::Future;
 
 use personal_rns::interfaces::lora::RadioProfile;
+use personal_rns::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
+use personal_rns::interfaces::subghz::{
+    ResolvedSubGMode, SubGConfiguration, SubGConfigurationState,
+};
+use personal_rns::interfaces::{DiscoveryGroupSet, InterfaceId};
+#[cfg(feature = "remote-control-pairing")]
+use personal_rns::remote_control::RemoteControlPairingAttemptId;
 use personal_rns::storage::DisplayedStorageLimits;
+#[cfg(feature = "remote-control-pairing")]
+use personal_rns::units::InstantMillis;
 
 use crate::PersistenceState;
+#[cfg(feature = "remote-control-pairing")]
+use crate::{
+    RemoteControlPairingAvailability, RemoteControlTargetPairingPhase,
+    RemoteControlTargetPairingState,
+};
 
 use super::limits::storage_limit_page_count;
-use super::model::{Card, CardKind, ScreenContent};
-use lora::{lora_editor_hold, lora_editor_tap, region_index, LoRaHold, LoRaScreen};
+use super::model::{Card, CardKind, ScreenContent, SubGCardState};
+pub use groups::DiscoveryGroupReplacement;
+use groups::{
+    group_editor_hold, group_editor_tap, DiscoveryGroupEditor, DiscoveryGroupEditorOutcome,
+};
+use subg::{region_index, subg_editor_hold, subg_editor_tap, SubGEditorOutcome, SubGScreen};
 
 const INITIAL_VISIBLE_FOCUS_ITEMS: usize = 3;
 const SCROLLED_VISIBLE_FOCUS_ITEMS: usize = 2;
@@ -18,6 +37,8 @@ const PERSISTENCE_NOTICE_MILLIS: u64 = 5_000;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::screen) enum GlobalMenuItem {
     Announce,
+    #[cfg(feature = "remote-control-pairing")]
+    PairRemoteControl,
     Limits,
     Gnss,
     BlankDisplay,
@@ -27,6 +48,20 @@ pub(in crate::screen) enum GlobalMenuItem {
     Back,
 }
 
+#[cfg(feature = "remote-control-pairing")]
+const GLOBAL_MENU_ORDER: [GlobalMenuItem; 9] = [
+    GlobalMenuItem::Announce,
+    GlobalMenuItem::PairRemoteControl,
+    GlobalMenuItem::Limits,
+    GlobalMenuItem::Gnss,
+    GlobalMenuItem::BlankDisplay,
+    GlobalMenuItem::DisplayAutoOff,
+    GlobalMenuItem::Sleep,
+    GlobalMenuItem::RadioMode,
+    GlobalMenuItem::Back,
+];
+
+#[cfg(not(feature = "remote-control-pairing"))]
 const GLOBAL_MENU_ORDER: [GlobalMenuItem; 8] = [
     GlobalMenuItem::Announce,
     GlobalMenuItem::Limits,
@@ -50,30 +85,40 @@ pub(in crate::screen) const SLEEP_MENU_ITEM: usize = 4;
 pub(in crate::screen) const RADIO_MENU_ITEM_NO_DISPLAY: usize = 3;
 pub(in crate::screen) const POWER_MENU_ITEM: usize = 0;
 pub(in crate::screen) const POWER_ONLY_MENU_ITEMS: &[&str] = &["Power", "Back"];
+pub(in crate::screen) const DISCOVERY_GROUP_MENU_ITEMS: &[&str] = &["Power", "Groups", "Back"];
+pub(in crate::screen) const DISCOVERY_GROUPS_MENU_ITEM: usize = 1;
 pub(in crate::screen) const SHARED_INSTANCE_MENU_ITEMS: &[&str] = &["Power", "RNS Config", "Back"];
 pub(in crate::screen) const SHARED_INSTANCE_CONFIG_MENU_ITEM: usize = 1;
 pub(in crate::screen) const WIFI_MENU_ITEMS: &[&str] = &["Power", "Station", "Back"];
 pub(in crate::screen) const STATION_UPLINK_MENU_ITEM: usize = 1;
-const LORA_MENU_ITEMS: &[&str] = &["Power", "Tune", "Reset", "Back"];
-pub(in crate::screen) const LORA_TUNE_MENU_ITEM: usize = 1;
-pub(in crate::screen) const LORA_RESET_MENU_ITEM: usize = 2;
+const SUBG_MENU_ITEMS: &[&str] = &["Power", "Configure", "Clear", "Back"];
+const SUBG_SETUP_MENU_ITEMS: &[&str] = &["Configure", "Back"];
+pub(in crate::screen) const SUBG_CONFIGURE_MENU_ITEM: usize = 1;
+pub(in crate::screen) const SUBG_CLEAR_MENU_ITEM: usize = 2;
+pub(in crate::screen) const SUBG_SETUP_CONFIGURE_MENU_ITEM: usize = 0;
 
 pub(in crate::screen) fn interface_menu_items(
     kind: CardKind,
     shared_instance_config_export: SharedInstanceConfigExport,
+    discovery_groups: DiscoveryGroupEditorAvailability,
 ) -> &'static [&'static str] {
     match kind {
-        CardKind::LoRa => LORA_MENU_ITEMS,
+        CardKind::SubG(SubGCardState::Setup) => SUBG_SETUP_MENU_ITEMS,
+        CardKind::SubG(SubGCardState::AutoLoRa | SubGCardState::ManualLoRa) => SUBG_MENU_ITEMS,
         CardKind::WifiStation | CardKind::WifiStationDisabled => WIFI_MENU_ITEMS,
         CardKind::SharedInstance
             if shared_instance_config_export == SharedInstanceConfigExport::Available =>
         {
             SHARED_INSTANCE_MENU_ITEMS
         }
-        CardKind::Wifi
-        | CardKind::Peer
+        CardKind::Wifi | CardKind::Ble
+            if discovery_groups == DiscoveryGroupEditorAvailability::Available =>
+        {
+            DISCOVERY_GROUP_MENU_ITEMS
+        }
+        CardKind::Wifi | CardKind::Ble => POWER_ONLY_MENU_ITEMS,
+        CardKind::Peer
         | CardKind::Usb
-        | CardKind::Ble
         | CardKind::EspNow
         | CardKind::SharedInstance
         | CardKind::Tcp => POWER_ONLY_MENU_ITEMS,
@@ -91,6 +136,14 @@ pub enum InputEvent {
 pub enum UiAction {
     None,
     Announce,
+    #[cfg(feature = "remote-control-pairing")]
+    OpenRemoteControlPairing,
+    #[cfg(feature = "remote-control-pairing")]
+    CloseRemoteControlPairing,
+    #[cfg(feature = "remote-control-pairing")]
+    ApproveRemoteControlTargetPairing(RemoteControlPairingAttemptId),
+    #[cfg(feature = "remote-control-pairing")]
+    RejectRemoteControlTargetPairing(RemoteControlPairingAttemptId),
     BlankDisplay,
     ToggleDisplayAutoOff,
     Sleep,
@@ -99,9 +152,11 @@ pub enum UiAction {
     /// Flip the selected card's interface off or back on, keyed by the card's [`id`](crate::screen::Card::id).
     ToggleSelectedInterface,
     ToggleStationUplink,
-    OpenLoRaEditor,
-    SetLoRaProfile(RadioProfile),
-    ResetLoRaProfile,
+    OpenDiscoveryGroupsEditor(InterfaceId),
+    ReplaceDiscoveryGroups,
+    OpenSubGEditor,
+    SetSubGConfiguration(SubGConfiguration),
+    ClearSubGConfiguration,
     SwapRadioMode,
     OpenDocs,
     CopySharedInstanceConfig,
@@ -128,30 +183,54 @@ prns_macros::iterable_enum! {
         Awake,
         Saved,
         ApplyFailed,
-        ProfileNotSaved,
-        ProfileRecovered,
-        ProfileReset,
+        SubGNotSaved,
+        SubGRecovered,
+        SubGReset,
+        SubGMigrated,
+        SubGUncertain,
         IdentityReset,
         IdentityUnstable,
         StateRecovered,
         SaveDeferred,
         SaveFailed,
+        GroupsInvalid,
+        GroupsBusy,
+        GroupsNotSaved,
+        GroupsApplyFailed,
+        GroupsRollbackFailed,
     }
     #[cfg(test)]
     pub(in crate::screen) const ALL;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RadioProfileChangeResult {
+pub enum SubGConfigurationChangeResult {
     Saved,
     ApplyFailed,
-    ProfileNotSaved,
+    PersistenceFailed,
+    PersistenceUncertain,
+    RollbackFailed,
 }
 
-impl RadioProfileChangeResult {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActiveSubGConfiguration {
+    Previous,
+    Requested,
+}
+
+impl SubGConfigurationChangeResult {
     #[must_use]
-    pub const fn applied(self) -> bool {
-        matches!(self, Self::Saved | Self::ProfileNotSaved)
+    pub const fn committed(self) -> bool {
+        matches!(self, Self::Saved)
+    }
+
+    #[must_use]
+    pub const fn active_configuration(self) -> ActiveSubGConfiguration {
+        match self {
+            Self::ApplyFailed | Self::PersistenceFailed => ActiveSubGConfiguration::Previous,
+            Self::PersistenceUncertain | Self::RollbackFailed => ActiveSubGConfiguration::Requested,
+            Self::Saved => ActiveSubGConfiguration::Requested,
+        }
     }
 
     #[must_use]
@@ -159,26 +238,61 @@ impl RadioProfileChangeResult {
         match self {
             Self::Saved => UiNotice::Saved,
             Self::ApplyFailed => UiNotice::ApplyFailed,
-            Self::ProfileNotSaved => UiNotice::ProfileNotSaved,
+            Self::PersistenceFailed => UiNotice::SubGNotSaved,
+            Self::PersistenceUncertain | Self::RollbackFailed => UiNotice::SubGUncertain,
         }
     }
 }
 
-pub async fn apply_and_persist_radio_profile<Apply, Persist, PersistFuture>(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubGConfigurationStepOutcome {
+    Succeeded,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubGConfigurationPersistenceOutcome {
+    Committed,
+    NotCommitted,
+    Indeterminate,
+}
+
+#[inline(never)]
+pub async fn apply_and_persist_subg_configuration<
+    Apply,
+    ApplyFuture,
+    Persist,
+    PersistFuture,
+    Rollback,
+    RollbackFuture,
+>(
     apply: Apply,
     persist: Persist,
-) -> RadioProfileChangeResult
+    rollback: Rollback,
+) -> SubGConfigurationChangeResult
 where
-    Apply: Future<Output = bool>,
+    Apply: FnOnce() -> ApplyFuture,
+    ApplyFuture: Future<Output = SubGConfigurationStepOutcome>,
     Persist: FnOnce() -> PersistFuture,
-    PersistFuture: Future<Output = bool>,
+    PersistFuture: Future<Output = SubGConfigurationPersistenceOutcome>,
+    Rollback: FnOnce() -> RollbackFuture,
+    RollbackFuture: Future<Output = SubGConfigurationStepOutcome>,
 {
-    if !apply.await {
-        RadioProfileChangeResult::ApplyFailed
-    } else if persist().await {
-        RadioProfileChangeResult::Saved
-    } else {
-        RadioProfileChangeResult::ProfileNotSaved
+    if matches!(apply().await, SubGConfigurationStepOutcome::Failed) {
+        return SubGConfigurationChangeResult::ApplyFailed;
+    }
+    match persist().await {
+        SubGConfigurationPersistenceOutcome::Committed => {
+            return SubGConfigurationChangeResult::Saved
+        }
+        SubGConfigurationPersistenceOutcome::Indeterminate => {
+            return SubGConfigurationChangeResult::PersistenceUncertain
+        }
+        SubGConfigurationPersistenceOutcome::NotCommitted => {}
+    }
+    match rollback().await {
+        SubGConfigurationStepOutcome::Succeeded => SubGConfigurationChangeResult::PersistenceFailed,
+        SubGConfigurationStepOutcome::Failed => SubGConfigurationChangeResult::RollbackFailed,
     }
 }
 
@@ -197,9 +311,11 @@ impl UiNotice {
             Self::Awake => NoticeLines::one("Awake"),
             Self::Saved => NoticeLines::one("Saved"),
             Self::ApplyFailed => NoticeLines::one("Apply Failed"),
-            Self::ProfileNotSaved => NoticeLines::two("Profile", "Not saved"),
-            Self::ProfileRecovered => NoticeLines::two("Profile", "Recovered"),
-            Self::ProfileReset => NoticeLines::two("Profile", "Reset"),
+            Self::SubGNotSaved => NoticeLines::two("SubG", "Not saved"),
+            Self::SubGRecovered => NoticeLines::two("SubG", "Recovered"),
+            Self::SubGReset => NoticeLines::two("SubG", "Reset"),
+            Self::SubGMigrated => NoticeLines::two("SubG", "Migrated"),
+            Self::SubGUncertain => NoticeLines::two("SubG", "Uncertain"),
             Self::IdentityReset => NoticeLines::two("Identity", "Reset"),
             Self::IdentityUnstable => NoticeLines::two("Identity", "Unstable"),
             Self::StateRecovered => NoticeLines::two("State", "Recovered"),
@@ -207,6 +323,11 @@ impl UiNotice {
                 NoticeLines::three("Save deferred", "Flash cooldown", "Auto retry")
             }
             Self::SaveFailed => NoticeLines::three("Save failed", "Flash error", "Auto retry"),
+            Self::GroupsInvalid => NoticeLines::two("Groups", "Invalid"),
+            Self::GroupsBusy => NoticeLines::two("Groups", "Busy"),
+            Self::GroupsNotSaved => NoticeLines::two("Groups", "Not saved"),
+            Self::GroupsApplyFailed => NoticeLines::two("Groups", "Apply failed"),
+            Self::GroupsRollbackFailed => NoticeLines::two("Groups", "Rollback failed"),
         }
     }
 }
@@ -344,12 +465,21 @@ pub enum GnssAvailability {
     Available,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiscoveryGroupEditorAvailability {
+    Unavailable,
+    Available,
+}
+
 pub struct UiConfiguration {
     pub storage_limits: DisplayedStorageLimits,
     pub user_blanking: UserBlanking,
     pub access_point: AccessPointState,
     pub shared_instance_config_export: SharedInstanceConfigExport,
     pub gnss: GnssAvailability,
+    #[cfg(feature = "remote-control-pairing")]
+    pub remote_control_pairing: RemoteControlPairingAvailability,
+    pub discovery_groups: DiscoveryGroupEditorAvailability,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -361,9 +491,16 @@ pub struct UiState {
     pub(in crate::screen) access_point: AccessPointState,
     pub(in crate::screen) shared_instance_config_export: SharedInstanceConfigExport,
     pub(in crate::screen) gnss: GnssAvailability,
+    pub(in crate::screen) discovery_groups: DiscoveryGroupEditorAvailability,
     pub(in crate::screen) gnss_visible: bool,
     pub(in crate::screen) notice: Option<UiNotice>,
     pub(in crate::screen) storage_limits: DisplayedStorageLimits,
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) remote_control_pairing: RemoteControlPairingAvailability,
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) remote_control_state: RemoteControlTargetPairingState,
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) remote_control_now: InstantMillis,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -380,12 +517,21 @@ pub(in crate::screen) enum UiMode {
         selected_item: usize,
         kind: CardKind,
     },
-    LoRaEditor {
-        screen: LoRaScreen,
+    SubGEditor {
+        screen: SubGScreen,
         profile: RadioProfile,
+    },
+    DiscoveryGroupEditor(DiscoveryGroupEditor),
+    DiscoveryGroupCommit(DiscoveryGroupReplacement),
+    ConfirmSubGClear {
+        confirm: bool,
     },
     ConfirmRadioSwap {
         confirm: bool,
+    },
+    #[cfg(feature = "remote-control-pairing")]
+    RemoteControlPairing {
+        approve: bool,
     },
 }
 
@@ -399,9 +545,16 @@ impl UiState {
             access_point: configuration.access_point,
             shared_instance_config_export: configuration.shared_instance_config_export,
             gnss: configuration.gnss,
+            discovery_groups: configuration.discovery_groups,
             gnss_visible: false,
             notice: None,
             storage_limits: configuration.storage_limits,
+            #[cfg(feature = "remote-control-pairing")]
+            remote_control_pairing: configuration.remote_control_pairing,
+            #[cfg(feature = "remote-control-pairing")]
+            remote_control_state: RemoteControlTargetPairingState::new(),
+            #[cfg(feature = "remote-control-pairing")]
+            remote_control_now: InstantMillis(0),
         }
     }
 
@@ -454,8 +607,13 @@ impl UiState {
             | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
             | UiMode::InterfaceMenu { .. }
-            | UiMode::LoRaEditor { .. }
+            | UiMode::SubGEditor { .. }
+            | UiMode::DiscoveryGroupEditor(_)
+            | UiMode::DiscoveryGroupCommit(_)
+            | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
+            #[cfg(feature = "remote-control-pairing")]
+            UiMode::RemoteControlPairing { .. } => None,
         }
     }
 
@@ -466,23 +624,84 @@ impl UiState {
             | UiMode::GlobalMenu { .. }
             | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
-            | UiMode::LoRaEditor { .. }
+            | UiMode::SubGEditor { .. }
+            | UiMode::DiscoveryGroupEditor(_)
+            | UiMode::DiscoveryGroupCommit(_)
+            | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
+            #[cfg(feature = "remote-control-pairing")]
+            UiMode::RemoteControlPairing { .. } => None,
         }
     }
 
-    pub fn open_lora_editor(&mut self, profile: RadioProfile) {
-        self.mode = UiMode::LoRaEditor {
-            screen: LoRaScreen::Region {
-                cursor: region_index(profile.region),
+    pub fn open_subg_editor(&mut self, state: SubGConfigurationState) {
+        let profile = match state {
+            SubGConfigurationState::Unconfigured => US915_AUTO_LORA_PROFILE,
+            SubGConfigurationState::Configured(configuration) => {
+                let ResolvedSubGMode::LoRa(profile) = configuration.resolve();
+                profile
+            }
+        };
+        self.mode = UiMode::SubGEditor {
+            screen: SubGScreen::Region {
+                cursor: region_index(profile.region()),
             },
             profile,
         };
     }
 
+    pub fn open_discovery_groups_editor(
+        &mut self,
+        interface_id: InterfaceId,
+        groups: &DiscoveryGroupSet,
+    ) {
+        self.mode = UiMode::DiscoveryGroupEditor(DiscoveryGroupEditor::new(interface_id, groups));
+    }
+
+    /// Takes the validated group replacement produced by the most recent UI action.
+    pub fn take_discovery_group_replacement(&mut self) -> Option<DiscoveryGroupReplacement> {
+        let UiMode::DiscoveryGroupCommit(replacement) = self.mode else {
+            return None;
+        };
+        self.mode = UiMode::Cards;
+        Some(replacement)
+    }
+
     #[must_use]
     pub const fn gnss_visible(&self) -> bool {
         self.gnss_visible
+    }
+
+    #[cfg(feature = "remote-control-pairing")]
+    pub fn sync_remote_control(
+        &mut self,
+        state: RemoteControlTargetPairingState,
+        now: InstantMillis,
+    ) {
+        self.remote_control_state = state;
+        self.remote_control_now = now;
+    }
+
+    /// Restores pairing mode after an asynchronous close fails so the failure remains visible and
+    /// the user can retry it.
+    #[cfg(feature = "remote-control-pairing")]
+    pub fn remote_control_pairing_close_failed(&mut self) {
+        self.mode = UiMode::RemoteControlPairing { approve: false };
+    }
+
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) const fn remote_control_state(&self) -> RemoteControlTargetPairingState {
+        self.remote_control_state
+    }
+
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) const fn remote_control_now(&self) -> InstantMillis {
+        self.remote_control_now
+    }
+
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) const fn remote_control_pairing_approval_selected(&self) -> bool {
+        matches!(self.mode, UiMode::RemoteControlPairing { approve: true })
     }
 
     pub(in crate::screen) fn global_menu_items(&self) -> impl Iterator<Item = GlobalMenuItem> + '_ {
@@ -498,6 +717,10 @@ impl UiState {
                 self.user_blanking.is_available()
             }
             GlobalMenuItem::RadioMode => self.access_point != AccessPointState::Unsupported,
+            #[cfg(feature = "remote-control-pairing")]
+            GlobalMenuItem::PairRemoteControl => {
+                self.remote_control_pairing == RemoteControlPairingAvailability::Available
+            }
             GlobalMenuItem::Announce
             | GlobalMenuItem::Limits
             | GlobalMenuItem::Sleep
@@ -519,6 +742,8 @@ impl UiState {
     ) -> &'static str {
         match item {
             GlobalMenuItem::Announce => "Announce",
+            #[cfg(feature = "remote-control-pairing")]
+            GlobalMenuItem::PairRemoteControl => "Pair remote",
             GlobalMenuItem::Limits => "Limits",
             GlobalMenuItem::Gnss if self.gnss_visible => "GPS Off",
             GlobalMenuItem::Gnss => "GPS On",
@@ -544,8 +769,13 @@ impl UiState {
             | UiMode::GlobalMenu { .. }
             | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
-            | UiMode::LoRaEditor { .. }
+            | UiMode::SubGEditor { .. }
+            | UiMode::DiscoveryGroupEditor(_)
+            | UiMode::DiscoveryGroupCommit(_)
+            | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => {}
+            #[cfg(feature = "remote-control-pairing")]
+            UiMode::RemoteControlPairing { .. } => {}
             UiMode::InterfaceMenu { .. } if self.selected_card(content.cards).is_none() => {
                 self.mode = UiMode::Cards;
             }
@@ -555,7 +785,13 @@ impl UiState {
             } => {
                 self.mode = UiMode::InterfaceMenu {
                     selected_item: selected_item.min(
-                        interface_menu_items(kind, self.shared_instance_config_export).len() - 1,
+                        interface_menu_items(
+                            kind,
+                            self.shared_instance_config_export,
+                            self.discovery_groups,
+                        )
+                        .len()
+                            - 1,
                     ),
                     kind,
                 };
@@ -631,6 +867,11 @@ impl UiState {
                         self.mode = UiMode::Cards;
                         UiAction::Announce
                     }
+                    #[cfg(feature = "remote-control-pairing")]
+                    Some(GlobalMenuItem::PairRemoteControl) => {
+                        self.mode = UiMode::RemoteControlPairing { approve: false };
+                        UiAction::OpenRemoteControlPairing
+                    }
                     Some(GlobalMenuItem::Limits) => {
                         self.mode = UiMode::LimitsPage { page: 0 };
                         UiAction::None
@@ -678,6 +919,47 @@ impl UiState {
                     UiAction::None
                 }
             }
+            (InputEvent::ShortPress, UiMode::ConfirmSubGClear { confirm }) => {
+                self.mode = UiMode::ConfirmSubGClear { confirm: !confirm };
+                UiAction::None
+            }
+            (InputEvent::LongPress, UiMode::ConfirmSubGClear { confirm }) => {
+                self.mode = UiMode::Cards;
+                if confirm {
+                    UiAction::ClearSubGConfiguration
+                } else {
+                    UiAction::None
+                }
+            }
+            #[cfg(feature = "remote-control-pairing")]
+            (InputEvent::ShortPress, UiMode::RemoteControlPairing { approve }) => {
+                if self.remote_control_state.phase()
+                    == RemoteControlTargetPairingPhase::Confirmation
+                {
+                    self.mode = UiMode::RemoteControlPairing { approve: !approve };
+                }
+                UiAction::None
+            }
+            #[cfg(feature = "remote-control-pairing")]
+            (InputEvent::LongPress, UiMode::RemoteControlPairing { approve }) => {
+                if self.remote_control_state.phase()
+                    == RemoteControlTargetPairingPhase::Confirmation
+                {
+                    if let Some(attempt_id) = self.remote_control_state.attempt_id() {
+                        if approve {
+                            UiAction::ApproveRemoteControlTargetPairing(attempt_id)
+                        } else {
+                            UiAction::RejectRemoteControlTargetPairing(attempt_id)
+                        }
+                    } else {
+                        self.mode = UiMode::Cards;
+                        UiAction::CloseRemoteControlPairing
+                    }
+                } else {
+                    self.mode = UiMode::Cards;
+                    UiAction::CloseRemoteControlPairing
+                }
+            }
             (
                 InputEvent::ShortPress,
                 UiMode::InterfaceMenu {
@@ -687,7 +969,12 @@ impl UiState {
             ) => {
                 self.mode = UiMode::InterfaceMenu {
                     selected_item: (selected_item + 1)
-                        % interface_menu_items(kind, self.shared_instance_config_export).len(),
+                        % interface_menu_items(
+                            kind,
+                            self.shared_instance_config_export,
+                            self.discovery_groups,
+                        )
+                        .len(),
                     kind,
                 };
                 UiAction::None
@@ -701,42 +988,86 @@ impl UiState {
             ) => {
                 self.mode = UiMode::Cards;
                 match (kind, selected_item) {
+                    (CardKind::SubG(SubGCardState::Setup), SUBG_SETUP_CONFIGURE_MENU_ITEM) => {
+                        UiAction::OpenSubGEditor
+                    }
                     (CardKind::SharedInstance, SHARED_INSTANCE_CONFIG_MENU_ITEM)
                         if self.shared_instance_config_export
                             == SharedInstanceConfigExport::Available =>
                     {
                         UiAction::CopySharedInstanceConfig
                     }
+                    (CardKind::SubG(SubGCardState::Setup), _) => UiAction::None,
                     (_, POWER_MENU_ITEM) => UiAction::ToggleSelectedInterface,
+                    (CardKind::Wifi | CardKind::Ble, DISCOVERY_GROUPS_MENU_ITEM)
+                        if self.discovery_groups == DiscoveryGroupEditorAvailability::Available =>
+                    {
+                        self.selected_card(content.cards)
+                            .map_or(UiAction::None, |card| {
+                                UiAction::OpenDiscoveryGroupsEditor(card.id())
+                            })
+                    }
                     (
                         CardKind::WifiStation | CardKind::WifiStationDisabled,
                         STATION_UPLINK_MENU_ITEM,
                     ) => UiAction::ToggleStationUplink,
-                    (CardKind::LoRa, LORA_TUNE_MENU_ITEM) => UiAction::OpenLoRaEditor,
-                    (CardKind::LoRa, LORA_RESET_MENU_ITEM) => UiAction::ResetLoRaProfile,
+                    (CardKind::SubG(_), SUBG_CONFIGURE_MENU_ITEM) => UiAction::OpenSubGEditor,
+                    (CardKind::SubG(_), SUBG_CLEAR_MENU_ITEM) => {
+                        self.mode = UiMode::ConfirmSubGClear { confirm: false };
+                        UiAction::None
+                    }
                     _ => UiAction::None,
                 }
             }
-            (InputEvent::ShortPress, UiMode::LoRaEditor { screen, profile }) => {
-                let (screen, profile) = lora_editor_tap(screen, profile);
-                self.mode = UiMode::LoRaEditor { screen, profile };
+            (InputEvent::ShortPress, UiMode::SubGEditor { screen, profile }) => {
+                let (screen, profile) = subg_editor_tap(screen, profile);
+                self.mode = UiMode::SubGEditor { screen, profile };
                 UiAction::None
             }
-            (InputEvent::LongPress, UiMode::LoRaEditor { screen, profile }) => {
-                match lora_editor_hold(screen, profile) {
-                    LoRaHold::Stay { screen, profile } => {
-                        self.mode = UiMode::LoRaEditor { screen, profile };
+            (InputEvent::LongPress, UiMode::SubGEditor { screen, profile }) => {
+                match subg_editor_hold(screen, profile) {
+                    SubGEditorOutcome::Stay { screen, profile } => {
+                        self.mode = UiMode::SubGEditor { screen, profile };
                         UiAction::None
                     }
-                    LoRaHold::Commit(profile) => {
+                    SubGEditorOutcome::Commit(configuration) => {
                         self.mode = UiMode::Cards;
-                        UiAction::SetLoRaProfile(profile)
+                        UiAction::SetSubGConfiguration(configuration)
                     }
-                    LoRaHold::Cancel => {
+                    SubGEditorOutcome::Cancel => {
                         self.mode = UiMode::Cards;
                         UiAction::None
                     }
                 }
+            }
+            (InputEvent::ShortPress, UiMode::DiscoveryGroupEditor(editor)) => {
+                self.mode = UiMode::DiscoveryGroupEditor(group_editor_tap(editor));
+                UiAction::None
+            }
+            (InputEvent::LongPress, UiMode::DiscoveryGroupEditor(editor)) => {
+                match group_editor_hold(editor) {
+                    DiscoveryGroupEditorOutcome::Stay(editor) => {
+                        self.mode = UiMode::DiscoveryGroupEditor(editor);
+                        UiAction::None
+                    }
+                    DiscoveryGroupEditorOutcome::Commit(replacement) => {
+                        self.mode = UiMode::DiscoveryGroupCommit(replacement);
+                        UiAction::ReplaceDiscoveryGroups
+                    }
+                    DiscoveryGroupEditorOutcome::Invalid(editor) => {
+                        self.mode = UiMode::DiscoveryGroupEditor(editor);
+                        self.notice = Some(UiNotice::GroupsInvalid);
+                        UiAction::None
+                    }
+                    DiscoveryGroupEditorOutcome::Cancel => {
+                        self.mode = UiMode::Cards;
+                        UiAction::None
+                    }
+                }
+            }
+            (InputEvent::ShortPress | InputEvent::LongPress, UiMode::DiscoveryGroupCommit(_)) => {
+                self.mode = UiMode::Cards;
+                UiAction::None
             }
         };
         self.sync(content);

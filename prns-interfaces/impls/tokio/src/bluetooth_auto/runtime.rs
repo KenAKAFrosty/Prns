@@ -3,15 +3,17 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
+use tokio::time::Instant;
 
 use prns_core::interfaces::bluetooth_auto::{
-    self as contract, BleAddress, BleIdentity, CloseReason, EstablishedPeer, EstablishedTransport,
-    Handshake, HandshakeOutcome, HandshakeRole, LinkCapabilities, LocalPeer, PeerProtocol,
+    self as contract, BleAddress, BleIdentity, CloseReason, DiscoveryGroupSet, EstablishedPeer,
+    EstablishedTransport, Handshake, HandshakeFailureKind, HandshakeOutcome, HandshakeRole,
+    LinkCapabilities, LocalPeer, PeerProtocol,
 };
 use prns_core::interfaces::bluetooth_auto::{
     role_for, ConnectionPolicy, PolicyAction, PolicyInput,
@@ -25,17 +27,49 @@ use prns_core::interfaces::bluetooth_auto::{Endpoint, L2capPlan};
 const DIAL_TRACK: usize = 16;
 const RECENT_MEMBER_GRACE: Duration = Duration::from_secs(3);
 use prns_core::interfaces::{
-    ConfiguredInterfacePolicy, ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor,
-    InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+    ConfiguredInterfacePolicy, ConnectionState, DiscoveryGroupApplyOutcome,
+    EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
+    TransferRates, DEFAULT_DISCOVERY_GROUP_HASH,
 };
 use prns_runtime::manifold::driver::TokioInterfaceStatus;
-use prns_runtime::manifold::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use prns_runtime::manifold::interface_seam::{
+    Interface, InterfaceSeam, OutboundDisposition, OutboundDropReason,
+};
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
+
+use contract::{send_frame_duplex, BleDuplexOutcome, BleFrameForwarder};
+
+struct PeerInbound<'a, Seam> {
+    seam: &'a mut Seam,
+    status: &'a TokioInterfaceStatus,
+}
+
+impl<Seam: InterfaceSeam> BleFrameForwarder for PeerInbound<'_, Seam> {
+    type Error = core::convert::Infallible;
+
+    async fn forward(&mut self, frame: &[u8]) -> Result<(), Self::Error> {
+        self.status.add_rx(frame.len() as u64);
+        self.seam.next_inbound(frame).await;
+        Ok(())
+    }
+}
 
 struct ClosedSignal {
     identity: BleIdentity,
     address: BleAddress,
-    sink: mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
+    sink: mpsc::UnboundedSender<PeerClosed>,
+}
+
+struct PeerClosed {
+    identity: BleIdentity,
+    address: BleAddress,
+    status: TokioInterfaceStatus,
+}
+
+impl PeerClosed {
+    fn matches(&self, address: BleAddress, status: &TokioInterfaceStatus) -> bool {
+        self.address == address && self.status.same_instance(status)
+    }
 }
 
 pub struct BluetoothPeer<Src, Snk> {
@@ -83,7 +117,7 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
     fn report_close_to(
         mut self,
         address: BleAddress,
-        sink: mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
+        sink: mpsc::UnboundedSender<PeerClosed>,
     ) -> Self {
         self.closed = Some(ClosedSignal {
             identity: self.identity,
@@ -122,12 +156,13 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
-        let mut buf = [0u8; MAX_WIRE_FRAME_LEN];
+        let mut buf = [0u8; contract::BLE_WIRE_FRAME_LEN];
+        let mut pending_outbound = [0u8; contract::BLE_WIRE_FRAME_LEN];
         loop {
             tokio::select! {
-                received = self.source.recv_frame(&mut buf) => {
-                    let len = match received {
-                        Ok(len) => len,
+                received = contract::receive_frame(&mut self.source, &mut buf) => {
+                    let frame = match received {
+                        Ok(frame) => frame,
                         Err(error) => {
                             crate::diagnostic_log::warn!(
                                 "bluetooth: peer {:?} receive closed: {error:?}",
@@ -136,18 +171,49 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                             break;
                         }
                     };
-                    if len == 0 {
+                    if frame.is_empty() {
                         continue;
                     }
-                    self.status.add_rx(len as u64);
-                    seam.next_inbound(&buf[..len]).await;
+                    self.status.add_rx(frame.len() as u64);
+                    seam.next_inbound(frame).await;
                 }
                 outbound = seam.next_outbound() => {
                     if outbound.is_empty() {
                         continue;
                     }
                     let outbound_len = outbound.len();
-                    if let Err(error) = self.sink.send_frame(outbound).await {
+                    if outbound_len > pending_outbound.len() {
+                        seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::Rejected));
+                        break;
+                    }
+                    pending_outbound[..outbound_len].copy_from_slice(outbound);
+                    seam.accept_outbound_custody();
+                    let result = match send_frame_duplex(
+                        &mut self.source, &mut self.sink,
+                        &pending_outbound[..outbound_len], &mut buf,
+                        PeerInbound { seam: &mut seam, status: &self.status },
+                    ).await {
+                        BleDuplexOutcome::Finished(result) => result,
+                        BleDuplexOutcome::ForwardFailed(never) => match never {},
+                        BleDuplexOutcome::ReceiveFailed(error) => {
+                            seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
+                            crate::diagnostic_log::warn!(
+                                "bluetooth: peer {:?} receive closed during send: {error:?}",
+                                self.identity
+                            );
+                            break;
+                        }
+                        BleDuplexOutcome::InvalidReceiveLength(length) => {
+                            seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
+                            crate::diagnostic_log::warn!(
+                                "bluetooth: peer {:?} reported invalid receive length {length} during send",
+                                self.identity
+                            );
+                            break;
+                        }
+                    };
+                    if let Err(error) = result {
+                        seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
                         crate::diagnostic_log::warn!(
                             "bluetooth: peer {:?} send closed: {error:?}",
                             self.identity
@@ -155,16 +221,29 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                         break;
                     }
                     self.status.add_tx(outbound_len as u64);
+                    seam.complete_outbound(OutboundDisposition::Sent);
                 }
             }
         }
-        if let Some(ClosedSignal {
-            identity,
-            address,
-            sink,
-        }) = self.closed.take()
+        let closed = self
+            .closed
+            .take()
+            .map(|signal| (signal, self.status.clone()));
+        drop(self);
+        if let Some((
+            ClosedSignal {
+                identity,
+                address,
+                sink,
+            },
+            status,
+        )) = closed
         {
-            let _ = sink.send((identity, address));
+            let _ = sink.send(PeerClosed {
+                identity,
+                address,
+                status,
+            });
             std::future::pending::<()>().await;
         }
     }
@@ -215,15 +294,17 @@ enum HandshakeFailure {
 enum Step<L: BleLink> {
     Event(BleEvent<L>),
     Handshake(HandshakeDone<L>),
-    Closed(BleIdentity, BleAddress),
+    Closed(PeerClosed),
     Disabled,
+    DiscoveryGroups(DiscoveryGroupSet),
 }
 
-pub struct BluetoothAuto<B, const MAX_PEERS: usize> {
+pub struct BluetoothAuto<B, const MAX_PEERS: usize, S = super::TokioFairBleEvents> {
     backend: B,
     local: LocalPeer,
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
+    event_selector: S,
 }
 
 impl<B, const MAX_PEERS: usize> BluetoothAuto<B, MAX_PEERS>
@@ -245,12 +326,6 @@ where
         )
     }
 
-    #[must_use]
-    pub fn with_policy(mut self, policy: EffectiveInterfacePolicy) -> Self {
-        self.policy = policy;
-        self
-    }
-
     pub(crate) fn with_status(
         backend: B,
         identity: BleIdentity,
@@ -258,16 +333,43 @@ where
         capabilities: LinkCapabilities,
         status: BluetoothAutoStatus,
     ) -> Self {
+        let discovery_groups = status.discovery_groups();
         Self {
             backend,
             local: LocalPeer {
                 identity,
                 endpoint,
                 capabilities,
+                discovery_groups: discovery_groups.hashes(),
             },
             policy: contract::defaults_for_bitrate(contract::BLE_BITRATE_GUESS_BPS)
                 .configured(ConfiguredInterfacePolicy::default()),
             status,
+            event_selector: super::TokioFairBleEvents,
+        }
+    }
+}
+
+impl<B, const MAX_PEERS: usize, S> BluetoothAuto<B, MAX_PEERS, S> {
+    #[must_use]
+    pub fn with_policy(mut self, policy: EffectiveInterfacePolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// Replaces only supervisor arbitration; backend, identity and status stay owned
+    /// by this instance. Ordinary constructors retain Tokio's fair selection.
+    #[must_use]
+    pub fn with_event_selector<N: super::BleEventSelector>(
+        self,
+        event_selector: N,
+    ) -> BluetoothAuto<B, MAX_PEERS, N> {
+        BluetoothAuto {
+            backend: self.backend,
+            local: self.local,
+            policy: self.policy,
+            status: self.status,
+            event_selector,
         }
     }
 
@@ -285,6 +387,9 @@ pub struct BluetoothAutoStatus {
 struct BluetoothAutoShared {
     id: InterfaceId,
     enabled: watch::Sender<bool>,
+    discovery_groups: watch::Sender<DiscoveryGroupSet>,
+    applied_discovery_groups: watch::Sender<DiscoveryGroupSet>,
+    discovery_group_replacement: AsyncMutex<()>,
     up: AtomicBool,
     failed: AtomicBool,
     failure_reason: Mutex<Option<&'static str>>,
@@ -294,11 +399,20 @@ struct BluetoothAutoShared {
 
 impl BluetoothAutoStatus {
     pub(crate) fn new() -> Self {
+        Self::new_with_discovery_groups(DiscoveryGroupSet::reticulum())
+    }
+
+    pub(crate) fn new_with_discovery_groups(discovery_groups: DiscoveryGroupSet) -> Self {
         let (enabled, _) = watch::channel(true);
+        let (groups, _) = watch::channel(discovery_groups);
+        let (applied_groups, _) = watch::channel(discovery_groups);
         Self {
             shared: Arc::new(BluetoothAutoShared {
                 id: InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, contract::GROUP_ID),
                 enabled,
+                discovery_groups: groups,
+                applied_discovery_groups: applied_groups,
+                discovery_group_replacement: AsyncMutex::new(()),
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
                 failure_reason: Mutex::new(None),
@@ -319,7 +433,13 @@ impl BluetoothAutoStatus {
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios", test))]
+    #[cfg(any(
+        test,
+        all(
+            feature = "bluetooth-auto",
+            any(target_os = "macos", target_os = "ios")
+        )
+    ))]
     pub(crate) fn clear_failure(&self) {
         self.shared.failed.store(false, Ordering::Relaxed);
         if let Ok(mut slot) = self.shared.failure_reason.lock() {
@@ -340,6 +460,55 @@ impl BluetoothAutoStatus {
             *current = !*current;
             true
         });
+    }
+
+    #[must_use]
+    pub fn discovery_groups(&self) -> DiscoveryGroupSet {
+        *self.shared.discovery_groups.borrow()
+    }
+
+    /// Requests an atomic replacement. The running supervisor acknowledges it only after all old
+    /// peers and handshakes have been torn down and discovery has restarted with the new set.
+    pub async fn replace_discovery_groups(
+        &self,
+        groups: DiscoveryGroupSet,
+    ) -> DiscoveryGroupApplyOutcome {
+        let _replacement = self.shared.discovery_group_replacement.lock().await;
+        if self.discovery_groups() == groups {
+            return DiscoveryGroupApplyOutcome::Unchanged;
+        }
+        let mut applied = self.shared.applied_discovery_groups.subscribe();
+        self.shared.discovery_groups.send_replace(groups);
+        if !self.is_enabled() || !self.shared.up.load(Ordering::Acquire) {
+            self.shared.applied_discovery_groups.send_replace(groups);
+            return DiscoveryGroupApplyOutcome::Applied;
+        }
+        loop {
+            if *applied.borrow_and_update() == groups {
+                return DiscoveryGroupApplyOutcome::Applied;
+            }
+            if applied.changed().await.is_err() {
+                return DiscoveryGroupApplyOutcome::Failed;
+            }
+        }
+    }
+
+    async fn wait_for_discovery_groups_change(
+        &self,
+        current: &DiscoveryGroupSet,
+    ) -> DiscoveryGroupSet {
+        let mut changed = self.shared.discovery_groups.subscribe();
+        loop {
+            let candidate = *changed.borrow_and_update();
+            if &candidate != current {
+                return candidate;
+            }
+            let _ = changed.changed().await;
+        }
+    }
+
+    fn acknowledge_discovery_groups(&self, groups: DiscoveryGroupSet) {
+        self.shared.applied_discovery_groups.send_replace(groups);
     }
 
     fn update_enabled(&self, enabled: bool) {
@@ -449,7 +618,8 @@ impl InterfaceStatus for BluetoothAutoStatus {
     }
 }
 
-impl<B, const MAX_PEERS: usize> InterfaceSupervisor for BluetoothAuto<B, MAX_PEERS>
+impl<B, const MAX_PEERS: usize, S: super::BleEventSelector + 'static> InterfaceSupervisor
+    for BluetoothAuto<B, MAX_PEERS, S>
 where
     B: BleBackend<MAX_PEERS>,
     B::Link: 'static,
@@ -472,6 +642,7 @@ where
             local,
             policy,
             status,
+            mut event_selector,
         } = self;
         if let Some(reason) = backend.blocked() {
             status.mark_failed(Some(reason));
@@ -479,12 +650,13 @@ where
         }
         let configured_capabilities = local.capabilities;
         let mut local = local;
+        let mut discovery_groups = status.discovery_groups();
         prepare_radio::<B, MAX_PEERS>(&mut backend, &mut local, configured_capabilities).await;
         let started = Instant::now();
         let mut manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
         let mut members: HashMap<BleIdentity, TokioMember> = HashMap::new();
         let mut handshakes: HandshakeQueue<B::Link> = FuturesUnordered::new();
-        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<PeerClosed>();
         let mut pending: std::vec::Vec<PolicyAction> = std::vec::Vec::new();
         status.mark_up();
         manager.start(&mut |action| pending.push(action));
@@ -509,14 +681,53 @@ where
                 apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
                 continue;
             }
-            let step = tokio::select! {
-                event = backend.next_event() => Step::Event(event),
-                Some(done) = handshakes.next(), if !handshakes.is_empty() => Step::Handshake(done),
-                Some((identity, address)) = closed_rx.recv() => Step::Closed(identity, address),
-                () = status.wait_until_disabled() => Step::Disabled,
-            };
+            let step = event_selector
+                .select(super::BleEventSources {
+                    backend: async { Step::Event(backend.next_event().await) },
+                    handshake: async {
+                        if let Some(done) = handshakes.next().await {
+                            return Step::Handshake(done);
+                        }
+                        std::future::pending().await
+                    },
+                    closed: async {
+                        if let Some(closed) = closed_rx.recv().await {
+                            return Step::Closed(closed);
+                        }
+                        std::future::pending().await
+                    },
+                    disabled: async {
+                        status.wait_until_disabled().await;
+                        Step::Disabled
+                    },
+                    groups: async {
+                        Step::DiscoveryGroups(
+                            status
+                                .wait_for_discovery_groups_change(&discovery_groups)
+                                .await,
+                        )
+                    },
+                })
+                .await;
             match step {
                 Step::Disabled => {}
+                Step::DiscoveryGroups(groups) => {
+                    let _ = backend.set_advertising(AdvertisingMode::Off).await;
+                    let _ = backend.set_scanning(ScanningMode::Off).await;
+                    for (_, member) in members.drain() {
+                        member.attached.teardown();
+                        backend.on_link_closed(member.address).await;
+                    }
+                    handshakes = FuturesUnordered::new();
+                    pending.clear();
+                    status.set_members(std::vec::Vec::new());
+                    discovery_groups = groups;
+                    local.discovery_groups = groups.hashes();
+                    manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
+                    manager.start(&mut |action| pending.push(action));
+                    apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
+                    status.acknowledge_discovery_groups(groups);
+                }
                 Step::Event(BleEvent::Sighting { address, .. }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
                     manager.handle(PolicyInput::Sighting { address, now_ms }, &mut |action| {
@@ -595,9 +806,28 @@ where
                             )
                             .await;
                         }
-                        Err(_reason) => {
+                        Err(reason) => {
+                            let failure = match reason {
+                                HandshakeFailure::Aborted(CloseReason::Incompatible) => {
+                                    HandshakeFailureKind::Incompatible
+                                }
+                                HandshakeFailure::Timeout
+                                | HandshakeFailure::MissingColumbaIdentity
+                                | HandshakeFailure::ColumbaIdentitySend
+                                | HandshakeFailure::InitialSend
+                                | HandshakeFailure::Recv
+                                | HandshakeFailure::ReplySend
+                                | HandshakeFailure::Aborted(
+                                    CloseReason::SelfConnection | CloseReason::DuplicateLink,
+                                ) => HandshakeFailureKind::Other,
+                            };
                             manager.handle(
-                                PolicyInput::HandshakeFailed { address, origin },
+                                PolicyInput::HandshakeFailed {
+                                    address,
+                                    origin,
+                                    failure,
+                                    now_ms,
+                                },
                                 &mut |action| pending.push(action),
                             );
                             apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend)
@@ -605,14 +835,18 @@ where
                         }
                     }
                 }
-                Step::Closed(identity, address) => {
-                    if members
-                        .get(&identity)
-                        .is_some_and(|member| member.address == address)
-                    {
-                        if let Some(member) = members.remove(&identity) {
-                            member.attached.teardown();
-                        }
+                Step::Closed(closed) => {
+                    let Some(member) = members.get(&closed.identity) else {
+                        continue;
+                    };
+                    if !closed.matches(member.address, &member.status) {
+                        continue;
+                    }
+                    let PeerClosed {
+                        identity, address, ..
+                    } = closed;
+                    if let Some(member) = members.remove(&identity) {
+                        member.attached.teardown();
                     }
                     manager.handle(PolicyInput::Closed { identity, address }, &mut |action| {
                         pending.push(action)
@@ -630,7 +864,8 @@ where
     }
 }
 
-impl<B, const MAX_PEERS: usize> prns_core::interfaces::ReportsStatus for BluetoothAuto<B, MAX_PEERS>
+impl<B, const MAX_PEERS: usize, S> prns_core::interfaces::ReportsStatus
+    for BluetoothAuto<B, MAX_PEERS, S>
 where
     B: BleBackend<MAX_PEERS>,
 {
@@ -642,7 +877,8 @@ where
     }
 }
 
-pub(super) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(super) const HANDSHAKE_TIMEOUT: Duration =
+    Duration::from_millis(contract::HANDSHAKE_TIMEOUT_MS);
 
 async fn prepare_radio<B, const MAX_PEERS: usize>(
     backend: &mut B,
@@ -701,7 +937,7 @@ async fn apply_settle<B, const MAX_PEERS: usize>(
     pending: &mut std::vec::Vec<PolicyAction>,
     link: B::Link,
     fleet: &Fleet,
-    closed: &mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
+    closed: &mpsc::UnboundedSender<PeerClosed>,
     members: &mut HashMap<BleIdentity, TokioMember>,
     backend: &mut B,
     policy: EffectiveInterfacePolicy,
@@ -773,6 +1009,12 @@ async fn drive_handshake<L: BleLink>(
 ) -> Result<EstablishedPeer, HandshakeFailure> {
     match tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         if link.peer_protocol() == PeerProtocol::Columba {
+            if !local
+                .discovery_groups
+                .contains(&DEFAULT_DISCOVERY_GROUP_HASH)
+            {
+                return Err(HandshakeFailure::Aborted(CloseReason::Incompatible));
+            }
             let identity = link
                 .receive_columba_peer_identity()
                 .await
@@ -799,7 +1041,7 @@ async fn drive_handshake<L: BleLink>(
                 .control_recv()
                 .await
                 .map_err(|_| HandshakeFailure::Recv)?;
-            let reaction = handshake.absorb(msg);
+            let reaction = handshake.absorb(local, msg);
             if let Some(reply) = reaction.reply {
                 link.control_send(&reply)
                     .await
@@ -871,7 +1113,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn aggregate_status_lingers_degraded_after_last_member_drops() {
         let status = BluetoothAutoStatus::new();
         status.mark_up();
@@ -885,7 +1127,10 @@ mod tests {
         status.set_members(std::vec::Vec::new());
         assert_eq!(status.connection(), ConnectionState::Degraded);
 
-        tokio::time::sleep(RECENT_MEMBER_GRACE + Duration::from_millis(10)).await;
+        tokio::time::advance(RECENT_MEMBER_GRACE - Duration::from_millis(1)).await;
+        assert_eq!(status.connection(), ConnectionState::Degraded);
+
+        tokio::time::advance(Duration::from_millis(1)).await;
         assert_eq!(status.connection(), ConnectionState::Disconnected);
     }
 
@@ -1045,9 +1290,7 @@ mod tests {
 
         async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, Closed> {
             let frame = self.data_rx.recv().await.ok_or(Closed)?;
-            let len = frame.len().min(out.len());
-            out[..len].copy_from_slice(&frame[..len]);
-            Ok(len)
+            contract::copy_received_frame(&frame, out).map_err(|_| Closed)
         }
     }
 
@@ -1057,6 +1300,7 @@ mod tests {
             identity: BleIdentity::new([1; 16]),
             endpoint: linux(),
             capabilities: caps(0x0080),
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         };
         let peer_identity = BleIdentity::new([2; 16]);
         let mut link = ColumbaLink {
@@ -1086,6 +1330,7 @@ mod tests {
             identity: BleIdentity::new([1; 16]),
             endpoint: android(),
             capabilities: caps(0x0080),
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         };
         let peer_identity = BleIdentity::new([2; 16]);
         let mut link = ColumbaLink {
@@ -1226,17 +1471,113 @@ mod tests {
         }
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    enum StartupCall {
+        Radio(RadioMode),
+        Capabilities(LinkCapabilities),
+        Advertising(AdvertisingMode),
+        Scanning(ScanningMode),
+        NextEvent,
+    }
+
+    struct RecordingStartupBackend {
+        calls: Vec<StartupCall>,
+        first_event: Option<oneshot::Sender<Vec<StartupCall>>>,
+    }
+
+    impl BleBackend<7> for RecordingStartupBackend {
+        type Error = Closed;
+        type Link = LoopbackLink;
+
+        async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), Closed> {
+            self.calls.push(StartupCall::Radio(mode));
+            Ok(())
+        }
+
+        async fn local_capabilities(
+            &mut self,
+            configured: LinkCapabilities,
+        ) -> Result<LinkCapabilities, Closed> {
+            self.calls.push(StartupCall::Capabilities(configured));
+            Ok(configured)
+        }
+
+        async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Closed> {
+            self.calls.push(StartupCall::Advertising(mode));
+            Ok(())
+        }
+
+        async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), Closed> {
+            self.calls.push(StartupCall::Scanning(mode));
+            Ok(())
+        }
+
+        async fn next_event(&mut self) -> BleEvent<LoopbackLink> {
+            if let Some(first_event) = self.first_event.take() {
+                self.calls.push(StartupCall::NextEvent);
+                let _ = first_event.send(std::mem::take(&mut self.calls));
+            }
+            std::future::pending().await
+        }
+
+        async fn dial(
+            &mut self,
+            _address: BleAddress,
+        ) -> prns_core::interfaces::bluetooth_auto::DialOutcome {
+            prns_core::interfaces::bluetooth_auto::DialOutcome::UnknownPeer
+        }
+    }
+
+    #[tokio::test]
+    async fn ios_gatt_only_startup_enables_scanning_before_waiting_for_peers() {
+        let (first_event_tx, first_event_rx) = oneshot::channel();
+        let capabilities = LinkCapabilities {
+            l2cap: None,
+            link_mtu: contract::BLE_HW_MTU as u16,
+        };
+        let bluetooth = BluetoothAuto::<_, 7>::new(
+            RecordingStartupBackend {
+                calls: Vec::new(),
+                first_event: Some(first_event_tx),
+            },
+            BleIdentity::new([1; 16]),
+            Endpoint::CoreBluetooth(AppleHost::Ios),
+            capabilities,
+        );
+        let status = bluetooth.status();
+        assert!(status.is_enabled());
+        let (fleet, _detached_fleet) = Fleet::detached(status.id());
+        let calls = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(1), first_event_rx) => {
+                result.unwrap().unwrap()
+            }
+            () = bluetooth.run(fleet) => unreachable!("the BLE supervisor runs until cancelled"),
+        };
+        assert_eq!(
+            calls,
+            vec![
+                StartupCall::Radio(RadioMode::On),
+                StartupCall::Capabilities(capabilities),
+                StartupCall::Advertising(AdvertisingMode::On),
+                StartupCall::Scanning(ScanningMode::On),
+                StartupCall::NextEvent,
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn two_nodes_handshake_over_loopback_and_a_frame_crosses() {
         let local_a = LocalPeer {
             identity: BleIdentity::new([1u8; 16]),
             endpoint: mac(),
             capabilities: caps(0x0081),
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         };
         let local_b = LocalPeer {
             identity: BleIdentity::new([2u8; 16]),
             endpoint: linux(),
             capabilities: caps(0x0082),
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         };
         let (mut backend_a, mut backend_b) = LoopbackBleBackend::pair();
 
@@ -1391,11 +1732,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_group_replacements_settle_in_request_order() {
+        fn groups(name: &str) -> DiscoveryGroupSet {
+            let id = prns_core::interfaces::DiscoveryGroupId::parse(name).expect("valid group");
+            DiscoveryGroupSet::singleton(id).expect("valid set")
+        }
+
+        let status = BluetoothAutoStatus::new();
+        status.mark_up();
+        let initial = status.discovery_groups();
+        let first = groups("alpha");
+        let second = groups("bravo");
+        let first_task = {
+            let status = status.clone();
+            tokio::spawn(async move { status.replace_discovery_groups(first).await })
+        };
+        tokio::task::yield_now().await;
+        let second_task = {
+            let status = status.clone();
+            tokio::spawn(async move { status.replace_discovery_groups(second).await })
+        };
+
+        let first_requested = status.wait_for_discovery_groups_change(&initial).await;
+        assert_eq!(first_requested, first);
+        status.acknowledge_discovery_groups(first_requested);
+        let second_requested = status
+            .wait_for_discovery_groups_change(&first_requested)
+            .await;
+        assert_eq!(second_requested, second);
+        status.acknowledge_discovery_groups(second_requested);
+
+        assert_eq!(
+            first_task.await.expect("first task"),
+            DiscoveryGroupApplyOutcome::Applied
+        );
+        assert_eq!(
+            second_task.await.expect("second task"),
+            DiscoveryGroupApplyOutcome::Applied
+        );
+    }
+
+    #[tokio::test]
     async fn a_gatt_only_listener_settles_the_link_on_the_floor() {
         let local_a = LocalPeer {
             identity: BleIdentity::new([1u8; 16]),
             endpoint: mac(),
             capabilities: caps(0x0081),
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         };
         let local_b = LocalPeer {
             identity: BleIdentity::new([2u8; 16]),
@@ -1404,6 +1787,7 @@ mod tests {
                 l2cap: None,
                 link_mtu: 247,
             },
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         };
         let (mut backend_a, mut backend_b) = LoopbackBleBackend::pair();
 
@@ -1464,11 +1848,13 @@ mod tests {
             identity: BleIdentity::new([1u8; 16]),
             endpoint: mac(),
             capabilities: caps(0x00c0),
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         };
         let android_local = LocalPeer {
             identity: BleIdentity::new([2u8; 16]),
             endpoint: android(),
             capabilities: caps(0x0080),
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         };
         let (mut mac_backend, mut android_backend) = LoopbackBleBackend::pair();
 
@@ -1556,16 +1942,46 @@ mod tests {
         drop(link_b);
 
         let identity = BleIdentity::new([1u8; 16]);
-        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<PeerClosed>();
         let member =
             BluetoothPeer::new(identity, source, sink).report_close_to(addr, closed_tx.clone());
+        let status = member.status();
         tokio::spawn(member.run(idle_seam()));
 
         let reported = tokio::time::timeout(Duration::from_secs(2), closed_rx.recv())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(reported, (identity, addr));
+        assert_eq!((reported.identity, reported.address), (identity, addr));
+        assert!(reported.matches(addr, &status));
+    }
+
+    #[test]
+    fn queued_close_belongs_to_one_incarnation_even_at_the_same_address() {
+        let identity = BleIdentity::new([1; 16]);
+        let address = BleAddress::new([2; 6]);
+        let id = InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, identity.as_bytes());
+        let old = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected);
+        let replacement = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected);
+        let delayed = PeerClosed {
+            identity,
+            address,
+            status: old.clone(),
+        };
+        let current = PeerClosed {
+            identity,
+            address,
+            status: replacement.clone(),
+        };
+        assert_eq!(
+            [
+                delayed.matches(address, &old),
+                delayed.matches(address, &replacement),
+                current.matches(address, &replacement),
+                current.matches(BleAddress::new([3; 6]), &replacement),
+            ],
+            [true, false, true, false]
+        );
     }
 
     #[tokio::test]
@@ -1575,7 +1991,7 @@ mod tests {
         let (source, sink) = link_a.into_data();
         let _keep_peer_alive = link_b;
 
-        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<PeerClosed>();
         let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), source, sink)
             .report_close_to(addr, closed_tx.clone());
         let handle = tokio::spawn(member.run(idle_seam()));

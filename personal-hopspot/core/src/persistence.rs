@@ -91,6 +91,8 @@ mod tests {
         remote_control_target_accesses_restored_count: 0,
         remote_control_target_accesses_refused_count: 0,
         remote_control_target_accesses_dropped_count: 0,
+        discovery_group_configuration_restored: false,
+        discovery_group_configuration_refused_count: 0,
         warning: None,
     };
 

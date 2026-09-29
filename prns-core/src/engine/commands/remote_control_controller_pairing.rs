@@ -17,7 +17,8 @@ use crate::remote_control::{
     REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::links::request::{
-    write_packed_binary_header, PackBinaryError, SendRequestView, MAX_PACKED_BINARY_HEADER_LEN,
+    packed_binary_len, write_packed_binary_header, PackBinaryError, SendRequestView,
+    MAX_PACKED_BINARY_HEADER_LEN,
 };
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -35,6 +36,13 @@ type RemoteControlControllerPairingRequestData =
     HeaplessVec<u8, MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_REQUEST_DATA_LEN>;
 const _: () =
     assert!(MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_REQUEST_DATA_LEN <= MAX_SEND_REQUEST_DATA_LEN);
+const MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN: usize =
+    match packed_binary_len(RemoteControlPairingResponse::MAX_ENCODED_LEN) {
+        Some(length) => length,
+        None => panic!(),
+    };
+const _: () =
+    assert!(MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN <= super::MAX_RESPOND_DATA_LEN);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BeginRemoteControlControllerPairing {
@@ -64,6 +72,13 @@ impl RemoteControlControllerPairingRequest {
         expires_at: InstantMillis,
         now: InstantMillis,
     ) -> Result<Self, RemoteControlControllerPairingRequestBuildError> {
+        let remaining = expires_at.duration_since(now);
+        let response_timeout = match &request {
+            RemoteControlPairingRequest::Begin(_) => {
+                RequestResponseTimeout::LinkDefaultAtMost { maximum: remaining }
+            }
+            RemoteControlPairingRequest::Commit(_) => RequestResponseTimeout::Exact(remaining),
+        };
         let mut encoded = [0u8; RemoteControlPairingRequest::MAX_ENCODED_LEN];
         let encoded_len = request
             .write_into(&mut encoded)
@@ -85,9 +100,7 @@ impl RemoteControlControllerPairingRequest {
         Ok(Self {
             link_id: context.link_id(),
             data,
-            response_timeout: RequestResponseTimeout::LinkDefaultAtMost {
-                maximum: expires_at.duration_since(now),
-            },
+            response_timeout,
         })
     }
 
@@ -97,7 +110,7 @@ impl RemoteControlControllerPairingRequest {
             RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
             self.data.as_slice(),
             self.response_timeout,
-            ByteLimit::Maximum(RemoteControlPairingResponse::MAX_ENCODED_LEN as u64),
+            ByteLimit::Maximum(MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN as u64),
         )
     }
 
@@ -834,7 +847,9 @@ mod tests {
     };
     use crate::routing::dedup::PacketHash;
     use crate::routing::links::data::write_link_packet;
-    use crate::routing::links::request::{write_response_plaintext, RequestId};
+    use crate::routing::links::request::{
+        request_response_timeout_ms, write_response_plaintext, RequestId,
+    };
     use crate::routing::links::resources::receive::tests_support::{
         advertise_response_segment_from, engine_with_active_link, feed, lane, link_id, link_key,
     };
@@ -922,12 +937,23 @@ mod tests {
         packed
     }
 
-    fn execute(
+    #[derive(Debug, Default, PartialEq, Eq)]
+    struct ControllerPairingAuthorizationPersistenceEvents {
+        persisted: std::vec::Vec<RemoteControlPairingAttemptId>,
+        failed: std::vec::Vec<RemoteControlPairingAttemptId>,
+    }
+
+    fn execute_observing_controller_pairing_persistence(
         engine: &mut EngineState<TestStorageLayout>,
         command: PrnsCommand,
         now: InstantMillis,
-    ) -> (Settlement, WakeSchedules) {
+    ) -> (
+        Settlement,
+        WakeSchedules,
+        ControllerPairingAuthorizationPersistenceEvents,
+    ) {
         let mut settled = None;
+        let mut persistence_events = ControllerPairingAuthorizationPersistenceEvents::default();
         let schedules = engine.ingest_command_into(
             IssuedCommand {
                 id: CommandId(0xC1),
@@ -941,12 +967,30 @@ mod tests {
                     id: CommandId(0xC1),
                     settlement,
                 }) => settled = Some(settlement),
+                EngineReaction::Journaled(
+                    Journaled::RemoteControlControllerPairingAuthorizationPersisted { attempt_id },
+                ) => persistence_events.persisted.push(attempt_id),
+                EngineReaction::Journaled(
+                    Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+                        attempt_id,
+                    },
+                ) => persistence_events.failed.push(attempt_id),
                 EngineReaction::Journaled(Journaled::CommandSettled { .. })
                 | EngineReaction::Journaled(_)
                 | EngineReaction::Directive(_) => {}
             },
         );
-        (settled.unwrap(), schedules)
+        (settled.unwrap(), schedules, persistence_events)
+    }
+
+    fn execute(
+        engine: &mut EngineState<TestStorageLayout>,
+        command: PrnsCommand,
+        now: InstantMillis,
+    ) -> (Settlement, WakeSchedules) {
+        let (settlement, schedules, _) =
+            execute_observing_controller_pairing_persistence(engine, command, now);
+        (settlement, schedules)
     }
 
     fn dispatch_begin_request(
@@ -991,7 +1035,9 @@ mod tests {
         let request_id =
             RequestId::of_packet(&PacketHash::of_wire_packet(&request_frame.unwrap()).unwrap());
         assert_eq!(
-            engine.receipts.pending_request_intent(request_id),
+            engine
+                .receipts
+                .pending_request_intent(&link_id(), request_id),
             Some(SendRequestIntent::RemoteControlControllerPairing),
         );
         (controller, request_id)
@@ -1013,13 +1059,30 @@ mod tests {
         RemoteControlPairingAttemptId,
         crate::remote_control::RemoteControlPairingTranscript,
     ) {
+        awaiting_confirmation_for(
+            engine,
+            target_fill,
+            PAIRING_EXPIRES_AT,
+            DurationMillis(3_000),
+        )
+    }
+
+    fn awaiting_confirmation_for(
+        engine: &mut EngineState<TestStorageLayout>,
+        target_fill: u8,
+        pairing_expires_at: InstantMillis,
+        attempt_timeout: DurationMillis,
+    ) -> (
+        RemoteControlPairingAttemptId,
+        crate::remote_control::RemoteControlPairingTranscript,
+    ) {
         let controller = controller();
         let begin = match engine.remote_control_controller_pairing.begin(
             controller,
             context(),
             invitation_code(),
             STARTED_AT,
-            PAIRING_EXPIRES_AT,
+            pairing_expires_at,
         ) {
             BeginRemoteControlControllerPairingOutcome::BeginOwed {
                 begin,
@@ -1027,7 +1090,7 @@ mod tests {
                 expires_at,
             } => {
                 assert_eq!(owed_context, context());
-                assert_eq!(expires_at, PAIRING_EXPIRES_AT);
+                assert_eq!(expires_at, pairing_expires_at);
                 begin
             }
             BeginRemoteControlControllerPairingOutcome::Busy { .. }
@@ -1040,8 +1103,9 @@ mod tests {
             context(),
             &begin,
             permissions(),
-            RemoteControlPairingAttemptTimeout::try_from(DurationMillis(3_000)).unwrap(),
-        );
+            RemoteControlPairingAttemptTimeout::try_from(attempt_timeout).unwrap(),
+        )
+        .unwrap();
         let (offer, transcript) = prepared.into_parts();
         let ReceiveRemoteControlControllerPairingOfferOutcome::ConfirmationRequired { attempt_id } =
             engine
@@ -1108,7 +1172,7 @@ mod tests {
                 maximum: DurationMillis(9_000),
             },
             maximum_response_bytes: ByteLimit::Maximum(
-                RemoteControlPairingResponse::MAX_ENCODED_LEN as u64,
+                MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN as u64,
             ),
         };
         assert_eq!(request.send_request(), (&expected).into());
@@ -1127,6 +1191,22 @@ mod tests {
 
     #[test]
     fn exact_pairing_request_receipt_admits_offer_without_application_response() {
+        assert_offer_admitted(permissions(), false);
+    }
+
+    #[test]
+    fn maximum_pairing_offer_fits_the_complete_encoded_response_budget() {
+        assert_offer_admitted(
+            RemoteControlPairingPermissions::new(
+                crate::remote_control::RemoteControlControllerAuthority::Administrator,
+                RemoteControlRequestSet::all(),
+            )
+            .unwrap(),
+            true,
+        );
+    }
+
+    fn assert_offer_admitted(permissions: RemoteControlPairingPermissions, maximum: bool) {
         let mut engine = engine_with_active_link();
         let (controller, request_id) = dispatch_begin_request(&mut engine);
         let interfaces = [routable_descriptor(lane())];
@@ -1137,12 +1217,26 @@ mod tests {
             &signer(0x52),
             context(),
             &begin,
-            permissions(),
+            permissions,
             RemoteControlPairingAttemptTimeout::try_from(DurationMillis(3_000)).unwrap(),
-        );
+        )
+        .unwrap();
         let (offer, transcript) = prepared.into_parts();
         let attempt_id = (&transcript).into();
-        let packed = packed_response(RemoteControlPairingResponse::Offer(offer));
+        let response = RemoteControlPairingResponse::Offer(offer);
+        if maximum {
+            assert_eq!(
+                response.encoded_len(),
+                RemoteControlPairingResponse::MAX_ENCODED_LEN
+            );
+        }
+        let packed = packed_response(response);
+        if maximum {
+            assert_eq!(
+                packed.len(),
+                MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN
+            );
+        }
         let mut plaintext = [0u8; BROADCAST_MTU];
         let plaintext_len = write_response_plaintext(&request_id, &packed, &mut plaintext).unwrap();
         let mut response_frame = [0u8; BROADCAST_MTU];
@@ -1206,7 +1300,7 @@ mod tests {
         );
         assert_eq!(confirmation, Some(attempt_id));
         assert_eq!(application_responses, 0);
-        assert!(!engine.receipts.has_pending_request(request_id));
+        assert!(!engine.receipts.has_pending_request(&link_id(), request_id));
         assert!(matches!(
             engine.remote_control_controller_pairing.view(),
             RemoteControlControllerPairingView::AwaitingApproval(view)
@@ -1247,7 +1341,7 @@ mod tests {
             engine.remote_control_controller_pairing.view(),
             RemoteControlControllerPairingView::Idle,
         );
-        assert!(!engine.receipts.has_pending_request(request_id));
+        assert!(!engine.receipts.has_pending_request(&link_id(), request_id));
     }
 
     #[test]
@@ -1299,7 +1393,7 @@ mod tests {
             engine.remote_control_controller_pairing.view(),
             RemoteControlControllerPairingView::Idle,
         );
-        assert!(!engine.receipts.has_pending_request(request_id));
+        assert!(!engine.receipts.has_pending_request(&link_id(), request_id));
     }
 
     #[test]
@@ -1344,7 +1438,7 @@ mod tests {
             engine.remote_control_controller_pairing.view(),
             RemoteControlControllerPairingView::Idle,
         );
-        assert!(!engine.receipts.has_pending_request(request_id));
+        assert!(!engine.receipts.has_pending_request(&link_id(), request_id));
     }
 
     #[test]
@@ -1370,11 +1464,9 @@ mod tests {
             data: packed(RemoteControlPairingRequest::Commit(
                 RemoteControlPairingCommit::new(&transcript),
             )),
-            response_timeout: RequestResponseTimeout::LinkDefaultAtMost {
-                maximum: DurationMillis(2_500),
-            },
+            response_timeout: RequestResponseTimeout::Exact(DurationMillis(2_500)),
             maximum_response_bytes: ByteLimit::Maximum(
-                RemoteControlPairingResponse::MAX_ENCODED_LEN as u64,
+                MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_RESPONSE_DATA_LEN as u64,
             ),
         };
         assert_eq!(request.send_request(), (&expected).into());
@@ -1387,6 +1479,110 @@ mod tests {
         assert_eq!(
             schedules.remote_control_pairing,
             WakeSchedule::At(ATTEMPT_EXPIRES_AT),
+        );
+    }
+
+    #[test]
+    fn commit_request_waits_past_the_link_default_until_the_attempt_deadline() {
+        const PAIRING_EXPIRES_AT: InstantMillis = InstantMillis(60_000);
+        const ATTEMPT_TIMEOUT: DurationMillis = DurationMillis(30_000);
+        const ATTEMPT_EXPIRES_AT: InstantMillis = InstantMillis(32_000);
+        const APPROVED_AT: InstantMillis = InstantMillis(2_500);
+
+        let mut engine = engine_with_active_link();
+        let (attempt_id, _) =
+            awaiting_confirmation_for(&mut engine, 0x52, PAIRING_EXPIRES_AT, ATTEMPT_TIMEOUT);
+        let (settlement, _) = execute(
+            &mut engine,
+            ApproveRemoteControlControllerPairing { attempt_id }.into_command(),
+            APPROVED_AT,
+        );
+        let Settlement::ApproveRemoteControlControllerPairing(Ok(approval)) = settlement else {
+            panic!("approval settled")
+        };
+
+        let interfaces = [routable_descriptor(lane())];
+        let mut request_frame = None;
+        let mut request_settled = None;
+        let schedules = engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(0xC2),
+                command: approval.into_request().into_command(),
+            },
+            AttachedInterfaces::new(&interfaces),
+            APPROVED_AT,
+            &mut |bytes| bytes.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    request_frame = filled_frame(fill);
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: CommandId(0xC2),
+                    settlement,
+                }) => request_settled = Some(settlement),
+                EngineReaction::Directive(_) | EngineReaction::Journaled(_) => {}
+            },
+        );
+        assert!(request_frame.is_some());
+        assert_eq!(request_settled, None);
+        assert_eq!(
+            schedules.receipt_timeouts,
+            WakeSchedule::At(ATTEMPT_EXPIRES_AT),
+        );
+        assert_eq!(
+            engine.receipts.earliest_timeout_at(),
+            Some(ATTEMPT_EXPIRES_AT),
+        );
+
+        let link_default_deadline = APPROVED_AT.saturating_add(DurationMillis(
+            request_response_timeout_ms(RttMillis::new(250)),
+        ));
+        assert!(link_default_deadline < ATTEMPT_EXPIRES_AT);
+        engine.settle_timed_out_receipts(link_default_deadline, &mut |reaction| {
+            if let EngineReaction::Journaled(Journaled::CommandSettled {
+                id: CommandId(0xC2),
+                settlement,
+            }) = reaction
+            {
+                request_settled = Some(settlement);
+            }
+        });
+        assert_eq!(request_settled, None);
+        assert_eq!(
+            engine.receipts.earliest_timeout_at(),
+            Some(ATTEMPT_EXPIRES_AT),
+        );
+        assert!(matches!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::AwaitingCompletion(view)
+                if view.attempt_id() == attempt_id
+        ));
+
+        engine.settle_timed_out_receipts(ATTEMPT_EXPIRES_AT, &mut |reaction| {
+            if let EngineReaction::Journaled(Journaled::CommandSettled {
+                id: CommandId(0xC2),
+                settlement,
+            }) = reaction
+            {
+                request_settled = Some(settlement);
+            }
+        });
+        assert!(matches!(
+            request_settled,
+            Some(Settlement::RemoteControlControllerPairingRequest(Err(
+                RemoteControlControllerPairingRequestFailure {
+                    cause: RemoteControlControllerPairingRequestFailureCause::Request(
+                        SendRequestFailure::Timeout,
+                    ),
+                    exchange: FailRemoteControlControllerPairingRequestOutcome::Aborted {
+                        aborted: RemoteControlControllerPairingAborted::AwaitingCompletion { .. },
+                    },
+                },
+            )))
+        ));
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
         );
     }
 
@@ -1492,8 +1688,12 @@ mod tests {
             persistence: RemoteControlControllerPairingPersistence::Persisted,
         };
 
-        let (settlement, schedules) =
-            execute(&mut engine, command.into_command(), InstantMillis(4_000));
+        let (settlement, schedules, persistence_events) =
+            execute_observing_controller_pairing_persistence(
+                &mut engine,
+                command.into_command(),
+                InstantMillis(4_000),
+            );
         let Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
             RemoteControlControllerPairingFinalization::Completed {
                 attempt_id: completed,
@@ -1514,6 +1714,13 @@ mod tests {
             RemoteControlControllerPairingView::Idle,
         );
         assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+        assert_eq!(
+            persistence_events,
+            ControllerPairingAuthorizationPersistenceEvents {
+                persisted: std::vec![attempt_id],
+                failed: std::vec![],
+            },
+        );
 
         let (repeated, repeated_schedules) =
             execute(&mut engine, command.into_command(), InstantMillis(4_001));
@@ -1536,15 +1743,16 @@ mod tests {
         let mut engine = engine_with_active_link();
         let (attempt_id, target_identity, permitted_requests) = awaiting_persistence(&mut engine);
 
-        let (settlement, schedules) = execute(
-            &mut engine,
-            SettleRemoteControlControllerPairingPersistence {
-                attempt_id,
-                persistence: RemoteControlControllerPairingPersistence::Failed,
-            }
-            .into_command(),
-            InstantMillis(4_000),
-        );
+        let (settlement, schedules, persistence_events) =
+            execute_observing_controller_pairing_persistence(
+                &mut engine,
+                SettleRemoteControlControllerPairingPersistence {
+                    attempt_id,
+                    persistence: RemoteControlControllerPairingPersistence::Failed,
+                }
+                .into_command(),
+                InstantMillis(4_000),
+            );
         let Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
             RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
                 attempt_id: failed,
@@ -1565,6 +1773,13 @@ mod tests {
             RemoteControlControllerPairingView::Idle,
         );
         assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+        assert_eq!(
+            persistence_events,
+            ControllerPairingAuthorizationPersistenceEvents {
+                persisted: std::vec![],
+                failed: std::vec![attempt_id],
+            },
+        );
     }
 
     #[test]
@@ -1755,6 +1970,52 @@ mod tests {
             Err(crate::engine::ConfigureRemoteControlIdentitiesError::AlreadyConfigured),
         );
         assert_eq!(engine.held_identity_hashes(), &expected_hashes);
+    }
+
+    #[test]
+    fn a_close_link_command_refreshes_the_controller_pairing_schedule() {
+        let mut engine = engine_with_active_link();
+        configure_controller(&mut engine);
+        let (begun, begin_delta) = execute(
+            &mut engine,
+            PrnsCommand::BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing {
+                context: context(),
+                invitation_code: invitation_code(),
+                pairing_expires_at: PAIRING_EXPIRES_AT,
+            }),
+            STARTED_AT,
+        );
+        assert!(matches!(
+            begun,
+            Settlement::BeginRemoteControlControllerPairing(Ok(_))
+        ));
+        assert_eq!(
+            begin_delta.remote_control_pairing,
+            WakeSchedule::At(PAIRING_EXPIRES_AT),
+        );
+        let interfaces = [routable_descriptor(lane())];
+        let mut cached = engine.wake_schedules(AttachedInterfaces::new(&interfaces));
+        // No request is dispatched: this tests pairing-state cleanup separately
+        // from the request-receipt schedule owned by the same Link.
+        let (closed, close_delta) = execute(
+            &mut engine,
+            PrnsCommand::CloseLink(crate::engine::CloseLink {
+                link_id: context().link_id(),
+            }),
+            OFFERED_AT,
+        );
+        assert_eq!(closed, Settlement::CloseLink(Ok(())));
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert!(engine.links.is_empty());
+        cached.merge(close_delta);
+        assert_eq!(cached.remote_control_pairing, WakeSchedule::Idle);
+        assert_eq!(
+            cached.remote_control_pairing,
+            engine.remote_control_pairing_wake(),
+        );
     }
 
     #[test]

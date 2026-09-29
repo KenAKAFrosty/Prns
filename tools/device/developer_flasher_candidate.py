@@ -16,6 +16,7 @@ if str(RELEASE_TOOLS) not in sys.path:
 from flasher_manifest import (
     require_schema,
     target_artifacts,
+    validate_esp_artifact,
     validate_nrf_serial_dfu_recovery_artifact,
     validate_uf2_artifact,
 )
@@ -98,6 +99,7 @@ def read_stable_artifact(path: Path, wire_path: PurePosixPath) -> bytes:
 
 def validate_artifact(
     candidate: Path,
+    board_slug: str,
     artifact: object,
     transport: str,
     version: str,
@@ -121,10 +123,17 @@ def validate_artifact(
         )
     if transport == "uf2-mass-storage":
         try:
-            validate_uf2_artifact(artifact, payload)
+            validate_uf2_artifact(board_slug, artifact, payload)
         except (KeyError, TypeError, ValueError) as error:
             raise DeveloperCandidateError(
                 f"assembled manifest UF2 evidence is invalid for {relative.as_posix()!r}: {error}"
+            ) from error
+    if transport == "esp-serial":
+        try:
+            validate_esp_artifact(board_slug, artifact, payload)
+        except (KeyError, TypeError, ValueError) as error:
+            raise DeveloperCandidateError(
+                f"assembled manifest ESP evidence is invalid for {relative.as_posix()!r}: {error}"
             ) from error
     if transport == "esp-serial" and artifact.get("kind") == "application":
         embedded_identity = f"version={version} source={source_digest}".encode("ascii")
@@ -184,7 +193,14 @@ def validate_candidate(
         except ValueError as error:
             raise DeveloperCandidateError(str(error)) from error
         validated_artifacts = tuple(
-            validate_artifact(candidate, artifact, transport, version, source_digest)
+            validate_artifact(
+                candidate,
+                expected.board_slug,
+                artifact,
+                transport,
+                version,
+                source_digest,
+            )
             for artifact in artifacts
         )
         if transport == "nrf-serial-dfu":

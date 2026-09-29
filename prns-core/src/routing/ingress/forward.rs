@@ -134,7 +134,7 @@ mod tests {
     use crate::interfaces::InboundPacket;
     use crate::routing::ingress::testkit::iface;
     use crate::routing::ingress::{IgnoreReason, IngestPacketOutcome};
-    use crate::wire::{TransportId, WireContext, BROADCAST_MTU, HEADER_MAX_LEN};
+    use crate::wire::{TransportId, WireContext, BROADCAST_MTU};
 
     #[test]
     fn a_final_hop_forward_strips_the_transport_header_back_to_the_direct_wire() {
@@ -150,9 +150,7 @@ mod tests {
         );
 
         let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
-        let payload_len = WirePacketHeader::parse(&in_transport).unwrap().1.len();
         let mut forwarded = None;
-        let mut size_hint = None;
         let interfaces = [routable_descriptor(InterfaceId::new([0xB2; 8]))];
         let _ = relay.ingest_packet_into(
             InboundPacket {
@@ -168,21 +166,28 @@ mod tests {
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
-                    if let EngineReaction::Directive(Directive::EmitFrame {
+                    #[cfg(feature = "movable-frame-forwarding")]
+                    if let EngineReaction::Directive(Directive::ForwardFrame {
                         target,
-                        size_hint: hint,
-                        fill,
+                        header,
+                        payload,
                     }) = reaction
                     {
                         assert_eq!(target, InterfaceId::new([0xB2; 8]));
-                        size_hint = Some(hint);
+                        forwarded = crate::engine::test_support::forwarded_frame(header, payload);
+                    }
+                    #[cfg(not(feature = "movable-frame-forwarding"))]
+                    if let EngineReaction::Directive(Directive::EmitFrame {
+                        target, fill, ..
+                    }) = reaction
+                    {
+                        assert_eq!(target, InterfaceId::new([0xB2; 8]));
                         forwarded = filled_frame(fill);
                     }
                 },
             },
         );
 
-        assert_eq!(size_hint, Some(HEADER_MAX_LEN + payload_len));
         let wire = forwarded.expect("a transport-addressed packet with a one-hop route forwards");
         let mut expected = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
         expected[1] = 1;

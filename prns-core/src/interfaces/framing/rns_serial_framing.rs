@@ -14,21 +14,56 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
     2 + 2 * payload_len
 }
 
-#[cfg(target_pointer_width = "64")]
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+use memchr::arch::x86_64::avx2::memchr::Two as HostSpecialFinder;
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+use memchr::arch::aarch64::neon::memchr::Two as HostSpecialFinder;
+
+#[cfg(all(feature = "std", any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn find_special(haystack: &[u8]) -> Option<usize> {
-    const ONES: u128 = 0x0101_0101_0101_0101_0101_0101_0101_0101;
-    const HIGHS: u128 = 0x8080_8080_8080_8080_8080_8080_8080_8080;
-    const FLAG_REP: u128 = (FLAG as u128) * ONES;
-    const ESC_REP: u128 = (ESC as u128) * ONES;
+    static FINDER: std::sync::OnceLock<Option<HostSpecialFinder>> = std::sync::OnceLock::new();
+    match FINDER.get_or_init(|| HostSpecialFinder::new(FLAG, ESC)) {
+        Some(finder) => finder.find(haystack),
+        None => memchr::memchr2(FLAG, ESC, haystack),
+    }
+}
+
+#[cfg(all(
+    feature = "std",
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
+fn find_special(haystack: &[u8]) -> Option<usize> {
+    memchr::memchr2(FLAG, ESC, haystack)
+}
+
+#[cfg(all(not(feature = "std"), target_pointer_width = "64"))]
+fn find_special(haystack: &[u8]) -> Option<usize> {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    const FLAG_REP: u64 = (FLAG as u64) * ONES;
+    const ESC_REP: u64 = (ESC as u64) * ONES;
 
     let (chunks, _) = haystack.as_chunks::<16>();
     for (chunk_index, chunk) in chunks.iter().enumerate() {
         let word = u128::from_le_bytes(*chunk);
-        let f = word ^ FLAG_REP;
-        let e = word ^ ESC_REP;
-        let marks = ((f.wrapping_sub(ONES) & !f) | (e.wrapping_sub(ONES) & !e)) & HIGHS;
-        if marks != 0 {
-            return Some(chunk_index * 16 + (marks.trailing_zeros() / 8) as usize);
+        let low = word as u64;
+        let low_flag = low ^ FLAG_REP;
+        let low_escape = low ^ ESC_REP;
+        let low_marks = ((low_flag.wrapping_sub(ONES) & !low_flag)
+            | (low_escape.wrapping_sub(ONES) & !low_escape))
+            & HIGHS;
+        if low_marks != 0 {
+            return Some(chunk_index * 16 + (low_marks.trailing_zeros() / 8) as usize);
+        }
+        let high = (word >> 64) as u64;
+        let high_flag = high ^ FLAG_REP;
+        let high_escape = high ^ ESC_REP;
+        let high_marks = ((high_flag.wrapping_sub(ONES) & !high_flag)
+            | (high_escape.wrapping_sub(ONES) & !high_escape))
+            & HIGHS;
+        if high_marks != 0 {
+            return Some(chunk_index * 16 + 8 + (high_marks.trailing_zeros() / 8) as usize);
         }
     }
     let scanned = chunks.len() * 16;
@@ -38,7 +73,7 @@ fn find_special(haystack: &[u8]) -> Option<usize> {
         .map(|offset| scanned + offset)
 }
 
-#[cfg(not(target_pointer_width = "64"))]
+#[cfg(all(not(feature = "std"), not(target_pointer_width = "64")))]
 fn find_special(haystack: &[u8]) -> Option<usize> {
     const ONES: u64 = 0x0101_0101_0101_0101;
     const HIGHS: u64 = 0x8080_8080_8080_8080;
@@ -146,14 +181,13 @@ impl RnsSerialScanner {
                     find_special(&input[*offset..]).map_or(input.len(), |at| *offset + at);
                 let run_len = run_end - *offset;
                 if run_len != 0 {
-                    let free = sink.free_capacity();
-                    if run_len <= free {
-                        let run = &input[*offset..run_end];
-                        let _ = sink.extend_from_slice(run);
+                    let run = &input[*offset..run_end];
+                    if sink.extend_from_slice(run).is_ok() {
                         *offset = run_end;
                         continue;
                     }
 
+                    let free = sink.free_capacity();
                     *offset += free + 1;
                     sink.clear();
                     self.reset();

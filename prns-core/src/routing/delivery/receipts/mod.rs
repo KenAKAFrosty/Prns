@@ -7,3 +7,6 @@ mod impls;
 pub use impls::*;
 
 pub use self::core::*;
+
+#[cfg(test)]
+mod request_link_tests;

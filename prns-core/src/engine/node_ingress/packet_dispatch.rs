@@ -3,7 +3,8 @@ use super::relay::{RelayAudience, RelayPathRequest};
 
 use crate::crypto::X25519SecretKey;
 use crate::engine::remote_control_pairing::{
-    RemoteControlPairingRequestIngress, RemoteControlPairingRequestIngressOutcome,
+    RemoteControlPairingRequestDiagnostic, RemoteControlPairingRequestIngress,
+    RemoteControlPairingRequestIngressOutcome,
 };
 use crate::engine::settlement::settle;
 use crate::engine::LinkClosedReason;
@@ -17,16 +18,24 @@ use crate::engine::{
 use crate::identity::{IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::{Egress, InboundPacket};
-use crate::routing::ingress::{ClassifiedInboundPacket, IngestEffects};
+use crate::routing::ingress::{ClassifiedInboundPacket, IgnoreReason, IngestEffects, Ingress};
 use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::handshake::{negotiated_link_mtu, LinkProofSignOwed};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::links::resources::receive::gate::AcceptedResourceAdmission;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::receive::part_hash::{
+    ResourcePartHashCompleted, ResourcePartHashLanding,
+};
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::send::ResourceSealExecution;
 use crate::routing::links::resources::ResourceOffer;
 use crate::routing::proof::ProofRequest;
 use crate::storage::StorageLayout;
-use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN};
+#[cfg(not(feature = "movable-frame-forwarding"))]
+use crate::wire::HEADER_MAX_LEN;
+use crate::wire::{DestinationType, WireContext, BROADCAST_MTU};
 
 pub struct IngestIo<'a, FillEntropy, OnProofRequest, OnResourceOffer, Sink>
 where
@@ -47,9 +56,60 @@ where
 pub struct IngestPacketReport {
     pub wake_schedules: WakeSchedules,
     pub protocol_violation: Option<ProtocolViolationKind>,
+    /// Local-only disposition of a classified link request packet, without payloads or peer identifiers.
+    /// Unlike `protocol_violation`, this also reports ordinary policy rejection (including
+    /// requests arriving before their peer has been identified) and pairing outcomes.
+    /// Unclassifiable packets and packets forwarded without local handling have no request report.
+    /// Callers explicitly opting out of request diagnostics also receive `None` here.
+    pub request: Option<RequestIngressDiagnostic>,
+}
+
+/// Observability of link request ingress. Reporting this does not send a response,
+/// change an admission decision, or add application journal events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestIngressDiagnostic {
+    Ignored(IgnoreReason),
+    InterfaceMismatch,
+    ForwardedToApplication,
+    Pairing(RemoteControlPairingRequestDiagnostic),
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    #[cfg(feature = "resource-work-offload")]
+    pub fn resume_resource_part_hash<F, K>(
+        &mut self,
+        completed: ResourcePartHashCompleted<'_>,
+        now: InstantMillis,
+        fill_random: &mut F,
+        sink: &mut K,
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
+    {
+        let mut wake = WakeSchedules::UNCHANGED;
+        match self.land_resource_part_hash(completed) {
+            ResourcePartHashLanding::Ignored(_) => {}
+            ResourcePartHashLanding::Pull { link_id, hash } => {
+                self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
+                self.emit_resource_open(&link_id, &hash, sink);
+                wake.resource_deadlines = self.resource_deadlines_wake();
+                wake.receipt_timeouts = self.receipt_timeouts_wake();
+            }
+            ResourcePartHashLanding::Assembly { link_id, hash } => {
+                self.emit_resource_open(&link_id, &hash, sink);
+                self.conclude_resource(&link_id, &hash, now, fill_random, sink);
+                wake.resource_deadlines = self.resource_deadlines_wake();
+                wake.receipt_timeouts = self.receipt_timeouts_wake();
+            }
+            ResourcePartHashLanding::DeadlineAdvanced { link_id, hash } => {
+                self.emit_resource_open(&link_id, &hash, sink);
+                wake.resource_deadlines = self.resource_deadlines_wake();
+            }
+        }
+        wake
+    }
+
     pub fn ingest_packet_into<F, P, A, K>(
         &mut self,
         packet: InboundPacket<'_>,
@@ -61,7 +121,7 @@ impl<S: StorageLayout> EngineState<S> {
         A: FnMut(&ResourceOffer) -> bool,
         K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
-        self.ingest_packet_into_report(packet, io).wake_schedules
+        self.ingest_classified_into(ClassifiedInboundPacket::classify(packet), io)
     }
 
     pub fn ingest_packet_into_report<F, P, A, K>(
@@ -89,11 +149,37 @@ impl<S: StorageLayout> EngineState<S> {
         A: FnMut(&ResourceOffer) -> bool,
         K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
-        self.ingest_classified_into_report(packet, io)
+        self.ingest_classified_into_report_with_request_diagnostics::<false, _, _, _, _>(packet, io)
             .wake_schedules
     }
 
     pub fn ingest_classified_into_report<F, P, A, K>(
+        &mut self,
+        packet: ClassifiedInboundPacket<'_>,
+        io: IngestIo<'_, F, P, A, K>,
+    ) -> IngestPacketReport
+    where
+        F: FnMut(&mut [u8]),
+        P: FnMut(&ProofRequest) -> bool,
+        A: FnMut(&ResourceOffer) -> bool,
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
+    {
+        self.ingest_classified_into_report_with_request_diagnostics::<true, _, _, _, _>(packet, io)
+    }
+
+    /// Ingest with an explicit compile-time choice of request diagnostics.
+    ///
+    /// Disabling collection only leaves `report.request` empty. Wake schedules,
+    /// protocol violations, admission decisions, emitted work and journal events
+    /// are unchanged. Consumers that never inspect request reports can avoid
+    /// materializing the pairing projection on constrained targets.
+    pub fn ingest_classified_into_report_with_request_diagnostics<
+        const REQUEST_DIAGNOSTICS: bool,
+        F,
+        P,
+        A,
+        K,
+    >(
         &mut self,
         packet: ClassifiedInboundPacket<'_>,
         io: IngestIo<'_, F, P, A, K>,
@@ -113,9 +199,22 @@ impl<S: StorageLayout> EngineState<S> {
             sink,
         } = io;
         let (source, ingress) = packet.into_parts();
+        let is_request = REQUEST_DIAGNOSTICS
+            && matches!(&ingress, Ingress::Data { data, .. }
+            if data.header.destination_type == DestinationType::Link
+                && data.header.context == WireContext::Request);
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         let mut effects = IngestEffects::default();
         let outcome = self.ingest_classified_with_effects(ingress, interfaces, &mut effects);
+        let mut request = match &outcome {
+            IngestPacketOutcome::Ignored(reason) if is_request => {
+                Some(RequestIngressDiagnostic::Ignored(*reason))
+            }
+            IngestPacketOutcome::LinkInterfaceMismatch { .. } if is_request => {
+                Some(RequestIngressDiagnostic::InterfaceMismatch)
+            }
+            _ => None,
+        };
 
         //Consider cfg-gating this on metrics/observability?
         let protocol_violation = ProtocolViolationKind::of_outcome(&outcome);
@@ -219,13 +318,22 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::Forward(forward) => {
                 if interfaces.is_egress_eligible(forward.fire_on, Egress::Transport) {
-                    let size_hint = HEADER_MAX_LEN + forward.payload.len();
-                    let mut fill = |slot: &mut [u8]| forward.to_wire(slot).ok();
-                    sink(EngineReaction::Directive(Directive::EmitFrame {
+                    #[cfg(feature = "movable-frame-forwarding")]
+                    sink(EngineReaction::Directive(Directive::ForwardFrame {
                         target: forward.fire_on,
-                        size_hint,
-                        fill: &mut fill,
+                        header: forward.header,
+                        payload: forward.payload,
                     }));
+                    #[cfg(not(feature = "movable-frame-forwarding"))]
+                    {
+                        let size_hint = HEADER_MAX_LEN + forward.payload.len();
+                        let mut fill = |slot: &mut [u8]| forward.to_wire(slot).ok();
+                        sink(EngineReaction::Directive(Directive::EmitFrame {
+                            target: forward.fire_on,
+                            size_hint,
+                            fill: &mut fill,
+                        }));
+                    }
                 }
             }
             IngestPacketOutcome::AnswerPathRequest { destination } => {
@@ -331,21 +439,23 @@ impl<S: StorageLayout> EngineState<S> {
                 rtt,
                 data,
             } => {
-                match self.ingest_remote_control_pairing_request(
-                    RemoteControlPairingRequestIngress {
-                        destination,
-                        link_id,
-                        request_id,
-                        requester,
-                        path_hash,
-                        data,
-                    },
-                    interfaces,
-                    now,
-                    fill_random,
-                    sink,
-                ) {
-                    RemoteControlPairingRequestIngressOutcome::Pairing(_pairing_outcome) => {
+                match self
+                    .ingest_remote_control_pairing_request_report::<REQUEST_DIAGNOSTICS, _, _>(
+                        RemoteControlPairingRequestIngress {
+                            destination,
+                            link_id,
+                            request_id,
+                            requester,
+                            path_hash,
+                            data,
+                        },
+                        interfaces,
+                        now,
+                        fill_random,
+                        sink,
+                    ) {
+                    RemoteControlPairingRequestIngressOutcome::Pairing(diagnostic) => {
+                        request = diagnostic.map(RequestIngressDiagnostic::Pairing);
                         wake_schedule_changes.remote_control_pairing =
                             self.remote_control_pairing_wake();
                         wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
@@ -354,6 +464,8 @@ impl<S: StorageLayout> EngineState<S> {
                         wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
                     }
                     RemoteControlPairingRequestIngressOutcome::ForwardToApplication => {
+                        request = REQUEST_DIAGNOSTICS
+                            .then_some(RequestIngressDiagnostic::ForwardedToApplication);
                         sink(EngineReaction::Journaled(Journaled::RequestReceived {
                             destination,
                             link_id,
@@ -472,7 +584,23 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::OwesResourceParts(request) => {
                 self.serve_resource_request(&request, source, now, fill_random, sink);
+                #[cfg(feature = "resource-work-offload")]
+                match self.resource_seal_execution {
+                    ResourceSealExecution::Inline => {
+                        self.seal_staged_continuation(&request.link_id, fill_random, sink);
+                    }
+                    ResourceSealExecution::ExternalBorrowed
+                    | ResourceSealExecution::ExternalOwned => {
+                        self.request_resource_seal(&request.link_id, sink);
+                    }
+                }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+            }
+            #[cfg(feature = "resource-work-offload")]
+            IngestPacketOutcome::OwesResourcePartHash(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::ResourcePartHash(owed),
+                )));
             }
             IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
                 self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
@@ -517,6 +645,9 @@ impl<S: StorageLayout> EngineState<S> {
                             self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
                         }
                         AcceptedResourceAdmission::Pending => {}
+                        AcceptedResourceAdmission::SupersededResponse { link_id, hash } => {
+                            self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
+                        }
                         AcceptedResourceAdmission::CapacityRejected {
                             link_id,
                             hash,
@@ -575,6 +706,9 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::ResourceAdmissionPending => {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
+            IngestPacketOutcome::ResourceResponseSuperseded { link_id, hash } => {
+                self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
+            }
             IngestPacketOutcome::ResourceCapacityRejected {
                 link_id,
                 hash,
@@ -595,7 +729,7 @@ impl<S: StorageLayout> EngineState<S> {
                 // Mark the final ready span in flight before conclusion observes the row. That
                 // makes a complete transfer park as AwaitingOpen until its typed completion.
                 self.emit_resource_open(&link_id, &hash, sink);
-                self.conclude_resource(&link_id, &hash, now, sink);
+                self.conclude_resource(&link_id, &hash, now, fill_random, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
@@ -629,16 +763,16 @@ impl<S: StorageLayout> EngineState<S> {
                 link_id,
                 correlation,
             } => {
-                settle(
-                    sink,
+                self.settle_advertised_resource(
                     id,
-                    crate::routing::links::resources::send::resource_settlement(
-                        correlation,
-                        Err(crate::engine::SendResourceFailure::RejectedByPeer),
-                    ),
+                    &link_id,
+                    correlation,
+                    Err(crate::engine::SendResourceFailure::RejectedByPeer),
+                    sink,
                 );
                 self.fail_staged_continuation(&link_id, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
             IngestPacketOutcome::ResourceDelivered {
                 id,
@@ -659,14 +793,7 @@ impl<S: StorageLayout> EngineState<S> {
                         sink,
                     ));
                 } else {
-                    settle(
-                        sink,
-                        id,
-                        crate::routing::links::resources::send::resource_settlement(
-                            correlation,
-                            Ok(()),
-                        ),
-                    );
+                    self.settle_advertised_resource(id, &link_id, correlation, Ok(()), sink);
                     self.promote_staged_resource(&link_id, now, fill_random, sink);
                 }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
@@ -770,6 +897,68 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketReport {
             wake_schedules: wake_schedule_changes,
             protocol_violation,
+            request,
         }
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn request_ingress_diagnostics_debug_contains_only_discriminants() {
+        use crate::routing::links::handshake::LinkRttError;
+        for (reason, expected) in [
+            (IgnoreReason::Consumed, "Consumed"),
+            (IgnoreReason::Malformed, "Malformed"),
+            (IgnoreReason::UnhandledContext, "UnhandledContext"),
+            (IgnoreReason::Duplicate, "Duplicate"),
+            (IgnoreReason::Superseded, "Superseded"),
+            (IgnoreReason::NotForUs, "NotForUs"),
+            (IgnoreReason::NoRoute, "NoRoute"),
+            (IgnoreReason::HopLimitReached, "HopLimitReached"),
+            (IgnoreReason::LoopPrevented, "LoopPrevented"),
+            (IgnoreReason::RouteUnresponsive, "RouteUnresponsive"),
+            (IgnoreReason::OtherInstance, "OtherInstance"),
+            (IgnoreReason::UnknownLink, "UnknownLink"),
+            (IgnoreReason::LinkPhaseMismatch, "LinkPhaseMismatch"),
+            (
+                IgnoreReason::LinkRttError(LinkRttError::Malformed),
+                "LinkRttError(Malformed)",
+            ),
+            (
+                IgnoreReason::LinkRttError(LinkRttError::InvalidToken),
+                "LinkRttError(InvalidToken)",
+            ),
+            (
+                IgnoreReason::LinkRttError(LinkRttError::BufferTooShort),
+                "LinkRttError(BufferTooShort)",
+            ),
+            (IgnoreReason::DecryptFailed, "DecryptFailed"),
+            (IgnoreReason::ProofInvalid, "ProofInvalid"),
+            (IgnoreReason::UnknownIdentity, "UnknownIdentity"),
+            (IgnoreReason::LinkRequestsRefused, "LinkRequestsRefused"),
+            (IgnoreReason::PermissionDenied, "PermissionDenied"),
+            (IgnoreReason::RateLimited, "RateLimited"),
+            (IgnoreReason::CapacityExhausted, "CapacityExhausted"),
+            (IgnoreReason::RequestTooLarge, "RequestTooLarge"),
+            (IgnoreReason::StrategyDeclined, "StrategyDeclined"),
+            (IgnoreReason::UnmatchedResponse, "UnmatchedResponse"),
+            (IgnoreReason::IfacRefused, "IfacRefused"),
+        ] {
+            assert_eq!(
+                std::format!("{:?}", RequestIngressDiagnostic::Ignored(reason)),
+                std::format!("Ignored({expected})"),
+            );
+        }
+        assert_eq!(
+            std::format!("{:?}", RequestIngressDiagnostic::InterfaceMismatch),
+            "InterfaceMismatch"
+        );
+        assert_eq!(
+            std::format!("{:?}", RequestIngressDiagnostic::ForwardedToApplication),
+            "ForwardedToApplication"
+        );
     }
 }

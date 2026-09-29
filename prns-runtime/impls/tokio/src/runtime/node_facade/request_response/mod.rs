@@ -5,10 +5,14 @@ use crate::engine::RequestResponseTimeout;
 use crate::engine::RespondFailure;
 use crate::engine::SendRequestFailure;
 use crate::engine::Settlement;
+use crate::interfaces::rns_management::{
+    write_route_snapshots, RnsPathTableWriteError, RnsRemotePathTableRequest,
+};
 use crate::manifold::compression;
 use crate::manifold::driver::{
     HostCommand, HostResourcePayload, RequestAnyHostCommand, RespondAnyHostCommand,
 };
+use crate::node_introspection::NodeIntrospection;
 use crate::routing::links::data::LINK_MDU;
 use crate::routing::links::request::{
     packed_binary_len, response_envelope_prefix, write_packed_binary_header,
@@ -34,6 +38,9 @@ const RESPONSE_PACKET_CEILING: usize = LINK_MDU - RESPONSE_WIRE_OVERHEAD;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RequestOptions {
     pub response_timeout: RequestResponseTimeout,
+    /// Counts the encoded response value, before application decoding. See
+    /// [`crate::engine::SendRequest::maximum_response_bytes`] for the packet and
+    /// whole-Resource contract and the stricter segmented admission bound.
     pub maximum_response_bytes: ByteLimit,
 }
 
@@ -202,6 +209,23 @@ impl PrnsNodeHandle {
             });
             return Some(responder.rtt);
         }
+        match compression::compression_preflight(packed.as_slice()) {
+            compression::CompressionPreflight::ShipUncompressed => {
+                return self
+                    .commands
+                    .send(HostCommand::RespondAny(RespondAnyHostCommand {
+                        id,
+                        link_id: responder.link_id,
+                        request_id: responder.request_id,
+                        packed,
+                        compressed_candidate: None,
+                        completion: None,
+                    }))
+                    .ok()
+                    .map(|()| responder.rtt);
+            }
+            compression::CompressionPreflight::AttemptCompression => {}
+        }
         let commands = self.commands.clone();
         let link_id = responder.link_id;
         let request_id = responder.request_id;
@@ -238,6 +262,36 @@ impl PrnsNodeHandle {
         packed: std::vec::Vec<u8>,
     ) -> Option<RttMillis> {
         self.send_packed_response(responder, packed.into())
+    }
+
+    pub async fn respond_rns_path_table(
+        &self,
+        responder: RespondToken,
+        request: RnsRemotePathTableRequest,
+    ) -> bool {
+        let routes: std::vec::Vec<_> = self
+            .routes()
+            .await
+            .into_iter()
+            .filter(|route| request.includes(route.destination, route.hops))
+            .collect();
+        let mut capacity = 256usize;
+        loop {
+            let mut packed = std::vec![0; capacity];
+            match write_route_snapshots(&routes, &mut packed) {
+                Ok(written) => {
+                    packed.truncate(written);
+                    return self.respond_owned_packed(responder, packed).is_some();
+                }
+                Err(RnsPathTableWriteError::BufferTooShort) => {
+                    let Some(next) = capacity.checked_mul(2) else {
+                        return false;
+                    };
+                    capacity = next;
+                }
+                Err(_) => return false,
+            }
+        }
     }
 
     pub fn respond_bytes(&self, responder: RespondToken, bytes: &[u8]) -> Option<RttMillis> {
@@ -451,6 +505,14 @@ impl PrnsNodeHandle {
                         }
                         ResourceSendError::NodeStopped => ResponseSendError::NodeStopped,
                     });
+            }
+            match compression::compression_preflight(packed.as_slice()) {
+                compression::CompressionPreflight::ShipUncompressed => {
+                    return self
+                        .send_response_command_settled(id, responder, packed, None)
+                        .await;
+                }
+                compression::CompressionPreflight::AttemptCompression => {}
             }
             let (packed, compressed_candidate) = tokio::task::spawn_blocking(move || {
                 let candidate = compression::compress_if_smaller(packed.as_slice())

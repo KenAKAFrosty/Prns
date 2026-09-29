@@ -29,6 +29,41 @@ pub struct RouteSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundedRouteSnapshots<const N: usize> {
+    entries: heapless::Vec<RouteSnapshot, N>,
+    truncated: bool,
+}
+
+impl<const N: usize> BoundedRouteSnapshots<N> {
+    pub const fn new() -> Self {
+        Self {
+            entries: heapless::Vec::new(),
+            truncated: false,
+        }
+    }
+
+    pub fn entries(&self) -> &[RouteSnapshot] {
+        &self.entries
+    }
+
+    pub const fn is_truncated(&self) -> bool {
+        self.truncated
+    }
+
+    fn push(&mut self, entry: RouteSnapshot) {
+        if self.entries.push(entry).is_err() {
+            self.truncated = true;
+        }
+    }
+}
+
+impl<const N: usize> Default for BoundedRouteSnapshots<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveLinkSnapshot {
     pub link_id: LinkId,
     pub rtt: RttMillis,
@@ -92,6 +127,20 @@ impl<S: StorageLayout> EngineState<S> {
         {
             visit(route_snapshot(destination, entry, expires_at));
         }
+    }
+
+    pub fn bounded_route_snapshots<const N: usize>(
+        &self,
+        interfaces: AttachedInterfaces<'_>,
+        mut include: impl FnMut(&RouteSnapshot) -> bool,
+    ) -> BoundedRouteSnapshots<N> {
+        let mut snapshots = BoundedRouteSnapshots::new();
+        self.visit_route_snapshots(interfaces, |snapshot| {
+            if include(&snapshot) {
+                snapshots.push(snapshot);
+            }
+        });
+        snapshots
     }
 
     #[must_use]

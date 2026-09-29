@@ -133,6 +133,7 @@ impl InterfaceOptions {
             boolean(self.ignore_config_warnings),
         )?;
         push(&mut values, "group_id", text(self.group_id))?;
+        push(&mut values, "group_ids", list(self.group_ids))?;
         push(&mut values, "discovery_scope", text(self.discovery_scope))?;
         push(
             &mut values,

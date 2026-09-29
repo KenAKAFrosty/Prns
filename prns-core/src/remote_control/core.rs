@@ -14,10 +14,16 @@ pub struct RemoteControlStorageRequirements {
 }
 
 impl RemoteControlStorageRequirements {
+    /// Peak storage owned by an available service while a pairing window is open.
+    ///
+    /// The service keeps its controller and target identities, target and pairing-availability
+    /// destinations, and target request handler for its entire lifetime. Opening a pairing window
+    /// adds one provisional identity, destination, and request handler until the window closes.
     pub const AVAILABLE: Self = Self {
         held_identities: 3,
         upstream_app_destinations: 3,
-        request_handlers: 1,
+        // Live `/remote-control` plus the ephemeral pairing-session handler.
+        request_handlers: 2,
     };
 
     #[must_use]
@@ -83,6 +89,15 @@ pub struct RemoteControlNodeIdentitySecrets {
     target: RemoteControlTargetIdentitySecret,
 }
 
+pub struct RemoteControlTargetSealingKey(zeroize::Zeroizing<[u8; 64]>);
+
+impl RemoteControlTargetSealingKey {
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8; 64] {
+        &self.0
+    }
+}
+
 impl RemoteControlNodeIdentitySecrets {
     pub fn generate_with_runtime_entropy<S: EntropySource>(
         entropy: &mut RuntimeEntropy<S>,
@@ -138,6 +153,25 @@ impl RemoteControlNodeIdentitySecrets {
         }
     }
 
+    /// Derives a purpose-bound local sealing key without exposing target identity key material.
+    ///
+    /// The target identity hash is the HKDF salt and `domain` is the application context. Callers
+    /// must use a stable, unique domain label for each stored-record family.
+    pub fn target_sealing_key(&self, domain: &[u8]) -> RemoteControlTargetSealingKey {
+        self.target
+            .parts
+            .encryption_secret
+            .with_scalar_bytes(|secret| {
+                RemoteControlTargetSealingKey(zeroize::Zeroizing::new(
+                    crate::crypto::hkdf_sha256::<64>(
+                        secret,
+                        self.target.parts.hash.as_bytes(),
+                        domain,
+                    ),
+                ))
+            })
+    }
+
     pub(crate) fn into_parts(self) -> (IdentityParts, IdentityParts) {
         (self.controller.parts, self.target.parts)
     }
@@ -189,26 +223,64 @@ impl RemoteControlControllerIdentity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RemoteControlControllerAuthority {
+    Operator = 0x01,
+    Administrator = 0x02,
+}
+
+impl RemoteControlControllerAuthority {
+    #[must_use]
+    pub const fn wire_value(self) -> u8 {
+        self as u8
+    }
+
+    pub(crate) const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            0x01 => Some(Self::Operator),
+            0x02 => Some(Self::Administrator),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlControllerGrantError {
     NoPermittedRequests,
+    AdministratorRequestRequiresAuthority { request: RemoteControlRequestKind },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlControllerGrant {
     controller: RemoteControlControllerIdentity,
+    authority: RemoteControlControllerAuthority,
     permitted_requests: RemoteControlRequestSet,
 }
 
 impl RemoteControlControllerGrant {
     pub fn new(
         controller: RemoteControlControllerIdentity,
+        authority: RemoteControlControllerAuthority,
         permitted_requests: RemoteControlRequestSet,
     ) -> Result<Self, RemoteControlControllerGrantError> {
         if permitted_requests.is_empty() {
             return Err(RemoteControlControllerGrantError::NoPermittedRequests);
         }
+        if authority == RemoteControlControllerAuthority::Operator {
+            if let Some(request) = permitted_requests
+                .iter()
+                .find(|request| request.requires_administrator())
+            {
+                return Err(
+                    RemoteControlControllerGrantError::AdministratorRequestRequiresAuthority {
+                        request,
+                    },
+                );
+            }
+        }
         Ok(Self {
             controller,
+            authority,
             permitted_requests,
         })
     }
@@ -219,13 +291,35 @@ impl RemoteControlControllerGrant {
     }
 
     #[must_use]
+    pub const fn authority(&self) -> RemoteControlControllerAuthority {
+        self.authority
+    }
+
+    #[must_use]
     pub const fn permitted_requests(&self) -> &RemoteControlRequestSet {
         &self.permitted_requests
     }
 
     #[must_use]
     pub fn permits(&self, request: RemoteControlRequestKind) -> bool {
-        self.permitted_requests.supports(request)
+        if request.requires_administrator() {
+            self.authority == RemoteControlControllerAuthority::Administrator
+        } else {
+            self.permitted_requests.supports(request)
+        }
+    }
+
+    #[must_use]
+    pub fn effective_requests(&self) -> RemoteControlRequestSet {
+        let mut requests = self.permitted_requests;
+        if self.authority == RemoteControlControllerAuthority::Administrator {
+            for request in RemoteControlRequestKind::ALL {
+                if request.requires_administrator() {
+                    let _inserted = requests.insert(request);
+                }
+            }
+        }
+        requests
     }
 }
 
@@ -243,6 +337,7 @@ impl
     ) -> Self {
         Self {
             controller: *controller,
+            authority: permissions.authority(),
             permitted_requests: *permissions.permitted_requests(),
         }
     }
@@ -273,24 +368,40 @@ impl RemoteControlTargetIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlTargetAccessError {
     NoPermittedRequests,
+    AdministratorRequestRequiresAuthority { request: RemoteControlRequestKind },
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlTargetAccess {
     target: RemoteControlTargetIdentity,
+    authority: RemoteControlControllerAuthority,
     permitted_requests: RemoteControlRequestSet,
 }
 
 impl RemoteControlTargetAccess {
     pub fn new(
         target: RemoteControlTargetIdentity,
+        authority: RemoteControlControllerAuthority,
         permitted_requests: RemoteControlRequestSet,
     ) -> Result<Self, RemoteControlTargetAccessError> {
         if permitted_requests.is_empty() {
             return Err(RemoteControlTargetAccessError::NoPermittedRequests);
         }
+        if authority == RemoteControlControllerAuthority::Operator {
+            if let Some(request) = permitted_requests
+                .iter()
+                .find(|request| request.requires_administrator())
+            {
+                return Err(
+                    RemoteControlTargetAccessError::AdministratorRequestRequiresAuthority {
+                        request,
+                    },
+                );
+            }
+        }
         Ok(Self {
             target,
+            authority,
             permitted_requests,
         })
     }
@@ -306,13 +417,35 @@ impl RemoteControlTargetAccess {
     }
 
     #[must_use]
+    pub const fn authority(&self) -> RemoteControlControllerAuthority {
+        self.authority
+    }
+
+    #[must_use]
     pub const fn permitted_requests(&self) -> &RemoteControlRequestSet {
         &self.permitted_requests
     }
 
     #[must_use]
     pub fn permits(&self, request: RemoteControlRequestKind) -> bool {
-        self.permitted_requests.supports(request)
+        if request.requires_administrator() {
+            self.authority == RemoteControlControllerAuthority::Administrator
+        } else {
+            self.permitted_requests.supports(request)
+        }
+    }
+
+    #[must_use]
+    pub fn effective_requests(&self) -> RemoteControlRequestSet {
+        let mut requests = self.permitted_requests;
+        if self.authority == RemoteControlControllerAuthority::Administrator {
+            for request in RemoteControlRequestKind::ALL {
+                if request.requires_administrator() {
+                    let _inserted = requests.insert(request);
+                }
+            }
+        }
+        requests
     }
 }
 
@@ -324,6 +457,7 @@ impl From<(RemoteControlTargetIdentity, RemoteControlPairingPermissions)>
     ) -> Self {
         Self {
             target,
+            authority: permissions.authority(),
             permitted_requests: permissions.into_permitted_requests(),
         }
     }
@@ -403,10 +537,17 @@ pub trait RemoteControlTargetAccessTable {
         &mut self,
         access: RemoteControlTargetAccess,
     ) -> Result<SetRemoteControlTargetAccessOutcome, SetRemoteControlTargetAccessError>;
+    fn forget_by_identity_hash(
+        &mut self,
+        identity: &IdentityHash,
+    ) -> ForgetRemoteControlTargetOutcome;
+
     fn forget_target(
         &mut self,
         target: &RemoteControlTargetIdentity,
-    ) -> ForgetRemoteControlTargetOutcome;
+    ) -> ForgetRemoteControlTargetOutcome {
+        self.forget_by_identity_hash(&target.identity_hash())
+    }
 
     fn is_empty(&self) -> bool {
         self.len() == 0

@@ -8,11 +8,18 @@ members = [
     "prns-nrf-dfu",
     "prns-nrf-dfu-wasm",
     "prns-runtime/core",
+    "personal-hopspot/builder",
+    "personal-hopspot/assurance",
+    "personal-hopspot/assurance-kernel",
+    "personal-hopspot/xtensa-qemu",
     "personal-hopspot/core",
+    "personal-hopspot/memory",
+    "personal-hopspot/resources",
     "personal-hopspot/sdk/hopspot",
     "docs/command",
     "tools/repo/cargo-tools-command",
     "personal-hopspot/flasher",
+    "validation/simulation",
 ]
 default-members = [
     "personal-rns",

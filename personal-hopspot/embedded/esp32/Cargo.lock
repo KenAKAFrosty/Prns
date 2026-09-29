@@ -144,7 +144,7 @@ dependencies = [
  "libc",
  "log",
  "macaddr",
- "nix",
+ "nix 0.29.0",
  "num-derive",
  "num-traits",
  "pin-project",
@@ -1782,6 +1782,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hopspot-heltec-wireless-stick-lite-v3"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "esp-hal",
+ "esp-rtos",
+ "personal-hopspot-esp32",
+]
+
+[[package]]
 name = "hopspot-t-beam-supreme"
 version = "0.1.0"
 dependencies = [
@@ -2242,6 +2252,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.12.1",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2432,6 +2454,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 name = "personal-hopspot-core"
 version = "0.1.0"
 dependencies = [
+ "embassy-sync 0.8.0",
  "embedded-graphics",
  "embedded-storage",
  "embedded-storage-async",
@@ -2440,6 +2463,7 @@ dependencies = [
  "prns-core",
  "prns-macros",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]
@@ -2472,8 +2496,10 @@ dependencies = [
  "esp-radio-rtos-driver",
  "esp-rtos",
  "heapless 0.8.0",
+ "jiff",
  "log",
  "personal-hopspot-core",
+ "personal-hopspot-memory",
  "personal-rns",
  "portable-atomic",
  "prns-core",
@@ -2482,6 +2508,26 @@ dependencies = [
  "static_cell",
  "trouble-host",
 ]
+
+[[package]]
+name = "personal-hopspot-esp32-platform-assurance"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-rtos",
+ "personal-hopspot-memory",
+ "personal-hopspot-xtensa-qemu",
+]
+
+[[package]]
+name = "personal-hopspot-memory"
+version = "0.1.0"
+
+[[package]]
+name = "personal-hopspot-xtensa-qemu"
+version = "0.1.0"
 
 [[package]]
 name = "personal-rns"
@@ -2612,6 +2658,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "hybrid-array",
+ "memchr",
  "prns-macros",
  "rand_core 0.10.1",
  "roaring",
@@ -2626,6 +2673,7 @@ version = "0.3.7"
 dependencies = [
  "cfg-if",
  "dispatch2",
+ "libc",
  "log",
  "objc2",
  "objc2-core-bluetooth",
@@ -2722,6 +2770,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "heapless 0.8.0",
+ "nix 0.31.3",
  "prns-core",
  "prns-runtime",
  "rtrb",

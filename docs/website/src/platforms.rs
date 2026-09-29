@@ -88,6 +88,12 @@ pub enum PreparationProfile {
     EspUsbBoot,
     TechoUf2,
     T114Uf2,
+    #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
+    MeshPocketUf2,
+    #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
+    MuziBaseDuoUf2,
+    #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
+    Rak4631Uf2,
     T096Uf2,
     T1000eNrfSerialDfu,
 }
@@ -143,6 +149,28 @@ impl BoardFlashTarget {
             }
         )
     }
+
+    pub const fn shared_uf2_identity(self) -> Option<&'static str> {
+        match self {
+            Self::EspSerial { .. } => None,
+            Self::Uf2MassStorage {
+                board_id_match_kind,
+                board_id,
+                ..
+            } => match board_id_match_kind {
+                Uf2BoardIdMatchKind::ExactShared => Some(board_id),
+                Uf2BoardIdMatchKind::Exact | Uf2BoardIdMatchKind::RevisionPrefix => None,
+            },
+            Self::NrfSerialDfu {
+                recovery_board_id_match_kind,
+                recovery_board_id,
+                ..
+            } => match recovery_board_id_match_kind {
+                Uf2BoardIdMatchKind::ExactShared => Some(recovery_board_id),
+                Uf2BoardIdMatchKind::Exact | Uf2BoardIdMatchKind::RevisionPrefix => None,
+            },
+        }
+    }
 }
 
 pub mod board_images {
@@ -184,6 +212,7 @@ impl BoardTarget {
             "xiao-esp32-c6" => Some(&board_images::XIAO_ESP32_C6),
             "t-echo" => Some(&board_images::T_ECHO),
             "t114" => Some(&board_images::T114),
+            "mesh-pocket-5000" | "mesh-pocket-10000" => Some(&board_images::MESH_POCKET),
             "t1000-e" => Some(&board_images::SEEED_CARD_TRACKER_T1000_E),
             "t096" => Some(&board_images::HELTEC_MESH_NODE_T096),
             "mesh-tower-v2" => Some(&board_images::MESH_TOWER_V2),
@@ -205,26 +234,6 @@ pub const GROUPS: &[Group] = &[
 
 pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
     BoardTarget {
-        name: "muzi.works Base Duo",
-        slug: "muzi-works-base-duo",
-        silicon: "nRF52840 + LR1121",
-        tier: Tier::BringUp,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
-        name: "Heltec Wireless Stick Lite V3",
-        slug: "heltec-wireless-stick-lite-v3",
-        silicon: "ESP32-S3 + SX1262",
-        tier: Tier::BringUp,
-        interfaces: &[],
-        icon: Some("espressif"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
         name: "Raspberry Pi Zero 2 W",
         slug: "raspberry-pi-zero-2-w",
         silicon: "RP3A0, quad-core Arm Cortex-A53",
@@ -241,16 +250,6 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("espressif"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
-        name: "RAK WisBlock Starter Kit",
-        slug: "rak-wisblock-starter-kit",
-        silicon: "RAK19007 + RAK4631, nRF52840 + SX1262",
-        tier: Tier::BringUp,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
         preparation_profile: None,
         flash_target: None,
     },
@@ -699,15 +698,7 @@ mod tests {
             .map(|board| board.name)
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            bring_up,
-            vec![
-                "muzi.works Base Duo",
-                "Heltec Wireless Stick Lite V3",
-                "Raspberry Pi Zero 2 W",
-                "RAK WisBlock Starter Kit",
-            ]
-        );
+        assert_eq!(bring_up, vec!["Raspberry Pi Zero 2 W"]);
         assert!(
             UPCOMING_BOARD_TARGETS
                 .iter()
@@ -727,18 +718,26 @@ mod tests {
     }
 
     #[test]
-    fn promoted_nordic_boards_come_from_the_shared_shipping_catalog() {
+    fn qualification_boards_come_from_the_shared_catalog() {
+        let catalog = prns_flash_manifest::board_catalog().expect("board catalog is valid");
         assert_eq!(
             QUALIFICATION_BOARD_TARGETS
                 .iter()
-                .map(|board| (board.slug, board.tier, board.image().is_some()))
+                .map(|board| board.slug)
                 .collect::<Vec<_>>(),
-            [("heltec-e290", Tier::Qualification, false)]
+            catalog
+                .boards
+                .iter()
+                .filter(|board| {
+                    board.availability == prns_flash_manifest::BoardAvailability::Qualification
+                })
+                .map(|board| board.slug.as_str())
+                .collect::<Vec<_>>()
         );
-        assert_eq!(
-            QUALIFICATION_BOARD_TARGETS[0].is_flashable(),
-            cfg!(feature = "local-dev-flasher")
-        );
+        assert!(QUALIFICATION_BOARD_TARGETS
+            .iter()
+            .all(|board| board.tier == Tier::Qualification
+                && board.is_flashable() == cfg!(feature = "local-dev-flasher")));
         let cards = SHIPPING_BOARD_TARGETS
             .iter()
             .filter(|board| matches!(board.slug, "t096" | "t1000-e"))

@@ -10,6 +10,8 @@ use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::AppDeciders;
 use crate::manifold::Host;
+use crate::routing::links::resources::receive::part_hash::ResourcePartHashLane;
+use crate::routing::links::resources::send::ResourceSealExecution;
 use crate::routing::links::resources::ResourceOffer;
 use crate::runtime::InterfaceStore;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
@@ -21,19 +23,24 @@ mod egress;
 mod host;
 mod host_protocol;
 mod inbound_dispatch;
+mod indexed_rows;
 mod interface_seam;
 mod interface_status;
 mod interface_topology;
 mod journal_delivery;
 mod local_command_lane;
+mod manifold_wake;
 mod owed_work;
+#[cfg(feature = "runtime-metrics")]
+mod scheduling_metrics;
+mod scheduling_policy;
 
 pub use super::grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
 };
-pub use crypto_pool::{CryptoPoolConfig, PoolWorkers};
+pub(crate) use crate::runtime::TokioEntropy;
+pub use crypto_pool::{CryptoPoolConfig, CryptoWorkerPlacement, PoolWorkers};
 pub use egress::Egress;
-pub(crate) use host::TokioEntropy;
 pub use host::{TokioClock, TokioHost};
 pub use host_protocol::{
     AddInterfaceCommand, HostCommand, HostResourceMetadata, HostResourcePayload,
@@ -41,14 +48,21 @@ pub use host_protocol::{
     ResourceInbound, RespondAnyHostCommand, SendResourceHostCommand,
     SendResourceSegmentHostCommand, StreamInbound,
 };
+pub(crate) use host_protocol::{HostResourceDigestPreparation, HostResourceRecycler};
 pub use interface_seam::TokioInterfaceSeam;
 pub use interface_status::TokioInterfaceStatus;
 pub(crate) use local_command_lane::{
     local_command_lane, LocalCommandConsumer, LocalCommandProducer,
 };
+use manifold_wake::ManifoldWakeEvent;
+pub use manifold_wake::{manifold_wake, ManifoldWakeReceiver, ManifoldWakeSender};
 pub use prns_runtime::runtime::{
     PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot,
 };
+#[cfg(not(feature = "scheduler-tuning"))]
+pub(crate) use scheduling_policy::SchedulerPolicy;
+#[cfg(feature = "scheduler-tuning")]
+pub use scheduling_policy::{SchedulerPolicy, SchedulerPolicyError, SchedulerPolicyInput};
 
 use command_dispatch::{CommandDispatch, CommandEffect};
 use crypto_dispatch::{CryptoCompletionEffect, CryptoDispatch};
@@ -59,12 +73,16 @@ use inbound_dispatch::{InboundContext, InboundDispatch};
 use interface_topology::InterfaceTopology;
 use journal_delivery::JournalDispatch;
 use owed_work::PendingOwedWork;
+#[cfg(feature = "runtime-metrics")]
+use scheduling_metrics::{ManifoldMetrics, TurnActivity};
 
 trait CommandLane {
     fn enabled(&self) -> bool;
     fn try_recv(&mut self) -> Option<HostCommand>;
     fn poll_recv(&mut self, context: &mut std::task::Context<'_>) -> Poll<Option<HostCommand>>;
 }
+
+const RESOURCE_PART_HASH_OFFLOAD_MINIMUM_INPUT_BYTES: usize = 8 * 1024;
 
 struct NoLocalCommands;
 
@@ -100,7 +118,7 @@ impl CommandLane for LocalCommandConsumer {
 pub struct ManifoldWiring {
     pub interfaces: std::vec::Vec<InterfaceDescriptor>,
     pub ifacs: std::vec::Vec<InterfaceIfac>,
-    pub notify: UnboundedReceiver<InterfaceId>,
+    pub wake: ManifoldWakeReceiver,
     pub inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
     pub commands: UnboundedReceiver<HostCommand>,
     pub egress: Egress,
@@ -144,6 +162,7 @@ pub async fn run_with_deciders<S, H, J, P, A>(
         None,
         NoLocalCommands,
         CryptoPoolConfig::host_default(),
+        SchedulerPolicy::production(),
     )
     .await
 }
@@ -196,6 +215,7 @@ pub async fn run_with_store_and_deciders<S, H, J, P, A>(
         Some(store),
         NoLocalCommands,
         crypto_pool_config,
+        SchedulerPolicy::production(),
     )
     .await
 }
@@ -211,6 +231,7 @@ pub(crate) async fn run_executor_local_with_store_and_deciders<S, H, J, P, A>(
     on_journaled: J,
     store: InterfaceStore,
     crypto_pool_config: CryptoPoolConfig,
+    scheduler_policy: SchedulerPolicy,
     deciders: AppDeciders<P, A>,
 ) where
     S: StorageLayout,
@@ -228,6 +249,7 @@ pub(crate) async fn run_executor_local_with_store_and_deciders<S, H, J, P, A>(
         Some(store),
         local_commands,
         crypto_pool_config,
+        scheduler_policy,
     )
     .await
 }
@@ -244,6 +266,7 @@ async fn run_inner<S, H, J, P, A, C>(
     store: Option<InterfaceStore>,
     mut local_commands: C,
     crypto_pool_config: CryptoPoolConfig,
+    scheduler_policy: SchedulerPolicy,
 ) where
     S: StorageLayout,
     H: Host,
@@ -259,7 +282,7 @@ async fn run_inner<S, H, J, P, A, C>(
     let ManifoldWiring {
         interfaces,
         ifacs,
-        mut notify,
+        wake,
         inbound_lanes,
         mut commands,
         egress,
@@ -273,21 +296,33 @@ async fn run_inner<S, H, J, P, A, C>(
     let mut journal = JournalDispatch::new(on_journaled);
     let mut owed_work = PendingOwedWork::new();
     let mut inline_crypto_completions = std::vec::Vec::new();
+    #[cfg(feature = "runtime-metrics")]
+    let mut manifold_metrics = ManifoldMetrics::default();
     macro_rules! journaled_sink {
         () => {
             |journaled| journal.route(journaled)
         };
     }
-    const MAX_INBOUND_BATCH: usize = 64;
-    const MAX_COMMAND_BATCH: usize = 64;
     const LOCAL_COMMAND_BURST: usize = 32;
-    // Keep the single-owner manifold hot while work remains durable, but regularly return control
-    // to the sibling interface and request futures that replenish its SPSC lanes.
-    const HOT_TURNS_BEFORE_YIELD: usize = 16;
     let crypto_completion_wake = Arc::new(tokio::sync::Notify::new());
-    let crypto_pool = crypto_pool_config
-        .resolved_worker_count()
-        .and_then(|workers| CryptoPool::spawn(workers.get(), crypto_completion_wake.clone()));
+    let crypto_pool = crypto_pool_config.resolved().and_then(|resolved| {
+        CryptoPool::spawn_with_policy(
+            resolved.workers.get(),
+            crypto_completion_wake.clone(),
+            scheduler_policy,
+            resolved.placement,
+        )
+    });
+    engine.set_resource_seal_execution(match crypto_pool.as_ref() {
+        Some(_) => ResourceSealExecution::ExternalOwned,
+        None => ResourceSealExecution::Inline,
+    });
+    engine.set_resource_part_hash_lane(match crypto_pool.as_ref() {
+        Some(_) => ResourcePartHashLane::ExternalAtOrAbove {
+            minimum_input_bytes: RESOURCE_PART_HASH_OFFLOAD_MINIMUM_INPUT_BYTES,
+        },
+        None => ResourcePartHashLane::Inline,
+    });
     let mut clock = ManifoldClock::new(&host);
     let due_timer = tokio::time::sleep_until(clock.immediate_deadline());
     tokio::pin!(due_timer);
@@ -299,7 +334,12 @@ async fn run_inner<S, H, J, P, A, C>(
     let mut local_command_streak = 0usize;
     let mut local_commands_enabled = local_commands.enabled();
     let mut hot_turns = 0usize;
+    let mut manifold_wait_armed = false;
     loop {
+        #[cfg(feature = "runtime-metrics")]
+        let turn_started = std::time::Instant::now();
+        #[cfg(feature = "runtime-metrics")]
+        let mut turn_activity = TurnActivity::default();
         match soonest_pacer_release(&topology.pacers) {
             None => pacer_armed = None,
             Some(at) => {
@@ -322,9 +362,10 @@ async fn run_inner<S, H, J, P, A, C>(
                 armed = Some((at, reason));
             }
         }
-        // Announcements carry only lane identity. Pull every already-durable notification without
-        // registering a Tokio waiter; the SPSC lane remains the source of truth for frame data.
-        inbound.collect_ready(&mut notify);
+        inbound.discover_ready(&mut topology);
+        let mut work_remaining = scheduler_policy.turn_work();
+        let flushed_egress = topology.egress.flush_pending(work_remaining);
+        work_remaining = work_remaining.saturating_sub(flushed_egress);
         if pending_command.is_none() {
             pending_command = next_command(
                 &mut local_commands,
@@ -334,13 +375,15 @@ async fn run_inner<S, H, J, P, A, C>(
             );
         }
 
-        let mut progressed = false;
+        let mut progressed = flushed_egress > 0;
         if let Some(pool) = crypto_pool.as_ref().filter(|pool| pool.has_completion()) {
-            pool.disarm_completion_wait();
             let mut next = pool.pop_completion();
             let now = clock.observe_step(&host);
             let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
+            let mut completed = 0;
+            let completion_budget = scheduler_policy.completion_turn_budget(work_remaining);
             while let Some(result) = next {
+                let completed_work = result.work.max(1);
                 let effect = CryptoDispatch {
                     engine: &mut engine,
                     host: &mut host,
@@ -371,14 +414,23 @@ async fn run_inner<S, H, J, P, A, C>(
                         );
                     }
                 }
+                work_remaining = work_remaining.saturating_sub(completed_work);
+                completed += 1;
+                if work_remaining == 0 || completed == completion_budget {
+                    break;
+                }
                 next = pool.pop_completion();
+            }
+            #[cfg(feature = "runtime-metrics")]
+            {
+                turn_activity.completions = completed;
             }
             progressed = true;
         }
 
         if inbound.has_ready_lanes() {
             let now = clock.observe_step(&host);
-            inbound.process(InboundContext {
+            let processed = inbound.process(InboundContext {
                 engine: &mut engine,
                 host: &mut host,
                 topology: &mut topology,
@@ -389,80 +441,85 @@ async fn run_inner<S, H, J, P, A, C>(
                 wake_schedules: &mut wake_schedules,
                 should_prove: &mut should_prove,
                 should_accept_resource: &mut should_accept_resource,
-                max_frames_per_lane: MAX_INBOUND_BATCH,
+                max_frames_per_lane: scheduler_policy.inbound_per_lane(),
+                max_frames_total: scheduler_policy.inbound_turn_budget(work_remaining),
                 owed_work: &mut owed_work,
+                #[cfg(feature = "runtime-metrics")]
+                manifold_metrics: &mut manifold_metrics,
                 now,
             });
-            progressed = true;
+            work_remaining = work_remaining.saturating_sub(processed);
+            #[cfg(feature = "runtime-metrics")]
+            {
+                turn_activity.inbound_frames = processed;
+            }
+            progressed |= processed > 0;
         }
 
-        if !inbound.has_ready_lanes() && engine.owed_staged_seal_link().is_some() {
-            let now = clock.observe_step(&host);
-            CryptoDispatch {
-                engine: &mut engine,
-                host: &mut host,
-                topology: &mut topology,
-                wire_scratch: &mut wire_scratch,
-                journal: &mut journal,
-                crypto_pool: crypto_pool.as_ref(),
-                owed_work: &mut owed_work,
-                inbound: &mut inbound,
-            }
-            .dispatch_staged_seal(now);
-            progressed = true;
-        }
-
-        if let Some(mut issued) = pending_command.take() {
-            let now = clock.observe_step(&host);
-            let mut command_budget = MAX_COMMAND_BATCH;
-            loop {
-                let effect = CommandDispatch {
-                    engine: &mut engine,
-                    host: &mut host,
-                    topology: &mut topology,
-                    wire_scratch: &mut wire_scratch,
-                    journal: &mut journal,
-                    crypto_pool: crypto_pool.as_ref(),
-                    owed_work: &mut owed_work,
-                }
-                .dispatch(issued, now);
-                match effect {
-                    CommandEffect::Delta(delta) => merge_wake_schedules_delta(
-                        &mut wake_schedules,
-                        delta,
-                        &engine,
-                        topology.view(),
-                    ),
-                    CommandEffect::RecomputeWakeSchedules => {
-                        wake_schedules = engine.wake_schedules(topology.view());
+        if work_remaining > 0 || pending_command.is_some() {
+            if let Some(mut issued) = pending_command.take() {
+                let now = clock.observe_step(&host);
+                let mut command_budget = scheduler_policy.command_turn_budget(work_remaining);
+                let initial_command_budget = command_budget;
+                loop {
+                    let effect = CommandDispatch {
+                        engine: &mut engine,
+                        host: &mut host,
+                        topology: &mut topology,
+                        wire_scratch: &mut wire_scratch,
+                        journal: &mut journal,
+                        crypto_pool: crypto_pool.as_ref(),
+                        owed_work: &mut owed_work,
+                        #[cfg(feature = "runtime-metrics")]
+                        manifold_metrics: &manifold_metrics,
                     }
-                    CommandEffect::InterfaceAttached { id, frame_capacity } => {
-                        inbound.grow_frame_capacity(frame_capacity);
-                        inbound.mark_ready(id);
-                        wire_scratch.grow(frame_capacity);
-                        wake_schedules = engine.wake_schedules(topology.view());
+                    .dispatch(issued, now);
+                    match effect {
+                        CommandEffect::Delta(delta) => merge_wake_schedules_delta(
+                            &mut wake_schedules,
+                            delta,
+                            &engine,
+                            topology.view(),
+                        ),
+                        CommandEffect::RecomputeWakeSchedules => {
+                            wake_schedules = engine.wake_schedules(topology.view());
+                        }
+                        CommandEffect::InterfaceAttached { id, frame_capacity } => {
+                            inbound.grow_frame_capacity(frame_capacity);
+                            inbound.mark_ready(id);
+                            wire_scratch.grow(frame_capacity);
+                            wake_schedules = engine.wake_schedules(topology.view());
+                        }
+                    }
+                    command_budget -= 1;
+                    if command_budget == 0 {
+                        break;
+                    }
+                    match next_command(
+                        &mut local_commands,
+                        &mut commands,
+                        &mut local_command_streak,
+                        LOCAL_COMMAND_BURST,
+                    ) {
+                        Some(next) => issued = next,
+                        None => break,
                     }
                 }
-                command_budget -= 1;
-                if command_budget == 0 {
-                    break;
+                let commands_dispatched = initial_command_budget.saturating_sub(command_budget);
+                work_remaining = work_remaining.saturating_sub(commands_dispatched);
+                #[cfg(feature = "runtime-metrics")]
+                {
+                    turn_activity.commands = commands_dispatched;
                 }
-                match next_command(
-                    &mut local_commands,
-                    &mut commands,
-                    &mut local_command_streak,
-                    LOCAL_COMMAND_BURST,
-                ) {
-                    Some(next) => issued = next,
-                    None => break,
-                }
+                progressed = true;
             }
-            progressed = true;
         }
 
         if armed.is_some_and(|(deadline, _)| deadline <= clock.now()) {
-            if let Some((_, reason)) = armed.take() {
+            if let Some((_deadline, reason)) = armed.take() {
                 let now = clock.observe_step(&host);
+                #[cfg(feature = "runtime-metrics")]
+                manifold_metrics.record_timer_lateness(_deadline.0, now.0);
                 let wake_schedules_delta = fire_due_reason(
                     &mut engine,
                     reason,
@@ -492,8 +549,10 @@ async fn run_inner<S, H, J, P, A, C>(
         }
 
         if pacer_armed.is_some_and(|deadline| deadline <= clock.now()) {
-            pacer_armed = None;
+            let _deadline = pacer_armed.take().unwrap_or(InstantMillis(0));
             let now = clock.observe_step(&host);
+            #[cfg(feature = "runtime-metrics")]
+            manifold_metrics.record_pacer_lateness(_deadline.0, now.0);
             flush_due_pacers(
                 &mut topology.pacers,
                 now,
@@ -503,12 +562,30 @@ async fn run_inner<S, H, J, P, A, C>(
             progressed = true;
         }
 
-        if owed_work.dispatch(
-            &mut host,
-            crypto_pool.as_ref(),
-            &mut inline_crypto_completions,
-        ) {
-            progressed = true;
+        if work_remaining > 0 || owed_work.has_pending() {
+            #[cfg(feature = "runtime-metrics")]
+            let inline_dispatch_started = crypto_pool.is_none().then(std::time::Instant::now);
+            let dispatched = owed_work.dispatch(
+                &mut host,
+                crypto_pool.as_ref(),
+                &mut inline_crypto_completions,
+                if crypto_pool.is_some() {
+                    scheduler_policy.owed_work_turn_budget(work_remaining)
+                } else {
+                    1
+                },
+            );
+            work_remaining = work_remaining.saturating_sub(dispatched);
+            #[cfg(feature = "runtime-metrics")]
+            {
+                turn_activity.owed_work = dispatched;
+                if dispatched > 0 {
+                    if let Some(started_at) = inline_dispatch_started {
+                        manifold_metrics.record_inline_work(started_at, dispatched);
+                    }
+                }
+            }
+            progressed |= dispatched > 0;
         }
         if !inline_crypto_completions.is_empty() {
             let now = clock.observe_step(&host);
@@ -528,7 +605,9 @@ async fn run_inner<S, H, J, P, A, C>(
                     CryptoCompletion {
                         worker: None,
                         result,
+                        class: crypto_pool::CryptoJobClass::Latency,
                         work: 0,
+                        timing: crypto_pool::CompletedJobTiming::unmeasured(),
                     },
                     now,
                     &mut seal_buf,
@@ -566,9 +645,21 @@ async fn run_inner<S, H, J, P, A, C>(
             }
         }
 
+        #[cfg(feature = "runtime-metrics")]
+        manifold_metrics.record_turn(turn_started, turn_activity, work_remaining == 0);
+
         if progressed {
+            if manifold_wait_armed {
+                wake.disarm();
+                manifold_wait_armed = false;
+            }
+            if work_remaining == 0 {
+                hot_turns = 0;
+                tokio::task::yield_now().await;
+                continue;
+            }
             hot_turns += 1;
-            if hot_turns >= HOT_TURNS_BEFORE_YIELD {
+            if hot_turns >= scheduler_policy.hot_turns() {
                 hot_turns = 0;
                 tokio::task::yield_now().await;
             }
@@ -594,9 +685,15 @@ async fn run_inner<S, H, J, P, A, C>(
             continue;
         }
 
+        if !manifold_wait_armed {
+            wake.arm();
+            manifold_wait_armed = true;
+            continue;
+        }
+
         tokio::select! {
             local_issued = poll_fn(|context| local_commands.poll_recv(context)),
-                if local_commands_enabled => {
+                if local_commands_enabled && pending_command.is_none() => {
                 match local_issued {
                     Some(issued) => {
                         local_command_streak = local_command_streak.saturating_add(1);
@@ -605,11 +702,11 @@ async fn run_inner<S, H, J, P, A, C>(
                     None => local_commands_enabled = false,
                 }
             }
-            arrived = notify.recv() => {
-                let Some(source) = arrived else { return };
-                inbound.mark_ready(source);
-            }
-            issued = commands.recv() => {
+            event = wake.wait() => match event {
+                ManifoldWakeEvent::Signaled => manifold_wait_armed = false,
+                ManifoldWakeEvent::SendersDropped => return,
+            },
+            issued = commands.recv(), if pending_command.is_none() => {
                 let Some(issued) = issued else { return };
                 pending_command = Some(issued);
             }
@@ -621,7 +718,8 @@ async fn run_inner<S, H, J, P, A, C>(
                 pacer_armed = None;
                 clock.observe_step(&host);
             }
-            () = crypto_completion_wake.notified(), if crypto_pool.is_some() => {}
+            () = crypto_completion_wake.notified(),
+                if crypto_pool.is_some() => {}
         }
     }
 }

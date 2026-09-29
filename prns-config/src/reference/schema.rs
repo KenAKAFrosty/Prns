@@ -347,7 +347,12 @@ fn medium_interface_key_rule(type_name: &str, key: &str) -> Option<KeyRule> {
         "BackboneInterface" | "BackboneClientInterface" => backbone_interface_key_rule(key),
         "I2PInterface" => i2p_interface_key_rule(key),
         "WeaveInterface" => weave_interface_key_rule(key),
-        "PrnsUsbAuto" | "PrnsBluetoothAuto" => None,
+        "PrnsUsbAuto" => None,
+        "PrnsBluetoothAuto" => match key {
+            interface_key::GROUP_ID => Some(Applied(ValueKind::String)),
+            interface_key::GROUP_IDS => Some(Applied(ValueKind::List)),
+            _ => None,
+        },
         "PrnsWebSocketClient" => prns_websocket_client_key_rule(key),
         "PrnsWebSocketServer" => prns_websocket_server_key_rule(key),
         _ => None,
@@ -357,6 +362,7 @@ fn medium_interface_key_rule(type_name: &str, key: &str) -> Option<KeyRule> {
 fn auto_interface_key_rule(key: &str) -> Option<KeyRule> {
     match key {
         interface_key::GROUP_ID => Some(Applied(ValueKind::String)),
+        interface_key::GROUP_IDS => Some(Applied(ValueKind::List)),
         interface_key::DISCOVERY_SCOPE | interface_key::MULTICAST_ADDRESS_TYPE => {
             Some(Applied(ValueKind::String))
         }
@@ -564,7 +570,8 @@ pub(super) fn known_interface_keys(type_name: &str) -> Vec<&'static str> {
         "BackboneInterface" | "BackboneClientInterface" => interface_key::BACKBONE,
         "I2PInterface" => interface_key::I2P,
         "WeaveInterface" => interface_key::WEAVE,
-        "PrnsUsbAuto" | "PrnsBluetoothAuto" => &[],
+        "PrnsUsbAuto" => &[],
+        "PrnsBluetoothAuto" => interface_key::PRNS_BLUETOOTH_AUTO,
         "PrnsWebSocketClient" => interface_key::PRNS_WEBSOCKET_CLIENT,
         "PrnsWebSocketServer" => interface_key::PRNS_WEBSOCKET_SERVER,
         _ => &[],

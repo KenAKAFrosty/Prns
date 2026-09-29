@@ -4,6 +4,33 @@ This crate is one package in the Personal RNS public Rust graph. Quick overviews
 
 All public packages use the same engine, release version, and dual MIT/Apache-2.0 license.
 
+## BLE receive boundary
+
+`interfaces::bluetooth_auto::receive_frame` validates a backend's reported length
+before exposing a borrowed whole frame. Its typed error distinguishes source
+failures from invalid lengths. Tokio peers, the shared duplex sender, and Embassy
+member reception use this same boundary. It adds no buffer or allocation and
+preserves the underlying source's cancellation semantics; empty frames stay empty.
+
+## BLE duplex transfers
+
+`interfaces::bluetooth_auto::send_frame_duplex` owns executor-neutral progress for
+one send alongside whole-frame reception and asynchronous forwarding. Callers
+supply both buffers, transport halves, and a `BleFrameForwarder`. The helper
+uses no allocation or runtime dependency. Pending receives must be cancellation
+safe; cancelling the operation or encountering a receive failure requires retiring
+the transport because its send may be partial. Adapters own custody, accounting,
+timeouts, and teardown. Forwarders return a typed result; forwarding failure retires
+the transport even if its send has already settled. Tokio uses an infallible seam,
+while Embassy preserves shared-lane delivery errors and accounts TX immediately
+after the sink settles.
+
+`receive_frames_during` owns the underlying receive/forward loop for a fallible
+work future. Embassy keeps that work alive until the other fanout sends settle,
+so unselected and already-finished peers can also receive. Completion wins over a
+new receive but still awaits forwarding of an already-received frame. Adapters
+track unsettled forwarding separately from send completion for safe cancellation.
+
 ## Portable host capabilities
 
 `prns-core::capabilities` defines optional, platform-neutral observations that applications and
@@ -12,3 +39,35 @@ initial capability set includes validated fixed-point geographic positions, an a
 GNSS/NMEA provider, and coherent battery/external-power observations. Embedded, mobile, and desktop hosts remain
 responsible for acquiring the observations, and core never publishes them or changes network
 behavior merely because they are available.
+
+## Request transport planning
+
+`EngineState::plan_request_transport` rejects missing or inactive links before
+choosing `RequestTransport::Packet` or `Resource`. The packet choice respects
+both the negotiated link MDU and the bounded request payload capacity. Hosts
+must preserve the typed rejection rather than treating every non-packet result
+as a large request. The legacy `request_fits_packet` predicate delegates to this
+plan but cannot distinguish a rejection from a Resource-sized request.
+
+Resource-backed requests settle through `SendRequest`, including typed
+`RequestTransferFailed(SendResourceFailure)` upload failures. After advertisement,
+the matching link/command/request receipt owns the terminal result: upload proof
+alone is not response success, and late failures cannot settle a retired receipt.
+An accepted Resource response retires its obsolete upload even if proof was lost.
+Request envelopes must use a whole Resource; segmented responses remain supported.
+
+Response-size accounting is not yet uniform between packets and Resources.
+The [accounting follow-up](plans/response-size-accounting.md) records the current
+boundary behavior and the cases a shared-core correction must preserve.
+
+## Request ingress diagnostics
+
+`EngineState::ingest_packet_into_report` and `ingest_classified_into_report` return an optional
+`RequestIngressDiagnostic` for locally handled link request packets. It distinguishes early
+admission failures, application delivery, and RemoteControl pairing outcomes without retaining
+payloads, peer identities, invitation proofs, confirmation codes, or grants. Rejected requests
+remain silent on the wire; the report does not add journal events or change request policy.
+Unclassifiable packets and packets forwarded without local handling have no request report.
+
+The Embassy runtime emits these reports at DEBUG on the `prns::request` log target when its
+existing `log` feature is enabled. Other hosts may consume the same core report directly.

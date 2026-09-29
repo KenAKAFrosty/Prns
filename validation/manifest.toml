@@ -47,6 +47,7 @@ cargo_lock_workspaces = [
     "prns-host/abi/c",
     "prns-host/impls/cooperative",
     "prns-host/impls/native",
+    "prns-host/impls/snapshot",
     "prns-host/impls/tokio",
     "prns-interfaces/impls/embassy",
     "prns-interfaces/impls/tokio",
@@ -64,12 +65,18 @@ cargo_manifests = [
     "benchmarks/Cargo.toml",
     "docs/command/Cargo.toml",
     "docs/website/Cargo.toml",
+    "personal-hopspot/assurance/Cargo.toml",
+    "personal-hopspot/assurance-kernel/Cargo.toml",
+    "personal-hopspot/xtensa-qemu/Cargo.toml",
+    "personal-hopspot/builder/Cargo.toml",
     "personal-hopspot/core/Cargo.toml",
     "personal-hopspot/desktop/Cargo.toml",
     "personal-hopspot/embedded/esp32/Cargo.toml",
+    "personal-hopspot/embedded/esp32/platform-assurance/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
+    "personal-hopspot/embedded/esp32/boards/heltec-wireless-stick-lite-v3/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/esp-alloc-0.10.0/Cargo.toml",
@@ -87,8 +94,10 @@ cargo_manifests = [
     "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v6/Cargo.toml",
     "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v7/Cargo.toml",
     "personal-hopspot/flasher/Cargo.toml",
+    "personal-hopspot/memory/Cargo.toml",
     "personal-hopspot/mobile/android/rust/Cargo.toml",
     "personal-hopspot/mobile/ios/rust/Cargo.toml",
+    "personal-hopspot/resources/Cargo.toml",
     "personal-hopspot/sdk/hopspot/Cargo.toml",
     "personal-rns/Cargo.toml",
     "prns-config/Cargo.toml",
@@ -99,6 +108,7 @@ cargo_manifests = [
     "prns-host/core/Cargo.toml",
     "prns-host/impls/cooperative/Cargo.toml",
     "prns-host/impls/native/Cargo.toml",
+    "prns-host/impls/snapshot/Cargo.toml",
     "prns-host/impls/tokio/Cargo.toml",
     "prns-interfaces/impls/embassy/Cargo.toml",
     "prns-interfaces/impls/tokio/Cargo.toml",
@@ -118,6 +128,7 @@ cargo_manifests = [
     "validation/fuzz/Cargo.toml",
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",
+    "validation/simulation/Cargo.toml",
 ]
 format_manifests = [
     "Cargo.toml",
@@ -132,6 +143,7 @@ format_manifests = [
     "prns-ffi/Cargo.toml",
     "prns-host/abi/c/Cargo.toml",
     "prns-host/impls/native/Cargo.toml",
+    "prns-host/impls/snapshot/Cargo.toml",
     "prns-interfaces/impls/embassy/Cargo.toml",
     "prns-interfaces/impls/tokio/Cargo.toml",
     "prns-napi/Cargo.toml",
@@ -142,6 +154,7 @@ format_manifests = [
     "validation/fuzz/Cargo.toml",
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",
+    "validation/simulation/Cargo.toml",
 ]
 
 [registry.format_package_overrides]
@@ -411,7 +424,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 120
 command = ["__RUNNER_PYTHON__", "tools/prns", "verify"]
-inputs = ["tools/prns", "tools/tasks.toml", "tools/repo/cargo-check.py", "tools/README.md", ".githooks/pre-push", "validation/hygiene/pre-push-ci-parity.py"]
+inputs = ["tools/prns", "tools/tasks.toml", "tools/repo/cargo-check.py", "tools/README.md", ".githooks/pre-push", "validation/hygiene/embedded_assurance_selection.py", "validation/hygiene/pre-push-ci-parity.py"]
 artifacts = "validation-artifacts/results/tool-registry"
 
 [[suite]]
@@ -576,6 +589,50 @@ inputs = ["validation/integration/Cargo.toml", "validation/integration/tests"]
 artifacts = "validation-artifacts/results/integration-capstones"
 
 [[suite]]
+id = "virtual-device-simulation"
+domain = "integration"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "prns-simulation", "--features", "controlled-time"]
+inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "prns-interfaces/impls/embassy"]
+artifacts = "validation-artifacts/results/virtual-device-simulation"
+
+[[suite]]
+id = "authorization-commit-recovery"
+domain = "integration"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "prns-core", "--features", "flash", "--lib", "engine::remote_control_pairing::tests::durable_authorization"]
+inputs = ["prns-core/src/engine", "prns-core/src/remote_control", "prns-core/src/persistence", "prns-core/Cargo.toml"]
+artifacts = "validation-artifacts/results/authorization-commit-recovery"
+
+[[suite]]
+id = "embedded-persistence-recovery"
+domain = "integration"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-runtime/impls/embassy/Cargo.toml", "--lib", "runtime::embedded_persistence::tests"]
+inputs = ["prns-runtime/impls/embassy", "prns-runtime/core", "prns-core/src/persistence", "prns-core/src/interfaces"]
+artifacts = "validation-artifacts/results/embedded-persistence-recovery"
+
+[[suite]]
+id = "bluetooth-auto-embassy"
+domain = "native"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-interfaces/impls/embassy/Cargo.toml", "--features", "bluetooth-auto-trouble", "--lib", "bluetooth_auto"]
+inputs = ["prns-interfaces/impls/embassy", "prns-core/src/interfaces/bluetooth_auto", "prns-runtime/core", "prns-runtime/impls/embassy"]
+artifacts = "validation-artifacts/results/bluetooth-auto-embassy"
+
+[[suite]]
 id = "release-contracts"
 domain = "release"
 tiers = ["pr", "release", "scheduled"]
@@ -622,6 +679,187 @@ timeout_seconds = 3600
 command = ["bash", "validation/hardening/miri.sh", "--quick"]
 inputs = ["validation/hardening/miri.sh"]
 artifacts = "validation-artifacts/results/miri-quick"
+
+[[suite]]
+id = "embedded-isa-thumbv7em"
+domain = "hardening"
+group = "embedded-isa"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_isa.run"]
+inputs = [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance",
+    "personal-hopspot/assurance-kernel",
+    "prns-core/src/interfaces/lora",
+    "prns-core/src/interfaces/subghz/regions/us915/mod.rs",
+    "prns-interfaces/impls/embassy/src/radios",
+    "validation/hardening/embedded-isa.toml",
+    "validation/hardening/embedded_architectures.py",
+    "validation/hardening/embedded_failure.py",
+    "validation/hardening/embedded_isa",
+]
+artifacts = "validation-artifacts/results/embedded-isa-thumbv7em"
+
+[[suite]]
+id = "embedded-isa-riscv32imac"
+domain = "hardening"
+group = "embedded-isa"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_isa.run"]
+inputs = [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance",
+    "personal-hopspot/assurance-kernel",
+    "prns-core/src/interfaces/lora",
+    "prns-core/src/interfaces/subghz/regions/us915/mod.rs",
+    "prns-interfaces/impls/embassy/src/radios",
+    "validation/hardening/embedded-isa.toml",
+    "validation/hardening/embedded_architectures.py",
+    "validation/hardening/embedded_failure.py",
+    "validation/hardening/embedded_isa",
+]
+artifacts = "validation-artifacts/results/embedded-isa-riscv32imac"
+
+[[suite]]
+id = "embedded-isa-xtensa-esp32s3"
+domain = "hardening"
+group = "embedded-isa"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "esp"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_isa.run"]
+inputs = [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance",
+    "personal-hopspot/assurance-kernel",
+    "personal-hopspot/xtensa-qemu",
+    "prns-core/src/interfaces/lora",
+    "prns-core/src/interfaces/subghz/regions/us915/mod.rs",
+    "prns-interfaces/impls/embassy/src/radios",
+    "tools/release/release-esp-toolchain-identity.sh",
+    "validation/hardening/embedded-isa.toml",
+    "validation/hardening/embedded_architectures.py",
+    "validation/hardening/embedded_failure.py",
+    "validation/hardening/embedded_isa",
+    "validation/hardening/embedded_readiness/contract.py",
+]
+artifacts = "validation-artifacts/results/embedded-isa-xtensa-esp32s3"
+
+[[suite]]
+id = "embedded-platform-nrf52840"
+domain = "hardening"
+group = "embedded-platform"
+tiers = ["release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+enforcement = "advisory"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_platform.run"]
+inputs = [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance",
+    "personal-hopspot/assurance-kernel",
+    "personal-hopspot/memory",
+    "validation/hardening/embedded-platform.toml",
+    "validation/hardening/embedded_architectures.py",
+    "validation/hardening/embedded_execution.py",
+    "validation/hardening/embedded_failure.py",
+    "validation/hardening/embedded_host.py",
+    "validation/hardening/embedded_platform",
+]
+artifacts = "validation-artifacts/results/embedded-platform-nrf52840"
+
+[[suite]]
+id = "embedded-platform-esp32s3"
+domain = "hardening"
+group = "embedded-platform"
+tiers = ["release", "scheduled"]
+platform = "any"
+toolchain = "esp"
+enforcement = "advisory"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_platform.run"]
+inputs = [
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance",
+    "personal-hopspot/builder",
+    "personal-hopspot/embedded/esp32/.cargo/config.toml",
+    "personal-hopspot/embedded/esp32/Cargo.lock",
+    "personal-hopspot/embedded/esp32/Cargo.toml",
+    "personal-hopspot/embedded/esp32/platform-assurance",
+    "personal-hopspot/memory",
+    "personal-hopspot/xtensa-qemu",
+    "prns-flash-manifest",
+    "release/flash/boards.json",
+    "tools/release/release-esp-toolchain-identity.sh",
+    "validation/hardening/embedded-platform.toml",
+    "validation/hardening/embedded-isa.toml",
+    "validation/hardening/embedded_architectures.py",
+    "validation/hardening/embedded_execution.py",
+    "validation/hardening/embedded_failure.py",
+    "validation/hardening/embedded_host.py",
+    "validation/hardening/embedded_isa/emulator.py",
+    "validation/hardening/embedded_isa/toolchain.py",
+    "validation/hardening/embedded_platform",
+    "validation/hardening/embedded_readiness/contract.py",
+]
+artifacts = "validation-artifacts/results/embedded-platform-esp32s3"
+
+[[suite]]
+id = "embedded-miri-quick"
+domain = "hardening"
+group = "embedded-miri"
+tiers = ["pr"]
+platform = "any"
+toolchain = "nightly"
+timeout_seconds = 3600
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_miri", "quick"]
+inputs = [
+    "validation/hardening/embedded_miri.py",
+    "validation/hardening/embedded-miri.toml",
+    "validation/hardening/embedded_failure.py",
+    "personal-hopspot/assurance",
+    "prns-interfaces/impls/embassy/src/radios",
+    "prns-runtime/impls/embassy/src/runtime/embedded_persistence",
+    "prns-core/src/persistence",
+]
+artifacts = "validation-artifacts/results/embedded-miri-quick"
+
+[[suite]]
+id = "embedded-miri-full"
+domain = "hardening"
+group = "embedded-miri"
+tiers = ["release", "scheduled"]
+platform = "any"
+toolchain = "nightly"
+timeout_seconds = 7200
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_miri", "full"]
+inputs = [
+    "validation/hardening/embedded_miri.py",
+    "validation/hardening/embedded-miri.toml",
+    "validation/hardening/embedded_failure.py",
+    "personal-hopspot/assurance",
+    "prns-interfaces/impls/embassy/src/radios",
+    "prns-runtime/impls/embassy/src/runtime/embedded_persistence",
+    "prns-core/src/persistence",
+]
+artifacts = "validation-artifacts/results/embedded-miri-full"
 
 [[suite]]
 id = "sanitizer-address"
@@ -707,7 +945,7 @@ artifacts = "validation-artifacts/results/embedded-builds"
 id = "esp32-firmware-check"
 domain = "platform"
 group = "esp"
-tiers = ["pr"]
+tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "esp"
 timeout_seconds = 5400
@@ -854,6 +1092,9 @@ inputs = [
   "personal-hopspot/sdk/hopspot/index.js",
   "personal-hopspot/sdk/hopspot/index.cjs",
   "personal-hopspot/sdk/hopspot/index.d.ts",
+  "personal-hopspot/sdk/hopspot/contract.js",
+  "personal-hopspot/sdk/hopspot/contract.cjs",
+  "personal-hopspot/sdk/hopspot/contract.d.ts",
   "personal-hopspot/sdk/hopspot/native.js",
   "personal-hopspot/sdk/hopspot/native.cjs",
   "personal-hopspot/sdk/hopspot/native.d.ts",
@@ -1098,6 +1339,19 @@ timeout_seconds = 360
 command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.remote_management_interop_smoke"]
 inputs = ["validation/interop/cases/remote_management_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_remote_management_client.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-remote-management"
+
+[[suite]]
+id = "interop-hopspot-remote-path"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_rpc"
+timeout_seconds = 360
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.hopspot_remote_path_interop_smoke"]
+inputs = ["validation/interop/cases/hopspot_remote_path_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_remote_management_client.py", "validation/integration/Cargo.toml", "validation/integration/examples/hopspot_remote_path.rs", "personal-hopspot/core/src"]
+artifacts = "validation-artifacts/results/interop-hopspot-remote-path"
 
 [[suite]]
 id = "interop-probe-responder"
@@ -1529,6 +1783,18 @@ inputs = [
 ]
 artifacts = "validation-artifacts/results/interop-websocket-bergie-lxmf-e2e"
 
+[[suite]]
+id = "subghz-turbo-evidence"
+domain = "simulation"
+group = "subghz"
+tiers = ["release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 300
+command = ["cargo", "run", "--locked", "-p", "prns-core", "--example", "subghz_turbo_evidence"]
+inputs = ["prns-core/src/interfaces/subghz", "prns-core/examples/subghz_turbo_evidence.rs"]
+artifacts = "validation-artifacts/results/subghz-turbo-evidence"
+
 [[fuzz_target]]
 name = "wire_announce_parse"
 path = "fuzz_targets/wire_announce_parse.rs"
@@ -1590,6 +1856,12 @@ group = "remote-control"
 tiers = ["release", "scheduled"]
 
 [[fuzz_target]]
+name = "bluetooth_auto_control_parse"
+path = "fuzz_targets/bluetooth_auto_control_parse.rs"
+group = "bluetooth-auto"
+tiers = ["release", "scheduled"]
+
+[[fuzz_target]]
 name = "remote_control_pairing_messages_parse"
 path = "fuzz_targets/remote_control_pairing_messages_parse.rs"
 group = "remote-control"
@@ -1599,6 +1871,108 @@ tiers = ["release", "scheduled"]
 name = "remote_control_controller_grants_snapshot"
 path = "fuzz_targets/remote_control_controller_grants_snapshot.rs"
 group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[fuzz_target]]
+name = "subghz_turbo_state"
+path = "fuzz_targets/subghz_turbo_state.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[fuzz_target]]
+name = "subghz_configuration"
+path = "fuzz_targets/subghz_configuration.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "control_parser_handles_every_legacy_greeting_shape"
+source = "prns-core/src/interfaces/bluetooth_auto/handshake.rs"
+group = "bluetooth-auto"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "control_parser_accepts_every_single_group_extension_shape"
+source = "prns-core/src/interfaces/bluetooth_auto/handshake.rs"
+group = "bluetooth-auto"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "every_schedule_time_selects_a_valid_turbo_channel"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "global_slot_construction_matches_representable_start_times"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "schedule_slot_reconstructs_bounded_time"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "every_cycle_and_position_selects_a_valid_channel"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "schedule_repeats_after_one_complete_supercycle"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "channel_position_lookup_round_trips"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "granted_receive_lease_keeps_every_instant_on_one_slot"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/radio_execution.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "clock_uncertainty_never_shrinks_during_holdover"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/clock.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "channel_access_never_grants_without_a_final_clear"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/channel_access.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "overlap_never_exceeds_transmission_airtime"
+source = "prns-core/src/interfaces/subghz/frequency_hopping/trace.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "contained_channel_centers_never_escape_the_frequency_range"
+source = "prns-core/src/interfaces/subghz/types.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "accepting_a_wider_channel_also_accepts_every_narrower_channel"
+source = "prns-core/src/interfaces/subghz/types.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "accepted_reservation_never_exceeds_occupancy_or_balance_limit"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/occupancy.rs"
+group = "subghz"
 tiers = ["release", "scheduled"]
 
 [[kani]]
@@ -1722,13 +2096,67 @@ group = "gnss"
 tiers = ["release", "scheduled"]
 
 [[kani]]
-name = "remote_control_request_parse_terminates_for_every_distinct_wire_shape"
+name = "request_parser_handles_discovery_and_power_family"
 source = "prns-core/src/remote_control/message.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
 
 [[kani]]
-name = "remote_control_response_parse_terminates_for_every_distinct_wire_shape"
+name = "request_parser_handles_inventory_and_authorization_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "request_parser_handles_interface_configuration_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "request_parser_handles_discovery_group_inventory"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "request_parser_accepts_maximum_discovery_group_count"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "request_parser_handles_desired_state_and_wifi_transaction_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "response_parser_handles_inventory_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "response_parser_handles_interface_configuration_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "response_parser_handles_discovery_group_replacement"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "response_parser_handles_desired_state_and_wifi_transaction_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "response_parser_handles_identity_power_and_error_family"
 source = "prns-core/src/remote_control/message.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
@@ -1762,3 +2190,28 @@ name = "target_attempt_deadlines_are_strictly_future_and_pairing_bounded"
 source = "prns-core/src/remote_control/pairing/target_pairing/kani_proofs.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "unexpired_pairing_windows_always_admit_a_bounded_attempt_timeout"
+source = "prns-core/src/remote_control/pairing/target_pairing/kani_proofs.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[suite]]
+id = "wifi-auto-tokio-without-ipv6-ll-multicast"
+domain = "native"
+group = "wifi-auto"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-interfaces/impls/tokio/Cargo.toml", "--features", "wifi-auto-mdns", "--lib", "without_ipv6_ll_multicast"]
+inputs = [
+  "prns-interfaces/impls/tokio/src/wifi_auto/without_ipv6_ll_multicast.rs",
+  "prns-interfaces/impls/tokio/src/wifi_auto/mdns_without_ipv6_ll_multicast.rs",
+  "prns-interfaces/impls/tokio/src/wifi_auto/mdns.rs",
+  "prns-interfaces/impls/tokio/src/wifi_auto/mod.rs",
+  "prns-interfaces/impls/tokio/src/wifi_auto/host_lan.rs",
+  "prns-interfaces/impls/tokio/src/network_device.rs",
+]
+artifacts = "validation-artifacts/results/wifi-auto-tokio-without-ipv6-ll-multicast"

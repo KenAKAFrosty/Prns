@@ -10,12 +10,17 @@ pub mod tokio {
     };
     pub use prns_runtime_tokio::manifold::driver::{
         run, run_with_deciders, run_with_store, run_with_store_and_deciders, tokio_grant_lane,
-        AddInterfaceCommand, CryptoPoolConfig, Egress, HeapFrameSlot, HostCommand,
-        HostResourceMetadata, HostResourcePayload, HostResourcePayloadError, ManifoldWiring,
-        PoolWorkers, ProvideDecompressedHostCommand, RequestAnyHostCommand, ResourceInbound,
-        RespondAnyHostCommand, SendResourceHostCommand, SendResourceSegmentHostCommand,
-        StreamInbound, TokioClock, TokioGrantConsumer, TokioGrantProducer, TokioHost,
-        TokioInterfaceSeam, TokioInterfaceStatus,
+        AddInterfaceCommand, CryptoPoolConfig, CryptoWorkerPlacement, Egress, HeapFrameSlot,
+        HostCommand, HostResourceMetadata, HostResourcePayload, HostResourcePayloadError,
+        ManifoldWiring, PoolWorkers, ProvideDecompressedHostCommand, RequestAnyHostCommand,
+        ResourceInbound, RespondAnyHostCommand, SendResourceHostCommand,
+        SendResourceSegmentHostCommand, StreamInbound, TokioClock, TokioGrantConsumer,
+        TokioGrantProducer, TokioHost, TokioInterfaceSeam, TokioInterfaceStatus,
+    };
+
+    #[cfg(feature = "scheduler-tuning")]
+    pub use prns_runtime_tokio::manifold::driver::{
+        SchedulerPolicy, SchedulerPolicyError, SchedulerPolicyInput,
     };
 }
 
@@ -25,7 +30,7 @@ pub mod embassy {
         embassy_grant_lane, run, run_with_deciders, run_with_store, EmbassyEgress,
         EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam,
         EmbassyInterfaceStatus, InterfaceLifecycle, ManifoldEgress, ManifoldWiring, PooledEgress,
-        PooledWiring,
+        PooledWiring, RNS_PATH_TABLE_RESPONSE_BYTES,
     };
     pub use prns_runtime_embassy::manifold::timebase::EmbassyTimebase;
 }

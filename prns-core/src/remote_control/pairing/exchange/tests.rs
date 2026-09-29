@@ -10,7 +10,8 @@ use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::vault::IdentitySecretKey;
 use crate::identity::{IdentityHash, IdentityPublicKeys, IdentitySigner};
 use crate::remote_control::{
-    RemoteControlControllerIdentity, RemoteControlPairingIdentity, RemoteControlPairingPermissions,
+    RemoteControlControllerAuthority, RemoteControlControllerIdentity,
+    RemoteControlPairingIdentity, RemoteControlPairingPermissions,
     RemoteControlPairingPermissionsError, RemoteControlRequestSet,
 };
 use crate::routing::links::LinkId;
@@ -47,6 +48,7 @@ impl PairingFixture {
             )),
             attempt_timeout(30_000),
         )
+        .unwrap()
     }
 }
 
@@ -112,7 +114,11 @@ fn pairing_exchange_discriminants_and_bounds_are_stable() {
     assert_eq!(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID, "/pair");
     assert_eq!(
         RemoteControlPairingProtocolVersion::ALL,
-        [RemoteControlPairingProtocolVersion::V2],
+        [
+            RemoteControlPairingProtocolVersion::V2,
+            RemoteControlPairingProtocolVersion::V3,
+            RemoteControlPairingProtocolVersion::V4,
+        ],
     );
     assert_eq!(
         RemoteControlPairingMessageKind::ALL,
@@ -124,12 +130,14 @@ fn pairing_exchange_discriminants_and_bounds_are_stable() {
         ],
     );
     assert_eq!(RemoteControlPairingProtocolVersion::V2.wire_value(), 2);
+    assert_eq!(RemoteControlPairingProtocolVersion::V3.wire_value(), 3);
+    assert_eq!(RemoteControlPairingProtocolVersion::V4.wire_value(), 4);
     assert_eq!(RemoteControlPairingMessageKind::Begin.wire_value(), 1);
     assert_eq!(RemoteControlPairingMessageKind::Offer.wire_value(), 2);
     assert_eq!(RemoteControlPairingMessageKind::Commit.wire_value(), 3);
     assert_eq!(RemoteControlPairingMessageKind::Completed.wire_value(), 4);
     assert_eq!(RemoteControlPairingRequest::MAX_ENCODED_LEN, 98);
-    assert_eq!(RemoteControlPairingResponse::MAX_ENCODED_LEN, 137);
+    assert_eq!(RemoteControlPairingResponse::MAX_ENCODED_LEN, 166);
     const {
         assert!(
             RemoteControlPairingRequest::MAX_ENCODED_LEN
@@ -218,9 +226,14 @@ fn an_offer_with_every_permission_fills_the_reported_response_bound() {
         &fixture.target_signer,
         fixture.context,
         &fixture.begin,
-        permissions(RemoteControlRequestSet::all()),
+        RemoteControlPairingPermissions::new(
+            RemoteControlControllerAuthority::Administrator,
+            RemoteControlRequestSet::all(),
+        )
+        .unwrap(),
         attempt_timeout(30_000),
-    );
+    )
+    .unwrap();
     let (offer, expected_transcript) = prepared.into_parts();
     let response = RemoteControlPairingResponse::Offer(offer);
     assert_eq!(
@@ -243,17 +256,101 @@ fn the_transcript_and_confirmation_code_have_a_pinned_vector() {
     assert_eq!(
         prepared.transcript().digest().as_bytes(),
         &[
-            0x94, 0x38, 0x9e, 0x49, 0xf2, 0x95, 0x30, 0x53, 0xd3, 0xd5, 0x2c, 0x5f, 0x51, 0x61,
-            0x9b, 0x4a, 0xab, 0x06, 0x50, 0x5b, 0x2f, 0x94, 0x96, 0x9b, 0x18, 0x06, 0x56, 0x6b,
-            0x3f, 0xb3, 0x56, 0x81,
+            0x95, 0x3b, 0xec, 0xdd, 0xe9, 0xd9, 0x47, 0xcc, 0xac, 0xb0, 0x61, 0xf4, 0xa9, 0x2a,
+            0x60, 0x9e, 0x0e, 0x9e, 0x39, 0x9a, 0x01, 0xa0, 0x91, 0x7c, 0x91, 0x78, 0x9e, 0xcc,
+            0x6c, 0x30, 0x9a, 0x88,
         ],
     );
-    assert_eq!(prepared.transcript().confirmation_code().value(), 105_940);
+    assert_eq!(prepared.transcript().confirmation_code().value(), 246_485);
     assert_eq!(
         RemoteControlPairingAttemptId::from(prepared.transcript())
             .confirmation_code()
             .value(),
-        105_940,
+        246_485,
+    );
+}
+
+#[test]
+fn the_v3_transcript_vector_is_stable_after_new_request_kinds_are_added() {
+    let context = context(0x73, 0x84);
+    let controller = controller(0x31);
+    let begin = RemoteControlPairingBegin::from_wire(
+        RemoteControlPairingProtocolVersion::V3,
+        controller,
+        invitation_code().into_proof(context.endpoint(), &controller),
+    );
+    let target_signer = signer(0x52);
+    let prepared = RemoteControlPairingPreparedOffer::new(
+        &target_signer,
+        context,
+        &begin,
+        permissions(RemoteControlRequestSet::only(
+            RemoteControlRequestKind::Describe,
+        )),
+        attempt_timeout(30_000),
+    )
+    .unwrap();
+
+    assert_eq!(
+        prepared.transcript().digest().as_bytes(),
+        &[
+            0xb2, 0x45, 0xde, 0xc0, 0xcd, 0xab, 0x60, 0xc3, 0xe0, 0xd9, 0x3b, 0x7c, 0x82, 0xd6,
+            0x2f, 0xf2, 0xa9, 0x9b, 0x1b, 0xfe, 0x9a, 0xdd, 0x56, 0x4d, 0x96, 0x65, 0xf3, 0x5d,
+            0xd5, 0xd1, 0xbb, 0x89,
+        ],
+    );
+    assert_eq!(prepared.transcript().confirmation_code().value(), 792_306);
+}
+
+#[test]
+fn legacy_pairing_versions_refuse_request_kinds_their_peers_cannot_parse() {
+    let context = context(0x73, 0x84);
+    let controller = controller(0x31);
+    let begin = RemoteControlPairingBegin::from_wire(
+        RemoteControlPairingProtocolVersion::V3,
+        controller,
+        invitation_code().into_proof(context.endpoint(), &controller),
+    );
+    let request = RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups;
+    let permissions = permissions(RemoteControlRequestSet::only(request));
+    assert_eq!(
+        RemoteControlPairingPreparedOffer::new(
+            &signer(0x52),
+            context,
+            &begin,
+            permissions.clone(),
+            attempt_timeout(30_000),
+        ),
+        Err(
+            RemoteControlPairingPreparedOfferError::RequestUnsupportedForVersion {
+                version: RemoteControlPairingProtocolVersion::V3,
+                request,
+            }
+        )
+    );
+
+    let current_begin =
+        RemoteControlPairingBegin::new(controller, context.endpoint(), invitation_code());
+    let prepared = RemoteControlPairingPreparedOffer::new(
+        &signer(0x52),
+        context,
+        &current_begin,
+        permissions,
+        attempt_timeout(30_000),
+    )
+    .expect("current pairing supports current request kinds");
+    let mut encoded = encoded_response(&RemoteControlPairingResponse::Offer(
+        prepared.into_parts().0,
+    ));
+    encoded[0] = RemoteControlPairingProtocolVersion::V3.wire_value();
+    assert_eq!(
+        RemoteControlPairingResponse::parse(&encoded),
+        Err(
+            RemoteControlPairingMessageParseError::RequestUnsupportedForVersion {
+                version: RemoteControlPairingProtocolVersion::V3,
+                request,
+            }
+        )
     );
 }
 
@@ -291,13 +388,19 @@ fn every_offer_transcript_fact_is_covered_by_the_target_signature() {
     for (offset, mask) in [
         (PAIRING_MESSAGE_HEADER_ENCODED_LEN, 0x01),
         (
-            PAIRING_MESSAGE_HEADER_ENCODED_LEN + PAIRING_IDENTITY_ENCODED_LEN + 1,
+            PAIRING_MESSAGE_HEADER_ENCODED_LEN + PAIRING_IDENTITY_ENCODED_LEN,
+            RemoteControlControllerAuthority::Operator.wire_value()
+                ^ RemoteControlControllerAuthority::Administrator.wire_value(),
+        ),
+        (
+            PAIRING_MESSAGE_HEADER_ENCODED_LEN + PAIRING_IDENTITY_ENCODED_LEN + 2,
             RemoteControlRequestKind::Describe.wire_value()
                 ^ RemoteControlRequestKind::AnnounceSelf.wire_value(),
         ),
         (
             PAIRING_MESSAGE_HEADER_ENCODED_LEN
                 + PAIRING_IDENTITY_ENCODED_LEN
+                + PAIRING_AUTHORITY_ENCODED_LEN
                 + PAIRING_REQUEST_SET_COUNT_ENCODED_LEN
                 + 1,
             0x01,
@@ -330,7 +433,8 @@ fn commit_and_completed_bind_the_exact_durably_committed_transcript() {
             RemoteControlRequestKind::Describe,
         )),
         attempt_timeout(30_000),
-    );
+    )
+    .unwrap();
     assert!(!commit.matches(alternate.transcript()));
 
     let completed =
@@ -469,7 +573,8 @@ fn parsers_reject_wrong_directions_versions_kinds_lengths_and_noncanonical_field
     let mut encoded = encoded_response(&RemoteControlPairingResponse::Offer(
         prepared.into_parts().0,
     ));
-    let permission_count_offset = PAIRING_MESSAGE_HEADER_ENCODED_LEN + PAIRING_IDENTITY_ENCODED_LEN;
+    let authority_offset = PAIRING_MESSAGE_HEADER_ENCODED_LEN + PAIRING_IDENTITY_ENCODED_LEN;
+    let permission_count_offset = authority_offset + PAIRING_AUTHORITY_ENCODED_LEN;
     encoded.insert(
         permission_count_offset + PAIRING_REQUEST_SET_COUNT_ENCODED_LEN + 1,
         RemoteControlRequestKind::Describe.wire_value(),
@@ -478,6 +583,17 @@ fn parsers_reject_wrong_directions_versions_kinds_lengths_and_noncanonical_field
     assert_eq!(
         RemoteControlPairingResponse::parse(&encoded),
         Err(RemoteControlPairingMessageParseError::NonCanonicalPermissions),
+    );
+
+    let fixture = PairingFixture::new();
+    let prepared = fixture.prepared_offer();
+    let mut unknown_authority = encoded_response(&RemoteControlPairingResponse::Offer(
+        prepared.into_parts().0,
+    ));
+    unknown_authority[authority_offset] = 0x7F;
+    assert_eq!(
+        RemoteControlPairingResponse::parse(&unknown_authority),
+        Err(RemoteControlPairingMessageParseError::UnknownAuthority { found: 0x7F }),
     );
 
     let fixture = PairingFixture::new();

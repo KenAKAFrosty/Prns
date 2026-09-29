@@ -1,4 +1,4 @@
-use super::inline_work::feed_packet_inline;
+use super::inline_work::{feed_packet_inline, issue_command_inline};
 use super::*;
 use personal_rns::engine::NoOwedWork;
 
@@ -124,7 +124,7 @@ impl ResourceCycle {
 
         let request = cycle.issue_link_request();
         let proof = cycle.feed_responder(request).only_frame("link proof");
-        let proof_response = cycle.feed_initiator(proof);
+        let mut proof_response = cycle.feed_initiator(proof);
         let link_id = proof_response
             .settlements
             .iter()
@@ -166,12 +166,14 @@ impl ResourceCycle {
             ..
         } = self;
         let mut capture = FeedCapture::default();
-        responder.ingest_command_into(
+        issue_command_inline(
+            responder,
             issued,
             AttachedInterfaces::new(interfaces),
             now,
-            &mut |bytes| responder_entropy.fill(bytes),
-            &mut |reaction: EngineReaction<'_, NoOwedWork>| capture.absorb(reaction, scratch),
+            responder_entropy,
+            &mut capture,
+            scratch,
         );
         capture.only_frame("announce")
     }
@@ -192,12 +194,14 @@ impl ResourceCycle {
             ..
         } = self;
         let mut capture = FeedCapture::default();
-        initiator.ingest_command_into(
+        issue_command_inline(
+            initiator,
             issued,
             AttachedInterfaces::new(interfaces),
             now,
-            &mut |bytes| initiator_entropy.fill(bytes),
-            &mut |reaction: EngineReaction<'_, NoOwedWork>| capture.absorb(reaction, scratch),
+            initiator_entropy,
+            &mut capture,
+            scratch,
         );
         capture.only_frame("link request")
     }
@@ -401,12 +405,6 @@ impl ResourceCycle {
     }
 }
 
-impl FeedCapture {
-    fn only_frame(mut self, label: &str) -> Vec<u8> {
-        assert_eq!(self.frames.len(), 1, "{label} emits exactly one frame");
-        self.frames.remove(0)
-    }
-}
 fn deterministic_payload(len: usize) -> Vec<u8> {
     let mut state = 0xD00D_F00D_CAFE_BABEu64;
     let mut out = Vec::with_capacity(len);

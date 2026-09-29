@@ -2,10 +2,12 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::once_lock::OnceLock;
 use esp_hal::peripherals::{ADC1, RNG};
 use esp_hal::rng::{Trng, TrngError, TrngSource};
-use personal_hopspot_core::HopspotS3FlashLayout;
+use personal_hopspot_memory::MemoryProfile;
 use personal_rns::runtime::{EntropyHandle, SharedRuntimeEntropy};
 use prns_core::entropy::{EntropySource, RuntimeEntropy};
 use static_cell::StaticCell;
+
+use crate::memory::EspFirmwareMemory;
 
 pub(crate) struct S3EntropySource;
 
@@ -34,13 +36,14 @@ pub(crate) struct S3RuntimeBootstrap {
 pub(crate) async fn bootstrap_s3_runtime(
     rng: &mut RNG<'static>,
     adc: &mut ADC1<'static>,
-    flash_layout: HopspotS3FlashLayout,
+    memory_profile: &'static MemoryProfile,
 ) -> S3RuntimeBootstrap {
     let trng_source = TrngSource::new(rng.reborrow(), adc.reborrow());
     let entropy = RuntimeEntropy::try_new(S3EntropySource)
         .expect("the enabled S3 boot TRNG fills the initial seed");
     let (identities, entropy) =
-        crate::identity::bootstrap_s3_identities(flash_layout.into(), entropy).await;
+        crate::identity::bootstrap_s3_identities(EspFirmwareMemory::new(memory_profile), entropy)
+            .await;
 
     drop(trng_source);
 

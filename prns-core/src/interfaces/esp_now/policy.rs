@@ -30,7 +30,7 @@ pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
         egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
     },
     mode: InterfaceMode::Full,
-    gravity: crate::interfaces::InterfaceGravity::ZERO,
+    gravity: crate::interfaces::InterfaceGravityDefault::FromBitrate,
     bitrate: ESP_NOW_BITRATE_BPS,
     mtu: MtuPolicy::fixed(ESP_NOW_HW_MTU),
     announce_rate_limit: None,
