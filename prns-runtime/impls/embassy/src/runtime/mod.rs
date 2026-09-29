@@ -1,3 +1,4 @@
+mod discovery_group_store;
 mod embedded_persistence;
 mod entropy;
 mod interface_store;
@@ -12,9 +13,12 @@ mod shared_flash;
 
 pub use prns_runtime::runtime::*;
 
-pub use embedded_persistence::{
+pub use discovery_group_store::{
     restored_discovery_group_configuration, restored_discovery_group_configuration_now,
     restored_discovery_groups, restored_discovery_groups_now, store_discovery_group_configuration,
+    DiscoveryGroupConfigurationStoreExchange, GlobalDiscoveryGroupStore,
+};
+pub use embedded_persistence::{
     DiscoveryGroupConfigurationChange, EmbeddedCompactionPolicy, EmbeddedFlashPersistence,
     EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
     EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget, FixedRouteSnapshotKeys,

@@ -1,7 +1,11 @@
 use embassy_nrf::gpio::Output;
 
 enum Polarity {
-    #[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t1000e",
+        feature = "board-rak4631"
+    ))]
     ActiveHigh,
     #[cfg(any(
         feature = "board-t114",
@@ -17,7 +21,11 @@ pub(crate) struct StatusLed {
 }
 
 impl StatusLed {
-    #[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t1000e",
+        feature = "board-rak4631"
+    ))]
     pub(crate) fn active_high(output: Output<'static>) -> Self {
         Self {
             output,
@@ -39,7 +47,11 @@ impl StatusLed {
 
     pub(crate) fn illuminate(&mut self) {
         match self.polarity {
-            #[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
+            #[cfg(any(
+                feature = "board-t096",
+                feature = "board-t1000e",
+                feature = "board-rak4631"
+            ))]
             Polarity::ActiveHigh => self.output.set_high(),
             #[cfg(any(
                 feature = "board-t114",
@@ -52,7 +64,11 @@ impl StatusLed {
 
     pub(crate) fn extinguish(&mut self) {
         match self.polarity {
-            #[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
+            #[cfg(any(
+                feature = "board-t096",
+                feature = "board-t1000e",
+                feature = "board-rak4631"
+            ))]
             Polarity::ActiveHigh => self.output.set_low(),
             #[cfg(any(
                 feature = "board-t114",
@@ -60,6 +76,19 @@ impl StatusLed {
                 feature = "board-muzi-base-duo"
             ))]
             Polarity::ActiveLow => self.output.set_high(),
+        }
+    }
+
+    /// Two short flashes make successful runtime entry visible on the headless RAK4631.
+    #[cfg(feature = "board-rak4631")]
+    pub(crate) async fn boot_splash(&mut self) {
+        use embassy_time::Timer;
+
+        for _ in 0..2 {
+            self.illuminate();
+            Timer::after_millis(100).await;
+            self.extinguish();
+            Timer::after_millis(100).await;
         }
     }
 }

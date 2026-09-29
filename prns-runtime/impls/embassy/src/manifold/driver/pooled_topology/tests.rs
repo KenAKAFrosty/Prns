@@ -90,6 +90,10 @@ fn dedicated_lanes_own_the_source_id_but_fleet_lanes_preserve_the_member_stamp()
 }
 
 impl<S: StorageLayout> ManifoldPersistence<S> for AlwaysDuePersistence {
+    fn has_pending_discovery_group_change(&self) -> bool {
+        false
+    }
+
     fn observe(&mut self, _journaled: &Journaled<'_>, _now: InstantMillis) {}
 
     fn deadline(&mut self, now: InstantMillis) -> Option<InstantMillis> {

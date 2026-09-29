@@ -102,6 +102,9 @@ where
     // Work emitted while resuming is already ready. Keep advancing without manufacturing a
     // batch or returning to the executor between continuation steps.
     while let Some(work) = pending.pop_front() {
+        let mut route = |reaction: EngineReaction<'_>| {
+            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
+        };
         match work {
             InlineReadyWork::Crypto(crypto) => match crypto {
                 CryptoOwed::ReceiptProofVerify(owed) => {
@@ -116,13 +119,7 @@ where
                     } else {
                         ReceiptProofVerification::Invalid
                     };
-                    wake.compose(engine.resume_receipt_proof(
-                        owed,
-                        verification,
-                        &mut |reaction| {
-                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                        },
-                    ));
+                    wake.compose(engine.resume_receipt_proof(owed, verification, &mut route));
                 }
                 CryptoOwed::ChannelAckVerify(owed) => {
                     let verification = if ed25519_verify(
@@ -136,13 +133,7 @@ where
                     } else {
                         ChannelAckVerification::Invalid
                     };
-                    wake.compose(engine.resume_channel_ack_verify(
-                        owed,
-                        verification,
-                        &mut |reaction| {
-                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                        },
-                    ));
+                    wake.compose(engine.resume_channel_ack_verify(owed, verification, &mut route));
                 }
                 CryptoOwed::LinkIdentityVerify(owed) => {
                     let verification =
@@ -153,9 +144,7 @@ where
                         } else {
                             LinkIdentityVerification::Invalid
                         };
-                    engine.resume_link_identity_verify(owed, verification, &mut |reaction| {
-                        route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                    });
+                    engine.resume_link_identity_verify(owed, verification, &mut route);
                 }
                 CryptoOwed::TunnelSynthesizeVerify(owed) => {
                     let verification =
@@ -180,9 +169,7 @@ where
                         },
                         interfaces,
                         &mut wire,
-                        &mut |reaction| {
-                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                        },
+                        &mut route,
                     ));
                 }
                 CryptoOwed::Decrypt(owed) => {
@@ -256,9 +243,7 @@ where
                             interfaces,
                             now,
                             &mut |entropy| host.fill_random(entropy),
-                            &mut |reaction| {
-                                route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                            },
+                            &mut route,
                         ));
                     } else {
                         record_protocol_violation(frame_accounting_statuses, owed.source_interface);
@@ -283,9 +268,7 @@ where
                         shared,
                         signature,
                         interfaces,
-                        &mut |reaction| {
-                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                        },
+                        &mut route,
                     ));
                 }
                 CryptoOwed::ProofSign(owed) => {
@@ -296,9 +279,7 @@ where
                             packet_hash: owed.packet_hash,
                             signature,
                         },
-                        &mut |reaction| {
-                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                        },
+                        &mut route,
                     );
                 }
                 CryptoOwed::LinkReceiptSign(owed) => {
@@ -311,9 +292,7 @@ where
                             signature,
                         },
                         now,
-                        &mut |reaction| {
-                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                        },
+                        &mut route,
                     );
                 }
                 CryptoOwed::ChannelAckSign(owed) => {
@@ -326,9 +305,7 @@ where
                             signature,
                         },
                         now,
-                        &mut |reaction| {
-                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                        },
+                        &mut route,
                     );
                 }
                 CryptoOwed::IdentifySign(owed) => {
@@ -336,33 +313,25 @@ where
                     wake.compose(engine.resume_identify_sign(
                         IdentifySignCompleted { owed, signature },
                         now,
-                        &mut |reaction| {
-                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                        },
+                        &mut route,
                     ));
                 }
                 CryptoOwed::TunnelSynthesizeSign(owed) => {
                     let signature = ed25519_sign(&owed.signing_secret, &owed.signed_region);
                     let _ = engine.resume_tunnel_synthesize_sign(
                         TunnelSynthesizeSignCompleted { owed, signature },
-                        &mut |reaction| {
-                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                        },
+                        &mut route,
                     );
                 }
                 CryptoOwed::EstablishLink(owed) => {
                     wake.compose(engine.resume_establish_link(
                         owed.fulfill(),
                         interfaces,
-                        &mut |reaction| {
-                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                        },
+                        &mut route,
                     ));
                 }
                 CryptoOwed::AnnounceSign(owed) => {
-                    engine.resume_announce_sign(owed.fulfill(), interfaces, &mut |reaction| {
-                        route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                    });
+                    engine.resume_announce_sign(owed.fulfill(), interfaces, &mut route);
                 }
                 CryptoOwed::AnnounceVerify(owed) => match owed.verify() {
                     AnnounceVerification::Verified(verified) => {
@@ -370,9 +339,7 @@ where
                             verified,
                             interfaces,
                             &mut |entropy| host.fill_random(entropy),
-                            &mut |reaction| {
-                                route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                            },
+                            &mut route,
                         ));
                     }
                     AnnounceVerification::Invalid(invalid) => {
@@ -385,11 +352,7 @@ where
                 CryptoOwed::RemoteControlPairingAvailabilityVerify(owed) => match owed.verify() {
                     RemoteControlPairingAvailabilityVerification::Verified(verified) => {
                         wake.compose(engine.resume_remote_control_pairing_availability(
-                            verified,
-                            interfaces,
-                            &mut |reaction| {
-                                route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                            },
+                            verified, interfaces, &mut route,
                         ));
                     }
                     RemoteControlPairingAvailabilityVerification::Invalid(invalid) => {
@@ -401,16 +364,14 @@ where
                 },
             },
             InlineReadyWork::ResourceBuildUnsupported { reservation } => {
-                wake.compose(engine.resume_resource_build_unavailable(
-                    reservation,
-                    &mut |reaction| {
-                        route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                    },
-                ));
+                wake.compose(engine.resume_resource_build_unavailable(reservation, &mut route));
             }
             InlineReadyWork::ResourceOpen(completed) => {
-                wake.compose(
-                    engine.resume_resource_open(completed, now, &mut |reaction| {
+                wake.compose(engine.resume_resource_open(
+                    completed,
+                    now,
+                    &mut |entropy| host.fill_random(entropy),
+                    &mut |reaction| {
                         route_and_capture_owed_work(
                             reaction,
                             egress,
@@ -420,8 +381,8 @@ where
                             on_journaled,
                             &mut pending,
                         );
-                    }),
-                );
+                    },
+                ));
             }
             InlineReadyWork::ResourceDecompressionUnsupported { link_id, hash } => {
                 // The no-alloc Embassy runtime does not carry a bzip2 implementation. An empty
@@ -434,9 +395,8 @@ where
                         plaintext: &[],
                     },
                     now,
-                    &mut |reaction| {
-                        route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
-                    },
+                    &mut |entropy| host.fill_random(entropy),
+                    &mut route,
                 ));
             }
         }

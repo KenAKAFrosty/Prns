@@ -13,6 +13,68 @@ use crate::storage::StorageLayout;
 use crate::units::InstantMillis;
 
 impl<S: StorageLayout> EngineState<S> {
+    pub(crate) fn prepare_remote_control_target_pairing_authorization_into<F, Work>(
+        &mut self,
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+        interfaces: AttachedInterfaces<'_>,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
+    ) -> Result<(), crate::engine::RemoteControlTargetPairingPreparationFailure>
+    where
+        F: FnMut(&mut [u8]),
+    {
+        use crate::engine::RemoteControlTargetPairingPreparationFailure as Failure;
+        use crate::remote_control::PrepareRemoteControlTargetPairingAuthorizationOutcome as Outcome;
+        let target_identity = match self.remote_control_target_pairing.view() {
+            RemoteControlTargetPairingView::Authorizing(attempt)
+                if attempt.attempt_id() == attempt_id =>
+            {
+                attempt.target().identity_hash()
+            }
+            RemoteControlTargetPairingView::Authorizing(attempt) => {
+                return Err(Failure::AttemptMismatch {
+                    active: attempt.attempt_id(),
+                })
+            }
+            RemoteControlTargetPairingView::Idle
+            | RemoteControlTargetPairingView::OfferPrepared(_)
+            | RemoteControlTargetPairingView::AwaitingBoth(_)
+            | RemoteControlTargetPairingView::AwaitingTargetApproval(_)
+            | RemoteControlTargetPairingView::AwaitingControllerCommit(_)
+            | RemoteControlTargetPairingView::Completing(_) => {
+                return Err(Failure::NoAuthorizationOwed)
+            }
+        };
+        let result = match self.held_identities.get(&target_identity) {
+            Some(signer) => match self
+                .remote_control_target_pairing
+                .prepare_authorization(attempt_id, &signer, now)
+            {
+                Outcome::Prepared { .. } => Ok(()),
+                Outcome::DeadlineElapsed { .. } => Err(Failure::DeadlineElapsed),
+                Outcome::SigningFailed { error, .. } => Err(Failure::SigningFailed { error }),
+                Outcome::NoAuthorizationOwed => Err(Failure::NoAuthorizationOwed),
+                Outcome::AttemptMismatch { active, .. } => Err(Failure::AttemptMismatch { active }),
+            },
+            None => Err(Failure::TargetSignerUnavailable { target_identity }),
+        };
+        if result.is_err() {
+            if let FailRemoteControlTargetPairingAuthorizationOutcome::Aborted { context, .. } =
+                self.remote_control_target_pairing
+                    .authorization_failed(attempt_id)
+            {
+                self.retire_remote_control_pairing_exchange_link(
+                    context,
+                    interfaces,
+                    fill_entropy,
+                    sink,
+                );
+            }
+        }
+        result
+    }
+
     pub(crate) fn settle_remote_control_target_pairing_authorization_into<F>(
         &mut self,
         settlement: SettleRemoteControlTargetPairingAuthorization,
@@ -93,18 +155,28 @@ impl<S: StorageLayout> EngineState<S> {
                         },
                     ),
                 };
-                let Some(target_signer) = self.held_identities.get(&target_identity) else {
-                    return Err(
+                let completion = match self
+                    .remote_control_target_pairing
+                    .settle_prepared_authorization(attempt_id, now)
+                {
+                    Some(completion) => completion,
+                    None => {
+                        let Some(target_signer) = self.held_identities.get(&target_identity) else {
+                            return Err(
                         SettleRemoteControlTargetPairingAuthorizationFailure::TargetSignerUnavailable {
                             attempt_id,
                             target_identity,
                         },
                     );
+                        };
+                        self.remote_control_target_pairing.authorization_persisted(
+                            attempt_id,
+                            &target_signer,
+                            now,
+                        )
+                    }
                 };
-                let (attempt_id, responder, completed) = match self
-                    .remote_control_target_pairing
-                    .authorization_persisted(attempt_id, &target_signer, now)
-                {
+                let (attempt_id, responder, completed) = match completion {
                     PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed {
                         attempt_id,
                         responder,

@@ -49,6 +49,6 @@ full_filters = ["runtime::embedded_persistence::tests"]
 sources = [
     "prns-runtime/impls/embassy/Cargo.toml",
     "prns-runtime/impls/embassy/Cargo.lock",
-    "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",
+    "prns-runtime/impls/embassy/src/runtime/embedded_persistence",
     "prns-core/src/persistence",
 ]

@@ -827,6 +827,75 @@ fn bounded_request_concatenates_segments_and_preserves_failures() {
 }
 
 #[test]
+fn failed_split_response_discards_buffered_chunks_and_reuses_the_bounded_slot() {
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let completions = CompletionPool::<CriticalSectionRawMutex, 0, 1, 8>::new();
+    let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
+    let link_id = LinkId::new([0x32; 16]);
+    let failure = SendRequestFailure::ResponseTransferFailed(
+        crate::routing::links::resources::ResourceFailureCause::TransferCorrupt,
+    );
+    let success = PacketReceiptDelivered {
+        rtt: RttMillis::new(17),
+        evidence: DeliveryEvidence::Response,
+    };
+    for settled in [Err(failure), Ok(success)] {
+        let (result, ()) = block_on(join(
+            handle.request(link_id, RequestPathHash::of("/segmented"), &[]),
+            async {
+                let issued = commands.receiver().receive().await;
+                assert!(matches!(
+                    handle.route_journaled(
+                        Journaled::ResponseSegmentReceived {
+                            command_id: issued.id,
+                            link_id,
+                            request_id: RequestId([0x54; 16]),
+                            segment_index: 1,
+                            total_segments: 2,
+                            data: b"prefix",
+                        },
+                        |_| panic!("awaited chunks stay private")
+                    ),
+                    JournalRoute::Awaiter
+                ));
+                if settled.is_ok() {
+                    assert!(matches!(
+                        handle.route_journaled(
+                            Journaled::ResponseSegmentReceived {
+                                command_id: issued.id,
+                                link_id,
+                                request_id: RequestId([0x54; 16]),
+                                segment_index: 2,
+                                total_segments: 2,
+                                data: b"!",
+                            },
+                            |_| panic!("awaited chunks stay private")
+                        ),
+                        JournalRoute::Awaiter
+                    ));
+                }
+                assert!(matches!(
+                    handle.route_journaled(
+                        Journaled::CommandSettled {
+                            id: issued.id,
+                            settlement: Settlement::SendRequest(settled),
+                        },
+                        |_| panic!("awaited settlement stays private")
+                    ),
+                    JournalRoute::Awaiter
+                ));
+            },
+        ));
+        assert_eq!(
+            result.map(|(bytes, rtt)| (bytes.as_slice().to_vec(), rtt)),
+            settled
+                .map(|receipt| (b"prefix!".to_vec(), receipt.rtt))
+                .map_err(SendError::Failed)
+        );
+    }
+}
+
+#[test]
 fn bounded_request_refuses_response_bytes_beyond_its_static_capacity() {
     const RESPONSE_BYTES: usize = 3;
     let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();

@@ -134,6 +134,7 @@ cargo_manifests = [
     "validation/fuzz/Cargo.toml",
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",
+    "validation/simulation/Cargo.toml",
 ]
 format_manifests = [
     "Cargo.toml",
@@ -162,6 +163,7 @@ format_manifests = [
     "validation/fuzz/Cargo.toml",
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",
+    "validation/simulation/Cargo.toml",
 ]
 
 [registry.format_package_overrides]
@@ -734,6 +736,50 @@ inputs = ["validation/integration/Cargo.toml", "validation/integration/tests"]
 artifacts = "validation-artifacts/results/integration-capstones"
 
 [[suite]]
+id = "virtual-device-simulation"
+domain = "integration"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "prns-simulation", "--features", "controlled-time"]
+inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "prns-interfaces/impls/embassy"]
+artifacts = "validation-artifacts/results/virtual-device-simulation"
+
+[[suite]]
+id = "authorization-commit-recovery"
+domain = "integration"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "prns-core", "--features", "flash", "--lib", "engine::remote_control_pairing::tests::durable_authorization"]
+inputs = ["prns-core/src/engine", "prns-core/src/remote_control", "prns-core/src/persistence", "prns-core/Cargo.toml"]
+artifacts = "validation-artifacts/results/authorization-commit-recovery"
+
+[[suite]]
+id = "embedded-persistence-recovery"
+domain = "integration"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-runtime/impls/embassy/Cargo.toml", "--lib", "runtime::embedded_persistence::tests"]
+inputs = ["prns-runtime/impls/embassy", "prns-runtime/core", "prns-core/src/persistence", "prns-core/src/interfaces"]
+artifacts = "validation-artifacts/results/embedded-persistence-recovery"
+
+[[suite]]
+id = "bluetooth-auto-embassy"
+domain = "native"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-interfaces/impls/embassy/Cargo.toml", "--features", "bluetooth-auto-trouble", "--lib", "bluetooth_auto"]
+inputs = ["prns-interfaces/impls/embassy", "prns-core/src/interfaces/bluetooth_auto", "prns-runtime/core", "prns-runtime/impls/embassy"]
+artifacts = "validation-artifacts/results/bluetooth-auto-embassy"
+
+[[suite]]
 id = "release-contracts"
 domain = "release"
 tiers = ["pr", "release", "scheduled"]
@@ -937,7 +983,7 @@ inputs = [
     "validation/hardening/embedded_failure.py",
     "personal-hopspot/assurance",
     "prns-interfaces/impls/embassy/src/radios",
-    "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",
+    "prns-runtime/impls/embassy/src/runtime/embedded_persistence",
     "prns-core/src/persistence",
 ]
 artifacts = "validation-artifacts/results/embedded-miri-quick"
@@ -957,7 +1003,7 @@ inputs = [
     "validation/hardening/embedded_failure.py",
     "personal-hopspot/assurance",
     "prns-interfaces/impls/embassy/src/radios",
-    "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",
+    "prns-runtime/impls/embassy/src/runtime/embedded_persistence",
     "prns-core/src/persistence",
 ]
 artifacts = "validation-artifacts/results/embedded-miri-full"

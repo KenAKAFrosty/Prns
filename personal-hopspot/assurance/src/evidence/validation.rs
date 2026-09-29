@@ -344,13 +344,14 @@ mod tests {
             required_failures: expected,
         } = matrix.status
         else {
-            return Err("missing evidence must fail the matrix".into());
+            return Err("missing evidence must fail".into());
         };
         matrix.status = MatrixStatus::Passed;
         assert!(matches!(
             validate(&matrix),
-            Err(MatrixValidationError::IncorrectStatus { required_failures })
-                if required_failures == expected
+            Err(MatrixValidationError::IncorrectStatus {
+                required_failures,
+            }) if required_failures == expected
         ));
         Ok(())
     }

@@ -53,6 +53,42 @@ class ThirdPartyNoticeTests(unittest.TestCase):
 
         self.assertIn("input fingerprint matches", stdout.getvalue())
 
+    def test_cargo_inputs_exclude_untracked_nested_checkouts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            for relative in (
+                "Cargo.toml", "Cargo.lock", "member/Cargo.toml",
+                "vendor/example/Cargo.toml", "scratch/Cargo.toml",
+                ".claude/worktrees/example/Cargo.toml",
+                ".claude/worktrees/example/Cargo.lock",
+            ):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "Cargo.toml", "Cargo.lock", "member", "vendor"],
+                cwd=root,
+                check=True,
+            )
+            with (
+                mock.patch.object(notices, "ROOT", root),
+                mock.patch.object(notices, "ABOUT", root / "about.toml"),
+                mock.patch.object(notices, "__file__", str(root / "generator.py")),
+            ):
+                actual = {
+                    path.relative_to(root).as_posix()
+                    for path in notices.notice_input_paths()
+                    if path.name in {"Cargo.toml", "Cargo.lock"}
+                }
+            self.assertEqual(actual, {"Cargo.toml", "Cargo.lock", "member/Cargo.toml"})
+
+    def test_unavailable_tracked_inventory_fails_closed(self) -> None:
+        with mock.patch.object(notices.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess([], 1, b"", b"not a repository")
+            with self.assertRaisesRegex(RuntimeError, "cannot enumerate tracked notice inputs"):
+                notices.notice_input_paths()
+
     def test_fast_input_check_rejects_stale_or_missing_fingerprints(self) -> None:
         for content, diagnostic in (
             (

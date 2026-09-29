@@ -19,6 +19,8 @@ pub const DIAL_FAILED_RETRY_TTL_MS: u64 = 5_000;
 pub const DIAL_PAUSE_MS: u64 = 15_000;
 pub const GROUP_MISMATCH_RETRY_TTL_MS: u64 = 60_000;
 pub const KEEPER_DUEL_WINDOW_MS: u64 = 5_000;
+/// Total connection greeting budget; adapters enforce it with their runtime's monotonic clock.
+pub const HANDSHAKE_TIMEOUT_MS: u64 = 10_000;
 pub const HANDSHAKE_SLACK: usize = 4;
 
 #[must_use]

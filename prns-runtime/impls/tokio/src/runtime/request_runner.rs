@@ -868,7 +868,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remote_administrator_grant_rolls_back_when_its_response_fails() {
+    async fn remote_administrator_grant_survives_when_its_response_fails() {
         use crate::remote_control::{
             RemoteControlAuthorizeControllerOutcome, RemoteControlControllerAuthority,
             RemoteControlControllerGrant, RemoteControlControllerGrantTable,
@@ -965,11 +965,40 @@ mod tests {
             }
         }
 
-        assert!(remote_control
-            .controller_grants()
-            .unwrap()
-            .grant_for(&operator.identity_hash())
-            .is_none());
+        let expected_operator = RemoteControlControllerGrant::new(
+            operator,
+            RemoteControlControllerAuthority::Operator,
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        )
+        .unwrap();
+        let mut expected = [administrator, expected_operator];
+        expected.sort_by_key(|grant| *grant.controller().identity_hash().as_bytes());
+        assert_eq!(
+            remote_control
+                .controller_grants()
+                .unwrap()
+                .grants_in_identity_hash_order(),
+            &expected
+        );
+        for _ in 0..2 {
+            use crate::persistence::{
+                read_remote_control_controller_grants_snapshot,
+                remote_control_controller_grants_snapshot_capacity, FileStore, PersistedStore,
+                SnapshotRegion,
+            };
+            let store = FileStore::new(&persistence_directory);
+            let mut bytes = vec![0; remote_control_controller_grants_snapshot_capacity(2)];
+            let loaded = store
+                .load(SnapshotRegion::RemoteControlControllerGrants, &mut bytes)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                read_remote_control_controller_grants_snapshot(loaded)
+                    .unwrap()
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
         drop(persistence_worker);
         std::fs::remove_dir_all(persistence_directory).unwrap();
     }

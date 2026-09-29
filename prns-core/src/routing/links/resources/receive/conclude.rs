@@ -1,5 +1,6 @@
 //! The conclusion: the sealed transfer opens, verifies against the advertised hash, proves back to the sender, and delivers, with failures surfaced by name. The host-side decompression seam parks here.
 
+use super::split_delivery::{deliver_split_segment, SplitDeliveryFailure, VerifiedSplitSegment};
 use crate::engine::Journaled;
 use crate::engine::{CommandId, SendRequestFailure};
 use crate::engine::{DeliveryEvidence, PacketReceiptDelivered, Settlement};
@@ -18,7 +19,7 @@ use crate::routing::links::request::{
 use crate::routing::links::resources::assemble_incoming::{
     open_transfer, verify_and_prove, OpenTransferError,
 };
-use crate::routing::links::resources::assembly::AssemblyProgress;
+use crate::routing::links::resources::assembly::{AssemblyBytes, AssemblyProgress, SegmentFit};
 use crate::routing::links::resources::control::{write_proof_plaintext, PROOF_PLAINTEXT_LEN};
 #[cfg(feature = "resource-work-offload")]
 use crate::routing::links::resources::streamed_open::ResourceOpenLane;
@@ -28,7 +29,7 @@ use crate::routing::links::resources::streamed_open::{
 use crate::routing::links::resources::table::{IncomingResourceState, IncomingResourceStatus};
 use crate::routing::links::resources::{
     ResourceCompression, ResourceCorrelation, ResourceFailureCause, ResourceHash, ResourceProof,
-    DECOMPRESSION_GRACE_MS, OPEN_VERDICT_GRACE_MS,
+    ResourceSegment, DECOMPRESSION_GRACE_MS, OPEN_VERDICT_GRACE_MS,
 };
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
@@ -37,18 +38,51 @@ use crate::units::RttMillis;
 use crate::wire::{PacketType, WireContext};
 
 impl<S: StorageLayout> EngineState<S> {
+    fn whole_response_lacks_delivery_claim(
+        &self,
+        link_id: &LinkId,
+        state: &IncomingResourceState,
+    ) -> bool {
+        if state.total_segments != 1 {
+            return false;
+        }
+        match state.correlation {
+            ResourceCorrelation::Response(id) => {
+                !self.receipts.has_pending_request(link_id, id)
+                    || self.whole_response_is_superseded(
+                        link_id,
+                        state.total_segments,
+                        state.correlation,
+                    )
+            }
+            ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => false,
+        }
+    }
+
     /// RNS 1.4.2 `Resource.assemble` + `prove`
+    #[inline(never)]
     pub(crate) fn conclude_resource(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
         now: InstantMillis,
+        fill_random: &mut impl FnMut(&mut [u8]),
         sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
     ) -> ConcludeResourceOutcome {
         let Some(index) = self.incoming_resources.lookup(link_id, hash) else {
             return ConcludeResourceOutcome::NotTracked;
         };
         let state = *self.incoming_resources.state(index);
+        if state.total_segments > 1
+            && self.split_segment_fit(link_id, &state) == SegmentFit::Unexpected
+        {
+            return self.fail_incoming_resource(
+                link_id,
+                hash,
+                ResourceFailureCause::TransferCorrupt,
+                sink,
+            );
+        }
         let Some(LinkPhase::Active {
             key,
             mtu,
@@ -178,10 +212,8 @@ impl<S: StorageLayout> EngineState<S> {
         }
 
         let multi_segment = state.total_segments > 1;
-        let original_hash = self
-            .incoming_assemblies
-            .original_hash(link_id)
-            .unwrap_or(*hash);
+        let original_hash = state.original_hash;
+        let superseded = self.whole_response_lacks_delivery_claim(link_id, &state);
 
         let delivery = {
             let (transfer, streamed) = self
@@ -218,14 +250,35 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 }
             };
+            let verified = verified.and_then(|verified| {
+                if multi_segment
+                    && !self.incoming_assemblies.fits_stream_size(
+                        link_id,
+                        ResourceSegment {
+                            index: state.segment_index,
+                            total_segments: state.total_segments,
+                            total_data_bytes: state.uncompressed_data_bytes,
+                        },
+                        verified.stream_byte_len,
+                    )
+                {
+                    Err(ResourceFailureCause::TransferCorrupt)
+                } else {
+                    Ok(verified)
+                }
+            });
             match verified {
-                Err(cause) => Err(cause),
+                Err(cause) => Err(SplitDeliveryFailure::Resource(cause)),
+                Ok(_) if superseded => {
+                    self.retire_incoming_resource(link_id, hash);
+                    self.reject_offered_resource(link_id, hash, now, fill_random, sink);
+                    return ConcludeResourceOutcome::SupersededResponse;
+                }
                 Ok(verified) => {
-                    emit_proof(verified.prove, fire_on, sink);
-                    self.links.note_outbound(link_id, now);
-                    if multi_segment {
-                        deliver_split_segment(
+                    let delivered = if multi_segment {
+                        let delivered = deliver_split_segment(
                             &self.receipts,
+                            &self.incoming_assemblies,
                             VerifiedSplitSegment {
                                 link_id,
                                 original_hash,
@@ -237,7 +290,14 @@ impl<S: StorageLayout> EngineState<S> {
                             },
                             sink,
                         );
+                        if !matches!(&delivered, Err(SplitDeliveryFailure::ResponseTooLarge)) {
+                            emit_proof(verified.prove, fire_on, sink);
+                            self.links.note_outbound(link_id, now);
+                        }
+                        delivered
                     } else {
+                        emit_proof(verified.prove, fire_on, sink);
+                        self.links.note_outbound(link_id, now);
                         let request_permitted = request_is_permitted(
                             &self.request_handlers,
                             state.correlation,
@@ -261,13 +321,24 @@ impl<S: StorageLayout> EngineState<S> {
                             now,
                             sink,
                         );
-                    }
-                    Ok(verified.stream_byte_len)
+                        Ok(verified.data.len() as u64)
+                    };
+                    delivered.map(|value| AssemblyBytes {
+                        stream: verified.stream_byte_len,
+                        value,
+                    })
                 }
             }
         };
         match delivery {
-            Err(cause) => self.fail_incoming_resource(link_id, hash, cause, sink),
+            Err(SplitDeliveryFailure::Resource(cause)) => {
+                self.fail_incoming_resource(link_id, hash, cause, sink)
+            }
+            Err(SplitDeliveryFailure::ResponseTooLarge) => {
+                self.retire_incoming_resource(link_id, hash);
+                self.refuse_split_response_value(link_id, hash, &state, now, fill_random, sink);
+                ConcludeResourceOutcome::ResponseTooLarge
+            }
             Ok(segment_bytes) => {
                 self.retire_incoming_resource(link_id, hash);
                 if multi_segment {
@@ -275,6 +346,9 @@ impl<S: StorageLayout> EngineState<S> {
                         link_id,
                         ConcludedSegment {
                             original_hash,
+                            segment_index: state.segment_index,
+                            total_segments: state.total_segments,
+                            total_data_bytes: state.uncompressed_data_bytes,
                             correlation: state.correlation,
                             segment_bytes,
                         },
@@ -297,46 +371,86 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
+        let original_hash = segment.original_hash;
+        match self.settle_split_assembly(link_id, segment, link_rtt, now) {
+            SplitAssemblyConclusion::NoDelivery => {}
+            SplitAssemblyConclusion::Resource { total_size_bytes } => {
+                sink(EngineReaction::Journaled(Journaled::ResourceAssembled {
+                    link_id: *link_id,
+                    original_hash,
+                    total_size_bytes,
+                }));
+            }
+            SplitAssemblyConclusion::Response { id, delivered } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendRequest(Ok(delivered)),
+                }));
+            }
+        }
+    }
+
+    fn settle_split_assembly(
+        &mut self,
+        link_id: &LinkId,
+        segment: ConcludedSegment,
+        link_rtt: RttMillis,
+        now: InstantMillis,
+    ) -> SplitAssemblyConclusion {
         let ConcludedSegment {
             original_hash,
+            segment_index,
+            total_segments,
+            total_data_bytes,
             correlation,
             segment_bytes,
         } = segment;
-        match self.incoming_assemblies.advance(link_id, segment_bytes) {
+        match self.incoming_assemblies.advance(
+            link_id,
+            &original_hash,
+            ResourceSegment {
+                index: segment_index,
+                total_segments,
+                total_data_bytes,
+            },
+            segment_bytes,
+            correlation.into(),
+        ) {
             Some(AssemblyProgress::Complete { total_size_bytes }) => {
                 let settled = match correlation {
-                    ResourceCorrelation::Response(id) => self.receipts.settle_by_request_id(id),
+                    ResourceCorrelation::Response(id) => {
+                        self.receipts.settle_by_request_id(link_id, id)
+                    }
                     ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => None,
                 };
+                self.incoming_assemblies.clear(link_id);
                 match settled {
-                    Some(proven) => sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    Some(proven) => SplitAssemblyConclusion::Response {
                         id: proven.command_id,
-                        settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
+                        delivered: PacketReceiptDelivered {
                             rtt: RttMillis::measured_between(proven.sent_at, now),
                             evidence: DeliveryEvidence::Response,
-                        })),
-                    })),
-                    None => sink(EngineReaction::Journaled(Journaled::ResourceAssembled {
-                        link_id: *link_id,
-                        original_hash,
-                        total_size_bytes,
-                    })),
+                        },
+                    },
+                    None => SplitAssemblyConclusion::Resource { total_size_bytes },
                 }
-                self.incoming_assemblies.clear(link_id);
             }
             Some(AssemblyProgress::Assembling) => {
                 if let ResourceCorrelation::Response(id) = correlation {
                     self.receipts.arm_request_timeout(
+                        link_id,
                         id,
                         InstantMillis(now.0.saturating_add(request_response_timeout_ms(link_rtt))),
                     );
                 }
+                SplitAssemblyConclusion::NoDelivery
             }
-            None => {}
+            None => SplitAssemblyConclusion::NoDelivery,
         }
     }
 
-    /// The one exit every dead incoming transfer leaves through: the slot retires (window and rate bequeathed to the link), the failure event carries the cause, and a response transfer's claimed request settles with it.
+    /// Retire a failed transfer and its assembly, report the Resource failure,
+    /// and fail any request claimed by that transfer.
     pub(crate) fn fail_incoming_resource<Work>(
         &mut self,
         link_id: &LinkId,
@@ -344,8 +458,7 @@ impl<S: StorageLayout> EngineState<S> {
         cause: ResourceFailureCause,
         sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> ConcludeResourceOutcome {
-        let settled_request = self.settle_response_claim(link_id, hash);
-        self.retire_incoming_resource(link_id, hash);
+        let settled_request = self.abandon_incoming_resource(link_id, hash);
         sink(EngineReaction::Journaled(Journaled::ResourceFailed {
             link_id: *link_id,
             hash: *hash,
@@ -360,21 +473,59 @@ impl<S: StorageLayout> EngineState<S> {
         ConcludeResourceOutcome::Failed(cause)
     }
 
-    /// The receipts half of a response transfer's death: RNS 1.4.2 concludes any non-`COMPLETE` response resource through `request_timed_out`, so the pending request settles with the transfer.
-    /// The caller journals the failure settlement for the returned command.
-    pub(super) fn settle_response_claim(
+    /// Release a failed transfer and its split assembly. The caller journals the
+    /// failure settlement for the returned request command, if one was claimed.
+    pub(super) fn abandon_incoming_resource(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
     ) -> Option<CommandId> {
         let index = self.incoming_resources.lookup(link_id, hash)?;
-        let ResourceCorrelation::Response(request_id) =
-            self.incoming_resources.state(index).correlation
-        else {
+        let state = *self.incoming_resources.state(index);
+        let settled_request = self.settle_failed_resource_claim(link_id, &state);
+        self.retire_incoming_resource(link_id, hash);
+        settled_request
+    }
+
+    fn settle_failed_resource_claim(
+        &mut self,
+        link_id: &LinkId,
+        state: &IncomingResourceState,
+    ) -> Option<CommandId> {
+        if self.whole_response_is_superseded(link_id, state.total_segments, state.correlation) {
             return None;
-        };
-        let proven = self.receipts.settle_by_request_id(request_id)?;
-        Some(proven.command_id)
+        }
+        if state.total_segments > 1 {
+            if self.split_segment_fit(link_id, state) == SegmentFit::Expected {
+                self.incoming_assemblies.clear(link_id);
+            } else if self.incoming_assemblies.correlation(link_id)
+                == Some(state.correlation.into())
+            {
+                // A replacement chain still owns this request. The stale
+                // transfer must not settle it or alter its current deadline.
+                return None;
+            }
+        }
+        match state.correlation {
+            ResourceCorrelation::Response(id) => self
+                .receipts
+                .settle_by_request_id(link_id, id)
+                .map(|proven| proven.command_id),
+            ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => None,
+        }
+    }
+
+    fn split_segment_fit(&self, link_id: &LinkId, state: &IncomingResourceState) -> SegmentFit {
+        self.incoming_assemblies.fit(
+            link_id,
+            &state.original_hash,
+            ResourceSegment {
+                index: state.segment_index,
+                total_segments: state.total_segments,
+                total_data_bytes: state.uncompressed_data_bytes,
+            },
+            state.correlation.into(),
+        )
     }
 
     /// Verified exactly like an uncompressed assembly.
@@ -384,6 +535,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         completed: ResourceDecompressionCompleted<'_>,
         now: InstantMillis,
+        fill_random: &mut impl FnMut(&mut [u8]),
         sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> crate::engine::WakeSchedules {
         let ResourceDecompressionCompleted {
@@ -399,6 +551,19 @@ impl<S: StorageLayout> EngineState<S> {
         if state.status != IncomingResourceStatus::AwaitingDecompression {
             return wake_schedule_changes;
         }
+        if state.total_segments > 1
+            && self.split_segment_fit(&link_id, &state) == SegmentFit::Unexpected
+        {
+            self.fail_incoming_resource(
+                &link_id,
+                &hash,
+                ResourceFailureCause::TransferCorrupt,
+                sink,
+            );
+            wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+            wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+            return wake_schedule_changes;
+        }
         self.retire_incoming_resource(&link_id, &hash);
         wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
 
@@ -412,7 +577,7 @@ impl<S: StorageLayout> EngineState<S> {
             self.fail_retired_incoming_resource(
                 &link_id,
                 &hash,
-                state.correlation,
+                &state,
                 ResourceFailureCause::DecompressionFailed,
                 sink,
             );
@@ -431,7 +596,7 @@ impl<S: StorageLayout> EngineState<S> {
             self.fail_retired_incoming_resource(
                 &link_id,
                 &hash,
-                state.correlation,
+                &state,
                 ResourceFailureCause::LinkVanished,
                 sink,
             );
@@ -448,29 +613,55 @@ impl<S: StorageLayout> EngineState<S> {
             self.fail_retired_incoming_resource(
                 &link_id,
                 &hash,
-                state.correlation,
+                &state,
                 ResourceFailureCause::TransferCorrupt,
                 sink,
             );
             wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             return wake_schedule_changes;
         };
+        if is_split
+            && !self.incoming_assemblies.fits_stream_size(
+                &link_id,
+                ResourceSegment {
+                    index: state.segment_index,
+                    total_segments: state.total_segments,
+                    total_data_bytes: state.uncompressed_data_bytes,
+                },
+                plaintext.len() as u64,
+            )
+        {
+            self.fail_retired_incoming_resource(
+                &link_id,
+                &hash,
+                &state,
+                ResourceFailureCause::TransferCorrupt,
+                sink,
+            );
+            wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+            return wake_schedule_changes;
+        }
         let Ok((metadata, data)) = split_metadata_block(&state, plaintext) else {
             self.fail_retired_incoming_resource(
                 &link_id,
                 &hash,
-                state.correlation,
+                &state,
                 ResourceFailureCause::MetadataOverrun,
                 sink,
             );
             wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             return wake_schedule_changes;
         };
+        if self.whole_response_lacks_delivery_claim(&link_id, &state) {
+            self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
+            wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+            return wake_schedule_changes;
+        }
         let Some(prove) = proof_emission(&link_id, &hash, &proof, mtu) else {
             self.fail_retired_incoming_resource(
                 &link_id,
                 &hash,
-                state.correlation,
+                &state,
                 ResourceFailureCause::ProofUnsendable,
                 sink,
             );
@@ -478,17 +669,11 @@ impl<S: StorageLayout> EngineState<S> {
             return wake_schedule_changes;
         };
 
-        emit_proof(prove, fire_on, sink);
-        self.links.note_outbound(&link_id, now);
-        wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
-
         if is_split {
-            let original_hash = self
-                .incoming_assemblies
-                .original_hash(&link_id)
-                .unwrap_or(hash);
-            deliver_split_segment(
+            let original_hash = state.original_hash;
+            let delivered = deliver_split_segment(
                 &self.receipts,
+                &self.incoming_assemblies,
                 VerifiedSplitSegment {
                     link_id: &link_id,
                     original_hash,
@@ -500,18 +685,50 @@ impl<S: StorageLayout> EngineState<S> {
                 },
                 sink,
             );
+            if !matches!(&delivered, Err(SplitDeliveryFailure::ResponseTooLarge)) {
+                emit_proof(prove, fire_on, sink);
+                self.links.note_outbound(&link_id, now);
+            }
+            let value = match delivered {
+                Ok(value) => value,
+                Err(failure) => {
+                    match failure {
+                        SplitDeliveryFailure::Resource(cause) => self
+                            .fail_retired_incoming_resource(&link_id, &hash, &state, cause, sink),
+                        SplitDeliveryFailure::ResponseTooLarge => self.refuse_split_response_value(
+                            &link_id,
+                            &hash,
+                            &state,
+                            now,
+                            fill_random,
+                            sink,
+                        ),
+                    }
+                    wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                    wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+                    return wake_schedule_changes;
+                }
+            };
             self.advance_split_assembly(
                 &link_id,
                 ConcludedSegment {
                     original_hash,
+                    segment_index: state.segment_index,
+                    total_segments: state.total_segments,
+                    total_data_bytes: state.uncompressed_data_bytes,
                     correlation: state.correlation,
-                    segment_bytes: plaintext.len() as u64,
+                    segment_bytes: AssemblyBytes {
+                        stream: plaintext.len() as u64,
+                        value,
+                    },
                 },
                 link_rtt,
                 now,
                 sink,
             );
         } else {
+            emit_proof(prove, fire_on, sink);
+            self.links.note_outbound(&link_id, now);
             let request_permitted = request_is_permitted(
                 &self.request_handlers,
                 state.correlation,
@@ -536,31 +753,51 @@ impl<S: StorageLayout> EngineState<S> {
                 sink,
             );
         }
+        wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
         wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
         wake_schedule_changes
     }
 
-    /// [`Self::fail_incoming_resource`] for a slot already retired (the inflate seam retires before it judges), so the claim settles off the caller's copied correlation.
+    fn refuse_split_response_value<Work>(
+        &mut self,
+        link_id: &LinkId,
+        hash: &ResourceHash,
+        state: &IncomingResourceState,
+        now: InstantMillis,
+        fill_random: &mut impl FnMut(&mut [u8]),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
+    ) {
+        let settled = self.settle_failed_resource_claim(link_id, state);
+        self.reject_offered_resource(link_id, hash, now, fill_random, sink);
+        if let Some(id) = settled {
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id,
+                settlement: Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)),
+            }));
+        }
+    }
+
+    /// [`Self::fail_incoming_resource`] for the inflate seam's already-retired
+    /// slot. Its state still owns the claim and split-assembly cleanup.
     fn fail_retired_incoming_resource<Work>(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
-        correlation: ResourceCorrelation,
+        state: &IncomingResourceState,
         cause: ResourceFailureCause,
         sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
+        let settled_request = self.settle_failed_resource_claim(link_id, state);
         sink(EngineReaction::Journaled(Journaled::ResourceFailed {
             link_id: *link_id,
             hash: *hash,
             cause,
         }));
-        if let ResourceCorrelation::Response(request_id) = correlation {
-            if let Some(proven) = self.receipts.settle_by_request_id(request_id) {
-                sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                    id: proven.command_id,
-                    settlement: Settlement::SendRequest(Err(SendRequestFailure::from(cause))),
-                }));
-            }
+        if let Some(command_id) = settled_request {
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id: command_id,
+                settlement: Settlement::SendRequest(Err(SendRequestFailure::from(cause))),
+            }));
         }
     }
 }
@@ -598,11 +835,15 @@ struct AssembledSingleSegment<'a> {
     data: &'a [u8],
 }
 
-/// Stock RNS resource responses carry the same msgpack `[request_id, data]` envelope as packet
-/// responses. Accept data that is not a valid envelope as the former Prns raw-body form for wire
-/// continuity, but a valid envelope must name the request advertised by the resource.
-fn response_application_data(request_id: RequestId, data: &[u8]) -> Option<&[u8]> {
-    if data.first() != Some(&0x92) {
+/// Metadata-bearing RNS responses are literal file bytes, never envelopes.
+/// Other responses carry `[request_id, data]`, with the former Prns raw-body
+/// form accepted for wire continuity. Valid envelopes must name the advertised request.
+pub(super) fn response_application_data<'a>(
+    request_id: RequestId,
+    metadata: Option<&[u8]>,
+    data: &'a [u8],
+) -> Option<&'a [u8]> {
+    if metadata.is_some() || data.first() != Some(&0x92) {
         return Some(data);
     }
     match parse_response_plaintext(data) {
@@ -611,12 +852,14 @@ fn response_application_data(request_id: RequestId, data: &[u8]) -> Option<&[u8]
     }
 }
 
-/// Correlated deliveries (a request or a settled response) carry no metadata lane because the reference's request/response machinery never reads it. A block on those transfers therefore strips and drops.
+/// Correlated deliveries expose the body, not the metadata block. Metadata still
+/// distinguishes raw file responses from enveloped response values.
+#[inline(never)]
 fn deliver_single_segment<C: ReceiptTable, Work>(
     receipts: &mut Receipts<C>,
     segment: AssembledSingleSegment<'_>,
     now: InstantMillis,
-    sink: &mut impl FnMut(EngineReaction<'_, Work>),
+    sink: &mut dyn FnMut(EngineReaction<'_, Work>),
 ) {
     let AssembledSingleSegment {
         destination,
@@ -632,24 +875,38 @@ fn deliver_single_segment<C: ReceiptTable, Work>(
 
     match correlation {
         ResourceCorrelation::Response(id) => {
-            let Some(data) = response_application_data(id, data) else {
-                return;
-            };
-            if let Some(proven) = receipts.settle_by_request_id(id) {
-                sink(EngineReaction::Journaled(Journaled::ResponseReceived {
-                    command_id: proven.command_id,
-                    link_id: *link_id,
-                    request_id: id,
-                    data,
-                }));
-                sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                    id: proven.command_id,
-                    settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
+            let response = response_application_data(id, metadata, data)
+                .ok_or(SendRequestFailure::ResponseTransferFailed(
+                    ResourceFailureCause::TransferCorrupt,
+                ))
+                .and_then(|data| {
+                    if receipts
+                        .pending_request_response_limit(link_id, id)
+                        .is_some_and(|limit| !limit.allows(data.len() as u64))
+                    {
+                        Err(SendRequestFailure::ResponseTooLarge)
+                    } else {
+                        Ok(data)
+                    }
+                });
+            if let Some(proven) = receipts.settle_by_request_id(link_id, id) {
+                let result = response.map(|data| {
+                    sink(EngineReaction::Journaled(Journaled::ResponseReceived {
+                        command_id: proven.command_id,
+                        link_id: *link_id,
+                        request_id: id,
+                        data,
+                    }));
+                    PacketReceiptDelivered {
                         rtt: RttMillis::measured_between(proven.sent_at, now),
                         evidence: DeliveryEvidence::Response,
-                    })),
+                    }
+                });
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: proven.command_id,
+                    settlement: Settlement::SendRequest(result),
                 }));
-            } else {
+            } else if let Ok(data) = response {
                 sink(EngineReaction::Journaled(Journaled::ResourceReceived {
                     link_id: *link_id,
                     hash: *hash,
@@ -705,78 +962,24 @@ fn request_is_permitted<C: crate::routing::request_handlers::RequestHandlerTable
     handlers.permits(&destination, &parsed.path_hash, requester.as_ref())
 }
 
+enum SplitAssemblyConclusion {
+    NoDelivery,
+    Resource {
+        total_size_bytes: u64,
+    },
+    Response {
+        id: CommandId,
+        delivered: PacketReceiptDelivered,
+    },
+}
+
 struct ConcludedSegment {
     original_hash: ResourceHash,
-    correlation: ResourceCorrelation,
-    segment_bytes: u64,
-}
-
-struct VerifiedSplitSegment<'a> {
-    link_id: &'a LinkId,
-    original_hash: ResourceHash,
-    correlation: ResourceCorrelation,
     segment_index: u64,
     total_segments: u64,
-    metadata: Option<&'a [u8]>,
-    data: &'a [u8],
-}
-
-/// The split mirror of [`deliver_single_segment`]: a response chain's segments answer their pending request, with the metadata lane stripped and dropped the same way; everything else journals a plain segment.
-fn deliver_split_segment<C: ReceiptTable, Work>(
-    receipts: &Receipts<C>,
-    segment: VerifiedSplitSegment<'_>,
-    sink: &mut impl FnMut(EngineReaction<'_, Work>),
-) {
-    let VerifiedSplitSegment {
-        link_id,
-        original_hash,
-        correlation,
-        segment_index,
-        total_segments,
-        metadata,
-        data,
-    } = segment;
-
-    let answers = match correlation {
-        ResourceCorrelation::Response(id) => receipts
-            .pending_request_command(id)
-            .map(|command_id| (command_id, id)),
-        ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => None,
-    };
-    match answers {
-        Some((command_id, request_id)) => {
-            let data = if segment_index == 1 {
-                let Some(data) = response_application_data(request_id, data) else {
-                    return;
-                };
-                data
-            } else {
-                data
-            };
-            sink(EngineReaction::Journaled(
-                Journaled::ResponseSegmentReceived {
-                    command_id,
-                    link_id: *link_id,
-                    request_id,
-                    segment_index,
-                    total_segments,
-                    data,
-                },
-            ));
-        }
-        None => {
-            sink(EngineReaction::Journaled(
-                Journaled::ResourceSegmentReceived {
-                    link_id: *link_id,
-                    original_hash,
-                    segment_index,
-                    total_segments,
-                    metadata,
-                    data,
-                },
-            ));
-        }
-    }
+    total_data_bytes: u64,
+    correlation: ResourceCorrelation,
+    segment_bytes: AssemblyBytes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -788,6 +991,8 @@ pub enum ConcludeResourceOutcome {
     /// A pool worker still holds the streamed open; the span verdict re-concludes, under its own grace deadline.
     AwaitingOpenVerdict,
     Delivered,
+    SupersededResponse,
+    ResponseTooLarge,
     Failed(ResourceFailureCause),
 }
 
@@ -828,6 +1033,9 @@ fn prove_split<'t>(
     link_id: &LinkId,
     mtu: usize,
 ) -> Result<VerifiedSegment<'t>, ResourceFailureCause> {
+    if state.total_segments == 1 && stream.len() as u64 != state.uncompressed_data_bytes {
+        return Err(ResourceFailureCause::TransferCorrupt);
+    }
     let Some(prove) = proof_emission(link_id, hash, &proof, mtu) else {
         return Err(ResourceFailureCause::ProofUnsendable);
     };
@@ -952,9 +1160,14 @@ mod seam_tests {
             },
         );
         while let Some(completed) = ready_opens.pop_front() {
-            engine.resume_resource_open(completed, InstantMillis(at), &mut |reaction| {
-                capture_inflate_reaction(reaction, &mut ready_opens, &mut inflate);
-            });
+            engine.resume_resource_open(
+                completed,
+                InstantMillis(at),
+                &mut |bytes| bytes.fill(0xC9),
+                &mut |reaction| {
+                    capture_inflate_reaction(reaction, &mut ready_opens, &mut inflate);
+                },
+            );
         }
         inflate
     }
@@ -967,17 +1180,17 @@ mod seam_tests {
         let mut packed = [0u8; 64];
         let len = write_response_plaintext(&request_id, b"answer", &mut packed).unwrap();
         assert_eq!(
-            response_application_data(request_id, &packed[..len]),
+            response_application_data(request_id, None, &packed[..len]),
             Some(&b"answer"[..])
         );
         assert_eq!(
-            response_application_data(RequestId([0x42; 16]), &packed[..len]),
+            response_application_data(RequestId([0x42; 16]), None, &packed[..len]),
             None,
             "a stock envelope cannot settle another request",
         );
         let former_raw_body = b"\x92not-a-valid-response-envelope";
         assert_eq!(
-            response_application_data(request_id, former_raw_body),
+            response_application_data(request_id, None, former_raw_body),
             Some(&former_raw_body[..]),
             "a legacy raw body remains data even when its first byte resembles msgpack",
         );
@@ -1088,6 +1301,7 @@ mod seam_tests {
                 plaintext: &plaintext,
             },
             InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
@@ -1169,6 +1383,7 @@ mod seam_tests {
                 plaintext: &composite,
             },
             InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
@@ -1280,6 +1495,7 @@ mod seam_tests {
                 plaintext: &corrupted,
             },
             InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Journaled(Journaled::ResourceFailed { hash, .. }) => {
                     failed.push(hash);
@@ -1299,6 +1515,7 @@ mod seam_tests {
                 plaintext: &plaintext,
             },
             InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 panic!("a retired transfer answers nothing");
             },
@@ -1317,6 +1534,7 @@ mod seam_tests {
                 plaintext: b"anything",
             },
             InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| touched = true,
         );
         assert!(!touched, "an unknown transfer answers nothing");
@@ -1360,7 +1578,9 @@ mod seam_tests {
                 }
             },
         );
-        assert!(requester.receipts.has_pending_request(request_id));
+        assert!(requester
+            .receipts
+            .has_pending_request(&link_id(), request_id));
 
         let mut responder = engine_with_active_link();
         let response = case1_plaintext();
@@ -1407,6 +1627,7 @@ mod seam_tests {
                 plaintext: &response,
             },
             InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { .. }) => proof_frames += 1,
                 EngineReaction::Journaled(Journaled::ResponseReceived {
@@ -1428,7 +1649,9 @@ mod seam_tests {
             settled_ok,
             "the inflated response settles the pending request it answers",
         );
-        assert!(!requester.receipts.has_pending_request(request_id));
+        assert!(!requester
+            .receipts
+            .has_pending_request(&link_id(), request_id));
     }
 
     #[test]
@@ -1500,6 +1723,7 @@ mod seam_tests {
                 plaintext: &packed_request,
             },
             InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Journaled(Journaled::RequestReceived {
                     destination,
@@ -1571,6 +1795,7 @@ mod seam_tests {
                 plaintext: data,
             },
             InstantMillis(at + 400),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     proof_frame = filled_frame(fill);
@@ -1792,7 +2017,9 @@ mod seam_tests {
             last.assembled.is_empty(),
             "the settle replaces the ResourceAssembled journal for a response chain",
         );
-        assert!(!requester.receipts.has_pending_request(request_id));
+        assert!(!requester
+            .receipts
+            .has_pending_request(&link_id(), request_id));
         assert!(requester.incoming_resources.is_empty());
         assert!(requester
             .incoming_assemblies
@@ -1906,7 +2133,9 @@ mod seam_tests {
                 ))),
             ),
         ));
-        assert!(!requester.receipts.has_pending_request(request_id));
+        assert!(!requester
+            .receipts
+            .has_pending_request(&link_id(), request_id));
     }
 
     #[test]
@@ -2033,6 +2262,7 @@ mod seam_tests {
                     plaintext: data,
                 },
                 InstantMillis(at + 400),
+                &mut |bytes| bytes.fill(0xC9),
                 &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                     EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                         proof_frame = filled_frame(fill);
@@ -2068,7 +2298,9 @@ mod seam_tests {
                 at + 500,
             );
         }
-        assert!(!requester.receipts.has_pending_request(request_id));
+        assert!(!requester
+            .receipts
+            .has_pending_request(&link_id(), request_id));
         assert!(requester.incoming_resources.is_empty());
     }
 

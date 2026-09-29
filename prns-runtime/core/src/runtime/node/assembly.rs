@@ -65,6 +65,12 @@ struct AvailableRemoteControl {
 }
 
 impl AssembledRemoteControl {
+    /// Disable authorization after an inconsistent committed activation. Recovery requires
+    /// constructing a fresh service and restoring its durable authorization snapshots.
+    pub fn require_authorization_recovery(&mut self) {
+        self.available = None;
+    }
+
     #[must_use]
     pub const fn is_available(&self) -> bool {
         self.available.is_some()
@@ -936,6 +942,60 @@ mod tests {
                 }),
             Some(ByteLimit::Maximum(1_024)),
         );
+    }
+
+    #[test]
+    fn authorization_recovery_disables_service_without_emitting_empty_snapshots() {
+        let mut engine = EngineState::<Storage>::default();
+        let mut remote =
+            configure_remote_control_service(&mut engine, remote_control_service()).unwrap();
+        let destination = remote.target_endpoint().unwrap().destination_hash();
+        let path = remote.request_endpoint_id().unwrap();
+        let grant = remote_control_grant(0x41);
+        let access = || remote_control_target_access(0x43);
+        remote.set_controller_grant(grant).unwrap();
+        remote.set_target_access(access()).unwrap();
+        for _ in 0..2 {
+            remote.require_authorization_recovery();
+            assert!(!remote.is_available());
+            assert!(remote.identities().is_none());
+            assert!(remote.target_endpoint().is_none());
+            assert!(remote.request_endpoint_id().is_none());
+            assert!(remote.self_announcement().is_none());
+            assert!(remote.pairing_availability_destination().is_none());
+            assert!(remote.controller_grants().is_none());
+            assert!(remote.target_accesses().is_none());
+            assert_eq!(
+                remote.available_requests(),
+                RemoteControlRequestSet::empty()
+            );
+            assert!(remote.request_configuration(destination, path).is_none());
+            assert!(remote
+                .request_configuration_mut(destination, path)
+                .is_none());
+            assert_eq!(remote.write_controller_grants_snapshot(&mut []), Ok(None));
+            assert_eq!(remote.write_target_accesses_snapshot(&mut []), Ok(None));
+            assert_eq!(
+                remote.set_controller_grant(grant),
+                Err(SetRemoteControlControllerGrantServiceError::Unavailable)
+            );
+            assert_eq!(
+                remote.revoke_controller(grant.controller()),
+                Err(RevokeRemoteControlControllerServiceError::Unavailable)
+            );
+            assert_eq!(
+                remote.set_target_access(access()),
+                Err(SetRemoteControlTargetAccessServiceError::Unavailable)
+            );
+            assert_eq!(
+                remote.restore_controller_grants([grant]),
+                Err(RemoteControlAuthorizationRestoreError::Unavailable)
+            );
+            assert_eq!(
+                remote.restore_target_accesses([access()]),
+                Err(RemoteControlAuthorizationRestoreError::Unavailable)
+            );
+        }
     }
 
     #[test]

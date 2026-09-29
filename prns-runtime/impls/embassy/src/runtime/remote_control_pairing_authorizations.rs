@@ -216,13 +216,6 @@ impl AppliedRemoteControlControllerGrantActivation {
     pub(super) fn revoke_outcome(&self) -> Option<RevokeRemoteControlControllerOutcome> {
         controller_revoke_outcome(self.mutation)
     }
-
-    pub(super) fn roll_back(
-        &self,
-        remote_control: &mut AssembledRemoteControl,
-    ) -> Result<(), RemoteControlPairingAuthorizationTransactionFailure> {
-        reverse_authorization(remote_control, self.mutation)
-    }
 }
 
 fn pending_controller_grant_authorization(

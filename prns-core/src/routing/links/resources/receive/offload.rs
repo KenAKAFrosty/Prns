@@ -64,6 +64,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         completed: WholeResourceOpenCompleted<'_>,
         now: InstantMillis,
+        fill_random: &mut impl FnMut(&mut [u8]),
         sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
     ) -> WholeResourceOpenLanding {
         let reservation = completed.reservation;
@@ -103,7 +104,13 @@ impl<S: StorageLayout> EngineState<S> {
                     verification: ExternalOpenVerification::Rehash,
                 };
                 self.incoming_resources.state_mut(index).open_generation = None;
-                self.conclude_resource(&reservation.link_id, &reservation.hash, now, sink);
+                self.conclude_resource(
+                    &reservation.link_id,
+                    &reservation.hash,
+                    now,
+                    fill_random,
+                    sink,
+                );
             }
             WholeResourceOpenOutcome::OpenedAndDigested {
                 plaintext,
@@ -127,7 +134,13 @@ impl<S: StorageLayout> EngineState<S> {
                     verification: ExternalOpenVerification::Verified(proof),
                 };
                 self.incoming_resources.state_mut(index).open_generation = None;
-                self.conclude_resource(&reservation.link_id, &reservation.hash, now, sink);
+                self.conclude_resource(
+                    &reservation.link_id,
+                    &reservation.hash,
+                    now,
+                    fill_random,
+                    sink,
+                );
             }
             WholeResourceOpenOutcome::Refused => {
                 self.fail_incoming_resource(
@@ -151,7 +164,13 @@ impl<S: StorageLayout> EngineState<S> {
                     &mut self.resource_open_lane,
                     crate::routing::links::resources::streamed_open::ResourceOpenLane::EngineDirected,
                 );
-                self.conclude_resource(&reservation.link_id, &reservation.hash, now, sink);
+                self.conclude_resource(
+                    &reservation.link_id,
+                    &reservation.hash,
+                    now,
+                    fill_random,
+                    sink,
+                );
                 self.resource_open_lane = lane;
             }
         }
@@ -240,6 +259,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         completed: ResourceOpenCompleted<'_>,
         now: InstantMillis,
+        fill_random: &mut impl FnMut(&mut [u8]),
         sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
     ) -> WakeSchedules {
         let ResourceOpenCompleted {
@@ -344,7 +364,7 @@ impl<S: StorageLayout> EngineState<S> {
                 OpenProgress::Parked(open) if open.caught_up() || !competing_transfers
             );
         if conclude_here {
-            self.conclude_resource(&link_id, &hash, now, sink);
+            self.conclude_resource(&link_id, &hash, now, fill_random, sink);
             wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
         } else {
             self.emit_resource_open(&link_id, &hash, sink);
@@ -483,6 +503,111 @@ mod tests {
 
     #[cfg(feature = "resource-work-offload")]
     #[test]
+    fn external_split_refusal_uses_fresh_entropy_and_retires_both_peers() {
+        use crate::engine::{RespondFailure, SendRequestFailure, SendResourceFailure};
+        use crate::routing::links::resources::ResourceSegment;
+        use crate::units::ByteLimit;
+        use crate::wire::{WireContext, WirePacketHeader};
+
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        receiver.resource_open_lane = ResourceOpenLane::ExternalWhole;
+        let request = track_pending_request_with_limit(
+            &mut receiver,
+            CommandId(42),
+            1_800,
+            20_000,
+            ByteLimit::Maximum(0),
+        );
+        let advertisement = advertise_response_segment_from(
+            &mut sender,
+            CommandId(7),
+            request,
+            &[0xA7; 128],
+            None,
+            ResourceSegment {
+                index: 1,
+                total_segments: 2,
+                total_data_bytes: 256,
+            },
+            1_900,
+        );
+        let pull = feed(&mut receiver, &advertisement, 2_000);
+        let served = feed(&mut sender, &pull.frames[0].1, 2_100);
+        let mut jobs = served
+            .frames
+            .iter()
+            .filter_map(|(_, frame)| feed_deferring_whole_open(&mut receiver, frame, 2_200));
+        let job = jobs.next().unwrap();
+        assert!(jobs.next().is_none());
+        let mut sealed = job.sealed;
+        let plaintext = link_key().open_in_place(&mut sealed).unwrap().to_vec();
+        let mut entropy_lengths = std::vec::Vec::new();
+        let mut frames = std::vec::Vec::new();
+        let mut settlements = std::vec::Vec::new();
+        receiver.resume_whole_resource_open(
+            WholeResourceOpenCompleted {
+                reservation: job.plan.reservation(),
+                outcome: WholeResourceOpenOutcome::Opened(&plaintext),
+            },
+            InstantMillis(2_500),
+            &mut |bytes| {
+                entropy_lengths.push(bytes.len());
+                bytes.fill(0xD3);
+            },
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    frames.push(filled_frame(fill).unwrap());
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    settlements.push((id, settlement));
+                }
+                _ => panic!("unexpected completion effect"),
+            },
+        );
+        assert_eq!(entropy_lengths, std::vec![16]);
+        assert_eq!(
+            settlements,
+            std::vec![(
+                CommandId(42),
+                Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge))
+            )]
+        );
+        assert_eq!(frames.len(), 1);
+        assert_eq!(
+            WirePacketHeader::parse(&frames[0]).unwrap().0.context,
+            WireContext::ResourceReceiverCancel
+        );
+        assert_eq!(
+            feed(&mut sender, &frames[0], 2_600),
+            InboundCapture {
+                settlements: std::vec![(
+                    CommandId(7),
+                    Settlement::Respond(Err(RespondFailure::Resource(
+                        SendResourceFailure::RejectedByPeer
+                    )))
+                )],
+                ..InboundCapture::default()
+            }
+        );
+        assert!(sender.outgoing_resources.is_empty());
+        assert_eq!(sender.outgoing_assemblies.original_hash(&link_id()), None);
+        assert!(receiver.incoming_resources.is_empty());
+        assert_eq!(receiver.incoming_assemblies.original_hash(&link_id()), None);
+        assert!(!receiver.receipts.has_pending_request(&link_id(), request));
+        receiver.resume_whole_resource_open(
+            WholeResourceOpenCompleted {
+                reservation: job.plan.reservation(),
+                outcome: WholeResourceOpenOutcome::Opened(&plaintext),
+            },
+            InstantMillis(2_700),
+            &mut |_| panic!("stale completion must not consume entropy"),
+            &mut |_| panic!("stale completion must not emit effects"),
+        );
+    }
+
+    #[cfg(feature = "resource-work-offload")]
+    #[test]
     fn an_external_whole_open_delivers_and_proves() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
@@ -499,6 +624,7 @@ mod tests {
                 outcome: WholeResourceOpenOutcome::Opened(&plaintext),
             },
             InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
@@ -552,6 +678,7 @@ mod tests {
                 },
             },
             InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
@@ -597,6 +724,7 @@ mod tests {
                 },
             },
             InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::ResourceFailed { cause, .. }) = reaction
                 {
@@ -628,6 +756,7 @@ mod tests {
                 outcome: WholeResourceOpenOutcome::Refused,
             },
             InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::ResourceFailed { cause, .. }) = reaction
                 {
@@ -656,6 +785,7 @@ mod tests {
                 outcome: WholeResourceOpenOutcome::Unavailable,
             },
             InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::ResourceReceived { data, .. }) =
                     reaction
@@ -782,6 +912,7 @@ mod tests {
                 residence: job.residence,
             },
             InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
@@ -839,6 +970,7 @@ mod tests {
                 residence: job.residence,
             },
             InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceOpen(owed))) =
                     reaction
@@ -877,6 +1009,7 @@ mod tests {
                 &followup.link_id,
                 &followup.hash,
                 InstantMillis(2_450),
+                &mut |bytes| bytes.fill(0xC9),
                 &mut |_| {},
             ),
             ConcludeResourceOutcome::AwaitingOpenVerdict,
@@ -899,6 +1032,7 @@ mod tests {
                 residence: followup.residence,
             },
             InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
@@ -940,6 +1074,7 @@ mod tests {
                 residence: job.residence,
             },
             InstantMillis(2_250),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |_| panic!("a mismatched span touches nothing"),
         );
         assert_eq!(wrong_span, WakeSchedules::UNCHANGED);
@@ -985,6 +1120,7 @@ mod tests {
                 residence: job.residence,
             },
             InstantMillis(2_250),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |_| panic!("stale work emits nothing"),
         );
 

@@ -30,6 +30,18 @@ impl<S: StorageLayout> EngineState<S> {
                 Ok(RemoteControlTargetPairingApproval::AwaitingControllerCommit { attempt_id })
             }
             ApproveRemoteControlTargetPairingOutcome::AuthorizationOwed { attempt_id, grant } => {
+                self.prepare_remote_control_target_pairing_authorization_into(
+                    attempt_id,
+                    interfaces,
+                    now,
+                    fill_entropy,
+                    sink,
+                )
+                .map_err(|failure| {
+                    ApproveRemoteControlTargetPairingFailure::AuthorizationPreparationFailed {
+                        failure,
+                    }
+                })?;
                 sink(EngineReaction::Journaled(
                     crate::engine::Journaled::RemoteControlTargetPairingAuthorizationRequired {
                         attempt_id,

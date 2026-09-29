@@ -25,6 +25,7 @@ mesh-pocket-battery-10000 = []
 board-t1000e = ["cortex-m/critical-section-single-core"]
 board-mesh-tower-v2 = ["embassy-nrf/nfc-pins-as-gpio"]
 board-muzi-base-duo = ["embassy-nrf/nfc-pins-as-gpio"]
+board-rak4631 = ["embassy-nrf/nfc-pins-as-gpio", "softdevice-s140-v6"]
 softdevice-s140-v6 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v6"]
 softdevice-s140-v7 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v7"]
 
@@ -66,6 +67,11 @@ required-features = ["board-mesh-tower-v2", "softdevice-s140-v6"]
 name = "muzi-base-duo"
 path = "src/bin/muzi_base_duo.rs"
 required-features = ["board-muzi-base-duo", "softdevice-s140-v6"]
+
+[[bin]]
+name = "rak4631"
+path = "src/bin/rak4631.rs"
+required-features = ["board-rak4631"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }

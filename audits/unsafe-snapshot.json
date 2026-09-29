@@ -786,6 +786,9 @@
         "desktop-windows": [
           "alloc"
         ],
+        "engine": [
+          "alloc"
+        ],
         "esp32-c6": [
           "alloc"
         ],
@@ -1801,6 +1804,10 @@
           "default",
           "std"
         ],
+        "engine": [
+          "default",
+          "std"
+        ],
         "ios": [
           "default",
           "std"
@@ -1934,6 +1941,9 @@
           "default"
         ],
         "desktop-windows": [
+          "default"
+        ],
+        "engine": [
           "default"
         ],
         "esp32-c6": [
@@ -2234,7 +2244,8 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
-        "desktop-linux": []
+        "desktop-linux": [],
+        "engine": []
       },
       "name": "cfg_aliases",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3612,7 +3623,9 @@
         "desktop-windows": [
           "rand_core"
         ],
-        "engine": [],
+        "engine": [
+          "rand_core"
+        ],
         "esp32-c6": [
           "rand_core"
         ],
@@ -3785,8 +3798,10 @@
           "zeroize"
         ],
         "engine": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "esp32-c6": [
@@ -4628,6 +4643,11 @@
           "oid",
           "zeroize"
         ],
+        "engine": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
         "esp32-c6": [
           "alloc",
           "oid",
@@ -4923,6 +4943,7 @@
           "default",
           "mac",
           "oid",
+          "rand_core",
           "zeroize"
         ],
         "esp32-c6": [
@@ -5429,7 +5450,9 @@
         "desktop-windows": [
           "alloc"
         ],
-        "engine": [],
+        "engine": [
+          "alloc"
+        ],
         "esp32-c6": [
           "alloc"
         ],
@@ -5554,7 +5577,12 @@
           "zeroize"
         ],
         "engine": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "esp32-c6": [
@@ -10488,8 +10516,10 @@
         "engine": [
           "alloc",
           "futures-io",
+          "futures-sink",
           "io",
           "memchr",
+          "sink",
           "slab",
           "std"
         ],
@@ -10892,6 +10922,7 @@
         "desktop-windows": [
           "std"
         ],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -12727,6 +12758,7 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -12857,6 +12889,9 @@
           "rust-allocator"
         ],
         "desktop-windows": [
+          "rust-allocator"
+        ],
+        "engine": [
           "rust-allocator"
         ],
         "esp32-c6": [
@@ -14762,6 +14797,13 @@
         "expo-host-linux": [
           "process",
           "sched"
+        ],
+        "engine": [
+          "default",
+          "process",
+          "sched",
+          "signal",
+          "time"
         ],
         "host-c-linux": [
           "process",
@@ -18086,7 +18128,8 @@
           "flash",
           "resource-work-offload",
           "std",
-          "std-sync-host"
+          "std-sync-host",
+          "tokio-host"
         ],
         "esp32-c6": [
           "alloc",
@@ -18468,6 +18511,9 @@
           "alloc"
         ],
         "desktop-windows": [
+          "alloc"
+        ],
+        "engine": [
           "alloc"
         ],
         "esp32-c6": [
@@ -19064,13 +19110,17 @@
         "engine": [
           "alloc",
           "default",
+          "ed25519-batch",
           "embassy-host",
           "flash",
+          "large-static-responses",
+          "movable-frame-forwarding",
           "resource-work-offload",
           "rns-management-wire",
           "std",
           "std-sync-host",
-          "test-support"
+          "test-support",
+          "tokio-host"
         ],
         "esp32-c6": [
           "alloc",
@@ -19675,6 +19725,7 @@
       "graphs": {
         "android": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "log",
           "network-device-selection",
           "serial",
@@ -19689,6 +19740,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "browser-rendezvous",
           "config",
           "i2p",
@@ -19713,6 +19765,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "browser-rendezvous",
           "config",
           "i2p",
@@ -19737,6 +19790,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "browser-rendezvous",
           "config",
           "i2p",
@@ -19759,6 +19813,7 @@
         ],
         "desktop-linux": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "log",
           "network-device-selection",
           "serial",
@@ -19771,6 +19826,7 @@
         ],
         "desktop-macos": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "log",
           "network-device-selection",
           "serial",
@@ -19783,6 +19839,7 @@
         ],
         "desktop-windows": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "log",
           "network-device-selection",
           "serial",
@@ -19793,8 +19850,12 @@
           "wifi-auto",
           "wifi-auto-apple"
         ],
+        "engine": [
+          "bluetooth-auto-runtime"
+        ],
         "esp32-c6": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "log",
           "network-device-selection",
           "serial",
@@ -19804,6 +19865,7 @@
         ],
         "esp32-s3-heltec": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "log",
           "network-device-selection",
           "serial",
@@ -19813,6 +19875,7 @@
         ],
         "esp32-s3-heltec-e290": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "log",
           "network-device-selection",
           "serial",
@@ -19822,6 +19885,7 @@
         ],
         "esp32-s3-heltec-r8": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "log",
           "network-device-selection",
           "serial",
@@ -19831,6 +19895,7 @@
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "log",
           "network-device-selection",
           "serial",
@@ -19840,6 +19905,7 @@
         ],
         "esp32-s3-tbeam": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "log",
           "network-device-selection",
           "serial",
@@ -19908,6 +19974,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "config",
           "i2p",
           "interface-discovery",
@@ -19927,6 +19994,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "config",
           "i2p",
           "interface-discovery",
@@ -19946,6 +20014,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "config",
           "i2p",
           "interface-discovery",
@@ -19963,6 +20032,7 @@
         ],
         "ios": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "network-device-selection",
           "tcp",
           "wifi-auto",
@@ -19970,6 +20040,7 @@
         ],
         "nrf52840": [
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "serial",
           "tcp",
           "usb"
@@ -20143,6 +20214,8 @@
         "engine": [
           "alloc",
           "default",
+          "movable-frame-forwarding",
+          "resource-bzip2",
           "std"
         ],
         "esp32-c6": [
@@ -20402,6 +20475,7 @@
           "rns-management",
           "tracing"
         ],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -21875,6 +21949,7 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -23803,7 +23878,10 @@
           "alloc",
           "rand_core"
         ],
-        "engine": [],
+        "engine": [
+          "alloc",
+          "rand_core"
+        ],
         "esp32-c6": [
           "alloc",
           "rand_core"
@@ -24623,6 +24701,9 @@
         "desktop-windows": [
           "alloc"
         ],
+        "engine": [
+          "alloc"
+        ],
         "esp32-c6": [
           "alloc"
         ],
@@ -24860,6 +24941,9 @@
           "default"
         ],
         "desktop-windows": [
+          "default"
+        ],
+        "engine": [
           "default"
         ],
         "esp32-c6": [
@@ -25845,11 +25929,11 @@
       "name": "t-echo",
       "source": "personal-hopspot/embedded/nrf52840",
       "unsafe": {
-        "blocks": 1481,
+        "blocks": 1483,
         "externs": 13,
         "functions": 299,
         "impls": 17,
-        "tokens": 1811
+        "tokens": 1813
       },
       "version": "0.1.0"
     },
@@ -26469,10 +26553,14 @@
           "windows-sys"
         ],
         "engine": [
+          "bytes",
+          "fs",
+          "io-util",
           "macros",
           "rt",
           "rt-multi-thread",
           "sync",
+          "test-util",
           "time",
           "tokio-macros"
         ],

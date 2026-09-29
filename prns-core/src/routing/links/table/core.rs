@@ -283,7 +283,7 @@ pub trait LinkTable {
     }
 
     fn link_ids(&self) -> &[LinkId];
-    fn timeout_ats(&self) -> &[Option<InstantMillis>];
+    fn timeout_at(&self, index: usize) -> Option<InstantMillis>;
     fn phases(&self) -> &[LinkPhase];
 
     fn phase_mut(&mut self, index: usize) -> &mut LinkPhase;
@@ -303,7 +303,9 @@ pub trait LinkTable {
     }
 
     fn earliest_indexed_timeout(&mut self) -> Option<InstantMillis> {
-        self.timeout_ats().iter().flatten().min().copied()
+        (0..self.len())
+            .filter_map(|index| self.timeout_at(index))
+            .min()
     }
 
     fn first_due_timeout_matching<P>(
@@ -315,7 +317,7 @@ pub trait LinkTable {
         P: FnMut(usize, &LinkPhase) -> bool,
     {
         (0..self.len()).find(|&index| {
-            self.timeout_ats()[index].is_some_and(|at| at <= now)
+            self.timeout_at(index).is_some_and(|at| at <= now)
                 && predicate(index, &self.phases()[index])
         })
     }
@@ -881,7 +883,9 @@ impl<C: LinkTable> Links<C> {
     pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
         debug_assert_eq!(
             self.earliest_timeout,
-            self.table.timeout_ats().iter().flatten().min().copied(),
+            (0..self.table.len())
+                .filter_map(|index| self.table.timeout_at(index))
+                .min(),
             "earliest_timeout cache desynced from the timeout_ats column"
         );
         self.earliest_timeout

@@ -241,6 +241,10 @@ pub enum IngestPacketOutcome<'p> {
     /// A validated and policy-approved advertisement is waiting for an
     /// incoming Resource row, or a retry coalesced into that existing wait.
     ResourceAdmissionPending,
+    ResourceResponseSuperseded {
+        link_id: LinkId,
+        hash: ResourceHash,
+    },
     /// The offer cannot wait: it can never fit, this target has no pending
     /// queue, or the bounded queue is full.
     ResourceCapacityRejected {

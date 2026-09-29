@@ -1,4 +1,11 @@
+mod authorization;
 mod host;
+pub(crate) use authorization::{AuthorizationOwnerError, AuthorizationTransaction};
+
+#[cfg(test)]
+mod test_directory;
+#[cfg(test)]
+pub(crate) use test_directory::TestDirectory;
 
 pub use host::{
     DefaultLocationError, FlushFailurePolicy, NodePersistence, PersistenceEvent,
@@ -163,7 +170,7 @@ impl PrnsNodeHandle {
     }
 }
 
-impl<St, R, F, S: StorageLayout> PrnsNode<St, R, F, S>
+impl<St, R, F, S: StorageLayout, E: prns_core::entropy::EntropySource> PrnsNode<St, R, F, S, E>
 where
     R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
