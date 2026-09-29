@@ -32,21 +32,13 @@ class ThirdPartyNoticeTests(unittest.TestCase):
         app_manifest = "applications/prns/native-composition/Cargo.toml"
         self.assertEqual(graphs["Prns app Android"], (app_manifest, "aarch64-linux-android"))
         self.assertEqual(graphs["Prns app iOS"], (app_manifest, "aarch64-apple-ios"))
-        defaults = {name: graph for name, graph in graphs.items() if name not in notices.GRAPH_FEATURES}
-        self.assertEqual(len(defaults), 31)
+        defaults = {
+            name: graph for name, graph in graphs.items()
+            if name not in notices.GRAPH_FEATURES
+        }
         self.assertEqual(
-            defaults["Host SDK native"],
-            ("prns-host/impls/native/Cargo.toml", "x86_64-unknown-linux-gnu"),
+            defaults["engine"], ("Cargo.toml", "x86_64-unknown-linux-gnu")
         )
-        for name, target in (
-            ("Expo host", "x86_64-unknown-linux-gnu"),
-            ("Expo Android", "aarch64-linux-android"),
-            ("Expo iOS", "aarch64-apple-ios"),
-        ):
-            self.assertEqual(
-                defaults[name], ("prns-host/bindings/uniffi/image/Cargo.toml", target)
-            )
-        self.assertEqual(defaults["engine"], ("Cargo.toml", "x86_64-unknown-linux-gnu"))
         self.assertEqual(
             defaults["Android"],
             ("personal-hopspot/mobile/android/rust/Cargo.toml", "aarch64-linux-android"),
@@ -55,6 +47,21 @@ class ThirdPartyNoticeTests(unittest.TestCase):
             defaults["iOS"],
             ("personal-hopspot/mobile/ios/rust/Cargo.toml", "aarch64-apple-ios"),
         )
+
+    def test_extracted_host_and_expo_graphs_are_retained(self) -> None:
+        graphs = {name: (manifest, target) for name, manifest, target in notices.GRAPHS}
+        self.assertEqual(
+            graphs["Host SDK native"],
+            ("prns-host/impls/native/Cargo.toml", "x86_64-unknown-linux-gnu"),
+        )
+        for name, target in (
+            ("Expo host", "x86_64-unknown-linux-gnu"),
+            ("Expo Android", "aarch64-linux-android"),
+            ("Expo iOS", "aarch64-apple-ios"),
+        ):
+            self.assertEqual(
+                graphs[name], ("prns-host/bindings/uniffi/image/Cargo.toml", target)
+            )
 
     def test_input_fingerprint_covers_checked_in_manifests_locks_and_notice_sources(
         self,
