@@ -64,12 +64,12 @@ its signer stays in Rust. General RemoteControl exchanges, pairing and access
 operations project the existing protocol types, while combined app queries,
 prompts and Wi-Fi workflows remain product concerns.
 
-The generated RemoteControl surface covers 217 protocol types, 30 request cases,
-31 response cases and 11 pairing/access operations. Its native work shares the
-bounded host command and event machinery. Resource-backed request failures now
-settle the matching request waiter, including invalid or closed links. App
-startup failures enter the same LXMF drain and joined host-stop paths as normal
-shutdown.
+The generated RemoteControl surface follows upstream protocol types and covers
+30 request cases, 31 response cases and 11 pairing/access operations. Its native
+work shares the bounded host command and event machinery. Resource-backed
+request failures now settle the matching request waiter, including invalid or
+closed links. App startup failures enter the same LXMF drain and joined host-stop
+paths as normal shutdown.
 
 Authenticated announce observation and prepared transport attachment are public
 native Rust embedding hooks. They are not foreign SDK event/attachment APIs.
