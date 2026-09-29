@@ -14794,16 +14794,16 @@
           "process",
           "sched"
         ],
-        "expo-host-linux": [
-          "process",
-          "sched"
-        ],
         "engine": [
           "default",
           "process",
           "sched",
           "signal",
           "time"
+        ],
+        "expo-host-linux": [
+          "process",
+          "sched"
         ],
         "host-c-linux": [
           "process",
@@ -19386,11 +19386,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 153,
+        "blocks": 154,
         "externs": 7,
         "functions": 0,
         "impls": 21,
-        "tokens": 213
+        "tokens": 214
       },
       "version": "0.3.7"
     },
@@ -19917,6 +19917,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "config",
           "i2p",
           "interface-discovery",
@@ -19936,6 +19937,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "config",
           "i2p",
           "interface-discovery",
@@ -19955,6 +19957,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "config",
           "i2p",
           "interface-discovery",
@@ -20049,6 +20052,7 @@
           "ax25",
           "backbone",
           "bluetooth-auto",
+          "bluetooth-auto-runtime",
           "config",
           "i2p",
           "interface-discovery",
