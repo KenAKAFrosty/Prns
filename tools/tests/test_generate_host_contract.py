@@ -64,6 +64,22 @@ class GenerateHostContractTests(unittest.TestCase):
         self.assertEqual(types["RemoteControlRequest"]["directions"], ["input"])
         self.assertEqual(types["RemoteControlResponse"]["directions"], ["output"])
 
+    def test_remote_control_failure_inventory_tracks_resource_and_authorization_failures(self):
+        from tools.repo.host_contract.remote_control import load, generate
+        types = load(ROOT)
+        self.assertIn("RequestTransferFailed", {
+            case["name"] for case in types["SendRequestFailure"]["variants"]
+        })
+        self.assertIn("AuthorizationPreparationFailed", {
+            case["name"] for case in types["ApproveRemoteControlTargetPairingFailure"]["variants"]
+        })
+        self.assertEqual(types["BufferTooShort"]["namespace"], "prns_core::crypto")
+        self.assertEqual(types["BufferTooShort"]["style"], "unit")
+        self.assertEqual(types["BufferTooShort"]["fields"], [])
+        output, _ = generate(ROOT)
+        self.assertIn("impl From<prns_core::crypto::BufferTooShort>", output)
+        self.assertIn("BuildOutgoingResourceError::Seal(value)", output)
+
     def test_remote_control_secret_owner_and_private_storage_do_not_leak(self):
         from tools.repo.host_contract.remote_control import generate
         output, _ = generate(ROOT)

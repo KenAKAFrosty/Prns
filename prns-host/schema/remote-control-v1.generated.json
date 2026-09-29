@@ -3561,6 +3561,17 @@
           ]
         },
         {
+          "name": "RequestTransferFailed",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "SendResourceFailure",
+              "public": true
+            }
+          ]
+        },
+        {
           "name": "ResourceCapacity",
           "style": "unit",
           "fields": []
@@ -3690,6 +3701,173 @@
           "fields": []
         }
       ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "SendResourceFailure",
+      "kind": "enum",
+      "namespace": "engine",
+      "source": "prns-core/src/engine/commands/resource.rs",
+      "variants": [
+        {
+          "name": "Rejected",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "SendResourceRejection",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "WriteFailed",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "RejectedByPeer",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Sequencing",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Timeout",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "LinkClosed",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "PredecessorFailed",
+          "style": "unit",
+          "fields": []
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "SendResourceRejection",
+      "kind": "enum",
+      "namespace": "engine",
+      "source": "prns-core/src/engine/commands/resource.rs",
+      "variants": [
+        {
+          "name": "NoSuchLink",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "LinkNotActive",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "LinkBusy",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "TableFull",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Build",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "BuildOutgoingResourceError",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "MetadataMisplaced",
+          "style": "unit",
+          "fields": []
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "BuildOutgoingResourceError",
+      "kind": "enum",
+      "namespace": "prns_core::routing::links::resources::build_outgoing",
+      "source": "prns-core/src/routing/links/resources/build_outgoing.rs",
+      "variants": [
+        {
+          "name": "DataTooLarge",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "MetadataTooLarge",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "SduTooSmall",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Seal",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "BufferTooShort",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "HashmapBufferTooShort",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "BufferShapeMismatch",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "PreparedDigestInputMismatch",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "SaltRerollsExhausted",
+          "style": "unit",
+          "fields": []
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "BufferTooShort",
+      "kind": "struct",
+      "namespace": "prns_core::crypto",
+      "source": "prns-core/src/crypto/token.rs",
+      "style": "unit",
+      "fields": [],
       "directions": [
         "output"
       ]
@@ -7081,6 +7259,17 @@
       "source": "prns-core/src/engine/commands/remote_control_pairing.rs",
       "variants": [
         {
+          "name": "AuthorizationPreparationFailed",
+          "style": "named",
+          "fields": [
+            {
+              "name": "failure",
+              "type": "RemoteControlTargetPairingPreparationFailure",
+              "public": false
+            }
+          ]
+        },
+        {
           "name": "Expired",
           "style": "named",
           "fields": [
@@ -7162,6 +7351,87 @@
             {
               "name": "retired_link",
               "type": "LinkId",
+              "public": false
+            }
+          ]
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "RemoteControlTargetPairingPreparationFailure",
+      "kind": "enum",
+      "namespace": "engine",
+      "source": "prns-core/src/engine/commands/remote_control_pairing.rs",
+      "variants": [
+        {
+          "name": "TargetSignerUnavailable",
+          "style": "named",
+          "fields": [
+            {
+              "name": "target_identity",
+              "type": "IdentityHash",
+              "public": false
+            }
+          ]
+        },
+        {
+          "name": "SigningFailed",
+          "style": "named",
+          "fields": [
+            {
+              "name": "error",
+              "type": "RemoteControlPairingCompletionSigningError",
+              "public": false
+            }
+          ]
+        },
+        {
+          "name": "DeadlineElapsed",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "NoAuthorizationOwed",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "AttemptMismatch",
+          "style": "named",
+          "fields": [
+            {
+              "name": "active",
+              "type": "RemoteControlPairingAttemptId",
+              "public": false
+            }
+          ]
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "RemoteControlPairingCompletionSigningError",
+      "kind": "enum",
+      "namespace": "rc",
+      "source": "prns-core/src/remote_control/pairing/exchange/transcript.rs",
+      "variants": [
+        {
+          "name": "TargetIdentityMismatch",
+          "style": "named",
+          "fields": [
+            {
+              "name": "expected",
+              "type": "IdentityHash",
+              "public": false
+            },
+            {
+              "name": "found",
+              "type": "IdentityHash",
               "public": false
             }
           ]

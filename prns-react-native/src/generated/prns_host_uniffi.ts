@@ -2871,6 +2871,41 @@ const FfiConverterTypeRemoteControlBeginRemoteControlControllerPairing = (() => 
     return new FFIConverter();
 })();
 
+export type RemoteControlBufferTooShort = {
+}
+
+/**
+ * Generated factory for {@link RemoteControlBufferTooShort} record objects.
+ */
+export const RemoteControlBufferTooShort = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RemoteControlBufferTooShort, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RemoteControlBufferTooShort>,
+    });
+})();
+
+const FfiConverterTypeRemoteControlBufferTooShort = (() => {
+    type TypeName = RemoteControlBufferTooShort;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+        }
+        allocationSize(value: TypeName): number {
+            return 0;
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type RemoteControlBuildVersion = {
     value: string
 }
@@ -4267,6 +4302,888 @@ const FfiConverterTypeRemoteControlResourceFailureCause = (() => {
 })();
 
 
+// Enum: RemoteControlBuildOutgoingResourceError
+export enum RemoteControlBuildOutgoingResourceError_Tags {
+    DataTooLarge = "DataTooLarge",
+    MetadataTooLarge = "MetadataTooLarge",
+    SduTooSmall = "SduTooSmall",
+    Seal = "Seal",
+    HashmapBufferTooShort = "HashmapBufferTooShort",
+    BufferShapeMismatch = "BufferShapeMismatch",
+    PreparedDigestInputMismatch = "PreparedDigestInputMismatch",
+    SaltRerollsExhausted = "SaltRerollsExhausted"
+}
+export const RemoteControlBuildOutgoingResourceError = (() => {
+
+    type DataTooLarge__interface = {
+        tag: RemoteControlBuildOutgoingResourceError_Tags.DataTooLarge
+    };
+    class DataTooLarge_ extends UniffiEnum implements DataTooLarge__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlBuildOutgoingResourceError";
+        readonly tag = RemoteControlBuildOutgoingResourceError_Tags.DataTooLarge;
+        constructor() {
+            super("RemoteControlBuildOutgoingResourceError", "DataTooLarge");
+        }
+
+        static new(): DataTooLarge_ {
+            return new DataTooLarge_();
+        }
+
+        static instanceOf(obj: any): obj is DataTooLarge_ {
+            return obj.tag === RemoteControlBuildOutgoingResourceError_Tags.DataTooLarge;
+        }
+
+    }
+
+    type MetadataTooLarge__interface = {
+        tag: RemoteControlBuildOutgoingResourceError_Tags.MetadataTooLarge
+    };
+    class MetadataTooLarge_ extends UniffiEnum implements MetadataTooLarge__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlBuildOutgoingResourceError";
+        readonly tag = RemoteControlBuildOutgoingResourceError_Tags.MetadataTooLarge;
+        constructor() {
+            super("RemoteControlBuildOutgoingResourceError", "MetadataTooLarge");
+        }
+
+        static new(): MetadataTooLarge_ {
+            return new MetadataTooLarge_();
+        }
+
+        static instanceOf(obj: any): obj is MetadataTooLarge_ {
+            return obj.tag === RemoteControlBuildOutgoingResourceError_Tags.MetadataTooLarge;
+        }
+
+    }
+
+    type SduTooSmall__interface = {
+        tag: RemoteControlBuildOutgoingResourceError_Tags.SduTooSmall
+    };
+    class SduTooSmall_ extends UniffiEnum implements SduTooSmall__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlBuildOutgoingResourceError";
+        readonly tag = RemoteControlBuildOutgoingResourceError_Tags.SduTooSmall;
+        constructor() {
+            super("RemoteControlBuildOutgoingResourceError", "SduTooSmall");
+        }
+
+        static new(): SduTooSmall_ {
+            return new SduTooSmall_();
+        }
+
+        static instanceOf(obj: any): obj is SduTooSmall_ {
+            return obj.tag === RemoteControlBuildOutgoingResourceError_Tags.SduTooSmall;
+        }
+
+    }
+
+    type Seal__interface = {
+        tag: RemoteControlBuildOutgoingResourceError_Tags.Seal;
+        inner:
+Readonly<{value: RemoteControlBufferTooShort}>
+    };
+    class Seal_ extends UniffiEnum implements Seal__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlBuildOutgoingResourceError";
+        readonly tag = RemoteControlBuildOutgoingResourceError_Tags.Seal;
+        readonly inner:
+Readonly<{value: RemoteControlBufferTooShort}>;
+        constructor(
+inner: {value: RemoteControlBufferTooShort }) {
+            super("RemoteControlBuildOutgoingResourceError", "Seal");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlBufferTooShort }): Seal_ {
+            return new Seal_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Seal_ {
+            return obj.tag === RemoteControlBuildOutgoingResourceError_Tags.Seal;
+        }
+
+    }
+
+    type HashmapBufferTooShort__interface = {
+        tag: RemoteControlBuildOutgoingResourceError_Tags.HashmapBufferTooShort
+    };
+    class HashmapBufferTooShort_ extends UniffiEnum implements HashmapBufferTooShort__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlBuildOutgoingResourceError";
+        readonly tag = RemoteControlBuildOutgoingResourceError_Tags.HashmapBufferTooShort;
+        constructor() {
+            super("RemoteControlBuildOutgoingResourceError", "HashmapBufferTooShort");
+        }
+
+        static new(): HashmapBufferTooShort_ {
+            return new HashmapBufferTooShort_();
+        }
+
+        static instanceOf(obj: any): obj is HashmapBufferTooShort_ {
+            return obj.tag === RemoteControlBuildOutgoingResourceError_Tags.HashmapBufferTooShort;
+        }
+
+    }
+
+    type BufferShapeMismatch__interface = {
+        tag: RemoteControlBuildOutgoingResourceError_Tags.BufferShapeMismatch
+    };
+    class BufferShapeMismatch_ extends UniffiEnum implements BufferShapeMismatch__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlBuildOutgoingResourceError";
+        readonly tag = RemoteControlBuildOutgoingResourceError_Tags.BufferShapeMismatch;
+        constructor() {
+            super("RemoteControlBuildOutgoingResourceError", "BufferShapeMismatch");
+        }
+
+        static new(): BufferShapeMismatch_ {
+            return new BufferShapeMismatch_();
+        }
+
+        static instanceOf(obj: any): obj is BufferShapeMismatch_ {
+            return obj.tag === RemoteControlBuildOutgoingResourceError_Tags.BufferShapeMismatch;
+        }
+
+    }
+
+    type PreparedDigestInputMismatch__interface = {
+        tag: RemoteControlBuildOutgoingResourceError_Tags.PreparedDigestInputMismatch
+    };
+    class PreparedDigestInputMismatch_ extends UniffiEnum implements PreparedDigestInputMismatch__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlBuildOutgoingResourceError";
+        readonly tag = RemoteControlBuildOutgoingResourceError_Tags.PreparedDigestInputMismatch;
+        constructor() {
+            super("RemoteControlBuildOutgoingResourceError", "PreparedDigestInputMismatch");
+        }
+
+        static new(): PreparedDigestInputMismatch_ {
+            return new PreparedDigestInputMismatch_();
+        }
+
+        static instanceOf(obj: any): obj is PreparedDigestInputMismatch_ {
+            return obj.tag === RemoteControlBuildOutgoingResourceError_Tags.PreparedDigestInputMismatch;
+        }
+
+    }
+
+    type SaltRerollsExhausted__interface = {
+        tag: RemoteControlBuildOutgoingResourceError_Tags.SaltRerollsExhausted
+    };
+    class SaltRerollsExhausted_ extends UniffiEnum implements SaltRerollsExhausted__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlBuildOutgoingResourceError";
+        readonly tag = RemoteControlBuildOutgoingResourceError_Tags.SaltRerollsExhausted;
+        constructor() {
+            super("RemoteControlBuildOutgoingResourceError", "SaltRerollsExhausted");
+        }
+
+        static new(): SaltRerollsExhausted_ {
+            return new SaltRerollsExhausted_();
+        }
+
+        static instanceOf(obj: any): obj is SaltRerollsExhausted_ {
+            return obj.tag === RemoteControlBuildOutgoingResourceError_Tags.SaltRerollsExhausted;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RemoteControlBuildOutgoingResourceError {
+        return obj[uniffiTypeNameSymbol] === "RemoteControlBuildOutgoingResourceError";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  DataTooLarge: DataTooLarge_,
+  MetadataTooLarge: MetadataTooLarge_,
+  SduTooSmall: SduTooSmall_,
+  Seal: Seal_,
+  HashmapBufferTooShort: HashmapBufferTooShort_,
+  BufferShapeMismatch: BufferShapeMismatch_,
+  PreparedDigestInputMismatch: PreparedDigestInputMismatch_,
+  SaltRerollsExhausted: SaltRerollsExhausted_
+    });
+
+})();
+export type RemoteControlBuildOutgoingResourceError = InstanceType<
+    typeof RemoteControlBuildOutgoingResourceError['DataTooLarge' | 'MetadataTooLarge' | 'SduTooSmall' | 'Seal' | 'HashmapBufferTooShort' | 'BufferShapeMismatch' | 'PreparedDigestInputMismatch' | 'SaltRerollsExhausted']
+>;
+
+// FfiConverter for enum RemoteControlBuildOutgoingResourceError
+const FfiConverterTypeRemoteControlBuildOutgoingResourceError = (() => {
+    type TypeName = RemoteControlBuildOutgoingResourceError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new RemoteControlBuildOutgoingResourceError.DataTooLarge();
+                case 2: return new RemoteControlBuildOutgoingResourceError.MetadataTooLarge();
+                case 3: return new RemoteControlBuildOutgoingResourceError.SduTooSmall();
+                case 4: return new RemoteControlBuildOutgoingResourceError.Seal({value: FfiConverterTypeRemoteControlBufferTooShort.readFromCursor(c) });
+                case 5: return new RemoteControlBuildOutgoingResourceError.HashmapBufferTooShort();
+                case 6: return new RemoteControlBuildOutgoingResourceError.BufferShapeMismatch();
+                case 7: return new RemoteControlBuildOutgoingResourceError.PreparedDigestInputMismatch();
+                case 8: return new RemoteControlBuildOutgoingResourceError.SaltRerollsExhausted();
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case RemoteControlBuildOutgoingResourceError_Tags.DataTooLarge: {
+                    c.writeI32(1);
+                    return;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.MetadataTooLarge: {
+                    c.writeI32(2);
+                    return;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.SduTooSmall: {
+                    c.writeI32(3);
+                    return;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.Seal: {
+                    c.writeI32(4);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlBufferTooShort.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.HashmapBufferTooShort: {
+                    c.writeI32(5);
+                    return;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.BufferShapeMismatch: {
+                    c.writeI32(6);
+                    return;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.PreparedDigestInputMismatch: {
+                    c.writeI32(7);
+                    return;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.SaltRerollsExhausted: {
+                    c.writeI32(8);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RemoteControlBuildOutgoingResourceError_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RemoteControlBuildOutgoingResourceError_Tags.DataTooLarge: {
+                    return 4;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.MetadataTooLarge: {
+                    return 4;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.SduTooSmall: {
+                    return 4;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.Seal: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlBufferTooShort.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.HashmapBufferTooShort: {
+                    return 4;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.BufferShapeMismatch: {
+                    return 4;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.PreparedDigestInputMismatch: {
+                    return 4;
+                }
+                case RemoteControlBuildOutgoingResourceError_Tags.SaltRerollsExhausted: {
+                    return 4;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: RemoteControlSendResourceRejection
+export enum RemoteControlSendResourceRejection_Tags {
+    NoSuchLink = "NoSuchLink",
+    LinkNotActive = "LinkNotActive",
+    LinkBusy = "LinkBusy",
+    TableFull = "TableFull",
+    Build = "Build",
+    MetadataMisplaced = "MetadataMisplaced"
+}
+export const RemoteControlSendResourceRejection = (() => {
+
+    type NoSuchLink__interface = {
+        tag: RemoteControlSendResourceRejection_Tags.NoSuchLink
+    };
+    class NoSuchLink_ extends UniffiEnum implements NoSuchLink__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceRejection";
+        readonly tag = RemoteControlSendResourceRejection_Tags.NoSuchLink;
+        constructor() {
+            super("RemoteControlSendResourceRejection", "NoSuchLink");
+        }
+
+        static new(): NoSuchLink_ {
+            return new NoSuchLink_();
+        }
+
+        static instanceOf(obj: any): obj is NoSuchLink_ {
+            return obj.tag === RemoteControlSendResourceRejection_Tags.NoSuchLink;
+        }
+
+    }
+
+    type LinkNotActive__interface = {
+        tag: RemoteControlSendResourceRejection_Tags.LinkNotActive
+    };
+    class LinkNotActive_ extends UniffiEnum implements LinkNotActive__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceRejection";
+        readonly tag = RemoteControlSendResourceRejection_Tags.LinkNotActive;
+        constructor() {
+            super("RemoteControlSendResourceRejection", "LinkNotActive");
+        }
+
+        static new(): LinkNotActive_ {
+            return new LinkNotActive_();
+        }
+
+        static instanceOf(obj: any): obj is LinkNotActive_ {
+            return obj.tag === RemoteControlSendResourceRejection_Tags.LinkNotActive;
+        }
+
+    }
+
+    type LinkBusy__interface = {
+        tag: RemoteControlSendResourceRejection_Tags.LinkBusy
+    };
+    class LinkBusy_ extends UniffiEnum implements LinkBusy__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceRejection";
+        readonly tag = RemoteControlSendResourceRejection_Tags.LinkBusy;
+        constructor() {
+            super("RemoteControlSendResourceRejection", "LinkBusy");
+        }
+
+        static new(): LinkBusy_ {
+            return new LinkBusy_();
+        }
+
+        static instanceOf(obj: any): obj is LinkBusy_ {
+            return obj.tag === RemoteControlSendResourceRejection_Tags.LinkBusy;
+        }
+
+    }
+
+    type TableFull__interface = {
+        tag: RemoteControlSendResourceRejection_Tags.TableFull
+    };
+    class TableFull_ extends UniffiEnum implements TableFull__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceRejection";
+        readonly tag = RemoteControlSendResourceRejection_Tags.TableFull;
+        constructor() {
+            super("RemoteControlSendResourceRejection", "TableFull");
+        }
+
+        static new(): TableFull_ {
+            return new TableFull_();
+        }
+
+        static instanceOf(obj: any): obj is TableFull_ {
+            return obj.tag === RemoteControlSendResourceRejection_Tags.TableFull;
+        }
+
+    }
+
+    type Build__interface = {
+        tag: RemoteControlSendResourceRejection_Tags.Build;
+        inner:
+Readonly<{value: RemoteControlBuildOutgoingResourceError}>
+    };
+    class Build_ extends UniffiEnum implements Build__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceRejection";
+        readonly tag = RemoteControlSendResourceRejection_Tags.Build;
+        readonly inner:
+Readonly<{value: RemoteControlBuildOutgoingResourceError}>;
+        constructor(
+inner: {value: RemoteControlBuildOutgoingResourceError }) {
+            super("RemoteControlSendResourceRejection", "Build");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlBuildOutgoingResourceError }): Build_ {
+            return new Build_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Build_ {
+            return obj.tag === RemoteControlSendResourceRejection_Tags.Build;
+        }
+
+    }
+
+    type MetadataMisplaced__interface = {
+        tag: RemoteControlSendResourceRejection_Tags.MetadataMisplaced
+    };
+    class MetadataMisplaced_ extends UniffiEnum implements MetadataMisplaced__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceRejection";
+        readonly tag = RemoteControlSendResourceRejection_Tags.MetadataMisplaced;
+        constructor() {
+            super("RemoteControlSendResourceRejection", "MetadataMisplaced");
+        }
+
+        static new(): MetadataMisplaced_ {
+            return new MetadataMisplaced_();
+        }
+
+        static instanceOf(obj: any): obj is MetadataMisplaced_ {
+            return obj.tag === RemoteControlSendResourceRejection_Tags.MetadataMisplaced;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RemoteControlSendResourceRejection {
+        return obj[uniffiTypeNameSymbol] === "RemoteControlSendResourceRejection";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  NoSuchLink: NoSuchLink_,
+  LinkNotActive: LinkNotActive_,
+  LinkBusy: LinkBusy_,
+  TableFull: TableFull_,
+  Build: Build_,
+  MetadataMisplaced: MetadataMisplaced_
+    });
+
+})();
+export type RemoteControlSendResourceRejection = InstanceType<
+    typeof RemoteControlSendResourceRejection['NoSuchLink' | 'LinkNotActive' | 'LinkBusy' | 'TableFull' | 'Build' | 'MetadataMisplaced']
+>;
+
+// FfiConverter for enum RemoteControlSendResourceRejection
+const FfiConverterTypeRemoteControlSendResourceRejection = (() => {
+    type TypeName = RemoteControlSendResourceRejection;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new RemoteControlSendResourceRejection.NoSuchLink();
+                case 2: return new RemoteControlSendResourceRejection.LinkNotActive();
+                case 3: return new RemoteControlSendResourceRejection.LinkBusy();
+                case 4: return new RemoteControlSendResourceRejection.TableFull();
+                case 5: return new RemoteControlSendResourceRejection.Build({value: FfiConverterTypeRemoteControlBuildOutgoingResourceError.readFromCursor(c) });
+                case 6: return new RemoteControlSendResourceRejection.MetadataMisplaced();
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case RemoteControlSendResourceRejection_Tags.NoSuchLink: {
+                    c.writeI32(1);
+                    return;
+                }
+                case RemoteControlSendResourceRejection_Tags.LinkNotActive: {
+                    c.writeI32(2);
+                    return;
+                }
+                case RemoteControlSendResourceRejection_Tags.LinkBusy: {
+                    c.writeI32(3);
+                    return;
+                }
+                case RemoteControlSendResourceRejection_Tags.TableFull: {
+                    c.writeI32(4);
+                    return;
+                }
+                case RemoteControlSendResourceRejection_Tags.Build: {
+                    c.writeI32(5);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlBuildOutgoingResourceError.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlSendResourceRejection_Tags.MetadataMisplaced: {
+                    c.writeI32(6);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RemoteControlSendResourceRejection_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RemoteControlSendResourceRejection_Tags.NoSuchLink: {
+                    return 4;
+                }
+                case RemoteControlSendResourceRejection_Tags.LinkNotActive: {
+                    return 4;
+                }
+                case RemoteControlSendResourceRejection_Tags.LinkBusy: {
+                    return 4;
+                }
+                case RemoteControlSendResourceRejection_Tags.TableFull: {
+                    return 4;
+                }
+                case RemoteControlSendResourceRejection_Tags.Build: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlBuildOutgoingResourceError.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlSendResourceRejection_Tags.MetadataMisplaced: {
+                    return 4;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: RemoteControlSendResourceFailure
+export enum RemoteControlSendResourceFailure_Tags {
+    Rejected = "Rejected",
+    WriteFailed = "WriteFailed",
+    RejectedByPeer = "RejectedByPeer",
+    Sequencing = "Sequencing",
+    Timeout = "Timeout",
+    LinkClosed = "LinkClosed",
+    PredecessorFailed = "PredecessorFailed"
+}
+export const RemoteControlSendResourceFailure = (() => {
+
+    type Rejected__interface = {
+        tag: RemoteControlSendResourceFailure_Tags.Rejected;
+        inner:
+Readonly<{value: RemoteControlSendResourceRejection}>
+    };
+    class Rejected_ extends UniffiEnum implements Rejected__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceFailure";
+        readonly tag = RemoteControlSendResourceFailure_Tags.Rejected;
+        readonly inner:
+Readonly<{value: RemoteControlSendResourceRejection}>;
+        constructor(
+inner: {value: RemoteControlSendResourceRejection }) {
+            super("RemoteControlSendResourceFailure", "Rejected");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlSendResourceRejection }): Rejected_ {
+            return new Rejected_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Rejected_ {
+            return obj.tag === RemoteControlSendResourceFailure_Tags.Rejected;
+        }
+
+    }
+
+    type WriteFailed__interface = {
+        tag: RemoteControlSendResourceFailure_Tags.WriteFailed
+    };
+    class WriteFailed_ extends UniffiEnum implements WriteFailed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceFailure";
+        readonly tag = RemoteControlSendResourceFailure_Tags.WriteFailed;
+        constructor() {
+            super("RemoteControlSendResourceFailure", "WriteFailed");
+        }
+
+        static new(): WriteFailed_ {
+            return new WriteFailed_();
+        }
+
+        static instanceOf(obj: any): obj is WriteFailed_ {
+            return obj.tag === RemoteControlSendResourceFailure_Tags.WriteFailed;
+        }
+
+    }
+
+    type RejectedByPeer__interface = {
+        tag: RemoteControlSendResourceFailure_Tags.RejectedByPeer
+    };
+    class RejectedByPeer_ extends UniffiEnum implements RejectedByPeer__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceFailure";
+        readonly tag = RemoteControlSendResourceFailure_Tags.RejectedByPeer;
+        constructor() {
+            super("RemoteControlSendResourceFailure", "RejectedByPeer");
+        }
+
+        static new(): RejectedByPeer_ {
+            return new RejectedByPeer_();
+        }
+
+        static instanceOf(obj: any): obj is RejectedByPeer_ {
+            return obj.tag === RemoteControlSendResourceFailure_Tags.RejectedByPeer;
+        }
+
+    }
+
+    type Sequencing__interface = {
+        tag: RemoteControlSendResourceFailure_Tags.Sequencing
+    };
+    class Sequencing_ extends UniffiEnum implements Sequencing__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceFailure";
+        readonly tag = RemoteControlSendResourceFailure_Tags.Sequencing;
+        constructor() {
+            super("RemoteControlSendResourceFailure", "Sequencing");
+        }
+
+        static new(): Sequencing_ {
+            return new Sequencing_();
+        }
+
+        static instanceOf(obj: any): obj is Sequencing_ {
+            return obj.tag === RemoteControlSendResourceFailure_Tags.Sequencing;
+        }
+
+    }
+
+    type Timeout__interface = {
+        tag: RemoteControlSendResourceFailure_Tags.Timeout
+    };
+    class Timeout_ extends UniffiEnum implements Timeout__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceFailure";
+        readonly tag = RemoteControlSendResourceFailure_Tags.Timeout;
+        constructor() {
+            super("RemoteControlSendResourceFailure", "Timeout");
+        }
+
+        static new(): Timeout_ {
+            return new Timeout_();
+        }
+
+        static instanceOf(obj: any): obj is Timeout_ {
+            return obj.tag === RemoteControlSendResourceFailure_Tags.Timeout;
+        }
+
+    }
+
+    type LinkClosed__interface = {
+        tag: RemoteControlSendResourceFailure_Tags.LinkClosed
+    };
+    class LinkClosed_ extends UniffiEnum implements LinkClosed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceFailure";
+        readonly tag = RemoteControlSendResourceFailure_Tags.LinkClosed;
+        constructor() {
+            super("RemoteControlSendResourceFailure", "LinkClosed");
+        }
+
+        static new(): LinkClosed_ {
+            return new LinkClosed_();
+        }
+
+        static instanceOf(obj: any): obj is LinkClosed_ {
+            return obj.tag === RemoteControlSendResourceFailure_Tags.LinkClosed;
+        }
+
+    }
+
+    type PredecessorFailed__interface = {
+        tag: RemoteControlSendResourceFailure_Tags.PredecessorFailed
+    };
+    class PredecessorFailed_ extends UniffiEnum implements PredecessorFailed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendResourceFailure";
+        readonly tag = RemoteControlSendResourceFailure_Tags.PredecessorFailed;
+        constructor() {
+            super("RemoteControlSendResourceFailure", "PredecessorFailed");
+        }
+
+        static new(): PredecessorFailed_ {
+            return new PredecessorFailed_();
+        }
+
+        static instanceOf(obj: any): obj is PredecessorFailed_ {
+            return obj.tag === RemoteControlSendResourceFailure_Tags.PredecessorFailed;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RemoteControlSendResourceFailure {
+        return obj[uniffiTypeNameSymbol] === "RemoteControlSendResourceFailure";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Rejected: Rejected_,
+  WriteFailed: WriteFailed_,
+  RejectedByPeer: RejectedByPeer_,
+  Sequencing: Sequencing_,
+  Timeout: Timeout_,
+  LinkClosed: LinkClosed_,
+  PredecessorFailed: PredecessorFailed_
+    });
+
+})();
+export type RemoteControlSendResourceFailure = InstanceType<
+    typeof RemoteControlSendResourceFailure['Rejected' | 'WriteFailed' | 'RejectedByPeer' | 'Sequencing' | 'Timeout' | 'LinkClosed' | 'PredecessorFailed']
+>;
+
+// FfiConverter for enum RemoteControlSendResourceFailure
+const FfiConverterTypeRemoteControlSendResourceFailure = (() => {
+    type TypeName = RemoteControlSendResourceFailure;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new RemoteControlSendResourceFailure.Rejected({value: FfiConverterTypeRemoteControlSendResourceRejection.readFromCursor(c) });
+                case 2: return new RemoteControlSendResourceFailure.WriteFailed();
+                case 3: return new RemoteControlSendResourceFailure.RejectedByPeer();
+                case 4: return new RemoteControlSendResourceFailure.Sequencing();
+                case 5: return new RemoteControlSendResourceFailure.Timeout();
+                case 6: return new RemoteControlSendResourceFailure.LinkClosed();
+                case 7: return new RemoteControlSendResourceFailure.PredecessorFailed();
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case RemoteControlSendResourceFailure_Tags.Rejected: {
+                    c.writeI32(1);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlSendResourceRejection.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlSendResourceFailure_Tags.WriteFailed: {
+                    c.writeI32(2);
+                    return;
+                }
+                case RemoteControlSendResourceFailure_Tags.RejectedByPeer: {
+                    c.writeI32(3);
+                    return;
+                }
+                case RemoteControlSendResourceFailure_Tags.Sequencing: {
+                    c.writeI32(4);
+                    return;
+                }
+                case RemoteControlSendResourceFailure_Tags.Timeout: {
+                    c.writeI32(5);
+                    return;
+                }
+                case RemoteControlSendResourceFailure_Tags.LinkClosed: {
+                    c.writeI32(6);
+                    return;
+                }
+                case RemoteControlSendResourceFailure_Tags.PredecessorFailed: {
+                    c.writeI32(7);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RemoteControlSendResourceFailure_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RemoteControlSendResourceFailure_Tags.Rejected: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlSendResourceRejection.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlSendResourceFailure_Tags.WriteFailed: {
+                    return 4;
+                }
+                case RemoteControlSendResourceFailure_Tags.RejectedByPeer: {
+                    return 4;
+                }
+                case RemoteControlSendResourceFailure_Tags.Sequencing: {
+                    return 4;
+                }
+                case RemoteControlSendResourceFailure_Tags.Timeout: {
+                    return 4;
+                }
+                case RemoteControlSendResourceFailure_Tags.LinkClosed: {
+                    return 4;
+                }
+                case RemoteControlSendResourceFailure_Tags.PredecessorFailed: {
+                    return 4;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
 // Enum: RemoteControlSendRequestFailure
 export enum RemoteControlSendRequestFailure_Tags {
     Rejected = "Rejected",
@@ -4276,6 +5193,7 @@ export enum RemoteControlSendRequestFailure_Tags {
     LinkClosed = "LinkClosed",
     ResponseTooLarge = "ResponseTooLarge",
     ResponseTransferFailed = "ResponseTransferFailed",
+    RequestTransferFailed = "RequestTransferFailed",
     ResourceCapacity = "ResourceCapacity"
 }
 export const RemoteControlSendRequestFailure = (() => {
@@ -4462,6 +5380,37 @@ inner: {value: RemoteControlResourceFailureCause }): ResponseTransferFailed_ {
 
     }
 
+    type RequestTransferFailed__interface = {
+        tag: RemoteControlSendRequestFailure_Tags.RequestTransferFailed;
+        inner:
+Readonly<{value: RemoteControlSendResourceFailure}>
+    };
+    class RequestTransferFailed_ extends UniffiEnum implements RequestTransferFailed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlSendRequestFailure";
+        readonly tag = RemoteControlSendRequestFailure_Tags.RequestTransferFailed;
+        readonly inner:
+Readonly<{value: RemoteControlSendResourceFailure}>;
+        constructor(
+inner: {value: RemoteControlSendResourceFailure }) {
+            super("RemoteControlSendRequestFailure", "RequestTransferFailed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlSendResourceFailure }): RequestTransferFailed_ {
+            return new RequestTransferFailed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is RequestTransferFailed_ {
+            return obj.tag === RemoteControlSendRequestFailure_Tags.RequestTransferFailed;
+        }
+
+    }
+
     type ResourceCapacity__interface = {
         tag: RemoteControlSendRequestFailure_Tags.ResourceCapacity
     };
@@ -4499,12 +5448,13 @@ inner: {value: RemoteControlResourceFailureCause }): ResponseTransferFailed_ {
   LinkClosed: LinkClosed_,
   ResponseTooLarge: ResponseTooLarge_,
   ResponseTransferFailed: ResponseTransferFailed_,
+  RequestTransferFailed: RequestTransferFailed_,
   ResourceCapacity: ResourceCapacity_
     });
 
 })();
 export type RemoteControlSendRequestFailure = InstanceType<
-    typeof RemoteControlSendRequestFailure['Rejected' | 'WriteFailed' | 'Culled' | 'Timeout' | 'LinkClosed' | 'ResponseTooLarge' | 'ResponseTransferFailed' | 'ResourceCapacity']
+    typeof RemoteControlSendRequestFailure['Rejected' | 'WriteFailed' | 'Culled' | 'Timeout' | 'LinkClosed' | 'ResponseTooLarge' | 'ResponseTransferFailed' | 'RequestTransferFailed' | 'ResourceCapacity']
 >;
 
 // FfiConverter for enum RemoteControlSendRequestFailure
@@ -4520,7 +5470,8 @@ const FfiConverterTypeRemoteControlSendRequestFailure = (() => {
                 case 5: return new RemoteControlSendRequestFailure.LinkClosed();
                 case 6: return new RemoteControlSendRequestFailure.ResponseTooLarge();
                 case 7: return new RemoteControlSendRequestFailure.ResponseTransferFailed({value: FfiConverterTypeRemoteControlResourceFailureCause.readFromCursor(c) });
-                case 8: return new RemoteControlSendRequestFailure.ResourceCapacity();
+                case 8: return new RemoteControlSendRequestFailure.RequestTransferFailed({value: FfiConverterTypeRemoteControlSendResourceFailure.readFromCursor(c) });
+                case 9: return new RemoteControlSendRequestFailure.ResourceCapacity();
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -4558,8 +5509,14 @@ const FfiConverterTypeRemoteControlSendRequestFailure = (() => {
                     FfiConverterTypeRemoteControlResourceFailureCause.writeIntoCursor(inner.value, c);
                     return;
                 }
-                case RemoteControlSendRequestFailure_Tags.ResourceCapacity: {
+                case RemoteControlSendRequestFailure_Tags.RequestTransferFailed: {
                     c.writeI32(8);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlSendResourceFailure.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlSendRequestFailure_Tags.ResourceCapacity: {
+                    c.writeI32(9);
                     return;
                 }
                 default:
@@ -4594,6 +5551,12 @@ const FfiConverterTypeRemoteControlSendRequestFailure = (() => {
                     const inner = value.inner;
                     let size = 4;
                     size += FfiConverterTypeRemoteControlResourceFailureCause.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlSendRequestFailure_Tags.RequestTransferFailed: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlSendResourceFailure.allocationSize(inner.value);
                     return size;
                 }
                 case RemoteControlSendRequestFailure_Tags.ResourceCapacity: {
@@ -22810,8 +23773,351 @@ const FfiConverterTypeRemoteControlApproveRemoteControlControllerPairingSettleme
 })();
 
 
+// Enum: RemoteControlPairingCompletionSigningError
+export enum RemoteControlPairingCompletionSigningError_Tags {
+    TargetIdentityMismatch = "TargetIdentityMismatch"
+}
+export const RemoteControlPairingCompletionSigningError = (() => {
+
+    type TargetIdentityMismatch__interface = {
+        tag: RemoteControlPairingCompletionSigningError_Tags.TargetIdentityMismatch;
+        inner:
+Readonly<{expected: RemoteControlIdentityHash; found: RemoteControlIdentityHash}>
+    };
+    class TargetIdentityMismatch_ extends UniffiEnum implements TargetIdentityMismatch__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlPairingCompletionSigningError";
+        readonly tag = RemoteControlPairingCompletionSigningError_Tags.TargetIdentityMismatch;
+        readonly inner:
+Readonly<{expected: RemoteControlIdentityHash; found: RemoteControlIdentityHash}>;
+        constructor(
+inner: {expected: RemoteControlIdentityHash; found: RemoteControlIdentityHash }) {
+            super("RemoteControlPairingCompletionSigningError", "TargetIdentityMismatch");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {expected: RemoteControlIdentityHash; found: RemoteControlIdentityHash }): TargetIdentityMismatch_ {
+            return new TargetIdentityMismatch_(inner);
+        }
+
+        static instanceOf(obj: any): obj is TargetIdentityMismatch_ {
+            return obj.tag === RemoteControlPairingCompletionSigningError_Tags.TargetIdentityMismatch;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RemoteControlPairingCompletionSigningError {
+        return obj[uniffiTypeNameSymbol] === "RemoteControlPairingCompletionSigningError";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  TargetIdentityMismatch: TargetIdentityMismatch_
+    });
+
+})();
+export type RemoteControlPairingCompletionSigningError = InstanceType<
+    typeof RemoteControlPairingCompletionSigningError['TargetIdentityMismatch']
+>;
+
+// FfiConverter for enum RemoteControlPairingCompletionSigningError
+const FfiConverterTypeRemoteControlPairingCompletionSigningError = (() => {
+    type TypeName = RemoteControlPairingCompletionSigningError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new RemoteControlPairingCompletionSigningError.TargetIdentityMismatch({expected: FfiConverterTypeRemoteControlIdentityHash.readFromCursor(c), found: FfiConverterTypeRemoteControlIdentityHash.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case RemoteControlPairingCompletionSigningError_Tags.TargetIdentityMismatch: {
+                    c.writeI32(1);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlIdentityHash.writeIntoCursor(inner.expected, c);
+                    FfiConverterTypeRemoteControlIdentityHash.writeIntoCursor(inner.found, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RemoteControlPairingCompletionSigningError_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RemoteControlPairingCompletionSigningError_Tags.TargetIdentityMismatch: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlIdentityHash.allocationSize(inner.expected);
+                    size += FfiConverterTypeRemoteControlIdentityHash.allocationSize(inner.found);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: RemoteControlTargetPairingPreparationFailure
+export enum RemoteControlTargetPairingPreparationFailure_Tags {
+    TargetSignerUnavailable = "TargetSignerUnavailable",
+    SigningFailed = "SigningFailed",
+    DeadlineElapsed = "DeadlineElapsed",
+    NoAuthorizationOwed = "NoAuthorizationOwed",
+    AttemptMismatch = "AttemptMismatch"
+}
+export const RemoteControlTargetPairingPreparationFailure = (() => {
+
+    type TargetSignerUnavailable__interface = {
+        tag: RemoteControlTargetPairingPreparationFailure_Tags.TargetSignerUnavailable;
+        inner:
+Readonly<{targetIdentity: RemoteControlIdentityHash}>
+    };
+    class TargetSignerUnavailable_ extends UniffiEnum implements TargetSignerUnavailable__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlTargetPairingPreparationFailure";
+        readonly tag = RemoteControlTargetPairingPreparationFailure_Tags.TargetSignerUnavailable;
+        readonly inner:
+Readonly<{targetIdentity: RemoteControlIdentityHash}>;
+        constructor(
+inner: {targetIdentity: RemoteControlIdentityHash }) {
+            super("RemoteControlTargetPairingPreparationFailure", "TargetSignerUnavailable");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {targetIdentity: RemoteControlIdentityHash }): TargetSignerUnavailable_ {
+            return new TargetSignerUnavailable_(inner);
+        }
+
+        static instanceOf(obj: any): obj is TargetSignerUnavailable_ {
+            return obj.tag === RemoteControlTargetPairingPreparationFailure_Tags.TargetSignerUnavailable;
+        }
+
+    }
+
+    type SigningFailed__interface = {
+        tag: RemoteControlTargetPairingPreparationFailure_Tags.SigningFailed;
+        inner:
+Readonly<{error: RemoteControlPairingCompletionSigningError}>
+    };
+    class SigningFailed_ extends UniffiEnum implements SigningFailed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlTargetPairingPreparationFailure";
+        readonly tag = RemoteControlTargetPairingPreparationFailure_Tags.SigningFailed;
+        readonly inner:
+Readonly<{error: RemoteControlPairingCompletionSigningError}>;
+        constructor(
+inner: {error: RemoteControlPairingCompletionSigningError }) {
+            super("RemoteControlTargetPairingPreparationFailure", "SigningFailed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {error: RemoteControlPairingCompletionSigningError }): SigningFailed_ {
+            return new SigningFailed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is SigningFailed_ {
+            return obj.tag === RemoteControlTargetPairingPreparationFailure_Tags.SigningFailed;
+        }
+
+    }
+
+    type DeadlineElapsed__interface = {
+        tag: RemoteControlTargetPairingPreparationFailure_Tags.DeadlineElapsed
+    };
+    class DeadlineElapsed_ extends UniffiEnum implements DeadlineElapsed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlTargetPairingPreparationFailure";
+        readonly tag = RemoteControlTargetPairingPreparationFailure_Tags.DeadlineElapsed;
+        constructor() {
+            super("RemoteControlTargetPairingPreparationFailure", "DeadlineElapsed");
+        }
+
+        static new(): DeadlineElapsed_ {
+            return new DeadlineElapsed_();
+        }
+
+        static instanceOf(obj: any): obj is DeadlineElapsed_ {
+            return obj.tag === RemoteControlTargetPairingPreparationFailure_Tags.DeadlineElapsed;
+        }
+
+    }
+
+    type NoAuthorizationOwed__interface = {
+        tag: RemoteControlTargetPairingPreparationFailure_Tags.NoAuthorizationOwed
+    };
+    class NoAuthorizationOwed_ extends UniffiEnum implements NoAuthorizationOwed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlTargetPairingPreparationFailure";
+        readonly tag = RemoteControlTargetPairingPreparationFailure_Tags.NoAuthorizationOwed;
+        constructor() {
+            super("RemoteControlTargetPairingPreparationFailure", "NoAuthorizationOwed");
+        }
+
+        static new(): NoAuthorizationOwed_ {
+            return new NoAuthorizationOwed_();
+        }
+
+        static instanceOf(obj: any): obj is NoAuthorizationOwed_ {
+            return obj.tag === RemoteControlTargetPairingPreparationFailure_Tags.NoAuthorizationOwed;
+        }
+
+    }
+
+    type AttemptMismatch__interface = {
+        tag: RemoteControlTargetPairingPreparationFailure_Tags.AttemptMismatch;
+        inner:
+Readonly<{active: RemoteControlPairingAttemptId}>
+    };
+    class AttemptMismatch_ extends UniffiEnum implements AttemptMismatch__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlTargetPairingPreparationFailure";
+        readonly tag = RemoteControlTargetPairingPreparationFailure_Tags.AttemptMismatch;
+        readonly inner:
+Readonly<{active: RemoteControlPairingAttemptId}>;
+        constructor(
+inner: {active: RemoteControlPairingAttemptId }) {
+            super("RemoteControlTargetPairingPreparationFailure", "AttemptMismatch");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {active: RemoteControlPairingAttemptId }): AttemptMismatch_ {
+            return new AttemptMismatch_(inner);
+        }
+
+        static instanceOf(obj: any): obj is AttemptMismatch_ {
+            return obj.tag === RemoteControlTargetPairingPreparationFailure_Tags.AttemptMismatch;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RemoteControlTargetPairingPreparationFailure {
+        return obj[uniffiTypeNameSymbol] === "RemoteControlTargetPairingPreparationFailure";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  TargetSignerUnavailable: TargetSignerUnavailable_,
+  SigningFailed: SigningFailed_,
+  DeadlineElapsed: DeadlineElapsed_,
+  NoAuthorizationOwed: NoAuthorizationOwed_,
+  AttemptMismatch: AttemptMismatch_
+    });
+
+})();
+export type RemoteControlTargetPairingPreparationFailure = InstanceType<
+    typeof RemoteControlTargetPairingPreparationFailure['TargetSignerUnavailable' | 'SigningFailed' | 'DeadlineElapsed' | 'NoAuthorizationOwed' | 'AttemptMismatch']
+>;
+
+// FfiConverter for enum RemoteControlTargetPairingPreparationFailure
+const FfiConverterTypeRemoteControlTargetPairingPreparationFailure = (() => {
+    type TypeName = RemoteControlTargetPairingPreparationFailure;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new RemoteControlTargetPairingPreparationFailure.TargetSignerUnavailable({targetIdentity: FfiConverterTypeRemoteControlIdentityHash.readFromCursor(c) });
+                case 2: return new RemoteControlTargetPairingPreparationFailure.SigningFailed({error: FfiConverterTypeRemoteControlPairingCompletionSigningError.readFromCursor(c) });
+                case 3: return new RemoteControlTargetPairingPreparationFailure.DeadlineElapsed();
+                case 4: return new RemoteControlTargetPairingPreparationFailure.NoAuthorizationOwed();
+                case 5: return new RemoteControlTargetPairingPreparationFailure.AttemptMismatch({active: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case RemoteControlTargetPairingPreparationFailure_Tags.TargetSignerUnavailable: {
+                    c.writeI32(1);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlIdentityHash.writeIntoCursor(inner.targetIdentity, c);
+                    return;
+                }
+                case RemoteControlTargetPairingPreparationFailure_Tags.SigningFailed: {
+                    c.writeI32(2);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlPairingCompletionSigningError.writeIntoCursor(inner.error, c);
+                    return;
+                }
+                case RemoteControlTargetPairingPreparationFailure_Tags.DeadlineElapsed: {
+                    c.writeI32(3);
+                    return;
+                }
+                case RemoteControlTargetPairingPreparationFailure_Tags.NoAuthorizationOwed: {
+                    c.writeI32(4);
+                    return;
+                }
+                case RemoteControlTargetPairingPreparationFailure_Tags.AttemptMismatch: {
+                    c.writeI32(5);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlPairingAttemptId.writeIntoCursor(inner.active, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RemoteControlTargetPairingPreparationFailure_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RemoteControlTargetPairingPreparationFailure_Tags.TargetSignerUnavailable: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlIdentityHash.allocationSize(inner.targetIdentity);
+                    return size;
+                }
+                case RemoteControlTargetPairingPreparationFailure_Tags.SigningFailed: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlPairingCompletionSigningError.allocationSize(inner.error);
+                    return size;
+                }
+                case RemoteControlTargetPairingPreparationFailure_Tags.DeadlineElapsed: {
+                    return 4;
+                }
+                case RemoteControlTargetPairingPreparationFailure_Tags.NoAuthorizationOwed: {
+                    return 4;
+                }
+                case RemoteControlTargetPairingPreparationFailure_Tags.AttemptMismatch: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlPairingAttemptId.allocationSize(inner.active);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
 // Enum: RemoteControlApproveRemoteControlTargetPairingFailure
 export enum RemoteControlApproveRemoteControlTargetPairingFailure_Tags {
+    AuthorizationPreparationFailed = "AuthorizationPreparationFailed",
     Expired = "Expired",
     NoActiveAttempt = "NoActiveAttempt",
     AttemptMismatch = "AttemptMismatch",
@@ -22821,6 +24127,37 @@ export enum RemoteControlApproveRemoteControlTargetPairingFailure_Tags {
     CompletionRetentionExpired = "CompletionRetentionExpired"
 }
 export const RemoteControlApproveRemoteControlTargetPairingFailure = (() => {
+
+    type AuthorizationPreparationFailed__interface = {
+        tag: RemoteControlApproveRemoteControlTargetPairingFailure_Tags.AuthorizationPreparationFailed;
+        inner:
+Readonly<{failure: RemoteControlTargetPairingPreparationFailure}>
+    };
+    class AuthorizationPreparationFailed_ extends UniffiEnum implements AuthorizationPreparationFailed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlApproveRemoteControlTargetPairingFailure";
+        readonly tag = RemoteControlApproveRemoteControlTargetPairingFailure_Tags.AuthorizationPreparationFailed;
+        readonly inner:
+Readonly<{failure: RemoteControlTargetPairingPreparationFailure}>;
+        constructor(
+inner: {failure: RemoteControlTargetPairingPreparationFailure }) {
+            super("RemoteControlApproveRemoteControlTargetPairingFailure", "AuthorizationPreparationFailed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {failure: RemoteControlTargetPairingPreparationFailure }): AuthorizationPreparationFailed_ {
+            return new AuthorizationPreparationFailed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is AuthorizationPreparationFailed_ {
+            return obj.tag === RemoteControlApproveRemoteControlTargetPairingFailure_Tags.AuthorizationPreparationFailed;
+        }
+
+    }
 
     type Expired__interface = {
         tag: RemoteControlApproveRemoteControlTargetPairingFailure_Tags.Expired;
@@ -23038,6 +24375,7 @@ inner: {attemptId: RemoteControlPairingAttemptId; retiredLink: RemoteControlLink
 
     return Object.freeze({
         instanceOf,
+  AuthorizationPreparationFailed: AuthorizationPreparationFailed_,
   Expired: Expired_,
   NoActiveAttempt: NoActiveAttempt_,
   AttemptMismatch: AttemptMismatch_,
@@ -23049,7 +24387,7 @@ inner: {attemptId: RemoteControlPairingAttemptId; retiredLink: RemoteControlLink
 
 })();
 export type RemoteControlApproveRemoteControlTargetPairingFailure = InstanceType<
-    typeof RemoteControlApproveRemoteControlTargetPairingFailure['Expired' | 'NoActiveAttempt' | 'AttemptMismatch' | 'OfferPendingDispatch' | 'AlreadyApproved' | 'FinalizationInProgress' | 'CompletionRetentionExpired']
+    typeof RemoteControlApproveRemoteControlTargetPairingFailure['AuthorizationPreparationFailed' | 'Expired' | 'NoActiveAttempt' | 'AttemptMismatch' | 'OfferPendingDispatch' | 'AlreadyApproved' | 'FinalizationInProgress' | 'CompletionRetentionExpired']
 >;
 
 // FfiConverter for enum RemoteControlApproveRemoteControlTargetPairingFailure
@@ -23058,56 +24396,63 @@ const FfiConverterTypeRemoteControlApproveRemoteControlTargetPairingFailure = ((
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         readFromCursor(c: Cursor): TypeName {
             switch (c.readI32()) {
-                case 1: return new RemoteControlApproveRemoteControlTargetPairingFailure.Expired({expired: FfiConverterTypeRemoteControlTargetPairingAborted.readFromCursor(c), retiredLink: FfiConverterTypeRemoteControlLinkId.readFromCursor(c) });
-                case 2: return new RemoteControlApproveRemoteControlTargetPairingFailure.NoActiveAttempt();
-                case 3: return new RemoteControlApproveRemoteControlTargetPairingFailure.AttemptMismatch({requested: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c), active: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c) });
-                case 4: return new RemoteControlApproveRemoteControlTargetPairingFailure.OfferPendingDispatch({attemptId: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c) });
-                case 5: return new RemoteControlApproveRemoteControlTargetPairingFailure.AlreadyApproved({attemptId: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c) });
-                case 6: return new RemoteControlApproveRemoteControlTargetPairingFailure.FinalizationInProgress({attemptId: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c) });
-                case 7: return new RemoteControlApproveRemoteControlTargetPairingFailure.CompletionRetentionExpired({attemptId: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c), retiredLink: FfiConverterTypeRemoteControlLinkId.readFromCursor(c) });
+                case 1: return new RemoteControlApproveRemoteControlTargetPairingFailure.AuthorizationPreparationFailed({failure: FfiConverterTypeRemoteControlTargetPairingPreparationFailure.readFromCursor(c) });
+                case 2: return new RemoteControlApproveRemoteControlTargetPairingFailure.Expired({expired: FfiConverterTypeRemoteControlTargetPairingAborted.readFromCursor(c), retiredLink: FfiConverterTypeRemoteControlLinkId.readFromCursor(c) });
+                case 3: return new RemoteControlApproveRemoteControlTargetPairingFailure.NoActiveAttempt();
+                case 4: return new RemoteControlApproveRemoteControlTargetPairingFailure.AttemptMismatch({requested: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c), active: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c) });
+                case 5: return new RemoteControlApproveRemoteControlTargetPairingFailure.OfferPendingDispatch({attemptId: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c) });
+                case 6: return new RemoteControlApproveRemoteControlTargetPairingFailure.AlreadyApproved({attemptId: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c) });
+                case 7: return new RemoteControlApproveRemoteControlTargetPairingFailure.FinalizationInProgress({attemptId: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c) });
+                case 8: return new RemoteControlApproveRemoteControlTargetPairingFailure.CompletionRetentionExpired({attemptId: FfiConverterTypeRemoteControlPairingAttemptId.readFromCursor(c), retiredLink: FfiConverterTypeRemoteControlLinkId.readFromCursor(c) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             switch (value.tag) {
-                case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.Expired: {
+                case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.AuthorizationPreparationFailed: {
                     c.writeI32(1);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlTargetPairingPreparationFailure.writeIntoCursor(inner.failure, c);
+                    return;
+                }
+                case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.Expired: {
+                    c.writeI32(2);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlTargetPairingAborted.writeIntoCursor(inner.expired, c);
                     FfiConverterTypeRemoteControlLinkId.writeIntoCursor(inner.retiredLink, c);
                     return;
                 }
                 case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.NoActiveAttempt: {
-                    c.writeI32(2);
+                    c.writeI32(3);
                     return;
                 }
                 case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.AttemptMismatch: {
-                    c.writeI32(3);
+                    c.writeI32(4);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlPairingAttemptId.writeIntoCursor(inner.requested, c);
                     FfiConverterTypeRemoteControlPairingAttemptId.writeIntoCursor(inner.active, c);
                     return;
                 }
                 case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.OfferPendingDispatch: {
-                    c.writeI32(4);
-                    const inner = value.inner;
-                    FfiConverterTypeRemoteControlPairingAttemptId.writeIntoCursor(inner.attemptId, c);
-                    return;
-                }
-                case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.AlreadyApproved: {
                     c.writeI32(5);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlPairingAttemptId.writeIntoCursor(inner.attemptId, c);
                     return;
                 }
-                case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.FinalizationInProgress: {
+                case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.AlreadyApproved: {
                     c.writeI32(6);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlPairingAttemptId.writeIntoCursor(inner.attemptId, c);
                     return;
                 }
-                case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.CompletionRetentionExpired: {
+                case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.FinalizationInProgress: {
                     c.writeI32(7);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlPairingAttemptId.writeIntoCursor(inner.attemptId, c);
+                    return;
+                }
+                case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.CompletionRetentionExpired: {
+                    c.writeI32(8);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlPairingAttemptId.writeIntoCursor(inner.attemptId, c);
                     FfiConverterTypeRemoteControlLinkId.writeIntoCursor(inner.retiredLink, c);
@@ -23120,6 +24465,12 @@ const FfiConverterTypeRemoteControlApproveRemoteControlTargetPairingFailure = ((
         }
         allocationSize(value: TypeName): number {
             switch (value.tag) {
+                case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.AuthorizationPreparationFailed: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlTargetPairingPreparationFailure.allocationSize(inner.failure);
+                    return size;
+                }
                 case RemoteControlApproveRemoteControlTargetPairingFailure_Tags.Expired: {
                     const inner = value.inner;
                     let size = 4;
@@ -40163,6 +41514,8 @@ export default Object.freeze({
     FfiConverterTypeRemoteControlBeginRemoteControlControllerPairingFailure,
     FfiConverterTypeRemoteControlBeginRemoteControlControllerPairingSettlement,
     FfiConverterTypeRemoteControlBluetoothIndication,
+    FfiConverterTypeRemoteControlBufferTooShort,
+    FfiConverterTypeRemoteControlBuildOutgoingResourceError,
     FfiConverterTypeRemoteControlBuildVersion,
     FfiConverterTypeRemoteControlCapabilities,
     FfiConverterTypeRemoteControlChargingState,
@@ -40263,6 +41616,7 @@ export default Object.freeze({
     FfiConverterTypeRemoteControlPairingAttemptTimeoutError,
     FfiConverterTypeRemoteControlPairingAvailabilityWriteError,
     FfiConverterTypeRemoteControlPairingCompletedVerificationError,
+    FfiConverterTypeRemoteControlPairingCompletionSigningError,
     FfiConverterTypeRemoteControlPairingContext,
     FfiConverterTypeRemoteControlPairingControlErrorRemoteControlApproveRemoteControlControllerPairingControlFailure,
     FfiConverterTypeRemoteControlPairingControlErrorRemoteControlApproveRemoteControlTargetPairingFailure,
@@ -40329,6 +41683,8 @@ export default Object.freeze({
     FfiConverterTypeRemoteControlSendPlainPacketWriteError,
     FfiConverterTypeRemoteControlSendRequestFailure,
     FfiConverterTypeRemoteControlSendRequestRejection,
+    FfiConverterTypeRemoteControlSendResourceFailure,
+    FfiConverterTypeRemoteControlSendResourceRejection,
     FfiConverterTypeRemoteControlSetRemoteControlTargetAccessControlError,
     FfiConverterTypeRemoteControlSetRemoteControlTargetAccessOutcome,
     FfiConverterTypeRemoteControlSetRemoteControlTargetAccessSettlement,
@@ -40348,6 +41704,7 @@ export default Object.freeze({
     FfiConverterTypeRemoteControlTargetPairingAborted,
     FfiConverterTypeRemoteControlTargetPairingApproval,
     FfiConverterTypeRemoteControlTargetPairingAttemptWindow,
+    FfiConverterTypeRemoteControlTargetPairingPreparationFailure,
     FfiConverterTypeRemoteControlTargetPairingRejection,
     FfiConverterTypeRemoteControlTargetPairingResponder,
     FfiConverterTypeRemoteControlWifiConfirmationRemaining,

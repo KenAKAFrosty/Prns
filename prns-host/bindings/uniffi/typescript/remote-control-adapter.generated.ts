@@ -757,6 +757,7 @@ export function liftRemoteControlSendRequestFailure(value: N.RemoteControlSendRe
     case N.RemoteControlSendRequestFailure_Tags.LinkClosed: return { tag: "LinkClosed" };
     case N.RemoteControlSendRequestFailure_Tags.ResponseTooLarge: return { tag: "ResponseTooLarge" };
     case N.RemoteControlSendRequestFailure_Tags.ResponseTransferFailed: return { tag: "ResponseTransferFailed", data: { value: liftRemoteControlResourceFailureCause(value.inner.value) } };
+    case N.RemoteControlSendRequestFailure_Tags.RequestTransferFailed: return { tag: "RequestTransferFailed", data: { value: liftRemoteControlSendResourceFailure(value.inner.value) } };
     case N.RemoteControlSendRequestFailure_Tags.ResourceCapacity: return { tag: "ResourceCapacity" };
     default: return unexpected(value);
   }
@@ -792,6 +793,45 @@ export function liftRemoteControlApplyHashmapUpdateError(value: N.RemoteControlA
     case N.RemoteControlApplyHashmapUpdateError.HashmapRagged: return { tag: "HashmapRagged" };
     default: return unexpected(value);
   }
+}
+export function liftRemoteControlSendResourceFailure(value: N.RemoteControlSendResourceFailure): C.RemoteControlSendResourceFailure {
+  switch (value.tag) {
+    case N.RemoteControlSendResourceFailure_Tags.Rejected: return { tag: "Rejected", data: { value: liftRemoteControlSendResourceRejection(value.inner.value) } };
+    case N.RemoteControlSendResourceFailure_Tags.WriteFailed: return { tag: "WriteFailed" };
+    case N.RemoteControlSendResourceFailure_Tags.RejectedByPeer: return { tag: "RejectedByPeer" };
+    case N.RemoteControlSendResourceFailure_Tags.Sequencing: return { tag: "Sequencing" };
+    case N.RemoteControlSendResourceFailure_Tags.Timeout: return { tag: "Timeout" };
+    case N.RemoteControlSendResourceFailure_Tags.LinkClosed: return { tag: "LinkClosed" };
+    case N.RemoteControlSendResourceFailure_Tags.PredecessorFailed: return { tag: "PredecessorFailed" };
+    default: return unexpected(value);
+  }
+}
+export function liftRemoteControlSendResourceRejection(value: N.RemoteControlSendResourceRejection): C.RemoteControlSendResourceRejection {
+  switch (value.tag) {
+    case N.RemoteControlSendResourceRejection_Tags.NoSuchLink: return { tag: "NoSuchLink" };
+    case N.RemoteControlSendResourceRejection_Tags.LinkNotActive: return { tag: "LinkNotActive" };
+    case N.RemoteControlSendResourceRejection_Tags.LinkBusy: return { tag: "LinkBusy" };
+    case N.RemoteControlSendResourceRejection_Tags.TableFull: return { tag: "TableFull" };
+    case N.RemoteControlSendResourceRejection_Tags.Build: return { tag: "Build", data: { value: liftRemoteControlBuildOutgoingResourceError(value.inner.value) } };
+    case N.RemoteControlSendResourceRejection_Tags.MetadataMisplaced: return { tag: "MetadataMisplaced" };
+    default: return unexpected(value);
+  }
+}
+export function liftRemoteControlBuildOutgoingResourceError(value: N.RemoteControlBuildOutgoingResourceError): C.RemoteControlBuildOutgoingResourceError {
+  switch (value.tag) {
+    case N.RemoteControlBuildOutgoingResourceError_Tags.DataTooLarge: return { tag: "DataTooLarge" };
+    case N.RemoteControlBuildOutgoingResourceError_Tags.MetadataTooLarge: return { tag: "MetadataTooLarge" };
+    case N.RemoteControlBuildOutgoingResourceError_Tags.SduTooSmall: return { tag: "SduTooSmall" };
+    case N.RemoteControlBuildOutgoingResourceError_Tags.Seal: return { tag: "Seal", data: { value: liftRemoteControlBufferTooShort(value.inner.value) } };
+    case N.RemoteControlBuildOutgoingResourceError_Tags.HashmapBufferTooShort: return { tag: "HashmapBufferTooShort" };
+    case N.RemoteControlBuildOutgoingResourceError_Tags.BufferShapeMismatch: return { tag: "BufferShapeMismatch" };
+    case N.RemoteControlBuildOutgoingResourceError_Tags.PreparedDigestInputMismatch: return { tag: "PreparedDigestInputMismatch" };
+    case N.RemoteControlBuildOutgoingResourceError_Tags.SaltRerollsExhausted: return { tag: "SaltRerollsExhausted" };
+    default: return unexpected(value);
+  }
+}
+export function liftRemoteControlBufferTooShort(value: N.RemoteControlBufferTooShort): C.RemoteControlBufferTooShort {
+  return {  };
 }
 export function liftRemoteControlResponseParseError(value: N.RemoteControlResponseParseError): C.RemoteControlResponseParseError {
   switch (value.tag) {
@@ -1403,6 +1443,7 @@ export function liftRemoteControlPairingControlErrorRemoteControlApproveRemoteCo
 }
 export function liftRemoteControlApproveRemoteControlTargetPairingFailure(value: N.RemoteControlApproveRemoteControlTargetPairingFailure): C.RemoteControlApproveRemoteControlTargetPairingFailure {
   switch (value.tag) {
+    case N.RemoteControlApproveRemoteControlTargetPairingFailure_Tags.AuthorizationPreparationFailed: return { tag: "AuthorizationPreparationFailed", data: { failure: liftRemoteControlTargetPairingPreparationFailure(value.inner.failure) } };
     case N.RemoteControlApproveRemoteControlTargetPairingFailure_Tags.Expired: return { tag: "Expired", data: { expired: liftRemoteControlTargetPairingAborted(value.inner.expired), retiredLink: liftRemoteControlLinkId(value.inner.retiredLink) } };
     case N.RemoteControlApproveRemoteControlTargetPairingFailure_Tags.NoActiveAttempt: return { tag: "NoActiveAttempt" };
     case N.RemoteControlApproveRemoteControlTargetPairingFailure_Tags.AttemptMismatch: return { tag: "AttemptMismatch", data: { requested: liftRemoteControlPairingAttemptId(value.inner.requested), active: liftRemoteControlPairingAttemptId(value.inner.active) } };
@@ -1411,6 +1452,22 @@ export function liftRemoteControlApproveRemoteControlTargetPairingFailure(value:
     case N.RemoteControlApproveRemoteControlTargetPairingFailure_Tags.FinalizationInProgress: return { tag: "FinalizationInProgress", data: { attemptId: liftRemoteControlPairingAttemptId(value.inner.attemptId) } };
     case N.RemoteControlApproveRemoteControlTargetPairingFailure_Tags.CompletionRetentionExpired: return { tag: "CompletionRetentionExpired", data: { attemptId: liftRemoteControlPairingAttemptId(value.inner.attemptId), retiredLink: liftRemoteControlLinkId(value.inner.retiredLink) } };
     default: return unexpected(value);
+  }
+}
+export function liftRemoteControlTargetPairingPreparationFailure(value: N.RemoteControlTargetPairingPreparationFailure): C.RemoteControlTargetPairingPreparationFailure {
+  switch (value.tag) {
+    case N.RemoteControlTargetPairingPreparationFailure_Tags.TargetSignerUnavailable: return { tag: "TargetSignerUnavailable", data: { targetIdentity: liftRemoteControlIdentityHash(value.inner.targetIdentity) } };
+    case N.RemoteControlTargetPairingPreparationFailure_Tags.SigningFailed: return { tag: "SigningFailed", data: { error: liftRemoteControlPairingCompletionSigningError(value.inner.error) } };
+    case N.RemoteControlTargetPairingPreparationFailure_Tags.DeadlineElapsed: return { tag: "DeadlineElapsed" };
+    case N.RemoteControlTargetPairingPreparationFailure_Tags.NoAuthorizationOwed: return { tag: "NoAuthorizationOwed" };
+    case N.RemoteControlTargetPairingPreparationFailure_Tags.AttemptMismatch: return { tag: "AttemptMismatch", data: { active: liftRemoteControlPairingAttemptId(value.inner.active) } };
+    default: return unexpected(value);
+  }
+}
+export function liftRemoteControlPairingCompletionSigningError(value: N.RemoteControlPairingCompletionSigningError): C.RemoteControlPairingCompletionSigningError {
+  switch (value.tag) {
+    case N.RemoteControlPairingCompletionSigningError_Tags.TargetIdentityMismatch: return { tag: "TargetIdentityMismatch", data: { expected: liftRemoteControlIdentityHash(value.inner.expected), found: liftRemoteControlIdentityHash(value.inner.found) } };
+    default: return unexpected(value.tag);
   }
 }
 export function liftRemoteControlApproveRemoteControlTargetPairingControlError(value: N.RemoteControlApproveRemoteControlTargetPairingControlError): C.RemoteControlApproveRemoteControlTargetPairingControlError {
