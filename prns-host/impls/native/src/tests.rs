@@ -964,6 +964,80 @@ fn persistent_host_restores_identity_and_flushes_on_shutdown() -> Result<(), Str
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn persistent_host_flushes_inside_a_directory_sandbox() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    struct Sandbox {
+        root: PathBuf,
+        ancestor: PathBuf,
+    }
+    impl Drop for Sandbox {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.ancestor, fs::Permissions::from_mode(0o700));
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    let root = temporary_root("sandbox-persistence")?;
+    let sandbox = Sandbox {
+        ancestor: root.join("execute-only"),
+        root,
+    };
+    let existing = sandbox.ancestor.join("existing-store");
+    let application = sandbox.ancestor.join("owned-application");
+    fs::create_dir_all(&existing).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&application).map_err(|error| error.to_string())?;
+    fs::set_permissions(&sandbox.ancestor, fs::Permissions::from_mode(0o111))
+        .map_err(|error| error.to_string())?;
+    match fs::File::open(&sandbox.ancestor) {
+        Ok(_) => {
+            eprintln!(
+                "sandbox persistence fixture skipped: directory read restrictions are bypassed"
+            );
+            return Ok(());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+        Err(error) => return Err(format!("unexpected sandbox fixture error: {error}")),
+    }
+
+    for directory in [existing, application.join("new/nested-store")] {
+        let mut host_config = config();
+        host_config.persistence = PersistenceConfig::Directory {
+            path: directory.to_string_lossy().into_owned(),
+        };
+        let sink = Arc::new(RecordingSink::new());
+        let host = NativeHost::start(host_config, sink.clone())
+            .map_err(|error| format!("sandbox host did not start: {error:?}"))?;
+        let restored =
+            sink.wait_for(|event| matches!(event, DiagnosticEvent::PersistenceRestored { .. }));
+        host.stop();
+        if !restored {
+            return Err("sandbox host did not restore persistence".into());
+        }
+        let diagnostics = sink.diagnostics();
+        if !diagnostics.iter().any(|event| {
+            matches!(
+                event,
+                DiagnosticEvent::PersistenceFlushed {
+                    cause: PersistenceFlushCause::Shutdown,
+                    ..
+                }
+            )
+        }) || diagnostics
+            .iter()
+            .any(|event| matches!(event, DiagnosticEvent::PersistenceFlushFailed { .. }))
+        {
+            return Err("sandbox host did not confirm its shutdown snapshot".into());
+        }
+        if !directory.join("timebase").is_file() {
+            return Err("sandbox host did not publish its timebase snapshot".into());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn persistence_path_must_be_a_directory() -> Result<(), String> {
     let root = temporary_root("not-directory")?;
