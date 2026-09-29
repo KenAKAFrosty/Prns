@@ -5,7 +5,8 @@ ownership repairs below are implemented; retained controls and negotiated
 liveness remain planned. There is no new control-wire version or liveness claim
 in the current build.
 
-A controlled two-phone iOS restart check on September 24, 2026 delivered a baseline message, restarted only iOS, and then failed recipient
+A controlled two-phone iOS restart check delivered a baseline message, restarted
+only iOS, and then failed recipient
 resolution while Android retained an established member and rejected new
 candidates. Resetting only Android's app Bluetooth restored delivery of the same
 unsent draft. This motivates shared transport work, not contact retries or an
@@ -17,7 +18,8 @@ application-owned Bluetooth protocol.
   greeting asserts a transport identity; it does not authenticate an LXMF sender.
   A competing Hello alone must not evict a working connection.
 - Tokio member close notifications carry the exact admission's
-  `TokioInterfaceStatus` identity, compared using `same_instance`. A delayed notification cannot remove a newer member, even at
+  `TokioInterfaceStatus` identity, compared using `same_instance`. A delayed
+  notification cannot remove a newer member, even at
   the same identity and address, or trigger backend cleanup for it.
 - Android Rust links now retain one physical-connection lease through handshake
   and both data halves. Its final drop retires only the owned connection and
