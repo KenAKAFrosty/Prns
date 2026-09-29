@@ -218,7 +218,7 @@ fn startup_requires_central_gatt_and_l2cap_readiness() {
     assert_eq!(
         manager_readiness(*current.borrow())
             .unwrap()
-            .map(|readiness| readiness.local_psm.get()),
+            .map(|psm| psm.get()),
         Some(0x0081)
     );
 }
@@ -268,7 +268,7 @@ fn bounded_ingress_separates_inbound_and_sighting_pressure() {
     assert_eq!(
         manager_readiness(*manager_current.borrow())
             .unwrap()
-            .map(|readiness| readiness.local_psm.get()),
+            .map(|psm| psm.get()),
         Some(0x0081)
     );
     assert_eq!(inbound_rx.try_recv(), Ok(1));
