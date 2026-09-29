@@ -40,8 +40,8 @@ impl<const MAX_LINKS: usize, A: Allocator> LinkTable for FixedHeapLinkTable<MAX_
         &self.link_ids
     }
 
-    fn timeout_ats(&self) -> &[Option<InstantMillis>] {
-        &self.timeout_ats
+    fn timeout_at(&self, index: usize) -> Option<InstantMillis> {
+        self.timeout_ats[index]
     }
 
     fn phases(&self) -> &[LinkPhase] {
@@ -106,7 +106,7 @@ mod tests {
 
         table.swap_remove(0);
         assert_eq!(table.link_ids(), &[link(2)]);
-        assert_eq!(table.timeout_ats(), &[Some(InstantMillis(200))]);
+        assert_eq!(table.timeout_at(0), Some(InstantMillis(200)));
         assert_eq!(table.phases().len(), 1);
     }
 }

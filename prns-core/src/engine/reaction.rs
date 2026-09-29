@@ -532,6 +532,8 @@ pub enum Journaled<'a> {
 
     /// One verified segment of a split response resource; the receive gate refuses out-of-order chains, so these concatenate in arrival order.
     /// The request settles as `Settlement::SendRequest` when the final segment assembles, not through a [`Journaled::ResponseReceived`].
+    /// Chunks are provisional until that settlement succeeds. A later failure invalidates
+    /// the response; consumers must not publish the accumulated prefix as a successful value.
     ResponseSegmentReceived {
         command_id: CommandId,
         link_id: LinkId,

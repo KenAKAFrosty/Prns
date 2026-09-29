@@ -715,6 +715,57 @@ fn host_resource_memory_limits_reach_the_engine_before_run() {
     assert_eq!(prns.node.engine.resource_memory_limits(), limits);
 }
 
+#[tokio::test(start_paused = true)]
+async fn explicit_host_preserves_entropy_position_handle_identity_and_timeline() {
+    use crate::manifold::{driver::TokioHost, Host};
+    use prns_core::entropy::RuntimeEntropy;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&calls);
+    let source = move |output: &mut [u8]| {
+        observed.fetch_add(1, Ordering::Relaxed);
+        output.fill(0x57);
+        Ok::<(), core::convert::Infallible>(())
+    };
+    let mut entropy = RuntimeEntropy::try_new(source).unwrap();
+    let mut reference = RuntimeEntropy::try_new(|output: &mut [u8]| {
+        output.fill(0x57);
+        Ok::<(), core::convert::Infallible>(())
+    })
+    .unwrap();
+    entropy.fill_random(&mut [0; 73]);
+    reference.fill_random(&mut [0; 73]);
+    let host = TokioHost::with_runtime_entropy(InstantMillis(900), entropy);
+    let mut node = PrnsNode::new_with_handle_and_host(
+        |handle| PrnsNodeRecipe {
+            transport_identity: None,
+            remote_control: test_remote_control_service(),
+            pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+            app_state: handle,
+            storage: crate::storage::GrowableHeap,
+            request_endpoints: crate::request_endpoints![],
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
+            on_event: |_event, _state: &PrnsNodeHandle| {},
+        },
+        host,
+    )
+    .with_crypto_pool(crate::runtime::CryptoPoolConfig::Inline);
+    assert!(Arc::ptr_eq(&node.handle.ids, &node.node.state.ids));
+    let mut actual = [0; 128];
+    let mut expected = [0; 128];
+    node.host.fill_random(&mut actual);
+    reference.fill_random(&mut expected);
+    assert_eq!(
+        (actual, calls.load(Ordering::Relaxed), node.clock().now()),
+        (expected, 1, InstantMillis(900))
+    );
+    tokio::time::advance(std::time::Duration::from_millis(7)).await;
+    assert_eq!(node.clock().now(), InstantMillis(907));
+    drop(node);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
 #[test]
 fn a_runtime_destination_registers_only_its_selected_route_types() {
     struct First;

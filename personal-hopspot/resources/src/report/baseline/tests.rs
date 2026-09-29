@@ -25,7 +25,7 @@ fn refresh_writes_the_complete_matrix_in_canonical_order() -> Result<(), Box<dyn
         &source_custody()?,
     )?;
     let baseline: CanonicalBaseline = serde_json::from_slice(&std::fs::read(outcome.path())?)?;
-    assert_eq!(outcome.targets(), 15);
+    assert_eq!(outcome.targets(), 16);
     assert_eq!(baseline.schema_version, BASELINE_SCHEMA_VERSION);
     assert_eq!(baseline.report_schema_version, SCHEMA_VERSION);
     assert_eq!(

@@ -1,18 +1,25 @@
+mod event_selection;
+#[cfg(feature = "bluetooth-auto")]
 mod host;
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "bluetooth-auto", target_os = "linux"))]
 mod linux;
 mod runtime;
+pub use event_selection::{BleEventSelector, BleEventSources, TokioFairBleEvents};
 
 pub use prns_core::interfaces::bluetooth_auto::BluetoothRadioState;
 
+#[cfg(feature = "bluetooth-auto")]
 pub use host::{
     AttachedBle, AttachedBluetoothLe, AutoBle, AutoBluetoothLe, ConfiguredAutoBle,
     ConfiguredAutoBluetoothLe,
 };
-#[cfg(target_os = "ios")]
+#[cfg(all(feature = "bluetooth-auto", target_os = "ios"))]
 pub use host::{CoreBluetoothRestorationIdentifiers, CoreBluetoothRestorationIdentifiersError};
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(all(
+    feature = "bluetooth-auto",
+    any(target_os = "macos", target_os = "ios")
+))]
 pub use host::{PreparedAutoBle, PreparedAutoBluetoothLe};
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "bluetooth-auto", target_os = "linux"))]
 pub use linux::{BluerBackend, BluerError};
 pub use runtime::{BluetoothAuto, BluetoothAutoStatus, BluetoothPeer};

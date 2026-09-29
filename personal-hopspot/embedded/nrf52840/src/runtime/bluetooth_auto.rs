@@ -953,9 +953,10 @@ fn preferred_tx_power() -> TxPower {
 }
 
 fn peripheral_adv_config() -> peripheral::Config {
-    let mut config = peripheral::Config::default();
-    config.tx_power = preferred_tx_power();
-    config
+    peripheral::Config {
+        tx_power: preferred_tx_power(),
+        ..Default::default()
+    }
 }
 
 fn idle_scan_config() -> central::ScanConfig<'static> {
@@ -979,6 +980,9 @@ fn initiate_data_length_extension(conn: &mut Connection) {
 fn tune_link(conn: &mut Connection) {
     if preferred_tx_power() != TxPower::ZerodBm {
         if let Some(handle) = conn.handle() {
+            // SAFETY: Bluetooth Auto runs only with the enabled SoftDevice; the handle belongs to
+            // this live connection, the connection role is valid, and `TxPower` values are valid
+            // SoftDevice transmit-power encodings.
             let ret = unsafe {
                 raw::sd_ble_gap_tx_power_set(
                     raw::BLE_GAP_TX_POWER_ROLES_BLE_GAP_TX_POWER_ROLE_CONN as _,

@@ -86,6 +86,11 @@ pub enum HostCommand {
         path_hash: RequestPathHash,
         payload: Vec<u8>,
         timeout: ResponseTimeout,
+        /// Bounds the encoded response before adapter binary decoding. Packets
+        /// and whole, metadata-free Resources exclude only the outer request-ID
+        /// envelope. Whole metadata-bearing Resources count literal file bytes,
+        /// excluding metadata. Segmented Resources count the full advertised
+        /// uncompressed stream, including envelope and metadata.
         maximum_response_bytes: Option<u64>,
     },
     Respond {

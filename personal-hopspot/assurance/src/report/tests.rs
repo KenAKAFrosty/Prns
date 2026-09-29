@@ -55,12 +55,10 @@ fn comparison_calls_out_fingerprint_changes() -> Result<(), Box<dyn std::error::
             memory_contract_fingerprint: fingerprint('d')?,
         },
     };
-    let MatrixStatus::Failed { required_failures } = before.status else {
-        return Err("missing evidence must fail the matrix".into());
+    let MatrixStatus::Failed { required_failures } = &mut before.status else {
+        return Err("missing evidence must fail".into());
     };
-    before.status = MatrixStatus::Failed {
-        required_failures: required_failures - 1,
-    };
+    *required_failures -= 1;
     let mut after = before.clone();
     if let Verdict::Passed { evidence } = &mut after.targets[0].resource {
         evidence.report_fingerprint = fingerprint('e')?;
@@ -86,7 +84,7 @@ fn matrix_report_exposes_failure_counts_and_typed_details() -> Result<(), Box<dy
     let markdown = super::render::matrix(&matrix);
 
     let MatrixStatus::Failed { required_failures } = matrix.status else {
-        return Err("missing evidence must fail the matrix".into());
+        return Err("missing evidence must fail".into());
     };
     assert!(markdown.contains(&format!("failed ({required_failures} required failures)")));
     assert!(markdown.contains("structural-violation: bad \\| entry point"));

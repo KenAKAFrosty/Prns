@@ -1176,6 +1176,7 @@ mod tests {
             .unwrap();
 
         let mut buf = [0u8; BROADCAST_MTU];
+        let mut first_hash = None;
         for i in 1..=8u64 {
             let dispatch = state
                 .write_commanded_send_single_packet(
@@ -1187,6 +1188,9 @@ mod tests {
                 )
                 .dispatched();
             assert_eq!(dispatch.culled, None);
+            if i == 1 {
+                first_hash = Some(PacketHash::of_wire_packet(&buf[..dispatch.wire_bytes]).unwrap());
+            }
         }
 
         let dispatch = state
@@ -1201,6 +1205,7 @@ mod tests {
         assert_eq!(
             dispatch.culled,
             Some(crate::routing::delivery::receipts::CulledReceipt {
+                packet_hash: first_hash.unwrap(),
                 command_id: CommandId(1),
                 kind: ReceiptKind::SendSinglePacket {
                     route_evidence: Some(route_evidence),
@@ -1493,7 +1498,7 @@ mod tests {
             .route_evidence_handle_for(&peer_destination())
             .unwrap();
         let mut buf = [0u8; BROADCAST_MTU];
-        state
+        let dispatch = state
             .write_commanded_send_single_packet(
                 CommandId(7),
                 &send_of(b"timed"),
@@ -1507,6 +1512,7 @@ mod tests {
         assert_eq!(
             state.receipts.pop_expired(InstantMillis(13_000)),
             Some(ExpiredReceipt {
+                packet_hash: PacketHash::of_wire_packet(&buf[..dispatch.wire_bytes]).unwrap(),
                 command_id: CommandId(7),
                 kind: ReceiptKind::SendSinglePacket {
                     route_evidence: Some(route_evidence),

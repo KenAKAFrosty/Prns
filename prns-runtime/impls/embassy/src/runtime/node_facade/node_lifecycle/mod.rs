@@ -17,6 +17,7 @@ use crate::manifold::driver::{
 use crate::manifold::grant::ManifoldLaneReader;
 use crate::manifold::Host;
 use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
+use crate::runtime::DiscoveryGroupConfigurationStoreExchange;
 use crate::storage::StorageLayout;
 
 use super::super::remote_control_pairing_persistence::{
@@ -707,7 +708,13 @@ where
     >(
         &mut self,
         store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
-        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
+        persistence: &mut EmbeddedFlashPersistence<
+            Fl,
+            Keys,
+            Observe,
+            PENDING,
+            impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+        >,
     ) where
         M: Sync,
         Fl: NorFlash,
@@ -737,7 +744,13 @@ where
     >(
         &mut self,
         store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
-        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
+        persistence: &mut EmbeddedFlashPersistence<
+            Fl,
+            Keys,
+            Observe,
+            PENDING,
+            impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+        >,
         should_prove: Decide,
     ) where
         M: Sync,
@@ -763,7 +776,13 @@ where
 
     pub async fn restore_embedded_persistence<Fl, Keys, Observe, const PENDING: usize>(
         &mut self,
-        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
+        persistence: &mut EmbeddedFlashPersistence<
+            Fl,
+            Keys,
+            Observe,
+            PENDING,
+            impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+        >,
     ) -> EmbeddedPersistenceRestoreReport
     where
         Fl: NorFlash,

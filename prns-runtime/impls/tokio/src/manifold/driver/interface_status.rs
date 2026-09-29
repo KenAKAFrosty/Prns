@@ -50,6 +50,12 @@ fn unpack_airtime(packed: u32) -> Option<AirtimeUtilization> {
 }
 
 impl TokioInterfaceStatus {
+    /// Compares the owning status cells, not the stable logical interface IDs.
+    #[must_use]
+    pub fn same_instance(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     #[must_use]
     pub fn new_accounted(id: InterfaceId, connection: ConnectionState) -> Self {
         Self::new(id, connection, true)
@@ -291,6 +297,21 @@ impl RecordsFrameAccounting for TokioInterfaceStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_instance_identity_survives_cloning_but_not_reconstruction() {
+        let id =
+            InterfaceId::from_channel_tag(crate::interfaces::InterfaceKind::BluetoothPeer, &[1]);
+        let first = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected);
+        let second = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected);
+        assert_eq!(
+            [
+                first.same_instance(&first.clone()),
+                first.same_instance(&second)
+            ],
+            [true, false]
+        );
+    }
 
     #[test]
     fn airtime_reads_none_until_published_then_round_trips() {

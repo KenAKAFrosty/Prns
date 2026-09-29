@@ -10,6 +10,7 @@ use std::task::{Context, Poll, Wake, Waker};
 
 use futures_util::task::AtomicWaker;
 use futures_util::FutureExt;
+use prns_core::entropy::EntropySource;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -53,7 +54,9 @@ use super::super::request_runner::{
 use super::super::{
     InterfaceStore, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe, SendError,
 };
-use super::interface_lifecycle::{drive_interfaces, DriverMsg};
+use super::interface_lifecycle::{
+    drive_interfaces_with_arbitration, DriverMsg, InterfaceArbitration,
+};
 use super::{persistence, AttachIntent, PrnsNodeHandle, PrnsNodeLocalHandle};
 
 const LOCAL_COMMAND_DEPTH: usize = 128;
@@ -75,10 +78,10 @@ fn notify_accepted_announce(
 /// (synchronous: it wires the engine and spawns each interface), then driven by
 /// [`run`](Self::run) or [`run_until`](Self::run_until). Hold [`handle`](Self::handle)
 /// clones to drive it from other tasks or threads while either method owns the loop.
-pub struct PrnsNode<St, R, F, S: StorageLayout> {
+pub struct PrnsNode<St, R, F, S: StorageLayout, E = crate::runtime::OsEntropySource> {
     handle: PrnsNodeHandle,
     local_commands: Option<manifold_driver::LocalCommandProducer>,
-    pub(super) host: TokioHost,
+    pub(super) host: TokioHost<E>,
     pub(super) node: AssembledNode<St, R, F, S>,
     manifold_wake: manifold_driver::ManifoldWakeReceiver,
     command_rx: UnboundedReceiver<HostCommand>,
@@ -89,6 +92,7 @@ pub struct PrnsNode<St, R, F, S: StorageLayout> {
     accepted_announce_observer: Option<AcceptedAnnounceObserver>,
     pub(super) crypto_pool: CryptoPoolConfig,
     scheduler_policy: SchedulerPolicy,
+    interface_arbitration: InterfaceArbitration,
     persistence: Option<persistence::NodePersistence>,
 }
 
@@ -100,7 +104,7 @@ pub enum NonRoutingIdentityError {
 
 pub type SharedInstanceIdentityError = NonRoutingIdentityError;
 
-impl<St, R, F> PrnsNode<St, R, F, GrowableHeap>
+impl<St, R, F, E: EntropySource> PrnsNode<St, R, F, GrowableHeap, E>
 where
     R: RequestEndpointSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
@@ -434,6 +438,82 @@ where
         P: persistence::PersistenceIntent,
         B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
     {
+        Self::assemble_with_host(
+            build_recipe,
+            crate::runtime::TokioHandleEntropy::new(),
+            |persistence| {
+                TokioHost::start_at(
+                    persistence
+                        .map(persistence::NodePersistence::timeline_origin)
+                        .unwrap_or_else(persistence::wall_clock_timeline_origin),
+                )
+            },
+        )
+    }
+}
+
+impl<St, R, F, S: StorageLayout, E: EntropySource> PrnsNode<St, R, F, S, E>
+where
+    R: RequestEndpointSet<St>,
+    F: FnMut(PrnsEvent<'_>, &St),
+{
+    /// Constructs a node with an explicitly owned host. Its timeline must agree with any
+    /// restored persistence. Handle/interface randomness and path IDs remain OS-backed.
+    pub fn new_with_host<'a, D, I, P>(
+        recipe: PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
+        host: TokioHost<E>,
+    ) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
+        I: AttachIntent,
+        P: persistence::PersistenceIntent,
+    {
+        Self::new_with_handle_and_host(|_| recipe, host)
+    }
+
+    /// Like [`Self::new_with_host`], with access to the handle while constructing the recipe.
+    pub fn new_with_handle_and_host<'a, D, I, P, B>(build_recipe: B, host: TokioHost<E>) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
+        I: AttachIntent,
+        P: persistence::PersistenceIntent,
+        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
+    {
+        Self::new_with_entropy_sources(
+            build_recipe,
+            host,
+            crate::runtime::TokioHandleEntropy::new(),
+        )
+    }
+
+    /// Selects every node-owned entropy provider before the recipe or interfaces can use them.
+    /// The host owns the timeline and engine stream; `handle_entropy` owns the shared
+    /// handle/interface stream and fallible path-ID provider. No provider is replaced at runtime.
+    pub fn new_with_entropy_sources<'a, D, I, P, B>(
+        build_recipe: B,
+        host: TokioHost<E>,
+        handle_entropy: crate::runtime::TokioHandleEntropy,
+    ) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
+        I: AttachIntent,
+        P: persistence::PersistenceIntent,
+        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
+    {
+        Self::assemble_with_host(build_recipe, handle_entropy, |_| host)
+    }
+
+    fn assemble_with_host<'a, D, I, P, B>(
+        build_recipe: B,
+        handle_entropy: crate::runtime::TokioHandleEntropy,
+        host: impl FnOnce(Option<&persistence::NodePersistence>) -> TokioHost<E>,
+    ) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
+        I: AttachIntent,
+        P: persistence::PersistenceIntent,
+        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
+    {
         let (manifold_wake_tx, manifold_wake_rx) = manifold_driver::manifold_wake();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (local_commands, local_command_rx) =
@@ -453,7 +533,7 @@ where
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
             resource_admission: super::resource_admission::ResourceAdmissionRegistry::default(),
-            entropy: crate::manifold::driver::TokioEntropy,
+            entropy: handle_entropy,
             timing_oracle: Arc::new(Mutex::new(None)),
             remote_control_controller_grants,
             remote_control_target_accesses,
@@ -466,12 +546,7 @@ where
         PrnsNode {
             local_commands: Some(local_commands),
             handle,
-            host: TokioHost::start_at(
-                node_persistence
-                    .as_ref()
-                    .map(persistence::NodePersistence::timeline_origin)
-                    .unwrap_or_else(persistence::wall_clock_timeline_origin),
-            ),
+            host: host(node_persistence.as_ref()),
             node,
             manifold_wake: manifold_wake_rx,
             command_rx,
@@ -481,6 +556,7 @@ where
             iface_build_rx,
             accepted_announce_observer: None,
             crypto_pool: CryptoPoolConfig::host_default(),
+            interface_arbitration: InterfaceArbitration::TokioFair,
             scheduler_policy: SchedulerPolicy::production(),
             persistence: node_persistence,
         }
@@ -586,6 +662,13 @@ where
     #[must_use]
     pub fn with_crypto_pool(mut self, crypto_pool: CryptoPoolConfig) -> Self {
         self.crypto_pool = crypto_pool;
+        self
+    }
+
+    /// Selects this node's interface-driver readiness arbitration before execution.
+    #[must_use]
+    pub fn with_interface_arbitration(mut self, arbitration: InterfaceArbitration) -> Self {
+        self.interface_arbitration = arbitration;
         self
     }
 
@@ -754,6 +837,7 @@ where
             mut accepted_announce_observer,
             crypto_pool,
             scheduler_policy,
+            interface_arbitration,
             persistence: _,
         } = self;
         let AssembledNode {
@@ -870,11 +954,12 @@ where
                 },
                 handle.clone(),
             ),
-            drive_interfaces(
+            drive_interfaces_with_arbitration(
                 std::vec::Vec::new(),
                 iface_build_rx,
                 driver_commands,
                 driver_interfaces,
+                interface_arbitration,
             ),
         );
         match persistence_worker {

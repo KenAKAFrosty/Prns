@@ -4,7 +4,8 @@ use personal_rns::usb_auto::WebUsbBootloaderEntry;
     feature = "board-t096",
     feature = "board-t1000e",
     feature = "board-mesh-pocket",
-    feature = "board-muzi-base-duo"
+    feature = "board-muzi-base-duo",
+    feature = "board-rak4631"
 ))]
 mod request {
     use core::sync::atomic::{AtomicBool, Ordering};
@@ -19,7 +20,8 @@ mod request {
         #[cfg(any(
             feature = "board-t096",
             feature = "board-mesh-pocket",
-            feature = "board-muzi-base-duo"
+            feature = "board-muzi-base-duo",
+            feature = "board-rak4631"
         ))]
         Rejected,
     }
@@ -39,7 +41,8 @@ mod request {
                     #[cfg(any(
                         feature = "board-t096",
                         feature = "board-mesh-pocket",
-                        feature = "board-muzi-base-duo"
+                        feature = "board-muzi-base-duo",
+                        feature = "board-rak4631"
                     ))]
                     ResetPreparation::Rejected => {}
                 }
@@ -60,7 +63,8 @@ mod request {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-mesh-pocket",
-        feature = "board-muzi-base-duo"
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     ))]
     fn prepare_bootloader_reset() -> ResetPreparation {
         const ADAFRUIT_UF2_DFU_GPREGRET: u32 = 0x57;
@@ -81,7 +85,8 @@ pub const fn webusb_entry() -> WebUsbBootloaderEntry {
         feature = "board-t096",
         feature = "board-t1000e",
         feature = "board-mesh-pocket",
-        feature = "board-muzi-base-duo"
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     ))]
     return WebUsbBootloaderEntry::Supported {
         request: request::request,
@@ -91,7 +96,8 @@ pub const fn webusb_entry() -> WebUsbBootloaderEntry {
         feature = "board-t096",
         feature = "board-t1000e",
         feature = "board-mesh-pocket",
-        feature = "board-muzi-base-duo"
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     )))]
     WebUsbBootloaderEntry::Unsupported
 }
@@ -101,7 +107,8 @@ pub async fn wait() -> ! {
         feature = "board-t096",
         feature = "board-t1000e",
         feature = "board-mesh-pocket",
-        feature = "board-muzi-base-duo"
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     ))]
     request::wait().await;
 
@@ -109,7 +116,8 @@ pub async fn wait() -> ! {
         feature = "board-t096",
         feature = "board-t1000e",
         feature = "board-mesh-pocket",
-        feature = "board-muzi-base-duo"
+        feature = "board-muzi-base-duo",
+        feature = "board-rak4631"
     )))]
     core::future::pending().await
 }

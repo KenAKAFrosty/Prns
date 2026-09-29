@@ -14,7 +14,7 @@ pub use espressif::{
 };
 pub use nrf52840::{
     MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2, MUZI_BASE_DUO, NRF52840_MEMORY_X_BINDING,
-    T096, T1000_E, T114, T_ECHO_S140_V6, T_ECHO_S140_V7,
+    RAK4631, T096, T1000_E, T114, T_ECHO_S140_V6, T_ECHO_S140_V7,
 };
 
 const KIB: u64 = 1024;
@@ -95,7 +95,7 @@ const fn journal(
     }
 }
 
-pub const ALL_MEMORY_PROFILES: [&MemoryProfile; 15] = [
+pub const ALL_MEMORY_PROFILES: [&MemoryProfile; 16] = [
     &HELTEC_V4,
     &HELTEC_V4_R8,
     &HELTEC_E290,
@@ -111,6 +111,7 @@ pub const ALL_MEMORY_PROFILES: [&MemoryProfile; 15] = [
     &T1000_E,
     &MESH_TOWER_V2,
     &MUZI_BASE_DUO,
+    &RAK4631,
 ];
 
 #[must_use]

@@ -108,6 +108,7 @@ where
     ) -> CryptoCompletionEffect {
         let Self {
             engine,
+            host,
             topology,
             wire_scratch,
             journal,
@@ -116,52 +117,58 @@ where
             ..
         } = self;
         let mut deferred = None;
-        let wake = engine.resume_resource_open(completed, now, &mut |reaction| {
-            route_reaction_with_work(
-                reaction,
-                &mut topology.egress,
-                &topology.ifacs,
-                &mut topology.pacers,
-                wire_scratch,
-                now,
-                &mut |journaled| journal.route(journaled),
-                &mut |work| {
-                    let OwedWork::ResourceOpen(owed) = work else {
-                        owed_work.push(work, crypto_pool);
-                        return;
-                    };
-                    let ResourceOpenSpanResidence::Transferable(reservation) = owed.residence
-                    else {
-                        owed_work.push_resource_open(owed, crypto_pool);
-                        return;
-                    };
-                    if crypto_pool.is_none()
-                        || deferred.is_some()
-                        || ResourceOpenExecution::for_sealed_byte_len(owed.state.sealed_byte_len())
-                            == ResourceOpenExecution::Manifold
-                    {
-                        owed_work.push_resource_open(owed, crypto_pool);
-                        return;
-                    }
-                    let ResourceOpenOwed {
-                        link_id,
-                        hash,
-                        span_start,
-                        state,
-                        bytes: _,
-                        residence: _,
-                        other_transfers_in_flight: _,
-                    } = owed;
-                    deferred = Some(DeferredTransferOpen {
-                        link_id,
-                        hash,
-                        span_start,
-                        state,
-                        reservation,
-                    });
-                },
-            );
-        });
+        let wake = engine.resume_resource_open(
+            completed,
+            now,
+            &mut |entropy| host.fill_random(entropy),
+            &mut |reaction| {
+                route_reaction_with_work(
+                    reaction,
+                    &mut topology.egress,
+                    &topology.ifacs,
+                    &mut topology.pacers,
+                    wire_scratch,
+                    now,
+                    &mut |journaled| journal.route(journaled),
+                    &mut |work| {
+                        let OwedWork::ResourceOpen(owed) = work else {
+                            owed_work.push(work, crypto_pool);
+                            return;
+                        };
+                        let ResourceOpenSpanResidence::Transferable(reservation) = owed.residence
+                        else {
+                            owed_work.push_resource_open(owed, crypto_pool);
+                            return;
+                        };
+                        if crypto_pool.is_none()
+                            || deferred.is_some()
+                            || ResourceOpenExecution::for_sealed_byte_len(
+                                owed.state.sealed_byte_len(),
+                            ) == ResourceOpenExecution::Manifold
+                        {
+                            owed_work.push_resource_open(owed, crypto_pool);
+                            return;
+                        }
+                        let ResourceOpenOwed {
+                            link_id,
+                            hash,
+                            span_start,
+                            state,
+                            bytes: _,
+                            residence: _,
+                            other_transfers_in_flight: _,
+                        } = owed;
+                        deferred = Some(DeferredTransferOpen {
+                            link_id,
+                            hash,
+                            span_start,
+                            state,
+                            reservation,
+                        });
+                    },
+                );
+            },
+        );
         if let Some(deferred) = deferred {
             let workspace = engine.take_resource_open_workspace(deferred.reservation);
             owed_work.push_deferred_transfer_open(deferred, workspace);
@@ -548,6 +555,7 @@ where
                     plaintext: &plaintext,
                 },
                 now,
+                &mut |entropy| host.fill_random(entropy),
                 &mut |reaction| {
                     route_completion_reaction(
                         reaction,
@@ -607,6 +615,7 @@ where
                         outcome: WholeResourceOpenOutcome::Unavailable,
                     },
                     now,
+                    &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
                         route_completion_reaction(
                             reaction,

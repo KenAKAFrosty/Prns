@@ -557,7 +557,8 @@ pub(crate) fn remote_control_pairing_persistence_failed(
     use personal_rns::runtime::EmbeddedRemoteControlPairingPersistenceFailure as Failure;
 
     let attempt_id = match failure {
-        Failure::AuthorizationTransaction { attempt_id, .. }
+        Failure::CommittedActivation { attempt_id, .. }
+        | Failure::AuthorizationTransaction { attempt_id, .. }
         | Failure::Storage { attempt_id, .. }
         | Failure::TargetSettlement { attempt_id, .. }
         | Failure::ControllerSettlement { attempt_id, .. }

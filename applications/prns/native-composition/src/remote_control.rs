@@ -6,7 +6,7 @@ use core::time::Duration;
 
 use personal_rns::engine::{
     EstablishLinkFailure, EstablishLinkRejection, SendRequestFailure, SendRequestRejection,
-    WriteEstablishLinkRejection,
+    SendResourceFailure, SendResourceRejection, WriteEstablishLinkRejection,
 };
 use personal_rns::identity::IdentityHash;
 use personal_rns::interfaces::InterfaceId;
@@ -415,10 +415,19 @@ fn announce_exchange_failure(error: RemoteControlTargetOperationError) -> Announ
             SendRequestFailure::Rejected(_) => AnnounceStatus::Failed {
                 stage: AnnounceStage::Link,
             },
-            SendRequestFailure::Timeout => AnnounceStatus::OutcomeUnknown {
-                reason: UnknownReason::Timeout,
-            },
-            SendRequestFailure::LinkClosed => AnnounceStatus::OutcomeUnknown {
+            SendRequestFailure::Timeout
+            | SendRequestFailure::RequestTransferFailed(SendResourceFailure::Timeout) => {
+                AnnounceStatus::OutcomeUnknown {
+                    reason: UnknownReason::Timeout,
+                }
+            }
+            SendRequestFailure::LinkClosed
+            | SendRequestFailure::RequestTransferFailed(
+                SendResourceFailure::LinkClosed
+                | SendResourceFailure::Rejected(
+                    SendResourceRejection::NoSuchLink | SendResourceRejection::LinkNotActive,
+                ),
+            ) => AnnounceStatus::OutcomeUnknown {
                 reason: UnknownReason::ConnectionLost,
             },
             SendRequestFailure::ResponseTooLarge
@@ -426,11 +435,11 @@ fn announce_exchange_failure(error: RemoteControlTargetOperationError) -> Announ
             | SendRequestFailure::ResourceCapacity => AnnounceStatus::OutcomeUnknown {
                 reason: UnknownReason::ResponseInvalid,
             },
-            SendRequestFailure::WriteFailed | SendRequestFailure::Culled => {
-                AnnounceStatus::OutcomeUnknown {
-                    reason: UnknownReason::DeliveryUnconfirmed,
-                }
-            }
+            SendRequestFailure::WriteFailed
+            | SendRequestFailure::Culled
+            | SendRequestFailure::RequestTransferFailed(_) => AnnounceStatus::OutcomeUnknown {
+                reason: UnknownReason::DeliveryUnconfirmed,
+            },
         },
         RemoteControlTargetOperationError::Exchange(RemoteControlError::Request(
             SendError::NodeStopped,
@@ -558,11 +567,20 @@ pub(crate) const fn classify_send_request_failure(
     failure: SendRequestFailure,
 ) -> SendRequestFailureClass {
     match failure {
-        SendRequestFailure::Timeout => SendRequestFailureClass::Timeout,
+        SendRequestFailure::Timeout
+        | SendRequestFailure::RequestTransferFailed(SendResourceFailure::Timeout) => {
+            SendRequestFailureClass::Timeout
+        }
         SendRequestFailure::Rejected(
             SendRequestRejection::NoSuchLink | SendRequestRejection::LinkNotActive,
         )
         | SendRequestFailure::LinkClosed
+        | SendRequestFailure::RequestTransferFailed(
+            SendResourceFailure::LinkClosed
+            | SendResourceFailure::Rejected(
+                SendResourceRejection::NoSuchLink | SendResourceRejection::LinkNotActive,
+            ),
+        )
         | SendRequestFailure::ResponseTransferFailed(
             prns_core::routing::links::resources::ResourceFailureCause::LinkVanished,
         ) => SendRequestFailureClass::Link,
@@ -570,6 +588,7 @@ pub(crate) const fn classify_send_request_failure(
         | SendRequestFailure::Culled
         | SendRequestFailure::ResponseTooLarge
         | SendRequestFailure::ResponseTransferFailed(_)
+        | SendRequestFailure::RequestTransferFailed(_)
         | SendRequestFailure::ResourceCapacity => SendRequestFailureClass::Request,
     }
 }
@@ -1047,6 +1066,83 @@ pub(crate) mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn request_transfer_failures_preserve_connection_context_and_uncertain_changes() {
+        for (failure, class, reason) in [
+            (
+                SendResourceFailure::Timeout,
+                SendRequestFailureClass::Timeout,
+                UnknownReason::Timeout,
+            ),
+            (
+                SendResourceFailure::LinkClosed,
+                SendRequestFailureClass::Link,
+                UnknownReason::ConnectionLost,
+            ),
+            (
+                SendResourceFailure::Rejected(SendResourceRejection::NoSuchLink),
+                SendRequestFailureClass::Link,
+                UnknownReason::ConnectionLost,
+            ),
+            (
+                SendResourceFailure::Rejected(SendResourceRejection::LinkNotActive),
+                SendRequestFailureClass::Link,
+                UnknownReason::ConnectionLost,
+            ),
+            (
+                SendResourceFailure::WriteFailed,
+                SendRequestFailureClass::Request,
+                UnknownReason::DeliveryUnconfirmed,
+            ),
+            (
+                SendResourceFailure::RejectedByPeer,
+                SendRequestFailureClass::Request,
+                UnknownReason::DeliveryUnconfirmed,
+            ),
+            (
+                SendResourceFailure::Sequencing,
+                SendRequestFailureClass::Request,
+                UnknownReason::DeliveryUnconfirmed,
+            ),
+            (
+                SendResourceFailure::PredecessorFailed,
+                SendRequestFailureClass::Request,
+                UnknownReason::DeliveryUnconfirmed,
+            ),
+            (
+                SendResourceFailure::Rejected(SendResourceRejection::LinkBusy),
+                SendRequestFailureClass::Request,
+                UnknownReason::DeliveryUnconfirmed,
+            ),
+            (
+                SendResourceFailure::Rejected(SendResourceRejection::TableFull),
+                SendRequestFailureClass::Request,
+                UnknownReason::DeliveryUnconfirmed,
+            ),
+            (
+                SendResourceFailure::Rejected(SendResourceRejection::MetadataMisplaced),
+                SendRequestFailureClass::Request,
+                UnknownReason::DeliveryUnconfirmed,
+            ),
+        ] {
+            let failure = SendRequestFailure::RequestTransferFailed(failure);
+            assert_eq!(classify_send_request_failure(failure), class);
+            let error = || {
+                RemoteControlTargetOperationError::Exchange(RemoteControlError::Request(
+                    SendError::Failed(failure),
+                ))
+            };
+            assert_eq!(
+                announce_exchange_failure(error()),
+                AnnounceStatus::OutcomeUnknown { reason }
+            );
+            assert_eq!(
+                management::mutation_failure(error()),
+                crate::contract::RemoteChangeStatus::OutcomeUnknown { reason }
+            );
+        }
     }
 
     #[test]

@@ -1,11 +1,14 @@
 //! RNS 1.4.2 `Resource(data, link)` plus `Resource.advertise`.
 
+use super::settlement::resource_failure_settlement;
 #[cfg(feature = "resource-work-offload")]
 use crate::crypto::Sha256PrefixState;
+#[cfg(test)]
+use crate::engine::RespondFailure;
 use crate::engine::{
     CommandId, Directive, EngineReaction, EngineState, InstantMillis, Journaled, OwedWork,
 };
-use crate::engine::{RespondFailure, SendResourceFailure, SendResourceRejection, Settlement};
+use crate::engine::{SendResourceFailure, SendResourceRejection, Settlement};
 use crate::interfaces::InterfaceId;
 use crate::rncp::write_file_metadata;
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
@@ -352,20 +355,6 @@ pub(crate) enum ResourceProofClassification {
     NotALocalLink,
 }
 
-pub(crate) fn resource_settlement(
-    correlation: ResourceCorrelation,
-    result: Result<(), SendResourceFailure>,
-) -> Settlement {
-    match correlation {
-        ResourceCorrelation::Response(_) => {
-            Settlement::Respond(result.map_err(RespondFailure::Resource))
-        }
-        ResourceCorrelation::Unsolicited | ResourceCorrelation::Request { .. } => {
-            Settlement::SendResource(result)
-        }
-    }
-}
-
 fn settle_resource_failure<Work>(
     sink: &mut impl FnMut(EngineReaction<'_, Work>),
     id: CommandId,
@@ -374,7 +363,7 @@ fn settle_resource_failure<Work>(
 ) {
     sink(EngineReaction::Journaled(Journaled::CommandSettled {
         id,
-        settlement: resource_settlement(correlation, Err(failure)),
+        settlement: resource_failure_settlement(correlation, failure),
     }));
 }
 
@@ -441,7 +430,7 @@ impl<S: StorageLayout> EngineState<S> {
         let settle = |sink: &mut dyn FnMut(EngineReaction<'a, OwedWork<'a>>), failure| {
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id,
-                settlement: resource_settlement(correlation, Err(failure)),
+                settlement: resource_failure_settlement(correlation, failure),
             }));
         };
         let validated = match self.validate_outgoing_resource_send(send, segment) {
@@ -513,6 +502,9 @@ impl<S: StorageLayout> EngineState<S> {
             total_data_bytes,
         } = segment;
         if index == 0 || total_segments == 0 || index > total_segments {
+            return Err(SendResourceFailure::Sequencing);
+        }
+        if matches!(send.correlation, ResourceCorrelation::Request { .. }) && total_segments != 1 {
             return Err(SendResourceFailure::Sequencing);
         }
         let uncompressed_data_bytes = u64::try_from(send.body.metadata.block_len())
@@ -610,11 +602,9 @@ impl<S: StorageLayout> EngineState<S> {
         };
         sink(EngineReaction::Journaled(Journaled::CommandSettled {
             id: reservation.command_id,
-            settlement: resource_settlement(
+            settlement: resource_failure_settlement(
                 reservation.correlation,
-                Err(SendResourceFailure::Rejected(SendResourceRejection::Build(
-                    error,
-                ))),
+                SendResourceFailure::Rejected(SendResourceRejection::Build(error)),
             ),
         }));
         if reservation.lane == TrackLane::Live {
@@ -643,11 +633,9 @@ impl<S: StorageLayout> EngineState<S> {
             ResourceBuildLanding::Failed(error) => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id: reservation.command_id,
-                    settlement: resource_settlement(
+                    settlement: resource_failure_settlement(
                         reservation.correlation,
-                        Err(SendResourceFailure::Rejected(SendResourceRejection::Build(
-                            error,
-                        ))),
+                        SendResourceFailure::Rejected(SendResourceRejection::Build(error)),
                     ),
                 }));
                 if lane == TrackLane::Live {
@@ -681,9 +669,9 @@ impl<S: StorageLayout> EngineState<S> {
             self.outgoing_resources.remove(&reservation.link_id, &hash);
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id: reservation.command_id,
-                settlement: resource_settlement(
+                settlement: resource_failure_settlement(
                     reservation.correlation,
-                    Err(SendResourceFailure::WriteFailed),
+                    SendResourceFailure::WriteFailed,
                 ),
             }));
             return crate::engine::WakeSchedules::UNCHANGED;
@@ -711,30 +699,22 @@ impl<S: StorageLayout> EngineState<S> {
                 self.outgoing_resources.state_mut(index).retries_left = MAX_ADVERTISEMENT_RETRIES;
                 self.outgoing_resources
                     .set_timeout_at(index, Some(advertised_deadline(now, rtt_millis)));
-                if let ResourceCorrelation::Request {
-                    response_timeout,
-                    maximum_response_bytes,
-                    ..
-                } = state.correlation
-                {
-                    self.book_request_resource_receipt(
-                        state.command_id,
-                        &reservation.link_id,
-                        request_data,
-                        response_timeout,
-                        maximum_response_bytes,
-                        now,
-                    );
-                    wake.receipt_timeouts = self.receipt_timeouts_wake();
-                }
+                wake.merge(self.book_request_resource_receipt(
+                    state.command_id,
+                    &reservation.link_id,
+                    request_data,
+                    state.correlation,
+                    now,
+                    sink,
+                ));
             }
             AdvertisementWriteOutcome::DidNotWrite => {
                 self.outgoing_resources.remove(&reservation.link_id, &hash);
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id: reservation.command_id,
-                    settlement: resource_settlement(
+                    settlement: resource_failure_settlement(
                         reservation.correlation,
-                        Err(SendResourceFailure::WriteFailed),
+                        SendResourceFailure::WriteFailed,
                     ),
                 }));
             }
@@ -1189,24 +1169,14 @@ impl<S: StorageLayout> EngineState<S> {
                     self.outgoing_resources
                         .set_timeout_at(index, Some(advertised_deadline(now, rtt_millis)));
                 }
-                if let ResourceCorrelation::Request {
-                    response_timeout,
-                    maximum_response_bytes,
-                    ..
-                } = correlation
-                {
-                    if segment_index == 1 {
-                        self.book_request_resource_receipt(
-                            id,
-                            &link_id,
-                            data,
-                            response_timeout,
-                            maximum_response_bytes,
-                            now,
-                        );
-                        wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
-                    }
-                }
+                wake_schedule_changes.merge(self.book_request_resource_receipt(
+                    id,
+                    &link_id,
+                    data,
+                    correlation,
+                    now,
+                    sink,
+                ));
             }
             AdvertisementWriteOutcome::DidNotWrite => {
                 self.outgoing_resources.remove(&link_id, &hash);
@@ -1610,11 +1580,9 @@ impl<S: StorageLayout> EngineState<S> {
         self.outgoing_resources.remove_at(index);
         sink(EngineReaction::Journaled(Journaled::CommandSettled {
             id,
-            settlement: resource_settlement(
+            settlement: resource_failure_settlement(
                 correlation,
-                Err(SendResourceFailure::Rejected(SendResourceRejection::Build(
-                    error,
-                ))),
+                SendResourceFailure::Rejected(SendResourceRejection::Build(error)),
             ),
         }));
         self.fail_staged_continuation(&link_id, sink);
@@ -1955,9 +1923,9 @@ impl<S: StorageLayout> EngineState<S> {
                 self.outgoing_resources.remove_at(staged);
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id: state.command_id,
-                    settlement: resource_settlement(
+                    settlement: resource_failure_settlement(
                         state.correlation,
-                        Err(SendResourceFailure::PredecessorFailed),
+                        SendResourceFailure::PredecessorFailed,
                     ),
                 }));
             }
@@ -2015,9 +1983,9 @@ impl<S: StorageLayout> EngineState<S> {
                 self.outgoing_resources.remove(link_id, &hash);
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
-                    settlement: resource_settlement(
+                    settlement: resource_failure_settlement(
                         correlation,
-                        Err(SendResourceFailure::WriteFailed),
+                        SendResourceFailure::WriteFailed,
                     ),
                 }));
             }
@@ -2039,9 +2007,9 @@ impl<S: StorageLayout> EngineState<S> {
             self.outgoing_resources.remove_at(index);
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id,
-                settlement: resource_settlement(
+                settlement: resource_failure_settlement(
                     correlation,
-                    Err(SendResourceFailure::PredecessorFailed),
+                    SendResourceFailure::PredecessorFailed,
                 ),
             }));
         }
@@ -2104,10 +2072,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
         }
-        sink(EngineReaction::Journaled(Journaled::CommandSettled {
-            id,
-            settlement: resource_settlement(correlation, Err(failure)),
-        }));
+        self.settle_advertised_resource(id, link_id, correlation, Err(failure), sink);
         self.fail_staged_continuation(link_id, sink);
     }
 

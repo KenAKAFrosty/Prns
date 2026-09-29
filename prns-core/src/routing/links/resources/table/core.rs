@@ -209,6 +209,7 @@ impl Default for OutgoingResourceState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IncomingResourceState {
+    pub original_hash: ResourceHash,
     pub salt_nonce: SaltNonce,
     pub compression: ResourceCompression,
     pub has_metadata: bool,
@@ -259,6 +260,7 @@ impl IncomingResourceState {
 impl Default for IncomingResourceState {
     fn default() -> Self {
         Self {
+            original_hash: ResourceHash::new([0; 32]),
             salt_nonce: SaltNonce::new([0; 4]),
             compression: ResourceCompression::Uncompressed,
             has_metadata: false,
@@ -507,6 +509,7 @@ pub struct OutgoingResources<C: ResourceTable<OutgoingResourceState>> {
 pub struct LinkOwnedOutgoingResource {
     pub command_id: CommandId,
     pub correlation: ResourceCorrelation,
+    pub status: OutgoingResourceStatus,
 }
 
 impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
@@ -1070,6 +1073,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         let resource = LinkOwnedOutgoingResource {
             command_id: state.command_id,
             correlation: state.correlation,
+            status: state.status,
         };
         self.table.swap_remove(index);
         self.refresh_earliest_timeout();
@@ -1294,9 +1298,11 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
 
     /// The capacity and shape gate the engine asks at accept; policy gating happens before the offer ever reaches the table.
     /// The duplicate refusal is RNS 1.4.2 `Resource.accept`'s `has_incoming_resource` registration gate.
+    /// Retain the offered chain identity through asynchronous opening and cleanup.
     pub fn accept(
         &mut self,
         link_id: LinkId,
+        original_hash: ResourceHash,
         offer: AcceptedResource<'_>,
     ) -> Result<usize, AcceptIncomingResourceError> {
         let shape = accepted_resource_shape(offer)?;
@@ -1317,6 +1323,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
                 link_id,
                 offer.hash,
                 IncomingResourceState {
+                    original_hash,
                     salt_nonce: offer.salt_nonce,
                     compression: offer.compression,
                     has_metadata: offer.has_metadata,
@@ -1765,6 +1772,7 @@ mod tests {
             Some(LinkOwnedOutgoingResource {
                 command_id: CommandId(7),
                 correlation: ResourceCorrelation::Unsolicited,
+                status: OutgoingResourceStatus::Building,
             }),
             "link teardown removes a building row without inventing a wire hash",
         );
@@ -1963,7 +1971,7 @@ mod tests {
         let mut incoming = IncomingResources::<HeapResourceTable<IncomingResourceState>>::default();
         incoming.set_memory_limit(0);
         assert_eq!(
-            incoming.accept(link_id(1), offer(0xAB, &[])),
+            incoming.accept(link_id(1), hash(0xAB), offer(0xAB, &[])),
             Err(AcceptIncomingResourceError::TableFull),
         );
     }
@@ -2034,9 +2042,12 @@ mod tests {
     fn an_accepted_offer_lands_with_its_initial_names() {
         let mut incoming = TestIncoming::default();
         let names = [[0x11u8; 4], [0x22; 4]].as_flattened().to_vec();
-        let index = incoming.accept(link_id(1), offer(0xAB, &names)).unwrap();
+        let index = incoming
+            .accept(link_id(1), hash(0xAB), offer(0xAB, &names))
+            .unwrap();
 
         let state = incoming.state(index);
+        assert_eq!(state.original_hash, hash(0xAB));
         assert_eq!(state.part_count, 3);
         assert_eq!(state.hashmap_height, 2);
         assert_eq!(state.window, WINDOW_START);
@@ -2048,16 +2059,22 @@ mod tests {
     #[test]
     fn the_accept_gate_refuses_what_the_store_cannot_hold() {
         let mut incoming = TestIncoming::default();
-        incoming.accept(link_id(1), offer(0xAB, &[])).unwrap();
+        incoming
+            .accept(link_id(1), hash(0xAB), offer(0xAB, &[]))
+            .unwrap();
         assert_eq!(
-            incoming.accept(link_id(1), offer(0xAB, &[])).unwrap_err(),
+            incoming
+                .accept(link_id(1), hash(0xAB), offer(0xAB, &[]))
+                .unwrap_err(),
             AcceptIncomingResourceError::AlreadyReceiving,
         );
 
         let mut too_large = offer(0xCD, &[]);
         too_large.sealed_transfer_bytes = 1025;
         assert_eq!(
-            incoming.accept(link_id(1), too_large).unwrap_err(),
+            incoming
+                .accept(link_id(1), hash(0xAB), too_large)
+                .unwrap_err(),
             AcceptIncomingResourceError::TransferTooLarge,
         );
 
@@ -2065,14 +2082,18 @@ mod tests {
         too_many.sdu = 245;
         too_many.part_count = 4;
         assert_eq!(
-            incoming.accept(link_id(1), too_many).unwrap_err(),
+            incoming
+                .accept(link_id(1), hash(0xAB), too_many)
+                .unwrap_err(),
             AcceptIncomingResourceError::TooManyParts,
         );
 
         let mut mismatched_parts = offer(0xCD, &[]);
         mismatched_parts.part_count = 2;
         assert_eq!(
-            incoming.accept(link_id(1), mismatched_parts).unwrap_err(),
+            incoming
+                .accept(link_id(1), hash(0xAB), mismatched_parts)
+                .unwrap_err(),
             AcceptIncomingResourceError::PartCountMismatch,
         );
 
@@ -2080,42 +2101,56 @@ mod tests {
         empty.sealed_transfer_bytes = 0;
         empty.part_count = 0;
         assert_eq!(
-            incoming.accept(link_id(1), empty).unwrap_err(),
+            incoming.accept(link_id(1), hash(0xAB), empty).unwrap_err(),
             AcceptIncomingResourceError::EmptyTransfer,
         );
 
         let mut zero_sdu = offer(0xCD, &[]);
         zero_sdu.sdu = 0;
         assert_eq!(
-            incoming.accept(link_id(1), zero_sdu).unwrap_err(),
+            incoming
+                .accept(link_id(1), hash(0xAB), zero_sdu)
+                .unwrap_err(),
             AcceptIncomingResourceError::SduTooSmall,
         );
 
         let too_long_names = [0u8; (HASHMAP_MAX_LEN + 1) * MAP_HASH_LEN];
         assert_eq!(
             incoming
-                .accept(link_id(1), offer(0xCD, &too_long_names))
+                .accept(link_id(1), hash(0xAB), offer(0xCD, &too_long_names))
                 .unwrap_err(),
             AcceptIncomingResourceError::HashmapTooLong,
         );
 
         assert_eq!(
             incoming
-                .accept(link_id(1), offer(0xCD, &[0u8; MAP_HASH_LEN + 1]))
+                .accept(
+                    link_id(1),
+                    hash(0xAB),
+                    offer(0xCD, &[0u8; MAP_HASH_LEN + 1])
+                )
                 .unwrap_err(),
             AcceptIncomingResourceError::HashmapRagged,
         );
 
         assert_eq!(
             incoming
-                .accept(link_id(1), offer(0xCD, &[0u8; 4 * MAP_HASH_LEN]))
+                .accept(
+                    link_id(1),
+                    hash(0xAB),
+                    offer(0xCD, &[0u8; 4 * MAP_HASH_LEN])
+                )
                 .unwrap_err(),
             AcceptIncomingResourceError::HashmapBeyondPartCount,
         );
 
-        incoming.accept(link_id(2), offer(0xCD, &[])).unwrap();
+        incoming
+            .accept(link_id(2), hash(0xAB), offer(0xCD, &[]))
+            .unwrap();
         assert_eq!(
-            incoming.accept(link_id(3), offer(0xEE, &[])).unwrap_err(),
+            incoming
+                .accept(link_id(3), hash(0xAB), offer(0xEE, &[]))
+                .unwrap_err(),
             AcceptIncomingResourceError::TableFull,
         );
     }
@@ -2126,7 +2161,7 @@ mod tests {
         let mut big = offer(0xAB, &[]);
         big.part_count = 100;
         big.sealed_transfer_bytes = 100 * 464;
-        let index = incoming.accept(link_id(1), big).unwrap();
+        let index = incoming.accept(link_id(1), hash(0xAB), big).unwrap();
 
         assert_eq!(
             incoming
@@ -2187,7 +2222,9 @@ mod tests {
     #[test]
     fn placed_parts_advance_the_consecutive_height_across_gaps() {
         let mut incoming = TestIncoming::default();
-        let index = incoming.accept(link_id(1), offer(0xAB, &[])).unwrap();
+        let index = incoming
+            .accept(link_id(1), hash(0xAB), offer(0xAB, &[]))
+            .unwrap();
         incoming.state_mut(index).outstanding_part_count = 3;
 
         assert_eq!(
@@ -2219,7 +2256,9 @@ mod tests {
     #[test]
     fn misfit_parts_are_dropped_silently_like_the_reference() {
         let mut incoming = TestIncoming::default();
-        let index = incoming.accept(link_id(1), offer(0xAB, &[])).unwrap();
+        let index = incoming
+            .accept(link_id(1), hash(0xAB), offer(0xAB, &[]))
+            .unwrap();
 
         assert_eq!(
             incoming.place_part(index, 0, &[0x11; 464]),

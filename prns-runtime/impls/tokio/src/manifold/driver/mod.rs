@@ -38,9 +38,9 @@ mod scheduling_policy;
 pub use super::grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
 };
+pub(crate) use crate::runtime::TokioEntropy;
 pub use crypto_pool::{CryptoPoolConfig, CryptoWorkerPlacement, PoolWorkers};
 pub use egress::Egress;
-pub(crate) use host::TokioEntropy;
 pub use host::{TokioClock, TokioHost};
 pub use host_protocol::{
     AddInterfaceCommand, HostCommand, HostResourceMetadata, HostResourcePayload,

@@ -22,11 +22,42 @@ provider, preserving the continuous secret stream without copying it. Embassy
 installs that generator once behind a mutex and distributes copyable
 `EntropyHandle` values; copying a handle does not copy the generator.
 
-Standard/Tokio hosts seed from the operating-system CSPRNG. A manifold owns a
-non-cloneable stream, while the few thread-local consumers seed an isolated
-stream lazily. Continuing Prns inside a process produced by raw Unix `fork` is
+Standard/Tokio nodes seed from the operating-system CSPRNG. A manifold owns a
+non-cloneable stream. Each node also owns a shared stream for its handle,
+attached interfaces and supervisor fleets; cloning a handle shares ownership,
+not generator state. Unrelated nodes do not share a thread-local generator.
+Path-discovery identifiers retain a separate fallible OS-source read behind
+that owner, returning `EntropyUnavailable` before submitting a command if the
+read fails or ownership is poisoned. The mutex is released before any await.
+Continuing Prns inside a process produced by raw Unix `fork` is
 unsupported because inherited generator state would be duplicated; spawning a
 fresh executable remains supported.
+
+`TokioHost::with_runtime_entropy` accepts an already-initialized
+`RuntimeEntropy<S>` and an explicit logical origin. Moving the stream preserves
+its position, source and reseed health without another seed read. The host does
+not accept a raw seed or an unbranded random-output callback. Controlled sources
+are appropriate only for isolated validation; normal node construction remains
+OS-backed. `PrnsNode::new_with_host` and `new_with_handle_and_host` carry that
+host through node execution without erasing its source type. The caller owns
+the supplied timeline, including its agreement with any restored persistence.
+These constructors do not override handle/interface or path-ID sources.
+`PrnsNode::new_with_entropy_sources` additionally requires a
+`TokioHandleEntropy`, installing all three providers before recipe construction
+and interface attachment. `TokioHandleEntropy::from_sources` consumes a branded
+stream and an independent fallible path-ID source; `try_os` supplies the normal
+OS-backed pair. Its clones share both providers, never generator state copies.
+Supplying the same owner to multiple nodes deliberately shares those providers;
+ordinary constructors allocate an independent owner for each node.
+
+The shared owner uses one type-erased `Arc` allocation and one mutex, with no
+per-fill allocation. This keeps sources selectable without making every handle,
+fleet and interface type generic. It adds a virtual call and a larger owner
+reference; path-source reads now also acquire that mutex. The manifold's
+separate hot-path stream remains statically dispatched and lock-free.
+A bounded frame-only simulator exchange exercises all three providers and
+repeats packet bytes. Other execution inputs, backend randomness and worker
+completion order still require their own replay evidence.
 
 ## Reseeding
 

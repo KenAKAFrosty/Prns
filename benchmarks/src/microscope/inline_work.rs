@@ -434,9 +434,12 @@ fn drive_ready_work(
                 });
             }
             ReadyWork::ResourceOpen(completed) => {
-                engine.resume_resource_open(completed, now, &mut |reaction| {
-                    route_or_capture_work(reaction, capture, scratch, ready)
-                });
+                engine.resume_resource_open(
+                    completed,
+                    now,
+                    &mut |bytes| entropy.fill(bytes),
+                    &mut |reaction| route_or_capture_work(reaction, capture, scratch, ready),
+                );
             }
             ReadyWork::WholeResourceOpenUnsupported { reservation } => {
                 engine.resume_whole_resource_open(
@@ -445,6 +448,7 @@ fn drive_ready_work(
                         outcome: WholeResourceOpenOutcome::Unavailable,
                     },
                     now,
+                    &mut |bytes| entropy.fill(bytes),
                     &mut |reaction| route_or_capture_work(reaction, capture, scratch, ready),
                 );
             }
@@ -456,6 +460,7 @@ fn drive_ready_work(
                         plaintext: &[],
                     },
                     now,
+                    &mut |bytes| entropy.fill(bytes),
                     &mut |reaction: EngineReaction<'_, NoOwedWork>| {
                         capture.absorb(reaction, scratch)
                     },

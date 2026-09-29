@@ -496,6 +496,25 @@ pub enum RejectRemoteControlTargetPairingOutcome {
     },
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum PrepareRemoteControlTargetPairingAuthorizationOutcome {
+    Prepared {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    DeadlineElapsed {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    SigningFailed {
+        attempt_id: RemoteControlPairingAttemptId,
+        error: RemoteControlPairingCompletionSigningError,
+    },
+    NoAuthorizationOwed,
+    AttemptMismatch {
+        prepared: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PersistRemoteControlTargetPairingAuthorizationOutcome {
     CompletionOwed {

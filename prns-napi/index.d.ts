@@ -370,6 +370,13 @@ export interface PathInfo {
 export interface RequestOptions {
   /** Request timeout in milliseconds. */
   timeoutMillis?: number
+  /**
+   * Encoded response limit before binary decoding (`packed.length`, not
+   * `data.length`) for packets and whole, metadata-free Resources.
+   * Whole metadata-bearing Resources count literal file bytes, excluding
+   * metadata. Segmented Resources count the entire advertised uncompressed
+   * stream, including envelope and metadata.
+   */
   maximumResponseBytes?: number
 }
 

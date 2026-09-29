@@ -181,7 +181,7 @@ class EmbeddedAssuranceSelectionTests(unittest.TestCase):
     def test_embassy_interface_and_runtime_changes_select_required_proofs(self) -> None:
         for path in (
             "prns-interfaces/impls/embassy/src/radios/lr1110/mod.rs",
-            "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",
+            "prns-runtime/impls/embassy/src/runtime/embedded_persistence/mod.rs",
         ):
             with self.subTest(path=path):
                 selected = selection.selection_for_paths({path})
