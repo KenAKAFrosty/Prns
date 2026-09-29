@@ -345,7 +345,9 @@ async fn dropping_a_challenger_closes_only_its_physical_connection() {
     };
     drop(challenger);
     backend
-        .on_link_closed(prns_core::interfaces::bluetooth_auto::BleAddress::new(address))
+        .on_link_closed(prns_core::interfaces::bluetooth_auto::BleAddress::new(
+            address,
+        ))
         .await;
     assert_eq!(bridge.next_close(), Some(2));
     assert_eq!(bridge.next_close(), None);
