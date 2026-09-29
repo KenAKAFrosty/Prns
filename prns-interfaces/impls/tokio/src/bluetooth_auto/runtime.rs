@@ -464,7 +464,13 @@ impl BluetoothAutoStatus {
             .unwrap_or_default()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios", test))]
+    #[cfg(any(
+        test,
+        all(
+            feature = "bluetooth-auto",
+            any(target_os = "macos", target_os = "ios")
+        )
+    ))]
     pub(crate) fn observe_radio_state(
         &self,
         source: impl Fn() -> BluetoothRadioState + Send + Sync + 'static,
