@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import gzip
 import os
 import subprocess
 import sys
@@ -98,26 +99,35 @@ class SwiftSetupTests(unittest.TestCase):
         script = textwrap.dedent(action.split("      run: |\n", 1)[1].split("    - uses:", 1)[0])
         fingerprint = "E813C892820A6FA13755B268F167DF1ACF9CE069"
         cases = (
-            (fingerprint, "0", "0", 0, "imported\n"),
-            ("0" * 40, "0", "0", 1, ""),
-            (fingerprint, "1", "0", 1, ""),
-            (fingerprint, "0", "3", 3, "imported\n"),
+            (fingerprint, "0", "0", False, 0, "imported\n"),
+            (fingerprint, "0", "0", True, 0, "imported\n"),
+            ("0" * 40, "0", "0", False, 1, ""),
+            ("0" * 40, "0", "0", True, 1, ""),
+            (fingerprint, "1", "0", False, 1, ""),
+            (fingerprint, "0", "3", False, 3, "imported\n"),
         )
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             curl = root / "curl"
-            curl.write_text('#!/bin/sh\nexit "$SWIFT_TEST_DOWNLOAD_EXIT"\n')
+            curl.write_text(
+                '#!/bin/sh\n[ "$SWIFT_TEST_DOWNLOAD_EXIT" = 0 ] || exit "$SWIFT_TEST_DOWNLOAD_EXIT"\n'
+                'cp "$SWIFT_TEST_KEY_SOURCE" "$RUNNER_TEMP/swiftly-signing-key.asc"\n'
+            )
             curl.chmod(0o700)
             gpg = root / "gpg"
             gpg.write_text(
-                '#!/bin/sh\ncase "$*" in\n'
+                '#!/bin/sh\nfor path do :; done\n'
+                '[ "$(cat "$path")" = public-key-fixture ] || exit 98\ncase "$*" in\n'
                 '*--show-keys*) printf "pub:::::::::\\nfpr:::::::::%s:\\n" "$SWIFT_TEST_FINGERPRINT" ;;\n'
                 '*--import*) echo imported; exit "$SWIFT_TEST_IMPORT_EXIT" ;;\n'
                 '*) exit 99 ;;\nesac\n'
             )
             gpg.chmod(0o700)
-            for key, download_exit, import_exit, expected_exit, output in cases:
-                with self.subTest(key=key, download=download_exit, importing=import_exit):
+            for key, download_exit, import_exit, compressed, expected_exit, output in cases:
+                with self.subTest(key=key, download=download_exit, importing=import_exit, compressed=compressed):
+                    payload = b"public-key-fixture\n"
+                    source = root / "download"
+                    source.write_bytes(gzip.compress(payload) if compressed else payload)
                     result = subprocess.run(
                         ["bash", "-c", script],
                         env={
@@ -127,6 +137,7 @@ class SwiftSetupTests(unittest.TestCase):
                             "SWIFT_TEST_FINGERPRINT": key,
                             "SWIFT_TEST_DOWNLOAD_EXIT": download_exit,
                             "SWIFT_TEST_IMPORT_EXIT": import_exit,
+                            "SWIFT_TEST_KEY_SOURCE": str(source),
                         },
                         capture_output=True,
                         text=True,
