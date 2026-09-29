@@ -245,13 +245,13 @@ async fn a_connected_non_draining_lane_cannot_stall_pooled_ingress_or_a_healthy_
 
     #[cfg(feature = "runtime-metrics")]
     {
-        let before = tokio::time::timeout(Duration::from_secs(2), handle.metrics_snapshot())
+        let settled = tokio::time::timeout(Duration::from_secs(2), handle.metrics_snapshot())
             .await
             .expect("the metrics command is independent of the slow lane")
             .expect("the manifold returns its metrics");
-        assert_eq!(before.egress.pending_frames, 1);
+        assert_eq!(settled.egress.pending_frames, 1);
         assert_eq!(
-            before
+            settled
                 .crypto
                 .expect("the test uses a pooled worker")
                 .packet_verdicts_owed,
@@ -259,6 +259,13 @@ async fn a_connected_non_draining_lane_cannot_stall_pooled_ingress_or_a_healthy_
             "completed crypto cannot remain globally gated behind egress"
         );
 
+        // Paused time advances only after the pool's bounded post-verdict hot turns drain.
+        tokio::time::pause();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let before = tokio::time::timeout(Duration::from_secs(2), handle.metrics_snapshot())
+            .await
+            .expect("the cold manifold services its metrics command")
+            .expect("the manifold remains alive after settling");
         tokio::time::sleep(Duration::from_millis(20)).await;
         let after = tokio::time::timeout(Duration::from_secs(2), handle.metrics_snapshot())
             .await
@@ -266,7 +273,9 @@ async fn a_connected_non_draining_lane_cannot_stall_pooled_ingress_or_a_healthy_
             .expect("the manifold remains alive");
         assert!(
             after.manifold.turns.saturating_sub(before.manifold.turns) <= 16,
-            "a permanently full lane must leave the idle manifold cold"
+            "a permanently full lane must leave the idle manifold cold: before={}, after={}",
+            before.manifold.turns,
+            after.manifold.turns,
         );
     }
 }
