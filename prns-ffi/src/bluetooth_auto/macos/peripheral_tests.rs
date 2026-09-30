@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use tokio::sync::{mpsc, oneshot};
 
-use prns_core::interfaces::bluetooth_auto::{Control, PeerProtocol};
+use prns_core::interfaces::bluetooth_auto::{Control, LivenessMode, PeerProtocol};
 
 use super::data_plane::{DataPlane, PendingL2cap};
 use super::gatt_link::{gatt_inbound_channel, GattInboundReceiver};
 use super::peripheral::{
-    can_arm_l2cap, can_open_inbound, l2cap_delivery_admission, reap_closed_sessions,
-    reap_stale_pending_l2cap, L2capDeliveryAdmission,
+    can_arm_l2cap, can_open_inbound, capability_read_allowed, l2cap_delivery_admission,
+    listener_liveness_mode, reap_closed_sessions, reap_stale_pending_l2cap, L2capDeliveryAdmission,
 };
 use super::peripheral_notify::SessionPhase;
 use super::peripheral_write::WriteSession;
@@ -37,6 +37,48 @@ fn native_session() -> (
         control_rx,
         data_rx,
     )
+}
+
+#[test]
+fn capability_publication_requires_runtime_and_current_native_service() {
+    for enabled in [false, true] {
+        for published in [false, true] {
+            for protocol in [PeerProtocol::Native, PeerProtocol::Columba] {
+                assert_eq!(
+                    listener_liveness_mode(enabled, published, protocol),
+                    if enabled && published && protocol == PeerProtocol::Native {
+                        LivenessMode::Listener
+                    } else {
+                        LivenessMode::Disabled
+                    },
+                );
+            }
+            assert_eq!(
+                capability_read_allowed::<()>(enabled, published, None),
+                enabled && published,
+            );
+        }
+    }
+}
+
+#[test]
+fn enabling_runtime_never_advertises_support_to_an_existing_legacy_owner() {
+    let (legacy, _control, _data) = native_session();
+    assert!(!capability_read_allowed(false, true, Some(&legacy)));
+    assert!(!capability_read_allowed(true, true, Some(&legacy)));
+    let (mut capable, _control, _data) = native_session();
+    capable.data_tx.notifications().enable_liveness_listener();
+    assert!(capability_read_allowed(true, true, Some(&capable)));
+    assert!(
+        !capability_read_allowed(true, false, Some(&capable)),
+        "restored old services have no e9"
+    );
+    capable.protocol = PeerProtocol::Columba;
+    assert!(!capability_read_allowed(true, true, Some(&capable)));
+    capable.protocol = PeerProtocol::Native;
+    drop(capable.data_tx.notifications().settled_owner());
+    assert!(!capability_read_allowed(true, true, Some(&capable)));
+    assert!(!capability_read_allowed(true, true, Some(&legacy)));
 }
 
 #[tokio::test]

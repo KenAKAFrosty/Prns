@@ -2,6 +2,7 @@ mod backend;
 mod central;
 mod data_plane;
 mod discovery;
+mod gatt_arbitration;
 mod gatt_link;
 mod gatt_write;
 mod l2cap_lifecycle;
@@ -36,7 +37,7 @@ use tokio::sync::watch;
 
 use prns_core::interfaces::bluetooth_auto::{
     BleAddress, BleUuid, BluetoothRadioState, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID,
-    COLUMBA_RX_UUID, COLUMBA_TX_UUID, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
+    COLUMBA_RX_UUID, COLUMBA_TX_UUID, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, NATIVE_LIVENESS_UUID,
 };
 
 use central::CentralDelegate;
@@ -166,6 +167,10 @@ fn control_uuid() -> Retained<CBUUID> {
 
 fn data_uuid() -> Retained<CBUUID> {
     cbuuid(NATIVE_DATA_UUID)
+}
+
+fn liveness_uuid() -> Retained<CBUUID> {
+    cbuuid(NATIVE_LIVENESS_UUID)
 }
 
 fn columba_rx_uuid() -> Retained<CBUUID> {
