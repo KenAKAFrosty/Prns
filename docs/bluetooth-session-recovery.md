@@ -315,6 +315,28 @@ configuration, not peak runtime memory use or physical recovery. The later
 Android diagnostic and Apple restored-service changes are also outside these
 firmware targets and receipts.
 
+The September 30 publication checks also exposed static-RAM overflow on T114
+and T096. Shortening temporary fragment lifetimes and borrowing the Columba
+write payload removed 1,008 bytes from the seven-worker pool without changing
+connection limits, queue capacity, completion ownership or deadlines.
+All six Nordic targets then passed their normal linked resource gates:
+
+| Target | Flash headroom | RAM headroom after reservations |
+| --- | ---: | ---: |
+| T096 | 140,396 | 276 |
+| T114 | 147,628 | 696 |
+| t-echo S140 v6 | 5,724 | 2,188 |
+| t-echo S140 v7 | 1,508 | 2,188 |
+| RAK4631 | 203,500 | 6,892 |
+| T1000-E | 311,000 | 40,608 |
+
+The full 69,632-byte runtime-stack reservation remains intact. T096 RAM and
+t-echo v7 flash remain tight; these are linked-fit results, not peak-runtime
+measurements. Receipts are under `target/flash-artifacts/resources/configured/`,
+with working-tree head `5b14317dcdc3ff72c0ec12a9e12c93f9ec8f4d9d` and diff
+fingerprint `21fe82af52a05193ad9f2ed6b84614ceb6dc92917fd88340cdd1fb74145bc951`.
+That source was committed as `528724122fadb6a4a653591e2029ce27abb58752`.
+
 ### September 30 phone acceptance
 
 Both phones were updated in place, without clearing identities, contacts or
