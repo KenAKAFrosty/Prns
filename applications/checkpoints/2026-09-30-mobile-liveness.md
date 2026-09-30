@@ -56,9 +56,9 @@ on September 30.
 | Restart only iOS, 16:56:10 | Android retired its old connection at 16:57:07.876 and accepted a replacement at 16:57:09.623. The first attempted saved-contact send at 16:57:21 delivered in 210 ms, with receiver Verified source and matching IDs. Android's process was unchanged. |
 | Restart only Android, 16:59:37 | The new process subscribed as central at 16:59:47, but its first send at 17:02:19 could not find the contact and was not queued. A reverse send from the untouched iPhone at 17:07:31 failed with no route. At 17:08 the iPhone showed Bluetooth Ready, without a peer. |
 
-The iOS-only restart therefore improves on the
-[September 29 failure](2026-09-29-mobile-persistence-recovery.md), but reciprocal
-restart acceptance is **not complete**. The successful trial's generic Android
+This initial iOS-only restart improved on the
+[September 29 failure](2026-09-29-mobile-persistence-recovery.md), but the Android
+restart still failed. The successful trial's generic Android
 `policy close` log is consistent with the liveness deadline; it does not identify
 the exact Rust retirement cause. Candidate connection churn began before that
 restart and must not be attributed entirely to the restart.
@@ -78,10 +78,65 @@ IDs. This confirms that legacy data can work, not that the failed isolated
 restart recovered without intervention: the diagnostic update restarted Android.
 
 Android's discovery result alone does not distinguish a stale restored iOS
-service from an Android discovery cache. The source does retain restored services
-without e9 indefinitely; that upgrade path is being repaired. Post-greeting
+service from an Android discovery cache. The source at that point retained
+restored services without e9 indefinitely; the repair and retest follow below. Post-greeting
 rejection remains a hypothesis for the misleading connection. Successful delivery
 alone does not qualify liveness in both native roles.
+
+The failed reverse message was retried at 17:20:02 and delivered in 97 ms, with
+receiver Verified source and the original message ID on both phones. This was a
+retry of the existing message, not a new logical message.
+
+### Restored-service repair and successful retest
+
+Apple now replaces a known legacy restored service at startup, after PoweredOn
+and before admitting listeners. Complete current services retain their original
+objects. Exact service/characteristic ownership fences delayed callbacks; live
+owners defer replacement and malformed services fail startup without removal.
+The repair does not change embedded behavior or firmware resource contracts.
+
+FFI tests pass 174 with one existing hardware-only ignore, with and without
+logging. Strict all-target Clippy, formatting and iOS target checks pass.
+MetalbeardMobile was updated in place at 17:27 using source
+`26c7d1ceade684c8e6c4722565cc53dc99e4dc93`; the standalone Release build and strict
+signature verification passed. Android kept the diagnostic APK above.
+
+| Updated iOS artifact | SHA256 |
+| --- | --- |
+| Executable | `24831fac2a6923eea64f036c953e93db64130fac037e493437e0682409194390` |
+| Aggregate framework | `e398d3431cf356598dbb6ae1c393a7e25d642174cd84631609dc466dd0a8b4e0` |
+| Bundled JavaScript | `2d473b390357b923f992ce813aeb0b62527483d6522bc41a184d3982db05e17b` |
+
+Android immediately discovered and successfully read the six-byte capability
+without an Android restart or Bluetooth toggle. The replacement link exchanged
+recurring nine-byte controls. A saved-contact iOS message at 17:27:45 delivered
+in 96 ms with matching IDs and receiver Verified source.
+
+| Isolated restart | Replacement connection | First attempted saved-contact send |
+| --- | --- | --- |
+| Android, 17:28:52 | Subscribed 17:29:13.630, about 22 seconds after command start; capability supported and recurring controls. iOS process unchanged. | 17:30:32, delivered in 56 ms; matching IDs and receiver Verified source. |
+| iOS, 17:31:30 | Subscribed 17:31:47.442, about 18 seconds after command start; capability supported and recurring controls. Android process unchanged. | 17:33:11, delivered in 60 ms; matching IDs and receiver Verified source. |
+
+Both isolated restarts therefore passed this bounded BLE-only journey without
+manual announces, Bluetooth resets, alternate transports or restarting the
+other phone. Delivery was tested about 100 seconds after each restart, not at
+the instant of reconnection. Early Android candidates closed and retried
+automatically. Close controls were observed during recovery, so these trials do
+not specifically establish silent-peer timeout expiry or a recovery-time guarantee.
+The release iOS build did not log an exact restoration-callback trace.
+
+Before the controlled restarts, at 17:28, a competing connection closed and the
+existing link hit a control-write error (status 133). A replacement connected
+automatically. The cause is not established; do not attribute it to the later
+restart or claim churn-free/long-idle stability.
+
+At the end, each demo conversation displayed 31 messages: the original 23 plus
+eight new logical messages, including the successful retry of the same failed
+message. Other displayed counts remained three on Android and 13 on iOS. No
+duplicate was apparent in this bounded loaded history. Both final binaries
+retained their primary/controller identities, contacts and the iPhone's paired
+board. At 17:38–17:40 both showed Running, Bluetooth Connected, Persistent Yes,
+Restored Yes and Last flush Interval.
 
 Private build/install logs are retained under
 `/Volumes/wavlink/dev/prns-mobile-build/logs/`; the local observation ledger is
@@ -89,15 +144,13 @@ Private build/install logs are retained under
 for this continuation. Changes are committed locally; this continuation did not
 push branches or open/update PRs.
 
-## Next acceptance
+## Remaining acceptance
 
-1. Diagnose and repair the failed Android-central recovery without weakening
-   established-session ownership or evicting a healthy connection on a greeting.
-2. Repeat isolated restarts in both directions with capability negotiation
-   observed, then verify saved-contact delivery, receiver Verified source,
-   matching IDs and duplicate counts separately.
+1. Exercise app Off/On and radio recovery independently, preserving saved records.
+2. Qualify silent-peer expiry, long idle and natural suspension; capture enough
+   native evidence to distinguish policy expiry from received Close or OS errors.
+3. Investigate recurring connection churn if it reproduces during those trials.
 
 Record unsuccessful early attempts and elapsed recovery time, not just the final
-retry. App Off/On, radio/permission recovery, long idle and natural suspension
-remain separate acceptance cases. Cooperative close on normal shutdown also
-remains follow-up implementation work.
+retry. Permission recovery also remains a separate case. Cooperative close on
+normal shutdown remains follow-up implementation work.
