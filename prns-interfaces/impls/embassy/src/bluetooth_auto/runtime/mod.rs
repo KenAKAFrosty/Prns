@@ -17,8 +17,8 @@ use prns_core::interfaces::bluetooth_auto::{
     role_for, ConnectionPolicy, PolicyAction, PolicyInput,
 };
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSource, DialOutcome, Origin, RadioMode,
-    ScanningMode,
+    AdvertisingMode, BleBackend, BleControl, BleEvent, BleLink, BleLinkParts, BleSource,
+    DialOutcome, Origin, RadioMode, ScanningMode,
 };
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, DiscoveryGroupApplyOutcome, InterfaceId, InterfaceKind,
@@ -535,6 +535,29 @@ struct Active<L: BleLink> {
     address: BleAddress,
     source: L::Source,
     sink: L::Sink,
+    control: Option<L::Control>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum MemberReceiveError<E> {
+    Data(contract::BleFrameReceiveError<E>),
+    ControlClosed,
+}
+
+/// Receive-only lifecycle observation: greetings do not replace an admitted member.
+/// Yield after each greeting so a ready control queue cannot monopolize the supervisor.
+async fn settled_control_closed<C: BleControl>(control: &mut Option<C>) {
+    let Some(control) = control else {
+        return ::core::future::pending().await;
+    };
+    loop {
+        match control.recv().await {
+            Ok(Control::Close { .. }) | Err(_) => return,
+            Ok(Control::Hello { .. } | Control::Welcome { .. }) => {
+                embassy_futures::yield_now().await;
+            }
+        }
+    }
 }
 
 struct PendingActions<const CAP: usize> {
@@ -691,7 +714,7 @@ enum SupervisorStep<L: BleLink> {
     Backend(BleEvent<L>),
     Inbound(
         usize,
-        Result<usize, contract::BleFrameReceiveError<<L::Source as BleSource>::Error>>,
+        Result<usize, MemberReceiveError<<L::Source as BleSource>::Error>>,
     ),
     Outbound,
 }
@@ -1297,11 +1320,17 @@ async fn advance_handshake<L: BleLink>(
 async fn recv_or_pending<L: BleLink>(
     member: &mut Option<Active<L>>,
     buf: &mut [u8; contract::BLE_HW_MTU],
-) -> Result<usize, contract::BleFrameReceiveError<<L::Source as BleSource>::Error>> {
+) -> Result<usize, MemberReceiveError<<L::Source as BleSource>::Error>> {
     match member {
-        Some(active) => contract::receive_frame(&mut active.source, buf)
-            .await
-            .map(<[u8]>::len),
+        Some(active) => match select(
+            settled_control_closed(&mut active.control),
+            contract::receive_frame(&mut active.source, buf),
+        )
+        .await
+        {
+            Either::First(()) => Err(MemberReceiveError::ControlClosed),
+            Either::Second(result) => result.map(<[u8]>::len).map_err(MemberReceiveError::Data),
+        },
         None => ::core::future::pending().await,
     }
 }
@@ -1315,7 +1344,7 @@ async fn recv_any<L: BleLink, const MEMBERS: usize>(
     bufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],
 ) -> (
     usize,
-    Result<usize, contract::BleFrameReceiveError<<L::Source as BleSource>::Error>>,
+    Result<usize, MemberReceiveError<<L::Source as BleSource>::Error>>,
 ) {
     let mut pairs = members.iter_mut().zip(bufs.iter_mut());
     let futures: [_; MEMBERS] = ::core::array::from_fn(|_| {
@@ -1639,7 +1668,11 @@ async fn apply_settled<
                     if !matches!(lane, L2capPlan::None) {
                         let _ = link.upgrade(&lane).await;
                     }
-                    let (source, sink) = link.into_data();
+                    let BleLinkParts {
+                        source,
+                        sink,
+                        control,
+                    } = link.into_parts();
                     let id = InterfaceId::from_channel_tag(
                         InterfaceKind::BluetoothPeer,
                         identity.as_bytes(),
@@ -1657,6 +1690,7 @@ async fn apply_settled<
                         address,
                         source,
                         sink,
+                        control,
                     });
                 }
             }
@@ -1770,6 +1804,7 @@ mod tests {
         type Error = MockError;
         type Source = MockSource;
         type Sink = MockSink;
+        type Control = contract::NoBleControl<MockError>;
 
         fn peer_protocol(&self) -> PeerProtocol {
             self.protocol
@@ -1802,8 +1837,12 @@ mod tests {
             Ok(())
         }
 
-        fn into_data(self) -> (MockSource, MockSink) {
-            (MockSource::Pending, MockSink)
+        fn into_parts(self) -> BleLinkParts<MockSource, MockSink, Self::Control> {
+            BleLinkParts {
+                source: MockSource::Pending,
+                sink: MockSink,
+                control: None,
+            }
         }
     }
 
@@ -1857,6 +1896,7 @@ mod tests {
             address: BleAddress::new([id; 6]),
             source: MockSource::Pending,
             sink: MockSink,
+            control: None,
         }
     }
 
@@ -1877,11 +1917,13 @@ mod tests {
             let expected = if length <= contract::BLE_HW_MTU {
                 Ok(length)
             } else {
-                Err(contract::BleFrameReceiveError::Length(
-                    contract::BleReceiveError::BufferTooSmall {
-                        length,
-                        capacity: contract::BLE_HW_MTU,
-                    },
+                Err(MemberReceiveError::Data(
+                    contract::BleFrameReceiveError::Length(
+                        contract::BleReceiveError::BufferTooSmall {
+                            length,
+                            capacity: contract::BLE_HW_MTU,
+                        },
+                    ),
                 ))
             };
             assert_eq!((slot, received), (1, expected));
@@ -1901,7 +1943,9 @@ mod tests {
                 &mut Some(member),
                 &mut [0; contract::BLE_HW_MTU]
             )),
-            Err(contract::BleFrameReceiveError::Source(MockError))
+            Err(MemberReceiveError::Data(
+                contract::BleFrameReceiveError::Source(MockError)
+            ))
         );
         assert!(matches!(
             block_on(select(

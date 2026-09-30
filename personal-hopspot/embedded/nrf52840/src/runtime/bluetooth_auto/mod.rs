@@ -20,7 +20,7 @@ use nrf_softdevice::{raw, RawError, SocEvent, Softdevice};
 
 use personal_rns::bluetooth_auto::connection_slots::{
     ConnectionSlotDataOwners, ConnectionSlotLease, ConnectionSlotLinkLease, ConnectionSlotOwners,
-    ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
+    ConnectionSlotParts, ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
     ConnectionSlotWorkerLease, ReadyConnectionSlot, ReadyConnectionSlotParts,
 };
 use personal_rns::bluetooth_auto::{
@@ -33,8 +33,8 @@ use personal_rns::interfaces::bluetooth_auto::{
     CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
-    RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleControl, BleEvent, BleLink, BleLinkParts, BleSink, BleSource,
+    DialOutcome, Origin, RadioMode, ScanningMode,
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 
@@ -559,8 +559,11 @@ impl LinkChannels {
     fn link(&'static self, slot: BleSlotLink) -> NrfBleLink {
         NrfBleLink {
             peer_protocol: self.peer_protocol().unwrap_or(PeerProtocol::Native),
-            control_in: &self.control_in,
-            control_out: &self.control_out,
+            control: NrfBleControl {
+                control_in: &self.control_in,
+                control_out: &self.control_out,
+                slot,
+            },
             data_in: self.data_in.receiver(),
             data_out: self.data_out.sender(),
             identity_in: &self.identity_in,
@@ -568,7 +571,6 @@ impl LinkChannels {
             data_plane: &self.data_plane,
             plan: L2capPlan::None,
             address: self.address(),
-            slot,
         }
     }
 }
@@ -760,8 +762,7 @@ impl BleBackend<{ NrfBleBackend::MAX_PEERS }> for NrfBleBackend {
 
 pub(super) struct NrfBleLink {
     peer_protocol: PeerProtocol,
-    control_in: &'static ControlOutbox,
-    control_out: &'static ControlOutbox,
+    control: NrfBleControl,
     data_in: Receiver<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     data_out: Sender<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     identity_in: &'static Signal<Mtx, BleIdentity>,
@@ -769,23 +770,18 @@ pub(super) struct NrfBleLink {
     data_plane: &'static Signal<Mtx, L2capPlan>,
     plan: L2capPlan,
     address: [u8; 6],
+}
+
+pub(super) struct NrfBleControl {
+    control_in: &'static ControlOutbox,
+    control_out: &'static ControlOutbox,
     slot: BleSlotLink,
 }
 
-impl BleLink for NrfBleLink {
+impl BleControl for NrfBleControl {
     type Error = Closed;
-    type Source = NrfBleSource;
-    type Sink = NrfBleSink;
 
-    fn peer_protocol(&self) -> PeerProtocol {
-        self.peer_protocol
-    }
-
-    fn address(&self) -> BleAddress {
-        BleAddress::new(self.address)
-    }
-
-    async fn control_send(&mut self, msg: &Control) -> Result<(), Closed> {
+    async fn send(&mut self, msg: &Control) -> Result<(), Closed> {
         loop {
             let available = match self.control_out.try_enqueue(msg) {
                 ControlOutboxAdmission::Enqueued => return Ok(()),
@@ -800,7 +796,7 @@ impl BleLink for NrfBleLink {
         }
     }
 
-    async fn control_recv(&mut self) -> Result<Control, Closed> {
+    async fn recv(&mut self) -> Result<Control, Closed> {
         loop {
             match select(self.control_in.wait(), self.slot.wait_for_close()).await {
                 Either::First(wire) => {
@@ -814,16 +810,44 @@ impl BleLink for NrfBleLink {
             }
         }
     }
+}
+
+impl BleLink for NrfBleLink {
+    type Error = Closed;
+    type Source = NrfBleSource;
+    type Sink = NrfBleSink;
+    type Control = NrfBleControl;
+
+    fn peer_protocol(&self) -> PeerProtocol {
+        self.peer_protocol
+    }
+
+    fn address(&self) -> BleAddress {
+        BleAddress::new(self.address)
+    }
+
+    async fn control_send(&mut self, msg: &Control) -> Result<(), Closed> {
+        self.control.send(msg).await
+    }
+
+    async fn control_recv(&mut self) -> Result<Control, Closed> {
+        self.control.recv().await
+    }
 
     async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, Closed> {
-        match select(self.identity_in.wait(), self.slot.wait_for_close()).await {
+        match select(self.identity_in.wait(), self.control.slot.wait_for_close()).await {
             Either::First(identity) => Ok(identity),
             Either::Second(()) => Err(Closed),
         }
     }
 
     async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), Closed> {
-        match select(self.identity_out.send(identity), self.slot.wait_for_close()).await {
+        match select(
+            self.identity_out.send(identity),
+            self.control.slot.wait_for_close(),
+        )
+        .await
+        {
             Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
@@ -834,22 +858,46 @@ impl BleLink for NrfBleLink {
         Ok(())
     }
 
-    fn into_data(self) -> (NrfBleSource, NrfBleSink) {
+    fn into_parts(self) -> BleLinkParts<NrfBleSource, NrfBleSink, NrfBleControl> {
         self.data_plane.signal(self.plan);
-        let ConnectionSlotDataOwners {
-            source: source_slot,
-            sink: sink_slot,
-        } = self.slot.into_data();
-        (
-            NrfBleSource {
+        let NrfBleControl {
+            control_in,
+            control_out,
+            slot,
+        } = self.control;
+        let (source_slot, sink_slot, control) = match self.peer_protocol {
+            PeerProtocol::Native => {
+                let ConnectionSlotParts {
+                    source,
+                    sink,
+                    control,
+                } = slot.into_parts();
+                (
+                    source,
+                    sink,
+                    Some(NrfBleControl {
+                        control_in,
+                        control_out,
+                        slot: control,
+                    }),
+                )
+            }
+            PeerProtocol::Columba => {
+                let ConnectionSlotDataOwners { source, sink } = slot.into_data();
+                (source, sink, None)
+            }
+        };
+        BleLinkParts {
+            source: NrfBleSource {
                 data_in: self.data_in,
                 slot: source_slot,
             },
-            NrfBleSink {
+            sink: NrfBleSink {
                 data_out: self.data_out,
                 slot: sink_slot,
             },
-        )
+            control,
+        }
     }
 }
 

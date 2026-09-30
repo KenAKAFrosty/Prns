@@ -19,8 +19,8 @@ use prns_core::interfaces::bluetooth_auto::{
     role_for, ConnectionPolicy, PolicyAction, PolicyInput,
 };
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, BluetoothRadioState,
-    Origin, RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleControl, BleEvent, BleLink, BleLinkParts, BleSink, BleSource,
+    BluetoothRadioState, NoBleControl, Origin, RadioMode, ScanningMode,
 };
 use prns_core::interfaces::bluetooth_auto::{Endpoint, L2capPlan};
 
@@ -72,11 +72,12 @@ impl PeerClosed {
     }
 }
 
-pub struct BluetoothPeer<Src, Snk> {
+pub struct BluetoothPeer<Src, Snk, Ctl = NoBleControl> {
     id: InterfaceId,
     identity: BleIdentity,
     source: Src,
     sink: Snk,
+    control: Option<Ctl>,
     channel_tag: [u8; 16],
     policy: EffectiveInterfacePolicy,
     status: TokioInterfaceStatus,
@@ -107,6 +108,7 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
             identity,
             source,
             sink,
+            control: None,
             channel_tag,
             policy,
             status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected),
@@ -114,6 +116,27 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
         }
     }
 
+    /// Retain the existing native control owner alongside both data halves.
+    /// `None` preserves the data-only behavior used by Columba and adapters.
+    pub fn with_control<Ctl: BleControl>(
+        self,
+        control: Option<Ctl>,
+    ) -> BluetoothPeer<Src, Snk, Ctl> {
+        BluetoothPeer {
+            id: self.id,
+            identity: self.identity,
+            source: self.source,
+            sink: self.sink,
+            control,
+            channel_tag: self.channel_tag,
+            policy: self.policy,
+            status: self.status,
+            closed: self.closed,
+        }
+    }
+}
+
+impl<Src: BleSource, Snk: BleSink, Ctl: BleControl> BluetoothPeer<Src, Snk, Ctl> {
     fn report_close_to(
         mut self,
         address: BleAddress,
@@ -143,7 +166,27 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
     }
 }
 
-impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
+/// This one future remains alive across data receives, sends and forwarding.
+/// No post-settlement writes or negotiated liveness are introduced here.
+async fn observe_control<Ctl: BleControl>(
+    control: &mut Option<Ctl>,
+) -> Result<CloseReason, Ctl::Error> {
+    let Some(control) = control else {
+        return core::future::pending().await;
+    };
+    loop {
+        match control.recv().await? {
+            contract::Control::Close { reason } => return Ok(reason),
+            contract::Control::Hello { .. } | contract::Control::Welcome { .. } => {
+                // A greeting cannot authorize evicting this keeper. Yield even for
+                // an always-ready adapter so repeated greetings cannot starve data.
+                tokio::task::yield_now().await;
+            }
+        }
+    }
+}
+
+impl<Src: BleSource, Snk: BleSink, Ctl: BleControl> Interface for BluetoothPeer<Src, Snk, Ctl> {
     const HW_MTU: usize = contract::BLE_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::BluetoothPeer;
 
@@ -156,75 +199,101 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
-        let mut buf = [0u8; contract::BLE_WIRE_FRAME_LEN];
-        let mut pending_outbound = [0u8; contract::BLE_WIRE_FRAME_LEN];
-        loop {
+        let mut control = self.control.take();
+        let mut outbound_in_flight = false;
+        {
+            let data = async {
+                let mut buf = [0u8; contract::BLE_WIRE_FRAME_LEN];
+                let mut pending_outbound = [0u8; contract::BLE_WIRE_FRAME_LEN];
+                loop {
+                    tokio::select! {
+                        received = contract::receive_frame(&mut self.source, &mut buf) => {
+                            let frame = match received {
+                                Ok(frame) => frame,
+                                Err(error) => {
+                                    crate::diagnostic_log::warn!(
+                                        "bluetooth: peer {:?} receive closed: {error:?}",
+                                        self.identity
+                                    );
+                                    break;
+                                }
+                            };
+                            if frame.is_empty() {
+                                continue;
+                            }
+                            self.status.add_rx(frame.len() as u64);
+                            seam.next_inbound(frame).await;
+                        }
+                        outbound = seam.next_outbound() => {
+                            if outbound.is_empty() {
+                                continue;
+                            }
+                            let outbound_len = outbound.len();
+                            if outbound_len > pending_outbound.len() {
+                                seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::Rejected));
+                                break;
+                            }
+                            pending_outbound[..outbound_len].copy_from_slice(outbound);
+                            seam.accept_outbound_custody();
+                            outbound_in_flight = true;
+                            let result = match send_frame_duplex(
+                                &mut self.source, &mut self.sink,
+                                &pending_outbound[..outbound_len], &mut buf,
+                                PeerInbound { seam: &mut seam, status: &self.status },
+                            ).await {
+                                BleDuplexOutcome::Finished(result) => result,
+                                BleDuplexOutcome::ForwardFailed(never) => match never {},
+                                BleDuplexOutcome::ReceiveFailed(error) => {
+                                    outbound_in_flight = false;
+                                    seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
+                                    crate::diagnostic_log::warn!(
+                                        "bluetooth: peer {:?} receive closed during send: {error:?}",
+                                        self.identity
+                                    );
+                                    break;
+                                }
+                                BleDuplexOutcome::InvalidReceiveLength(length) => {
+                                    outbound_in_flight = false;
+                                    seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
+                                    crate::diagnostic_log::warn!(
+                                        "bluetooth: peer {:?} reported invalid receive length {length} during send",
+                                        self.identity
+                                    );
+                                    break;
+                                }
+                            };
+                            if let Err(error) = result {
+                                outbound_in_flight = false;
+                                seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
+                                crate::diagnostic_log::warn!(
+                                    "bluetooth: peer {:?} send closed: {error:?}",
+                                    self.identity
+                                );
+                                break;
+                            }
+                            self.status.add_tx(outbound_len as u64);
+                            outbound_in_flight = false;
+                            seam.complete_outbound(OutboundDisposition::Sent);
+                        }
+                    }
+                }
+            };
+            let control_loop = observe_control(&mut control);
+            tokio::pin!(data, control_loop);
             tokio::select! {
-                received = contract::receive_frame(&mut self.source, &mut buf) => {
-                    let frame = match received {
-                        Ok(frame) => frame,
-                        Err(error) => {
-                            crate::diagnostic_log::warn!(
-                                "bluetooth: peer {:?} receive closed: {error:?}",
-                                self.identity
-                            );
-                            break;
-                        }
-                    };
-                    if frame.is_empty() {
-                        continue;
-                    }
-                    self.status.add_rx(frame.len() as u64);
-                    seam.next_inbound(frame).await;
-                }
-                outbound = seam.next_outbound() => {
-                    if outbound.is_empty() {
-                        continue;
-                    }
-                    let outbound_len = outbound.len();
-                    if outbound_len > pending_outbound.len() {
-                        seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::Rejected));
-                        break;
-                    }
-                    pending_outbound[..outbound_len].copy_from_slice(outbound);
-                    seam.accept_outbound_custody();
-                    let result = match send_frame_duplex(
-                        &mut self.source, &mut self.sink,
-                        &pending_outbound[..outbound_len], &mut buf,
-                        PeerInbound { seam: &mut seam, status: &self.status },
-                    ).await {
-                        BleDuplexOutcome::Finished(result) => result,
-                        BleDuplexOutcome::ForwardFailed(never) => match never {},
-                        BleDuplexOutcome::ReceiveFailed(error) => {
-                            seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
-                            crate::diagnostic_log::warn!(
-                                "bluetooth: peer {:?} receive closed during send: {error:?}",
-                                self.identity
-                            );
-                            break;
-                        }
-                        BleDuplexOutcome::InvalidReceiveLength(length) => {
-                            seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
-                            crate::diagnostic_log::warn!(
-                                "bluetooth: peer {:?} reported invalid receive length {length} during send",
-                                self.identity
-                            );
-                            break;
-                        }
-                    };
-                    if let Err(error) = result {
-                        seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
-                        crate::diagnostic_log::warn!(
-                            "bluetooth: peer {:?} send closed: {error:?}",
-                            self.identity
-                        );
-                        break;
-                    }
-                    self.status.add_tx(outbound_len as u64);
-                    seam.complete_outbound(OutboundDisposition::Sent);
-                }
+                () = &mut data => {},
+                outcome = &mut control_loop => {
+                    crate::diagnostic_log::debug!("bluetooth: settled control closed: {outcome:?}");
+                },
             }
         }
+        if outbound_in_flight {
+            seam.complete_outbound(OutboundDisposition::Dropped(
+                OutboundDropReason::TransportFailure,
+            ));
+        }
+        // Drop all three owners before publishing the exact member's close.
+        drop(control);
         let closed = self
             .closed
             .take()
@@ -249,8 +318,8 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
     }
 }
 
-impl<Src: BleSource, Snk: BleSink> prns_core::interfaces::ReportsStatus
-    for BluetoothPeer<Src, Snk>
+impl<Src: BleSource, Snk: BleSink, Ctl: BleControl> prns_core::interfaces::ReportsStatus
+    for BluetoothPeer<Src, Snk, Ctl>
 {
     fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status.clone();
@@ -701,6 +770,7 @@ where
     B::Link: 'static,
     <B::Link as BleLink>::Source: Send + 'static,
     <B::Link as BleLink>::Sink: Send + 'static,
+    <B::Link as BleLink>::Control: Send + 'static,
 {
     const KIND: InterfaceKind = InterfaceKind::BluetoothAuto;
 
@@ -1053,6 +1123,7 @@ async fn apply_settle<B, const MAX_PEERS: usize>(
     B::Link: 'static,
     <B::Link as BleLink>::Source: Send + 'static,
     <B::Link as BleLink>::Sink: Send + 'static,
+    <B::Link as BleLink>::Control: Send + 'static,
 {
     let actions = std::mem::take(pending);
     let mut link = Some(link);
@@ -1066,8 +1137,13 @@ async fn apply_settle<B, const MAX_PEERS: usize>(
             } => {
                 if let Some(mut held) = link.take() {
                     arm_fast_lane(&mut held, &lane).await;
-                    let (source, sink) = held.into_data();
+                    let BleLinkParts {
+                        source,
+                        sink,
+                        control,
+                    } = held.into_parts();
                     let member = BluetoothPeer::with_policy(identity, source, sink, policy)
+                        .with_control(control)
                         .report_close_to(address, closed.clone());
                     let status = member.status();
                     let attached = fleet.add(member);
@@ -1332,10 +1408,26 @@ mod tests {
 
     struct LoopbackLink {
         address: BleAddress,
-        control_tx: mpsc::Sender<Control>,
-        control_rx: mpsc::Receiver<Control>,
+        control: LoopbackControl,
         data_tx: mpsc::Sender<std::vec::Vec<u8>>,
         data_rx: mpsc::Receiver<std::vec::Vec<u8>>,
+    }
+
+    struct LoopbackControl {
+        control_tx: mpsc::Sender<Control>,
+        control_rx: mpsc::Receiver<Control>,
+    }
+
+    impl BleControl for LoopbackControl {
+        type Error = Closed;
+
+        async fn send(&mut self, msg: &Control) -> Result<(), Closed> {
+            self.control_tx.send(*msg).await.map_err(|_| Closed)
+        }
+
+        async fn recv(&mut self) -> Result<Control, Closed> {
+            self.control_rx.recv().await.ok_or(Closed)
+        }
     }
 
     struct LoopbackSource {
@@ -1360,6 +1452,7 @@ mod tests {
         type Error = Closed;
         type Source = LoopbackSource;
         type Sink = LoopbackSink;
+        type Control = NoBleControl<Closed>;
 
         fn peer_protocol(&self) -> PeerProtocol {
             PeerProtocol::Columba
@@ -1390,9 +1483,13 @@ mod tests {
             Ok(())
         }
 
-        fn into_data(self) -> (LoopbackSource, LoopbackSink) {
+        fn into_parts(self) -> BleLinkParts<LoopbackSource, LoopbackSink, Self::Control> {
             let (data_tx, data_rx) = mpsc::channel(1);
-            (LoopbackSource { data_rx }, LoopbackSink { data_tx })
+            BleLinkParts {
+                source: LoopbackSource { data_rx },
+                sink: LoopbackSink { data_tx },
+                control: None,
+            }
         }
     }
 
@@ -1400,6 +1497,7 @@ mod tests {
         type Error = Closed;
         type Source = LoopbackSource;
         type Sink = LoopbackSink;
+        type Control = LoopbackControl;
 
         fn peer_protocol(&self) -> PeerProtocol {
             PeerProtocol::Native
@@ -1410,26 +1508,27 @@ mod tests {
         }
 
         async fn control_send(&mut self, msg: &Control) -> Result<(), Closed> {
-            self.control_tx.send(*msg).await.map_err(|_| Closed)
+            self.control.send(msg).await
         }
 
         async fn control_recv(&mut self) -> Result<Control, Closed> {
-            self.control_rx.recv().await.ok_or(Closed)
+            self.control.recv().await
         }
 
         async fn upgrade(&mut self, _plan: &L2capPlan) -> Result<(), Closed> {
             Ok(())
         }
 
-        fn into_data(self) -> (LoopbackSource, LoopbackSink) {
-            (
-                LoopbackSource {
+        fn into_parts(self) -> BleLinkParts<LoopbackSource, LoopbackSink, LoopbackControl> {
+            BleLinkParts {
+                source: LoopbackSource {
                     data_rx: self.data_rx,
                 },
-                LoopbackSink {
+                sink: LoopbackSink {
                     data_tx: self.data_tx,
                 },
-            )
+                control: Some(self.control),
+            }
         }
     }
 
@@ -1470,6 +1569,12 @@ mod tests {
             }
         );
         assert_eq!(link.sent_identity, Some(local.identity));
+        let mut parts = link.into_parts();
+        assert!(parts.control.is_none());
+        parts.sink.send_frame(b"columba").await.unwrap();
+        let mut frame = [0; 16];
+        let len = parts.source.recv_frame(&mut frame).await.unwrap();
+        assert_eq!(&frame[..len], b"columba");
     }
 
     #[tokio::test]
@@ -1522,15 +1627,19 @@ mod tests {
         let (dat_b_tx, dat_b_rx) = mpsc::channel(8);
         let a = LoopbackLink {
             address: addr_b,
-            control_tx: ctl_a_tx,
-            control_rx: ctl_b_rx,
+            control: LoopbackControl {
+                control_tx: ctl_a_tx,
+                control_rx: ctl_b_rx,
+            },
             data_tx: dat_a_tx,
             data_rx: dat_b_rx,
         };
         let b = LoopbackLink {
             address: addr_a,
-            control_tx: ctl_b_tx,
-            control_rx: ctl_a_rx,
+            control: LoopbackControl {
+                control_tx: ctl_b_tx,
+                control_rx: ctl_a_rx,
+            },
             data_tx: dat_b_tx,
             data_rx: dat_a_rx,
         };
@@ -1866,10 +1975,12 @@ mod tests {
         assert_eq!(established_b.identity, local_a.identity);
         assert_eq!(endpoint_b, local_a.endpoint);
 
-        let (source_a, sink_a) = link_a.into_data();
-        let (source_b, sink_b) = link_b.into_data();
-        let member_a = BluetoothPeer::new(established_a.identity, source_a, sink_a);
-        let member_b = BluetoothPeer::new(established_b.identity, source_b, sink_b);
+        let parts_a = link_a.into_parts();
+        let parts_b = link_b.into_parts();
+        let member_a = BluetoothPeer::new(established_a.identity, parts_a.source, parts_a.sink)
+            .with_control(parts_a.control);
+        let member_b = BluetoothPeer::new(established_b.identity, parts_b.source, parts_b.sink)
+            .with_control(parts_b.control);
 
         let (discard_a, _discard_a_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (mut out_a_producer, out_a_consumer) = tokio_grant_lane(TEST_FRAME_CAP, 2);
@@ -1969,7 +2080,11 @@ mod tests {
     fn configured_policy_reaches_a_bluetooth_auto_peer_descriptor() {
         let identity = BleIdentity::new([0x44; 16]);
         let (link, _peer) = link_pair(BleAddress::new([0x11; 6]), BleAddress::new([0x22; 6]));
-        let (source, sink) = link.into_data();
+        let BleLinkParts {
+            source,
+            sink,
+            control,
+        } = link.into_parts();
         let policy = contract::defaults_for_bitrate(contract::BLE_BITRATE_GUESS_BPS).configured(
             ConfiguredInterfacePolicy {
                 mode: Some(prns_core::interfaces::InterfaceMode::AccessPoint),
@@ -1977,7 +2092,8 @@ mod tests {
                 ..ConfiguredInterfacePolicy::default()
             },
         );
-        let member = BluetoothPeer::with_policy(identity, source, sink, policy);
+        let member =
+            BluetoothPeer::with_policy(identity, source, sink, policy).with_control(control);
 
         assert_eq!(member.descriptor(), policy.descriptor(member.id()));
     }
@@ -2185,17 +2301,24 @@ mod tests {
         }
     }
 
+    mod settled_control;
+
     #[tokio::test]
     async fn a_dying_member_fires_its_close_signal() {
         let addr = BleAddress::new([0x11; 6]);
         let (link_a, link_b) = link_pair(addr, BleAddress::new([0x22; 6]));
-        let (source, sink) = link_a.into_data();
+        let BleLinkParts {
+            source,
+            sink,
+            control,
+        } = link_a.into_parts();
         drop(link_b);
 
         let identity = BleIdentity::new([1u8; 16]);
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<PeerClosed>();
-        let member =
-            BluetoothPeer::new(identity, source, sink).report_close_to(addr, closed_tx.clone());
+        let member = BluetoothPeer::new(identity, source, sink)
+            .with_control(control)
+            .report_close_to(addr, closed_tx.clone());
         let status = member.status();
         tokio::spawn(member.run(idle_seam()));
 
@@ -2239,11 +2362,16 @@ mod tests {
     async fn a_torn_down_member_does_not_fire_its_close_signal() {
         let addr = BleAddress::new([0x11; 6]);
         let (link_a, link_b) = link_pair(addr, BleAddress::new([0x22; 6]));
-        let (source, sink) = link_a.into_data();
+        let BleLinkParts {
+            source,
+            sink,
+            control,
+        } = link_a.into_parts();
         let _keep_peer_alive = link_b;
 
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<PeerClosed>();
         let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), source, sink)
+            .with_control(control)
             .report_close_to(addr, closed_tx.clone());
         let handle = tokio::spawn(member.run(idle_seam()));
 
@@ -2258,8 +2386,13 @@ mod tests {
         let identity = BleIdentity::new([2; 16]);
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel();
         let (old_link, old_remote) = link_pair(BleAddress::new([0xAA; 6]), old_address);
-        let (source, sink) = old_link.into_data();
+        let BleLinkParts {
+            source,
+            sink,
+            control,
+        } = old_link.into_parts();
         let old_peer = BluetoothPeer::new(identity, source, sink)
+            .with_control(control)
             .report_close_to(old_address, closed_tx.clone());
         let old_status = old_peer.status();
         let old_task = tokio::spawn(old_peer.run(idle_seam()));

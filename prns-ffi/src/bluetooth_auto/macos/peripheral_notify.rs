@@ -2,7 +2,7 @@
 //! accepts an update; a full notification queue leaves the same fragment with its sender.
 
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,27 +10,82 @@ use tokio::sync::watch;
 
 use super::MacosBleError;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SessionPhase {
+    Handshaking = 0,
+    Settled = 1,
+    Retired = 2,
+}
+
+#[derive(Default)]
+struct SessionState {
+    reserved: AtomicBool,
+    phase: AtomicU8,
+}
+
 #[derive(Clone, Default)]
-pub(super) struct NotificationSession(Arc<AtomicBool>);
+pub(super) struct NotificationSession(Arc<SessionState>);
+
+/// The one settled control owner, distinct from notification reservations and data pumps.
+pub(super) struct SettledSessionOwner(NotificationSession);
+
+impl Drop for SettledSessionOwner {
+    fn drop(&mut self) {
+        self.0.retire();
+    }
+}
 
 impl NotificationSession {
     pub(super) fn same_session(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
-    fn reserve(&self) -> Result<NotificationReservation, MacosBleError> {
+    pub(super) fn phase(&self) -> SessionPhase {
+        match self.0.phase.load(Ordering::Acquire) {
+            0 => SessionPhase::Handshaking,
+            1 => SessionPhase::Settled,
+            _ => SessionPhase::Retired,
+        }
+    }
+
+    pub(super) fn settle(&self) {
+        // Retirement is terminal even if a delayed admission reaches this owner.
+        let _ = self.0.phase.compare_exchange(
+            SessionPhase::Handshaking as u8,
+            SessionPhase::Settled as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+
+    pub(super) fn settled_owner(&self) -> SettledSessionOwner {
+        self.settle();
+        SettledSessionOwner(self.clone())
+    }
+
+    pub(super) fn retire(&self) {
         self.0
+            .phase
+            .store(SessionPhase::Retired as u8, Ordering::Release);
+    }
+
+    fn reserve(&self) -> Result<NotificationReservation, MacosBleError> {
+        if self.phase() == SessionPhase::Retired {
+            return Err(MacosBleError::Closed);
+        }
+        self.0
+            .reserved
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| MacosBleError::QueueFull)?;
         Ok(NotificationReservation(self.0.clone()))
     }
 }
 
-struct NotificationReservation(Arc<AtomicBool>);
+struct NotificationReservation(Arc<SessionState>);
 
 impl Drop for NotificationReservation {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.0.reserved.store(false, Ordering::Release);
     }
 }
 
@@ -73,6 +128,38 @@ mod tests {
     use std::future::ready;
 
     use super::*;
+
+    #[tokio::test]
+    async fn retired_session_rejects_new_notifications_before_submission() {
+        let session = NotificationSession::default();
+        drop(session.settled_owner());
+        let (_ready_tx, ready_rx) = watch::channel(());
+        let attempts = Cell::new(0);
+        let result = send_notification(session, ready_rx, Duration::from_secs(1), || {
+            attempts.set(attempts.get() + 1);
+            ready(NotificationAdmission::Accepted)
+        })
+        .await;
+        assert!(matches!(result, Err(MacosBleError::Closed)));
+        assert_eq!(attempts.get(), 0);
+    }
+
+    #[test]
+    fn settled_control_owner_retires_only_its_session() {
+        let original = NotificationSession::default();
+        let replacement = NotificationSession::default();
+        assert_eq!(original.phase(), SessionPhase::Handshaking);
+        let owner = original.settled_owner();
+        let replacement_owner = replacement.settled_owner();
+        assert_eq!(original.phase(), SessionPhase::Settled);
+        drop(owner);
+        assert_eq!(original.phase(), SessionPhase::Retired);
+        original.settle();
+        assert_eq!(original.phase(), SessionPhase::Retired);
+        assert_eq!(replacement.phase(), SessionPhase::Settled);
+        drop(replacement_owner);
+        assert_eq!(replacement.phase(), SessionPhase::Retired);
+    }
 
     #[tokio::test]
     async fn a_ready_callback_during_admission_retries_every_fragment_in_order() {

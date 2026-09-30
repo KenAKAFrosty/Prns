@@ -29,13 +29,13 @@ use prns_core::interfaces::bluetooth_auto::{
     CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
-    RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleControl, BleEvent, BleLink, BleLinkParts, BleSink, BleSource,
+    DialOutcome, Origin, RadioMode, ScanningMode,
 };
 
 use super::connection_slots::{
     ConnectionSlotDataOwners, ConnectionSlotLease, ConnectionSlotLinkLease, ConnectionSlotOwners,
-    ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
+    ConnectionSlotParts, ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
     ConnectionSlotWorkerLease, ReadyConnectionSlot, ReadyConnectionSlotParts,
 };
 use super::frame_pool::{FrameLease, FramePoolError, SharedFramePool};
@@ -121,7 +121,8 @@ pub type GattCharacteristic = Characteristic<GattVec<u8, GATT_VALUE_CAP>>;
 pub type ReticulumAttributeTable = AttributeTable<'static, NoopRawMutex, ATTRIBUTE_TABLE>;
 
 pub use backend::{
-    BleHub, Closed, EmbeddedBleBackend, EmbeddedBleLink, EmbeddedBleSink, EmbeddedBleSource,
+    BleHub, Closed, EmbeddedBleBackend, EmbeddedBleControl, EmbeddedBleLink, EmbeddedBleSink,
+    EmbeddedBleSource,
 };
 pub use sessions::{
     columba_identity_uuid, columba_rx_uuid, columba_tx_uuid, control_uuid, data_uuid,
