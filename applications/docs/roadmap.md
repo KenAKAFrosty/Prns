@@ -1,180 +1,125 @@
 # Current application roadmap
 
-This is the working backlog, not a release schedule or a claim that every shell
-route works. Check [validation and limits](validation.md) before making platform
-or reliability claims. Setup belongs in the [workspace guide](../README.md);
-the [binding guide](../prns/native-composition/bindings/README.md) owns the current
-generated API and native lifecycle boundary.
+This is the working backlog, not a release schedule. The app has a demonstrated
+two-phone BLE messaging journey and usable node-management screens. The next
+product increment is conversation delivery detail; wider background reliability
+and remote-settings acceptance remain separate qualification work.
 
-## Implemented foundation
+Use the [workspace guide](../README.md) for setup and ownership, the
+[app guide](../prns/app/README.md) for behavior and routes, and the
+[validation index](validation.md) for exact evidence and limits. Completed plans
+and dated receipts are history, not additional current authorities.
 
-- App-owned Rust composition and storage above the shared native host and
-  general Expo SDK. Host bindings and generic platform mechanics belong to
-  the SDK; the app stages that package with its one aggregate native image.
-- Identity creation and one-time import, local node/route inspection, contacts,
-  RemoteControl pairing, authenticated checks and node-address sharing.
-- Expanded node overview, interfaces, settings, peers and discovery groups,
-  plus typed ordinary/disruptive changes driven by live capabilities and access.
-  The new board pairing preset grants Administrator authority and the board's
-  exact supported request set after full-control disclosure.
-- Guided Wi-Fi trials with explicit keep/restore and uncertain-outcome recovery,
-  plus controller inventory and protected access removal. Adding a controller
-  still requires recipient identity exchange and reciprocal setup.
-- Small direct LXMF messages, a resettable persistent mailbox, manual retry and
-  local cancellation. Resources, opportunistic delivery and propagation are not
-  part of this messaging implementation.
-- A responsive Expo shell and stable screen catalog. Web has an explicitly
-  unavailable runtime; browser/Tauri ownership decisions exist, not providers.
+## Milestones
 
-These are development capabilities. The
-[SDK adoption checkpoint](../checkpoints/2026-09-24-sdk-adoption.md) records bounded
-Android/iOS ownership and Hermes reload checks, final standalone Release cold
-starts and retained app data. The
-[standalone SDK qualification](../../prns-react-native/docs/qualification.md)
-separately records the default provider. Physical observations belong to their
-recorded builds; neither record qualifies every background or product workflow.
+| Milestone | Implementation | Recorded device acceptance | Remaining work | Landing dependencies |
+| --- | --- | --- | --- | --- |
+| Foundation and persistence | Native composition, identities/import, contacts, mailbox and generated bindings | Retained-data installs and interval saves on both phones; Android import | Fresh current-build iOS import; custody and distribution are not promised | App [#197](https://github.com/KenAKAFrosty/Prns/pull/197); sandbox repair [#256](https://github.com/KenAKAFrosty/Prns/pull/256) is already integrated |
+| Reusable Expo SDK | Public host/session mechanics below app services; one selected native image | Default SDK and app-owned aggregate have separate ownership/reload evidence | Detached aggregate iOS consumer, public distribution and recorded release | SDK [#251](https://github.com/KenAKAFrosty/Prns/pull/251) before app; includes #256 |
+| Two-phone BLE messaging | Pair-free automatic BLE, announce/discover/save, short direct messages, retry/cancel, paged history and restart recovery | Saved-contact delivery and isolated restarts in both directions; bounded off-screen receipts | Device acceptance of mailbox review fixes; churn, silent-peer expiry and long idle remain reliability work | Recovery [#257](https://github.com/KenAKAFrosty/Prns/pull/257) follows #251 and is already integrated into #197 |
+| Network inspection | Physical connections, current routes and session announcement history | Focused standalone journey on both phones, including clear/reannounce and two-way messaging | Conversation delivery details; never infer past message paths from current routes | App #197 on the SDK/recovery integration |
+| Remote management | Capability-driven read/write screens, Wi-Fi trial workflow and access inventory/removal | Bounded Galaxy/E290 reads/writes, restart retention and failed-trial rollback | Successful Wi-Fi Keep, iOS coverage and verified recipient onboarding | App #197 consumes upstream RemoteControl APIs |
+| Later product scope | Shell routes or plans only where not explicitly implemented | No acceptance implied by placeholder routes | Resources, message notifications, location, NomadNet, later LXMF modes and browser/Tauri providers | Define each bounded slice before implementation |
 
-## Current priority: usable on-phone nodes and a two-phone demo
+The [validation index](validation.md) links the source and binaries for each
+journey. Retained grants do not prove fresh pairing; development-signed builds
+and current-source detached checks do not qualify a recorded release.
 
-The [two-phone demo plan](phone-node-demo.md) brings local-node,
-Contacts/Discovered and interface-management requirements into one observable
-journey: connect iOS and Android, announce distinct messaging names, save
-contacts, exchange LXMF messages over automatic, pair-free BLE, and inspect how
-the network is communicating. The
-[ordinary CoreBluetooth checkpoint](../checkpoints/2026-09-23-ordinary-corebluetooth.md)
-records direct discovery, two-way messages and one bounded off-screen receipt.
-The Network inspection slice has passed a focused journey on rebuilt standalone
-apps on both phones: readable tabs, announcements, routes, clear/reannounce and
-two-way messaging. The [validation record](validation.md#standalone-phone-builds-and-focused-acceptance)
-identifies the exact builds and limits. Conversation delivery details are the
-next inspection increment.
+## Next product increment
 
-Connection states and the announcing/discovery/contact journey are implemented
-with the bounded evidence in the [messaging checkpoint](../checkpoints/2026-09-24-messaging-discovery.md).
-[Shared Bluetooth restart recovery](../../docs/bluetooth-session-recovery.md)
-now retains settled controls and negotiates bounded liveness. The
-[September 30 physical checkpoint](../checkpoints/2026-09-30-mobile-liveness.md)
-records an Apple restored-service upgrade repair and successful isolated app
-restarts in both directions, followed by verified saved-contact delivery. Later
-checks passed Android node Stop/Start and radio recovery, iOS interface off/on,
-and bounded off-screen receipt on both phones.
-Network now separates physical Bluetooth connections, current routes with
-readable age/expiry, and the latest 200 accepted announcements. Technical IDs
-are expandable. Clearing history preserves contacts, routes and messages;
-history is session-only. It uses existing public inspection and observer APIs,
-without changing the canonical Host contract or inferring message paths.
-Retry backoff,
-cooperative shutdown and wider lifecycle qualification remain reliability
-follow-ups, not prerequisites for these features. Silent-peer expiry and dependable
-background delivery are not established by the current trials; revisit them
-before making those claims or if a new failure blocks normal use.
-TCP remains outside this product milestone. Preserve
-native background ownership and qualify foreground, locked/background and
-recovery behavior separately. The app uses ordinary Bluetooth permission and
-dual-role CoreBluetooth; the old per-accessory chooser investigation is retired.
-Keep app-level Bluetooth permission, messaging discovery and RemoteControl
-board pairing distinct.
+The [review fixes](../checkpoints/2026-09-30-mailbox-review.md) add
+conversation-level paging, guarded refreshes and preview verification warnings.
+Their automated evidence is separate from the earlier phone builds. Next, add
+conversation delivery details: show the message's recorded state, sender
+verification and available delivery evidence without guessing its network path.
+Use the existing Rust-owned service records and generated bindings. Do not add
+a generic service registry or a new storage framework for this slice.
 
-This prioritization does not make more board-management features prerequisites
-for using the phone's own node. Direct LXMF Resources follows this usability
-slice rather than blocking the first short-message demo.
+The [two-phone demo](phone-node-demo.md) remains the product goal: open the apps,
+announce distinct messaging names, discover and save contacts, exchange messages
+over ordinary BLE, and inspect the communication. Network now separates
+connections, routes and the latest 200 accepted announcements; clearing history
+preserves contacts, routes and messages. The
+[September 30 Network checkpoint](../checkpoints/2026-09-30-network-inspection.md)
+records the focused phone journey. TCP remains outside this milestone.
 
-## Parallel backlog: remote settings qualification and recipient onboarding
+Ordinary Bluetooth permission, messaging discovery and RemoteControl board
+authorization are distinct flows. The app uses dual-role CoreBluetooth, not the
+retired accessory chooser. It must work as a phone-based node without a board.
 
-The [September 21 integration](../checkpoints/2026-09-21-remote-control-management.md)
-rebases the app on upstream `8c211827b` and names all 30 RemoteControl request
-kinds. The first [read/write slice](remote-control-expansion.md) is implemented:
-Overview, interfaces/configuration/peers, discovery groups and 13 typed changes
-cover ordinary settings and disruptive connection/power actions. Rust retains
-workflow and validation ownership; generated bindings feed capability-driven UI.
+## Separate reliability and remote management follow ups
 
-The [settings workflow checkpoint](../checkpoints/2026-09-21-remote-settings-workflows.md)
-adds automatic reads, organized sections, transactional Wi-Fi trials and access
-inventory/removal. Recorded Android/board checks cover LoRa read/write and
-restored values after restart, plus failed Wi-Fi trials and prompt explicit
-rollback. Next, qualify successful new-network Keep and extend these checks to
-iOS. Design verified recipient onboarding before exposing controller
-authorization. There is no deployed-pairing migration project or granular
-permissions picker: development devices can be reset and paired again. Live
-upstream capability and authority checks remain mandatory.
+The [shared Bluetooth recovery design](../../docs/bluetooth-session-recovery.md)
+and [September 30 trials](../checkpoints/2026-09-30-mobile-liveness.md) establish
+bounded restart recovery, not uninterrupted connectivity or dependable background
+delivery. Follow up on competing-connection churn, unexplained status-8
+disconnects, silent-peer expiry, cooperative shutdown and longer unplugged idle.
+Natural suspension, repeated restoration, protected-data access and the remaining
+permission/radio cases need their own recorded journeys. These are not gates
+for unrelated foreground features unless a new failure blocks normal use.
 
-## Qualification and integration work to carry forward
+The [remote-control plan](remote-control-expansion.md) and
+[settings checkpoint](../checkpoints/2026-09-21-remote-settings-workflows.md)
+separate implemented controls from acceptance. Qualify successful new-network
+Keep and iOS workflows, then design verified recipient exchange before exposing
+controller authorization. Pairing uses one disclosed full-control preset, not
+a granular permissions picker. Live capability and authority checks remain
+mandatory; disposable test data does not require a deployed-pairing migration.
 
-- **Current mobile lifecycle:** permission and radio recovery, natural
-  suspension, long/locked idle, repeated restoration, protected-data access and
-  first-request recovery still need bounded, recorded journeys on current builds.
-  Normal standalone cold startup and retained-data upgrades have passed on iOS
-  and Android; they are not background-delivery guarantees.
-- **Product acceptance:** qualify fresh iOS identity import and pairing, wider
-  cancellation/disconnection cases, and the remote-settings workflows above.
-  Earlier Android and iOS journeys remain in their dated checkpoints; retained
-  grants do not prove fresh pairing.
-- **Unresolved historical failures:** retain the board navigation freeze/startup
-  notice, the old iOS ordinary-start timeout and the unexplained long delivery
-  delay as investigation leads. The
-  [September 15 checkpoint](../checkpoints/2026-09-15-upstream-integration.md) and
-  [iOS recovery investigation](../checkpoints/2026-09-09-ios-recovery-latency.md)
-  preserve their source, symptoms and narrower successful corrections. Reproduce
-  on a current build before prescribing another fix; chooser behavior is no
-  longer relevant to the current permission model.
-- **SDK and app landing:** land the independent
-  [SDK PR](https://github.com/KenAKAFrosty/Prns/pull/251) before the
-  [app PR](https://github.com/KenAKAFrosty/Prns/pull/197). Upstream now includes
-  the inherited firmware-assurance and tester-roster repairs; no separate repair
-  PR is needed. The earlier investigation is recorded in the
-  [build cleanup](../checkpoints/2026-09-24-build-cleanup.md#separate-upstream-ci-repair).
-  Consult current PR checks for CI status; historical publishing hooks do not
-  establish current hosted success.
-- **Recorded release:** after the SDK lands, promote the app compatibility
-  revision and matching artifacts, then run the separate recorded-release gate.
-  Keep current-source detached receipts distinct from release qualification.
-- **Firmware and transport limits:** preserve the firmware resource gates and
-  remeasure firmware-relevant changes. Broader physical write-batching and board
-  coverage remain separate from app builds; dated measurements are in
-  [validation](validation.md#firmware-and-repository-checks).
+Keep the historical board navigation freeze/startup notice, ordinary iOS startup
+timeout and long delivery delay as investigation leads, not proven current
+failures. Their [integration](../checkpoints/2026-09-15-upstream-integration.md)
+and [recovery](../checkpoints/2026-09-09-ios-recovery-latency.md) records preserve
+the limits. Reproduce on a relevant build before prescribing another fix.
 
-The [validation guide](validation.md) links prior evidence and its limits. Older
-PR publication chronologies belong in their checkpoints, not the active backlog.
+## Upstream landing and release
+
+The recommended review order is the independent sandbox repair #256, SDK #251,
+Bluetooth recovery #257, then app #197. The SDK includes #256, #257 includes the
+SDK work, and the app includes both; #257 is a follow-up dependency even though
+its GitHub base is currently `trunk`, not the SDK branch. This is the intended
+landing order, not a claim that GitHub has a true stacked base or that checks
+have passed. Reconcile each remaining diff as dependencies land and consult
+the PRs for live status.
+
+Upstream already contains the inherited firmware-assurance and tester-roster
+repairs recorded in the [build cleanup](../checkpoints/2026-09-24-build-cleanup.md#separate-upstream-ci-repair).
+Do not reopen those historical repair candidates.
+
+After the SDK lands, promote the app compatibility revision and matching
+artifacts, then run recorded-release qualification. Current-source detached
+checks remain distinct. Remeasure firmware-relevant changes with the canonical
+resource gates; historical headroom is not a current firmware assurance claim.
 
 ## Following product slices
 
 | Slice | Outcome and boundary |
 | --- | --- |
-| Direct LXMF Resources | Send/receive messages above the Link-packet limit using the existing wire and mailbox ownership; prove Python interoperability, bounds and cancellation. This is the next messaging increment, not propagation. |
-| Complete everyday controls | Message detail, pairing forget/revocation and further node operations, plus local interface/identity management where public APIs exist. Add missing generic seams upstream; do not duplicate protocol authority in the app. |
-| Notifications | Explicit privacy/settings and platform posting policy, with lifecycle evidence for each supported behavior. A running-node notification is not a message alert or a delivery guarantee. |
-| Later LXMF modes | Identified-Link reuse, ratchets/opportunistic delivery, stamps/tickets and propagation as separate protocol/state slices with reference tests. |
-| NomadNet client | A bounded client-only request/cache model and non-executing Micron rendering, with a reference corpus and malformed-content limits. Hosting and dynamic actions remain separate. |
-| Location and inspection | Explicit per-send consent and typed location provenance; richer activity, routes, interfaces and diagnostics. Location permission alone must not sample or transmit. |
+| Direct LXMF Resources | Messages above the Link-packet limit using existing wire/mailbox ownership; reference interoperability, bounds and cancellation. Not propagation. |
+| Everyday controls | Pairing forget/revocation and further node/interface/identity operations where public APIs exist. Missing general APIs belong upstream. |
+| Message notifications | Explicit privacy/settings and posting policy with platform evidence. A running-node notification is not a message alert or delivery guarantee. |
+| Later LXMF modes | Identified-Link reuse, ratchets/opportunistic delivery, stamps/tickets and propagation as separate protocol/state slices. |
+| NomadNet client | Bounded client-only requests/cache and non-executing Micron rendering. Hosting and dynamic actions remain separate. |
+| Location | Explicit per-send consent and typed provenance. Permission alone must not sample or transmit. |
+| Browser and desktop | DedicatedWorker orchestration for browser; process/shared-instance ownership for Tauri. Re-audit the [architecture checkpoint](../checkpoints/browser-tauri/README.md); do not duplicate the protocol engine. |
 
 Choose one slice at a time. Define its observable outcome, public Prns inputs,
 owned modules, generated changes and focused acceptance before implementation.
+Identity export/recovery, concurrent identity use and multi-device mailbox
+synchronization are separate security/protocol projects; onboarding import does
+not provide them.
 
-## Deferred platform and distribution work
+## Development rules
 
-Browser needs a reusable public DedicatedWorker orchestration seam; desktop
-needs a direct Tauri composition with process and shared-instance ownership.
-The [dated architecture checkpoint](../checkpoints/browser-tauri/README.md)
-records those decisions and must be re-audited against upstream before either
-provider is built. Do not create a second protocol engine or copy its scheduler.
-
-Newer Android service/permission behavior, iOS restoration, release/R8/signing,
-accessibility/localization, secret custody, retained-data upgrades and broader
-transport coverage remain explicit qualification work. Identity export,
-recovery, concurrent identity use and multi-device mailbox synchronization are
-separate security/protocol projects; onboarding import does not provide them.
-
-## Development rules worth preserving
-
-- Keep dependencies one-way: `applications/` consumes public Prns; core does not
-  import application services or product policy.
+- Dependencies remain one-way: `applications/` consumes public Prns APIs;
+  core does not import application services or product policy.
 - Rust owns protocol behavior, identity, durable state and command lifetime.
-  TypeScript owns presentation and platform-facing orchestration; generated
-  bindings are outputs, not another domain model.
-- Current development data is disposable. Persistence supports real workflows,
-  but is not a secure-storage, backup or cross-version migration guarantee.
-- Preserve the [screen IDs](../prns/app/src/navigation/catalog.ts), update route
-  parameters and deep-link tests together, and distinguish real capability from
-  placeholder UI. Avoid board-specific and implementation-detail user copy.
-- Refactor for demonstrated reuse. Do not add a service registry, storage
-  abstraction or platform package solely to anticipate a later feature.
+  TypeScript owns presentation and platform orchestration; generated bindings
+  are outputs, not another domain model.
+- Development data is disposable, but persistence must support the workflow
+  being tested. This is not a secure-storage, backup or migration guarantee.
+- Preserve [screen IDs](../prns/app/src/navigation/catalog.ts); update parameters,
+  links and deep-link tests together. Distinguish capability from placeholders.
+  Use consumer-facing copy without board-specific or implementation jargon.
+- Refactor for demonstrated reuse. Do not create a registry, storage abstraction
+  or platform package solely for a possible later consumer.
