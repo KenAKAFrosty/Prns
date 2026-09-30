@@ -8,7 +8,8 @@ use super::data_plane::{DataPlane, PendingL2cap};
 use super::gatt_link::{gatt_inbound_channel, GattInboundReceiver};
 use super::peripheral::{
     can_arm_l2cap, can_open_inbound, capability_read_allowed, l2cap_delivery_admission,
-    listener_liveness_mode, reap_closed_sessions, reap_stale_pending_l2cap, L2capDeliveryAdmission,
+    listener_liveness_mode, prepare_capability_read, prepare_listener_liveness,
+    reap_closed_sessions, reap_stale_pending_l2cap, L2capDeliveryAdmission,
 };
 use super::peripheral_notify::SessionPhase;
 use super::peripheral_write::WriteSession;
@@ -79,6 +80,84 @@ fn enabling_runtime_never_advertises_support_to_an_existing_legacy_owner() {
     drop(capable.data_tx.notifications().settled_owner());
     assert!(!capability_read_allowed(true, true, Some(&capable)));
     assert!(!capability_read_allowed(true, true, Some(&legacy)));
+}
+
+#[test]
+fn capability_read_reaps_dead_legacy_owners_but_preserves_live_legacy_connections() {
+    for retired in [false, true] {
+        let old_peer = peer_id(0x5a, 1);
+        let live_peer = peer_id(0x5a, 2);
+        assert_eq!(old_peer.address(), live_peer.address());
+        let (old, mut old_control, old_data) = native_session();
+        let (live, mut live_control, _live_data) = native_session();
+        // Cover both queued cleanup after explicit retirement and an ended receiver whose
+        // owner never reached settlement. The existing connection was legacy in both cases.
+        let _retained_data = if retired {
+            drop(old.data_tx.notifications().settled_owner());
+            Some(old_data)
+        } else {
+            drop(old_data);
+            None
+        };
+        let (upgrade_tx, mut old_upgrade) = oneshot::channel::<DataPlane>();
+        let mut old_pending = PendingL2cap::default();
+        assert!(old_pending.arm(upgrade_tx));
+        let mut pending = HashMap::from([(old_peer, old_pending)]);
+        let mut sessions = HashMap::from([(old_peer, old), (live_peer, live)]);
+        let (ready, mut notifications) = tokio::sync::watch::channel(());
+
+        assert!(prepare_capability_read(
+            true,
+            true,
+            old_peer,
+            &mut sessions,
+            &mut pending,
+            &ready,
+        ));
+        assert!(!sessions.contains_key(&old_peer));
+        assert!(!pending.contains_key(&old_peer));
+        assert!(matches!(
+            old_control.try_recv(),
+            Err(mpsc::error::TryRecvError::Disconnected)
+        ));
+        assert!(matches!(
+            old_upgrade.try_recv(),
+            Err(oneshot::error::TryRecvError::Closed)
+        ));
+        assert!(notifications.has_changed().unwrap());
+        notifications.borrow_and_update();
+
+        assert!(!prepare_capability_read(
+            true,
+            true,
+            live_peer,
+            &mut sessions,
+            &mut pending,
+            &ready,
+        ));
+        assert!(sessions.contains_key(&live_peer));
+        assert!(matches!(
+            live_control.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert!(!notifications.has_changed().unwrap());
+
+        let (fresh, _fresh_control, fresh_data) = native_session();
+        assert_eq!(
+            prepare_listener_liveness(&fresh_data, true, true, PeerProtocol::Native),
+            LivenessMode::Listener,
+        );
+        sessions.insert(old_peer, fresh);
+        assert!(prepare_capability_read(
+            true,
+            true,
+            old_peer,
+            &mut sessions,
+            &mut pending,
+            &ready,
+        ));
+        assert!(sessions.contains_key(&old_peer));
+    }
 }
 
 #[tokio::test]
