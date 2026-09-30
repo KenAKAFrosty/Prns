@@ -32,6 +32,7 @@ describe("screen catalog", () => {
       "explore.index",
       "more.index",
       "interfaces.index",
+      "activity.index",
       "settings.index",
       "settings.about",
       "help.index",

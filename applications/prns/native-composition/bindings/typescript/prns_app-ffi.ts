@@ -294,6 +294,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_fn_func_clear_network_activity": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_fn_func_create_manual_contact": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -510,6 +515,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_checksum_func_clear_lxmf_discovery": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_clear_network_activity": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -775,6 +785,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_fn_func_cancel_lxmf_message(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_change_remote_node(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_clear_lxmf_discovery(): bigint;
+    uniffi_prns_app_fn_func_clear_network_activity(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_create_manual_contact(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_delete_contact(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_describe_target(input: Uint8Array): bigint;
@@ -819,6 +830,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_checksum_func_cancel_lxmf_message(): number;
     uniffi_prns_app_checksum_func_change_remote_node(): number;
     uniffi_prns_app_checksum_func_clear_lxmf_discovery(): number;
+    uniffi_prns_app_checksum_func_clear_network_activity(): number;
     uniffi_prns_app_checksum_func_create_manual_contact(): number;
     uniffi_prns_app_checksum_func_delete_contact(): number;
     uniffi_prns_app_checksum_func_describe_target(): number;

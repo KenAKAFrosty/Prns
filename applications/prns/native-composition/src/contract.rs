@@ -25,6 +25,7 @@ pub struct DevelopmentNodeSnapshot {
     pub primary_identity: PrimaryIdentityState,
     pub local_host: LocalHostState,
     pub bluetooth: LocalBluetoothSnapshot,
+    pub network: LocalNetworkSnapshot,
     pub lxmf: LxmfHealth,
     pub controller_identity_fingerprint: Option<Vec<u8>>,
     pub pairing: RemoteControlPairingState,
@@ -78,6 +79,87 @@ pub struct LocalBluetoothPeerSnapshot {
     pub tx_bytes: u64,
     pub details: Option<String>,
     pub rssi_dbm: Option<i16>,
+}
+
+/// App presentation over one native inspection. Ages are measured at that
+/// inspection, not live JavaScript-clock estimates or historical message paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
+pub struct LocalNetworkSnapshot {
+    pub state: LocalNetworkState,
+    pub routes: Vec<LocalNetworkRouteSnapshot>,
+    /// Newest admission first; at most 200 rows from this native generation.
+    pub announces: Vec<LocalAnnounceActivity>,
+    pub activity_revision: u64,
+    /// Retention-window evictions since clear, not packet or Bluetooth loss.
+    pub dropped_announce_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
+pub enum LocalNetworkState {
+    Stopped,
+    Starting,
+    Ready,
+    /// Inspection failed; this does not establish that the network is down.
+    Unavailable {
+        detail: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
+pub struct LocalNetworkRouteSnapshot {
+    pub destination: [u8; 16],
+    pub via_identity: Option<[u8; 16]>,
+    /// The canonical logical interface, not an inferred physical next hop.
+    pub interface_id: Vec<u8>,
+    pub hops: u8,
+    pub learned_age_millis: u64,
+    pub last_activity_age_millis: u64,
+    pub expires_in_millis: u64,
+    pub expired: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
+pub struct LocalAnnounceActivity {
+    /// Unique within the aggregate generation; clear never reuses record IDs.
+    pub record_id: u64,
+    pub destination: [u8; 16],
+    pub announced_identity: [u8; 16],
+    /// Exact ingress when accepted, even after that interface is retired.
+    pub source_interface: Vec<u8>,
+    pub hops: u8,
+    pub age_millis: u64,
+    pub is_path_response: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
+pub struct ClearNetworkActivityInput {
+    pub generation_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
+pub enum ClearNetworkActivityOutcome {
+    Cleared { activity_revision: u64 },
+    GenerationChanged,
+    LocalNodeStopped,
+    Busy,
+}
+
+impl LocalNetworkSnapshot {
+    pub fn stopped() -> Self {
+        Self {
+            state: LocalNetworkState::Stopped,
+            routes: Vec::new(),
+            announces: Vec::new(),
+            activity_revision: 0,
+            dropped_announce_count: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -856,6 +938,7 @@ impl DevelopmentNodeSnapshot {
                 last_start_failure: None,
             },
             bluetooth: LocalBluetoothSnapshot::stopped(None),
+            network: LocalNetworkSnapshot::stopped(),
             lxmf: LxmfHealth::stopped(),
             controller_identity_fingerprint: None,
             pairing: RemoteControlPairingState::Searching,
@@ -954,6 +1037,30 @@ mod tests {
                 details: Some("CoC".into()),
                 rssi_dbm: Some(-60),
             }],
+        };
+        snapshot.network = LocalNetworkSnapshot {
+            state: LocalNetworkState::Ready,
+            routes: vec![LocalNetworkRouteSnapshot {
+                destination: [0x51; 16],
+                via_identity: Some([0x52; 16]),
+                interface_id: vec![0x53; 8],
+                hops: 2,
+                learned_age_millis: u64::MAX,
+                last_activity_age_millis: (1_u64 << 53) + 1,
+                expires_in_millis: u64::MAX,
+                expired: false,
+            }],
+            announces: vec![LocalAnnounceActivity {
+                record_id: u64::MAX,
+                destination: [0x51; 16],
+                announced_identity: [0x52; 16],
+                source_interface: vec![0x54; 8],
+                hops: 3,
+                age_millis: (1_u64 << 53) + 1,
+                is_path_response: true,
+            }],
+            activity_revision: u64::MAX,
+            dropped_announce_count: (1_u64 << 53) + 1,
         };
         let bytes =
             <DevelopmentNodeSnapshot as uniffi::Lower<crate::UniFfiTag>>::lower(snapshot.clone());

@@ -1,5 +1,7 @@
 import { Data, Effect, type Scope } from "effect";
 import type {
+  ClearNetworkActivityInput,
+  ClearNetworkActivityOutcome,
   StartRemoteWifiTrialInput,
   InspectRemoteWifiTrialInput,
   FinishRemoteWifiTrialInput,
@@ -24,6 +26,7 @@ import type {
 
 export type DevelopmentRuntimeOperationName =
   | "approvePairing"
+  | "clearNetworkActivity"
   | "describeTarget"
   | "announceTarget"
   | "readRemoteNode"
@@ -71,6 +74,9 @@ export type DevelopmentRuntimeFailure =
   | DevelopmentRuntimeStopError;
 
 export type EffectDevelopmentRuntime = {
+  readonly clearNetworkActivity: (
+    input: ClearNetworkActivityInput,
+  ) => Effect.Effect<ClearNetworkActivityOutcome, DevelopmentRuntimeOperationError>;
   readonly startRemoteWifiTrial: (
     input: StartRemoteWifiTrialInput,
   ) => Effect.Effect<RemoteWifiCommandOutcome, DevelopmentRuntimeOperationError>;
@@ -140,6 +146,8 @@ export function makeEffectDevelopmentRuntime(
   runtime: DevelopmentRuntime,
 ): EffectDevelopmentRuntime {
   return {
+    clearNetworkActivity: (input) =>
+      runtimeCall("clearNetworkActivity", (signal) => runtime.clearNetworkActivity(input, signal)),
     readRemoteNode: (input) =>
       runtimeCall("readRemoteNode", (signal) => runtime.readRemoteNode(input, signal)),
     changeRemoteNode: (input) =>

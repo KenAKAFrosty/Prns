@@ -65,12 +65,12 @@ The existing foundation is useful; this is not a messaging-engine rewrite.
 | Area | What exists | Gap for the demo |
 | --- | --- | --- |
 | Local node | One process-owned Rust runtime and stable primary identity; ordinary iOS Bluetooth admission; This phone appears before managed boards; retained-data cold launches passed on both platforms | Permission recovery and full physical lifecycle qualification remain |
-| Announcing | Contacts exposes a persisted messaging name, explicit Announce yourself and separate My address sharing; reciprocal messaging-build discovery passed | Wider announce/activity inspection remains planned |
-| Discovery | Discovered contacts shows accepted LXMF names, age, ingress and hops; 256-entry capacity, 24-hour expiry and explicit clear | General accepted-announce activity inspection remains planned |
+| Announcing | Contacts exposes a persisted messaging name, explicit Announce yourself and separate My address sharing; reciprocal messaging-build discovery passed | Network announcement history is implemented; rebuilt-phone acceptance remains |
+| Discovery | Discovered contacts shows accepted LXMF names, age, ingress and hops; 256-entry capacity, 24-hour expiry and explicit clear | General accepted-announcement history is implemented separately; it is not another contacts list |
 | Contacts | Save / Message from discovery; saved recipients, private aliases and announced names remain distinct; discovery-clear sends and isolated restart sends passed on both platforms | Wider retained-key and lifecycle qualification remain |
 | Bluetooth | Connections shows local status, stored enable/disable and physical peers; negotiated liveness and the Apple service-upgrade repair passed bounded isolated restart trials | Competing-connection churn, silent-peer expiry, iOS OS-radio recovery, permission denial and background/long-idle qualification remain |
 | TCP (deferred) | Optional developer TCP client fixture | Not part of this milestone |
-| Inspection | Logical interfaces, counters, routes and identity associations; Connections adds physical Bluetooth peers and their counters/details | Broader network views still use raw labels/IDs/times; current route is not historical message evidence |
+| Inspection | Network separates physical Bluetooth connections, readable current routes and bounded accepted-announcement history, with IDs on demand | Rebuilt-phone UI acceptance and conversation delivery details remain; current routes are not historical message evidence |
 
 Source anchors: [Inbox](../prns/app/src/features/inbox/inbox-screen.native.tsx),
 [local-node views](../prns/app/src/features/nodes/nodes-screen.tsx),
@@ -195,13 +195,13 @@ interface/activity routes rather than introducing another top-level tab.
 
 | Location | Implemented / planned experience |
 | --- | --- |
-| Nodes | Implemented: This phone first, Running/Stopped, concise Bluetooth summary and Connections; managed boards below. Edit the messaging name in Contacts. Expanded Network details remain planned. |
+| Nodes | Implemented: This phone first, Running/Stopped, concise Bluetooth summary, Connections and Network; managed boards below. Edit the messaging name in Contacts. |
 | Contacts | Saved / Discovered; prominent Announce yourself and a separate My address action for viewing/sharing the address. |
 | Discovered contact | Announced name, short address, human-readable last heard, received-via connection/hops when known; Save contact and Message. Identity details secondary. |
 | Inbox | Actual conversations, not every heard peer. New message selects a saved/discovered recipient; manual address entry remains available. Contact detail also has Message. |
 | Connections | Implemented with bounded iOS/Android retained-data acceptance: automatic Bluetooth, readable state, app-level permission actions, stored enable/disable and physical peer details. Remaining recovery/lifecycle checks are listed in the checkpoint. No per-phone picker; local settings do not use remote-board controls. |
-| Network details / Activity | Physical connections, current routes, accepted announces and bounded recent connection/message events; filters and clear local history. Technical IDs remain available on demand. |
-| Conversation details | Current route availability and independently recorded delivery evidence, clearly labeled. No inferred historical path presented as fact. |
+| Network / Activity | Implemented at the existing Activity route: separate Connections, Routes and Announcements views; latest 200 accepted announcements and clear local history. Technical IDs remain available on demand. General connection/message event history is not included. |
+| Conversation details | Next: current route availability and independently recorded delivery evidence, clearly labeled. No inferred historical path presented as fact. |
 
 Use Discovered, not Nearby, for announce-derived people: they may be reached over
 multiple hops, even when this phone uses only BLE. Reserve Nearby for physical
@@ -241,12 +241,12 @@ untrusted display data, not verified real-world identities.
   or add aggressive periodic announcements to make the demo pass.
 - Discovered messaging peers are deduplicated by destination, with bounded
   capacity (256 entries) and monotonic age expiry (24 hours); repeated observations
-  update last heard. A separately bounded recent accepted-announce feed, including
-  non-LXMF destinations, remains planned for inspection (initial proposal: 200
-  activity rows). These are internal bounds, not user configuration.
+  update last heard. Network has a separate 200-row accepted-announcement feed,
+  including non-LXMF destinations. These are internal bounds, not user
+  configuration. Old-entry removal means retention loss, not radio packet loss.
 - Discovery lives for the current native node generation; Stop/Start or process
-  restart clears it. The planned activity history needs similarly explicit reset
-  semantics. Saved contacts, names, connection settings and mailbox are durable.
+  restart clears it. Network announcement history has the same generation
+  boundary. Saved contacts, names, connection settings and mailbox are durable.
   Clearing observed history must not delete contacts, revoke permissions, block
   peers or change routing. Filtering is local presentation, not a network ban.
 - Separate recent-discovery history from messaging resolution. Fresh sends
@@ -283,6 +283,21 @@ unless a reusable core consumer needs its vocabulary expanded: it deliberately
 folds physical members into logical interfaces. Supplement it from the same raw
 capture; do not fork its projection or reconstruct physical peers from totals.
 Convert monotonic observations to ages in Rust, not phone wall-clock dates.
+
+Network's app-only snapshot uses the existing native clock for route ages,
+expiry and announcement ages. Displayed times describe the last network update;
+they do not advance using JavaScript time. An inspection failure is not an empty
+route table, and retained announcements remain visible when route inspection is
+unavailable. A logical route interface must not be presented as an exact physical
+peer. Recorded announcement ingress is resolved only against that recorded ID.
+
+The accepted-announcement observer copies fixed metadata into a generation-owned
+200-row ring and delegates to the existing LXMF observer once. It retains no
+payloads or names; display names reuse the messaging directory. A generation-bound
+clear result includes an activity revision. The UI keeps that acknowledgement
+across navigation until a native projection catches up, so stale snapshots cannot
+resurrect cleared rows and newer observations are not hidden. Clear, Stop and
+restart do not delete durable contacts or messages.
 
 The ordinary Bluetooth startup path uses app-level permission/radio state while
 preserving early native restoration preparation, one owner, Stop/reset
@@ -332,8 +347,10 @@ routes or counters.
    connections as reliability follow-ups. Cooperative shutdown notification
    remains implementation work, not a property of the current Stop behavior.
    These do not block network inspection unless a new failure prevents normal use.
-4. **Network explainability (next).** Complete announce/activity inspection, readable
-   route age/expiry, broader connection inspection and conversation delivery details.
+4. **Network explainability (first slice implemented).** Physical Bluetooth connections,
+   readable route age/expiry and bounded accepted-announcement inspection are in
+   source. Rebuild both phones for a focused UI check, then add conversation
+   delivery details using independently recorded evidence.
    Add a narrow upstream seam only where existing public evidence cannot answer
    the UI's question. Clearly separate current routes from actual message paths.
 5. **Repeatable device acceptance and recovery.** Test out-of-range, reconnect,

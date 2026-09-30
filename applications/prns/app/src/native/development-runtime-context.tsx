@@ -1,5 +1,7 @@
 import * as Bindings from "@prns-internal/expo";
 import type {
+  ClearNetworkActivityInput,
+  ClearNetworkActivityOutcome,
   StartRemoteWifiTrialInput,
   InspectRemoteWifiTrialInput,
   FinishRemoteWifiTrialInput,
@@ -87,6 +89,10 @@ export type DevelopmentRuntimeView = {
   readonly androidRuntime: AndroidRuntimeView | null;
   readonly phase: "unavailable" | "starting" | "ready" | "failed";
   readonly snapshot: DevelopmentNodeSnapshot | null;
+  readonly networkActivityClear: {
+    readonly generationId: bigint;
+    readonly activityRevision: bigint;
+  } | null;
   readonly lifecycleFailure: string | null;
   readonly backgroundFailure: string | null;
   readonly canStartNode: boolean;
@@ -96,6 +102,9 @@ export type DevelopmentRuntimeView = {
   readonly stopFailure: string | null;
   readonly stopNode: () => Promise<void>;
   readonly refreshSnapshot: () => Promise<RuntimeCommandResult<DevelopmentNodeSnapshot>>;
+  readonly clearNetworkActivity: (
+    input: ClearNetworkActivityInput,
+  ) => Promise<RuntimeCommandResult<ClearNetworkActivityOutcome>>;
   readonly setBluetoothEnabled: (
     enabled: boolean,
   ) => Promise<RuntimeCommandResult<LocalBluetoothSettingsOutcome>>;
@@ -164,6 +173,8 @@ export function DevelopmentRuntimeProvider({
     selectedProvider.availability.type === "available" ? "starting" : "unavailable",
   );
   const [snapshot, setSnapshot] = useState<DevelopmentNodeSnapshot | null>(null);
+  const [networkActivityClear, setNetworkActivityClear] =
+    useState<DevelopmentRuntimeView["networkActivityClear"]>(null);
   const [lifecycleFailure, setLifecycleFailure] = useState<string | null>(null);
   const [backgroundFailure, setBackgroundFailure] = useState<string | null>(null);
   const [bluetoothAuthorization, setBluetoothAuthorization] =
@@ -186,6 +197,7 @@ export function DevelopmentRuntimeProvider({
     readRequests.current.clear();
   }, []);
   const latestRevision = useRef<bigint | null>(null);
+  const latestNetworkGeneration = useRef<bigint | null>(null);
   const refreshActiveState = useRef(refreshActive);
   refreshActiveState.current = refreshActive;
   const canStartNode =
@@ -227,6 +239,15 @@ export function DevelopmentRuntimeProvider({
       return;
     }
     latestRevision.current = next.revision;
+    latestNetworkGeneration.current =
+      next.runtime === Bindings.DevelopmentNodeRuntime.Running ? next.generationId : null;
+    setNetworkActivityClear((previous) =>
+      previous !== null &&
+      previous.generationId === latestNetworkGeneration.current &&
+      next.network.activityRevision < previous.activityRevision
+        ? previous
+        : null,
+    );
     setSnapshot(next);
   }, []);
 
@@ -329,7 +350,9 @@ export function DevelopmentRuntimeProvider({
     acquisitionPending.current = true;
     session.current = null;
     latestRevision.current = null;
+    latestNetworkGeneration.current = null;
     setSnapshot(null);
+    setNetworkActivityClear(null);
     setLifecycleFailure(null);
     setBackgroundFailure(null);
 
@@ -474,6 +497,29 @@ export function DevelopmentRuntimeProvider({
   }, [publishSnapshot, runRead]);
 
   const bluetoothChange = useRef(false);
+  const clearNetworkActivity = useCallback(
+    async (input: ClearNetworkActivityInput) => {
+      const result = await run((active) => active.runtime.clearNetworkActivity(input));
+      if (result.type === "outcome" && result.outcome.tag === "Cleared") {
+        // The acknowledgement is authoritative even if refreshing fails. Do not
+        // rewrite snapshot arrays locally or discard observations after the clear.
+        // Retain its display barrier across route remounts until a native snapshot
+        // catches up; never carry it into a stopped or replacement generation.
+        if (latestNetworkGeneration.current === input.generationId) {
+          const activityRevision = result.outcome.inner.activityRevision;
+          setNetworkActivityClear((previous) =>
+            previous?.generationId === input.generationId &&
+            previous.activityRevision > activityRevision
+              ? previous
+              : { generationId: input.generationId, activityRevision },
+          );
+        }
+        await refreshSnapshot();
+      }
+      return result;
+    },
+    [refreshSnapshot, run],
+  );
   const setBluetoothEnabled = useCallback(
     async (enabled: boolean): Promise<RuntimeCommandResult<LocalBluetoothSettingsOutcome>> => {
       if (
@@ -730,6 +776,7 @@ export function DevelopmentRuntimeProvider({
       androidRuntime: androidCapability === undefined ? null : androidRuntime,
       phase,
       snapshot,
+      networkActivityClear,
       lifecycleFailure,
       backgroundFailure,
       canStartNode,
@@ -739,6 +786,7 @@ export function DevelopmentRuntimeProvider({
       stopFailure,
       stopNode,
       refreshSnapshot,
+      clearNetworkActivity,
       setBluetoothEnabled,
       readMessagingProfile,
       setMessagingName,
@@ -787,6 +835,7 @@ export function DevelopmentRuntimeProvider({
       lifecycleFailure,
       phase,
       refreshSnapshot,
+      clearNetworkActivity,
       setBluetoothEnabled,
       readMessagingProfile,
       setMessagingName,
@@ -803,6 +852,7 @@ export function DevelopmentRuntimeProvider({
       sendDirectText,
       selectedProvider.availability,
       snapshot,
+      networkActivityClear,
     ],
   );
 
@@ -819,6 +869,7 @@ export function routeConsumesDevelopmentSnapshot(pathname: string): boolean {
     pathname.startsWith("/nodes/") ||
     pathname === "/more/interfaces" ||
     pathname.startsWith("/more/interfaces/") ||
+    pathname === "/more/activity" ||
     pathname === "/contacts" ||
     pathname.startsWith("/contacts/") ||
     pathname === "/inbox" ||
