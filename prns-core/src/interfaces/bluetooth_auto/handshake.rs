@@ -470,6 +470,9 @@ impl Control {
         Self::try_decode(bytes).ok()
     }
 
+    // Keep the parser's Result separate from decode()'s Option conversion: fusing
+    // them expands aggregate copies substantially in size-constrained callers.
+    #[inline(never)]
     pub fn try_decode(bytes: &[u8]) -> Result<Self, ControlParseError> {
         let (tag, body) = bytes.split_first().ok_or(ControlParseError::Empty)?;
         match *tag {
