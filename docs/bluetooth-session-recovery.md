@@ -1,9 +1,9 @@
 # Bluetooth session recovery
 
 This is the implementation sequence for native Bluetooth session recovery. The
-ownership repairs and retained controls below are implemented. Correlated
-control-write completion and negotiated liveness remain planned. There is no new
-control-wire version or automatic restart-recovery claim in this change.
+ownership repairs, retained controls and correlated Android/embedded control-write
+completion below are implemented. Negotiated liveness remains planned. There is
+no new control-wire version or automatic restart-recovery claim in this change.
 
 A controlled two-phone iOS restart check delivered a baseline message, restarted
 only iOS, and then failed recipient resolution while Android retained an
@@ -65,10 +65,11 @@ duplex data work. A control Close or receive error ends only that member. Late
 Hello/Welcome messages are ignored with bounded yielding so they cannot starve
 data or timers. Columba continues without a native control loop.
 
-This slice only receives after settlement. It does not introduce probes,
-shutdown messages or concurrent control writes. Before sending after settlement,
-add persistent pending-operation state and control/data write arbitration;
-unrelated data activity must never cancel and retry a possibly submitted write.
+The supervisor still only receives after settlement. It does not introduce
+probes, shutdown messages or concurrent control writes. The completion work
+below supplies persistent pending-operation state and control/data write
+arbitration for the queued Android and embedded backends; the future liveness
+loop must keep each possibly submitted write alive across unrelated data work.
 
 ### Retained control validation
 
@@ -86,44 +87,97 @@ restart behavior are not qualified by these checks.
 
 ## Bound actual control I/O
 
-Before advertising lifecycle support, Android and embedded queued control
-writes need correlated native-worker completion receipts. Carry the exact
-session owner and an operation sequence through submission and completion.
-Success means the platform's completion point, or stack admission where the
-platform provides no later completion. It never proves remote receipt.
+Android and embedded queued controls now carry an operation sequence through
+submission and completion within the exact session owner. Queue admission alone
+does not finish a control send. The backend determines its completion point:
 
-Implement this next slice without enabling settled writes or new wire messages:
+| Backend | Local completion point |
+| --- | --- |
+| Android client | Matching characteristic-write callback |
+| Android server | Matching notification callback, fenced by registration and retained owner |
+| nRF central | Acknowledged GATT write response |
+| nRF peripheral | Connection-local notification completion count from `on_notify_tx_complete` |
+| Trouble central | Acknowledged GATT write response |
+| Trouble peripheral | Subscribed notification admitted to the host's outbound queue |
 
-- Keep sequence, phase, original deadline and terminal result with the exact
-  session, outside cancelable send futures. A resumed send must rejoin the same
-  operation; a different message cannot inherit its result. Preserve this state
-  while waiting for queue capacity as well as native completion.
-- Serialize acknowledged control and data writes per physical connection.
-  Trouble's response channel is untagged and nRF's response portal has one
-  waiter. Independent receive and L2CAP work must keep making progress.
-- Route Android's matching client/server callback to the original Rust
-  operation. This belongs in the shared transport bridge and its SDK/Hopspot
-  adapters, not the public host contract or generated application bindings.
-- Fix the Android control-buffer capacity in both consumers: their 64-byte
-  buffers cannot carry a maximum 153-byte greeting. An undersized output buffer
-  must not be indistinguishable from an empty queue.
+None of these completion points proves peer liveness or remote application
+receipt. Trouble checks the exact connection's subscription rather than accepting
+the notification API's unsubscribed no-op as success. Its single-executor server
+cannot process a subscription change between that check and packet assembly.
 
-Trouble's notification helper can return success without enqueueing when the
-connection is not subscribed; distinguish that from stack admission. nRF does
-provide a later notification-completion count through `on_notify_tx_complete`.
-Correlate it using a connection-owned control/data notification queue, not an
-address or an assumption that the platform has no completion callback. Keep
-embedded wire storage bounded and make shared pool waits safe for multiple
-canceling callers before extending their use.
+Each queued backend retains the original message identity, sequence, deadline
+and terminal result outside cancelable send futures. Resuming the same send
+joins its existing operation, including while waiting for capacity; another
+message cannot consume its result. Timely completion remains available after a
+delayed resumption, but a late callback cannot turn expiry into success.
+Embedded receipts hash the canonical control bytes only to check resumption
+consistency, not to authenticate the peer. This resumption contract is specific
+to these implementations; callers must not assume every `BleControl` backend
+can resume a canceled send.
 
-Use one overall deadline for submission and response; Busy retries do not start
-new deadlines. A missing callback retires the physical attempt, not merely its
-operation lane. Android server callbacks carry only an address: retain the old
-notification/disconnect owner until completion, and fence registration changes.
-When completion ownership remains ambiguous, address quarantine is safe but is
-not automatic recovery. A future automatic server-registration reset must
-explicitly retire all affected peripheral sessions; it cannot pretend only one
-peer was reset. Keep that policy separate from the smaller timeout repair.
+Acknowledged control and data writes share one lane per physical connection.
+For nRF and Trouble, canceling or failing an admitted write retires that
+connection before releasing its untagged response lane. Canceling a waiter that
+has not acquired the lane does not poison the active operation. Independent
+receive and L2CAP work continue. nRF registers each notification before native
+submission; surplus completion counts never become credit for a future write.
+Its existing four shared control-wire buffers remain bounded and are held until
+the worker completes. Pool availability uses bounded broadcast waiters, not a
+single consumable wakeup; this is an admission hint, not a fairness guarantee.
+
+Android's shared Rust bridge and private SDK/Hopspot JNI adapters carry exact
+operation receipts. Both Kotlin consumers use the native codec's control
+capacity, including a maximum 153-byte greeting, and distinguish an undersized
+buffer from no output. No public host contract or generated application binding
+changes are needed. Callback registration precedes native submission, and a
+submitted-ticket watermark rejects a stale pump read after completion. Rust
+watchdog scheduling is bounded and does not keep a physical connection leased.
+
+Submission, Busy retries and completion share the original deadline. Expiry
+retires the physical attempt, not merely its operation lane. Android retains
+uncertain server notification/disconnect ownership and fences registration
+changes. Platform callbacks do not themselves carry the Rust operation ticket;
+receipt matching therefore cannot distinguish arbitrary duplicate OS callbacks
+for successive writes on the same characteristic and physical client. Exact
+native ownership, serialization and timeout quarantine remain necessary.
+
+Address quarantine is safe but is not automatic recovery. A future automatic
+server-registration reset must explicitly retire all affected peripheral
+sessions; it cannot pretend only one peer was reset. Keep that policy separate
+from completion handling.
+
+### Control completion validation
+
+The focused checks pass 31 Tokio Bluetooth tests, 90 Embassy/Trouble tests,
+65 simulation BLE unit tests and 102 controlled-time Embassy integration tests.
+FFI host tests pass 145 tests with one existing hardware-radio test ignored;
+the SDK JNI adapter passes two host tests. Strict all-target Clippy passes for
+Tokio, Embassy, FFI and the SDK JNI adapter.
+
+Both JNI consumers compile for Android ARM64. Production Kotlin compilation and
+unit tests pass for both consumers: 63 SDK tests and 33 Hopspot tests. The SDK
+check uses its exact source through the existing aggregate app consumer; it
+does not build or install a new phone binary. Repository validation/tooling
+registries, formatting and documentation-link checks also pass.
+
+Linked resource checks pass for t-echo with both S140 versions and for E290,
+without reducing features, connection limits, pool capacity or reservations.
+The nRF control and L2CAP pools now use zero-initialized claim flags, placing
+their unchanged four and nine buffers in `.bss` instead of copying zero-filled
+storage from flash at startup. Outlining canonical control decoding and pinning
+native operations in caller-owned storage also avoid duplicated async code and
+storage.
+
+| t-echo profile | Firmware bytes | Flash headroom | RAM headroom after reservations |
+| --- | ---: | ---: | ---: |
+| S140 v6 | 620,748 | 5,940 | 1,180 |
+| S140 v7 | 620,860 | 1,732 | 1,180 |
+
+Both retain the 69,632-byte runtime-stack reservation. The v7 margin remains
+small and must be checked again as liveness is added. These linked-size checks
+do not measure peak runtime memory use or qualify physical Android callbacks,
+nRF notification completion, or rebuilt-phone restart recovery. No phone or
+board has been installed with this slice.
 
 ## Negotiate liveness without breaking legacy greetings
 
