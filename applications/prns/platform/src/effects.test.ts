@@ -13,6 +13,13 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
   return {
     contractFingerprint: "prns-app-native/foundation-1/test",
     revision,
+    network: {
+      state: Bindings.LocalNetworkState.Stopped.new(),
+      routes: [],
+      announces: [],
+      activityRevision: 0n,
+      droppedAnnounceCount: 0n,
+    },
     runtime: Bindings.DevelopmentNodeRuntime.Running,
     primaryIdentity: Bindings.PrimaryIdentityState.Missing.new(),
     localHost: Bindings.LocalHostState.Stopped.new({
@@ -56,6 +63,7 @@ function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRu
     ),
     saveDiscoveredContact: jest.fn(async () => Bindings.ContactMutationOutcome.NotObserved.new()),
     clearLxmfDiscovery: jest.fn(async () => Bindings.LxmfDiscoveryClearOutcome.Cleared),
+    clearNetworkActivity: jest.fn(async () => Bindings.ClearNetworkActivityOutcome.Busy.new()),
     inspectDevelopmentIdentity: jest.fn(async () => Bindings.PrimaryIdentityState.Missing.new()),
     previewIdentityImport: jest.fn(async () =>
       Bindings.IdentityImportPreviewOutcome.InvalidLength.new(),
