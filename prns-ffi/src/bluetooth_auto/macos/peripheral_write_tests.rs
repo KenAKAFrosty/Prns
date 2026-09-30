@@ -349,6 +349,29 @@ async fn late_decode_error_rolls_back_existing_control_and_data_reservations() {
     assert_eq!(harness.inbound.capacity(), 2);
 }
 
+#[tokio::test]
+async fn obsolete_attribute_in_a_mixed_batch_cannot_publish_a_current_prefix() {
+    let mut harness = Harness::new(1, 1);
+    let mut existing = harness.add_session(peer(1), InboundProfile::Native, 2, 8);
+    // The publication fence maps an old same-UUID characteristic to Unsupported before this
+    // shared all-or-none admission seam. No earlier current-service input may escape the batch.
+    assert_eq!(
+        harness.admit([
+            Ok(request(peer(1), WriteTarget::Data, &[1, 2])),
+            Ok(request(peer(1), WriteTarget::Unsupported, &[3])),
+        ]),
+        Err(WriteError::WriteNotPermitted),
+    );
+    assert_no_data(&mut existing.data).await;
+    assert_eq!(harness.sessions.len(), 1);
+    harness.assert_no_new_link();
+    assert_eq!(
+        harness.admit([Ok(request(peer(1), WriteTarget::Data, &[4]))]),
+        Ok(()),
+    );
+    assert_eq!(receive_data(&mut existing.data).await.as_ref(), &[4]);
+}
+
 #[test]
 fn inbound_pressure_and_session_capacity_do_not_publish_partial_peers() {
     // The first peer reserves the only ingress slot; the second refuses the entire batch.
