@@ -44,10 +44,11 @@ the canonical Host contract is unchanged. Clear is generation-bound and does
 not mutate contacts, routes or messages. Times describe the last native network
 update, and current routes are not historical message-path evidence.
 
-The isolated source checkpoint passes:
+The isolated source checkpoint and integrated `prns-app` checks pass:
 
-- 212 native unit tests, the generated-snapshot integration test, strict native
-  Clippy and formatting. Regressions cover bounded retention, observer delegation,
+- 212 native host-test unit tests; the integrated Android-feature host run passes
+  211 unit tests and all four integration tests. Strict native Clippy and
+  formatting also pass. Regressions cover bounded retention, observer delegation,
   concurrent clear/admission, generation changes and failed route inspection.
 - 430 app tests and 67 app-platform tests, including clear acknowledgement across
   navigation/refresh failure, newer observations, Stop and exact-width integers.
