@@ -92,6 +92,30 @@ session owner and an operation sequence through submission and completion.
 Success means the platform's completion point, or stack admission where the
 platform provides no later completion. It never proves remote receipt.
 
+Implement this next slice without enabling settled writes or new wire messages:
+
+- Keep sequence, phase, original deadline and terminal result with the exact
+  session, outside cancelable send futures. A resumed send must rejoin the same
+  operation; a different message cannot inherit its result. Preserve this state
+  while waiting for queue capacity as well as native completion.
+- Serialize acknowledged control and data writes per physical connection.
+  Trouble's response channel is untagged and nRF's response portal has one
+  waiter. Independent receive and L2CAP work must keep making progress.
+- Route Android's matching client/server callback to the original Rust
+  operation. This belongs in the shared transport bridge and its SDK/Hopspot
+  adapters, not the public host contract or generated application bindings.
+- Fix the Android control-buffer capacity in both consumers: their 64-byte
+  buffers cannot carry a maximum 153-byte greeting. An undersized output buffer
+  must not be indistinguishable from an empty queue.
+
+Trouble's notification helper can return success without enqueueing when the
+connection is not subscribed; distinguish that from stack admission. nRF does
+provide a later notification-completion count through `on_notify_tx_complete`.
+Correlate it using a connection-owned control/data notification queue, not an
+address or an assumption that the platform has no completion callback. Keep
+embedded wire storage bounded and make shared pool waits safe for multiple
+canceling callers before extending their use.
+
 Use one overall deadline for submission and response; Busy retries do not start
 new deadlines. A missing callback retires the physical attempt, not merely its
 operation lane. Android server callbacks carry only an address: retain the old
