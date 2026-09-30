@@ -813,6 +813,56 @@ public func FfiConverterTypeChangeRemoteNodeInput_lower(_ value: ChangeRemoteNod
 }
 
 
+public struct ClearNetworkActivityInput: Equatable, Hashable {
+    public var generationId: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(generationId: UInt64) {
+        self.generationId = generationId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClearNetworkActivityInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClearNetworkActivityInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClearNetworkActivityInput {
+        return
+            try ClearNetworkActivityInput(
+                generationId: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClearNetworkActivityInput, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.generationId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClearNetworkActivityInput_lift(_ buf: RustBuffer) throws -> ClearNetworkActivityInput {
+    return try FfiConverterTypeClearNetworkActivityInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClearNetworkActivityInput_lower(_ value: ClearNetworkActivityInput) -> RustBuffer {
+    return FfiConverterTypeClearNetworkActivityInput.lower(value)
+}
+
+
 public struct Contact: Equatable, Hashable {
     public var destination: Bytes16
     public var alias: String?
@@ -1157,6 +1207,7 @@ public struct DevelopmentNodeSnapshot: Equatable, Hashable {
     public var primaryIdentity: PrimaryIdentityState
     public var localHost: LocalHostState
     public var bluetooth: LocalBluetoothSnapshot
+    public var network: LocalNetworkSnapshot
     public var lxmf: LxmfHealth
     public var controllerIdentityFingerprint: Data?
     public var pairing: RemoteControlPairingState
@@ -1170,7 +1221,7 @@ public struct DevelopmentNodeSnapshot: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(contractFingerprint: String, revision: UInt64, generationId: UInt64, runtime: DevelopmentNodeRuntime, primaryIdentity: PrimaryIdentityState, localHost: LocalHostState, bluetooth: LocalBluetoothSnapshot, lxmf: LxmfHealth, controllerIdentityFingerprint: Data?, pairing: RemoteControlPairingState, pairingCandidates: [RemoteControlPairingCandidate], pairedTargets: [RemoteControlTargetSnapshot], lastAnnouncement: RemoteControlAnnounceOperation?, lastRemoteChange: RemoteChangeOperation?, lastRemoteWifi: RemoteWifiOperation?, activeOperation: DevelopmentNodeOperation?, failure: DevelopmentNodeFailure?) {
+    public init(contractFingerprint: String, revision: UInt64, generationId: UInt64, runtime: DevelopmentNodeRuntime, primaryIdentity: PrimaryIdentityState, localHost: LocalHostState, bluetooth: LocalBluetoothSnapshot, network: LocalNetworkSnapshot, lxmf: LxmfHealth, controllerIdentityFingerprint: Data?, pairing: RemoteControlPairingState, pairingCandidates: [RemoteControlPairingCandidate], pairedTargets: [RemoteControlTargetSnapshot], lastAnnouncement: RemoteControlAnnounceOperation?, lastRemoteChange: RemoteChangeOperation?, lastRemoteWifi: RemoteWifiOperation?, activeOperation: DevelopmentNodeOperation?, failure: DevelopmentNodeFailure?) {
         self.contractFingerprint = contractFingerprint
         self.revision = revision
         self.generationId = generationId
@@ -1178,6 +1229,7 @@ public struct DevelopmentNodeSnapshot: Equatable, Hashable {
         self.primaryIdentity = primaryIdentity
         self.localHost = localHost
         self.bluetooth = bluetooth
+        self.network = network
         self.lxmf = lxmf
         self.controllerIdentityFingerprint = controllerIdentityFingerprint
         self.pairing = pairing
@@ -1213,6 +1265,7 @@ public struct FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer {
                 primaryIdentity: FfiConverterTypePrimaryIdentityState.read(from: &buf),
                 localHost: FfiConverterTypeLocalHostState.read(from: &buf),
                 bluetooth: FfiConverterTypeLocalBluetoothSnapshot.read(from: &buf),
+                network: FfiConverterTypeLocalNetworkSnapshot.read(from: &buf),
                 lxmf: FfiConverterTypeLxmfHealth.read(from: &buf),
                 controllerIdentityFingerprint: FfiConverterOptionData.read(from: &buf),
                 pairing: FfiConverterTypeRemoteControlPairingState.read(from: &buf),
@@ -1234,6 +1287,7 @@ public struct FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer {
         FfiConverterTypePrimaryIdentityState.write(value.primaryIdentity, into: &buf)
         FfiConverterTypeLocalHostState.write(value.localHost, into: &buf)
         FfiConverterTypeLocalBluetoothSnapshot.write(value.bluetooth, into: &buf)
+        FfiConverterTypeLocalNetworkSnapshot.write(value.network, into: &buf)
         FfiConverterTypeLxmfHealth.write(value.lxmf, into: &buf)
         FfiConverterOptionData.write(value.controllerIdentityFingerprint, into: &buf)
         FfiConverterTypeRemoteControlPairingState.write(value.pairing, into: &buf)
@@ -1533,6 +1587,92 @@ public func FfiConverterTypeListLxmfMessagesInput_lower(_ value: ListLxmfMessage
 }
 
 
+public struct LocalAnnounceActivity: Equatable, Hashable {
+    /**
+     * Unique within the aggregate generation; clear never reuses record IDs.
+     */
+    public var recordId: UInt64
+    public var destination: Bytes16
+    public var announcedIdentity: Bytes16
+    /**
+     * Exact ingress when accepted, even after that interface is retired.
+     */
+    public var sourceInterface: Data
+    public var hops: UInt8
+    public var ageMillis: UInt64
+    public var isPathResponse: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Unique within the aggregate generation; clear never reuses record IDs.
+         */recordId: UInt64, destination: Bytes16, announcedIdentity: Bytes16,
+        /**
+         * Exact ingress when accepted, even after that interface is retired.
+         */sourceInterface: Data, hops: UInt8, ageMillis: UInt64, isPathResponse: Bool) {
+        self.recordId = recordId
+        self.destination = destination
+        self.announcedIdentity = announcedIdentity
+        self.sourceInterface = sourceInterface
+        self.hops = hops
+        self.ageMillis = ageMillis
+        self.isPathResponse = isPathResponse
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LocalAnnounceActivity: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLocalAnnounceActivity: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LocalAnnounceActivity {
+        return
+            try LocalAnnounceActivity(
+                recordId: FfiConverterUInt64.read(from: &buf),
+                destination: FfiConverterTypeBytes16.read(from: &buf),
+                announcedIdentity: FfiConverterTypeBytes16.read(from: &buf),
+                sourceInterface: FfiConverterData.read(from: &buf),
+                hops: FfiConverterUInt8.read(from: &buf),
+                ageMillis: FfiConverterUInt64.read(from: &buf),
+                isPathResponse: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LocalAnnounceActivity, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.recordId, into: &buf)
+        FfiConverterTypeBytes16.write(value.destination, into: &buf)
+        FfiConverterTypeBytes16.write(value.announcedIdentity, into: &buf)
+        FfiConverterData.write(value.sourceInterface, into: &buf)
+        FfiConverterUInt8.write(value.hops, into: &buf)
+        FfiConverterUInt64.write(value.ageMillis, into: &buf)
+        FfiConverterBool.write(value.isPathResponse, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalAnnounceActivity_lift(_ buf: RustBuffer) throws -> LocalAnnounceActivity {
+    return try FfiConverterTypeLocalAnnounceActivity.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalAnnounceActivity_lower(_ value: LocalAnnounceActivity) -> RustBuffer {
+    return FfiConverterTypeLocalAnnounceActivity.lower(value)
+}
+
+
 public struct LocalBluetoothPeerSnapshot: Equatable, Hashable {
     /**
      * Opaque physical interface identifier; this is not an authenticated RNS identity.
@@ -1734,6 +1874,172 @@ public func FfiConverterTypeLocalMessagingProfile_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeLocalMessagingProfile_lower(_ value: LocalMessagingProfile) -> RustBuffer {
     return FfiConverterTypeLocalMessagingProfile.lower(value)
+}
+
+
+public struct LocalNetworkRouteSnapshot: Equatable, Hashable {
+    public var destination: Bytes16
+    public var viaIdentity: Bytes16?
+    /**
+     * The canonical logical interface, not an inferred physical next hop.
+     */
+    public var interfaceId: Data
+    public var hops: UInt8
+    public var learnedAgeMillis: UInt64
+    public var lastActivityAgeMillis: UInt64
+    public var expiresInMillis: UInt64
+    public var expired: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(destination: Bytes16, viaIdentity: Bytes16?,
+        /**
+         * The canonical logical interface, not an inferred physical next hop.
+         */interfaceId: Data, hops: UInt8, learnedAgeMillis: UInt64, lastActivityAgeMillis: UInt64, expiresInMillis: UInt64, expired: Bool) {
+        self.destination = destination
+        self.viaIdentity = viaIdentity
+        self.interfaceId = interfaceId
+        self.hops = hops
+        self.learnedAgeMillis = learnedAgeMillis
+        self.lastActivityAgeMillis = lastActivityAgeMillis
+        self.expiresInMillis = expiresInMillis
+        self.expired = expired
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LocalNetworkRouteSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLocalNetworkRouteSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LocalNetworkRouteSnapshot {
+        return
+            try LocalNetworkRouteSnapshot(
+                destination: FfiConverterTypeBytes16.read(from: &buf),
+                viaIdentity: FfiConverterOptionTypeBytes16.read(from: &buf),
+                interfaceId: FfiConverterData.read(from: &buf),
+                hops: FfiConverterUInt8.read(from: &buf),
+                learnedAgeMillis: FfiConverterUInt64.read(from: &buf),
+                lastActivityAgeMillis: FfiConverterUInt64.read(from: &buf),
+                expiresInMillis: FfiConverterUInt64.read(from: &buf),
+                expired: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LocalNetworkRouteSnapshot, into buf: inout [UInt8]) {
+        FfiConverterTypeBytes16.write(value.destination, into: &buf)
+        FfiConverterOptionTypeBytes16.write(value.viaIdentity, into: &buf)
+        FfiConverterData.write(value.interfaceId, into: &buf)
+        FfiConverterUInt8.write(value.hops, into: &buf)
+        FfiConverterUInt64.write(value.learnedAgeMillis, into: &buf)
+        FfiConverterUInt64.write(value.lastActivityAgeMillis, into: &buf)
+        FfiConverterUInt64.write(value.expiresInMillis, into: &buf)
+        FfiConverterBool.write(value.expired, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalNetworkRouteSnapshot_lift(_ buf: RustBuffer) throws -> LocalNetworkRouteSnapshot {
+    return try FfiConverterTypeLocalNetworkRouteSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalNetworkRouteSnapshot_lower(_ value: LocalNetworkRouteSnapshot) -> RustBuffer {
+    return FfiConverterTypeLocalNetworkRouteSnapshot.lower(value)
+}
+
+
+/**
+ * App presentation over one native inspection. Ages are measured at that
+ * inspection, not live JavaScript-clock estimates or historical message paths.
+ */
+public struct LocalNetworkSnapshot: Equatable, Hashable {
+    public var state: LocalNetworkState
+    public var routes: [LocalNetworkRouteSnapshot]
+    /**
+     * Newest admission first; at most 200 rows from this native generation.
+     */
+    public var announces: [LocalAnnounceActivity]
+    public var activityRevision: UInt64
+    /**
+     * Retention-window evictions since clear, not packet or Bluetooth loss.
+     */
+    public var droppedAnnounceCount: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(state: LocalNetworkState, routes: [LocalNetworkRouteSnapshot],
+        /**
+         * Newest admission first; at most 200 rows from this native generation.
+         */announces: [LocalAnnounceActivity], activityRevision: UInt64,
+        /**
+         * Retention-window evictions since clear, not packet or Bluetooth loss.
+         */droppedAnnounceCount: UInt64) {
+        self.state = state
+        self.routes = routes
+        self.announces = announces
+        self.activityRevision = activityRevision
+        self.droppedAnnounceCount = droppedAnnounceCount
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LocalNetworkSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLocalNetworkSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LocalNetworkSnapshot {
+        return
+            try LocalNetworkSnapshot(
+                state: FfiConverterTypeLocalNetworkState.read(from: &buf),
+                routes: FfiConverterSequenceTypeLocalNetworkRouteSnapshot.read(from: &buf),
+                announces: FfiConverterSequenceTypeLocalAnnounceActivity.read(from: &buf),
+                activityRevision: FfiConverterUInt64.read(from: &buf),
+                droppedAnnounceCount: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LocalNetworkSnapshot, into buf: inout [UInt8]) {
+        FfiConverterTypeLocalNetworkState.write(value.state, into: &buf)
+        FfiConverterSequenceTypeLocalNetworkRouteSnapshot.write(value.routes, into: &buf)
+        FfiConverterSequenceTypeLocalAnnounceActivity.write(value.announces, into: &buf)
+        FfiConverterUInt64.write(value.activityRevision, into: &buf)
+        FfiConverterUInt64.write(value.droppedAnnounceCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalNetworkSnapshot_lift(_ buf: RustBuffer) throws -> LocalNetworkSnapshot {
+    return try FfiConverterTypeLocalNetworkSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalNetworkSnapshot_lower(_ value: LocalNetworkSnapshot) -> RustBuffer {
+    return FfiConverterTypeLocalNetworkSnapshot.lower(value)
 }
 
 
@@ -3836,6 +4142,90 @@ public func FfiConverterTypeChangeRemoteNodeOutcome_lower(_ value: ChangeRemoteN
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum ClearNetworkActivityOutcome: Equatable, Hashable {
+
+    case cleared(activityRevision: UInt64
+    )
+    case generationChanged
+    case localNodeStopped
+    case busy
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClearNetworkActivityOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClearNetworkActivityOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = ClearNetworkActivityOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClearNetworkActivityOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .cleared(activityRevision: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 2: return .generationChanged
+
+        case 3: return .localNodeStopped
+
+        case 4: return .busy
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ClearNetworkActivityOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .cleared(activityRevision):
+            writeInt(&buf, Int32(1))
+            FfiConverterUInt64.write(activityRevision, into: &buf)
+
+
+        case .generationChanged:
+            writeInt(&buf, Int32(2))
+
+
+        case .localNodeStopped:
+            writeInt(&buf, Int32(3))
+
+
+        case .busy:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClearNetworkActivityOutcome_lift(_ buf: RustBuffer) throws -> ClearNetworkActivityOutcome {
+    return try FfiConverterTypeClearNetworkActivityOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClearNetworkActivityOutcome_lower(_ value: ClearNetworkActivityOutcome) -> RustBuffer {
+    return FfiConverterTypeClearNetworkActivityOutcome.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum ContactListOutcome: Equatable, Hashable {
 
     case listed(contacts: [Contact]
@@ -5274,6 +5664,93 @@ public func FfiConverterTypeLocalMessagingProfileOutcome_lift(_ buf: RustBuffer)
 #endif
 public func FfiConverterTypeLocalMessagingProfileOutcome_lower(_ value: LocalMessagingProfileOutcome) -> RustBuffer {
     return FfiConverterTypeLocalMessagingProfileOutcome.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum LocalNetworkState: Equatable, Hashable {
+
+    case stopped
+    case starting
+    case ready
+    /**
+     * Inspection failed; this does not establish that the network is down.
+     */
+    case unavailable(detail: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension LocalNetworkState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLocalNetworkState: FfiConverterRustBuffer {
+    typealias SwiftType = LocalNetworkState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LocalNetworkState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .stopped
+
+        case 2: return .starting
+
+        case 3: return .ready
+
+        case 4: return .unavailable(detail: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: LocalNetworkState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .stopped:
+            writeInt(&buf, Int32(1))
+
+
+        case .starting:
+            writeInt(&buf, Int32(2))
+
+
+        case .ready:
+            writeInt(&buf, Int32(3))
+
+
+        case let .unavailable(detail):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(detail, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalNetworkState_lift(_ buf: RustBuffer) throws -> LocalNetworkState {
+    return try FfiConverterTypeLocalNetworkState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLocalNetworkState_lower(_ value: LocalNetworkState) -> RustBuffer {
+    return FfiConverterTypeLocalNetworkState.lower(value)
 }
 
 
@@ -10296,6 +10773,31 @@ fileprivate struct FfiConverterSequenceTypeContact: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeLocalAnnounceActivity: FfiConverterRustBuffer {
+    typealias SwiftType = [LocalAnnounceActivity]
+
+    public static func write(_ value: [LocalAnnounceActivity], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeLocalAnnounceActivity.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [LocalAnnounceActivity] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [LocalAnnounceActivity]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeLocalAnnounceActivity.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeLocalBluetoothPeerSnapshot: FfiConverterRustBuffer {
     typealias SwiftType = [LocalBluetoothPeerSnapshot]
 
@@ -10313,6 +10815,31 @@ fileprivate struct FfiConverterSequenceTypeLocalBluetoothPeerSnapshot: FfiConver
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeLocalBluetoothPeerSnapshot.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeLocalNetworkRouteSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = [LocalNetworkRouteSnapshot]
+
+    public static func write(_ value: [LocalNetworkRouteSnapshot], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeLocalNetworkRouteSnapshot.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [LocalNetworkRouteSnapshot] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [LocalNetworkRouteSnapshot]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeLocalNetworkRouteSnapshot.read(from: &buf))
         }
         return seq
     }
@@ -10816,6 +11343,24 @@ public func clearLxmfDiscovery()async  -> LxmfDiscoveryClearOutcome  {
             completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
             freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeLxmfDiscoveryClearOutcome_lift,
+            errorHandler: nil
+
+        )
+}
+/**
+ * Clear only this generation's ephemeral accepted-announce activity.
+ */
+public func clearNetworkActivity(input: ClearNetworkActivityInput)async  -> ClearNetworkActivityOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_clear_network_activity(FfiConverterTypeClearNetworkActivityInput_lower(input)
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeClearNetworkActivityOutcome_lift,
             errorHandler: nil
 
         )
@@ -11355,6 +11900,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_clear_lxmf_discovery() != 10179) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_prns_app_checksum_func_clear_network_activity() != 38833) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_create_manual_contact() != 1882) {
