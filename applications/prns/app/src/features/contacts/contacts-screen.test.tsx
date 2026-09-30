@@ -176,6 +176,7 @@ function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRu
         snapshot: snapshot(),
       }),
     readDevelopmentNodeSnapshot: async () => snapshot(),
+    clearNetworkActivity: async () => Bindings.ClearNetworkActivityOutcome.LocalNodeStopped.new(),
     initiateRemoteControlPairing: async () =>
       Bindings.RemoteControlPairingCommandOutcome.Busy.new(),
     approveRemoteControlPairing: async () => Bindings.RemoteControlPairingCommandOutcome.Busy.new(),
