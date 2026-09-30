@@ -142,7 +142,8 @@ pub(super) enum SlotJob {
 
 pub(super) struct SlotChannels {
     pub(super) control_in: Channel<BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
-    pub(super) control_out: Channel<BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
+    pub(super) control_out: Channel<BridgeMutex, ControlWrite, CONTROL_QUEUE_DEPTH>,
+    pub(super) control_completion: ControlCompletion<BridgeMutex>,
     pub(super) data_in: Channel<BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
     pub(super) data_out: Channel<BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
     pub(super) identity_in: Signal<BridgeMutex, BleIdentity>,
@@ -158,6 +159,7 @@ impl SlotChannels {
         Self {
             control_in: Channel::new(),
             control_out: Channel::new(),
+            control_completion: ControlCompletion::new(),
             data_in: Channel::new(),
             data_out: Channel::new(),
             identity_in: Signal::new(),
@@ -190,6 +192,7 @@ impl SlotChannels {
         self.shutdown.reset();
         self.control_in.clear();
         self.control_out.clear();
+        self.control_completion.reset();
         self.data_in.clear();
         self.data_out.clear();
         self.identity_in.reset();
@@ -206,6 +209,7 @@ impl SlotChannels {
             control: EmbeddedBleControl {
                 control_in: self.control_in.receiver(),
                 control_out: self.control_out.sender(),
+                completion: &self.control_completion,
                 slot,
             },
             data_in: self.data_in.receiver(),
@@ -479,18 +483,65 @@ pub struct EmbeddedBleLink {
 
 pub struct EmbeddedBleControl {
     control_in: Receiver<'static, BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
-    control_out: Sender<'static, BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
+    control_out: Sender<'static, BridgeMutex, ControlWrite, CONTROL_QUEUE_DEPTH>,
+    completion: &'static ControlCompletion<BridgeMutex>,
     slot: BleSlotLink,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ControlWrite {
+    pub message: Control,
+    pub ticket: ControlTicket,
 }
 
 impl BleControl for EmbeddedBleControl {
     type Error = Closed;
 
     async fn send(&mut self, msg: &Control) -> Result<(), Closed> {
-        match select(self.control_out.send(*msg), self.slot.wait_for_close()).await {
-            Either::First(()) => Ok(()),
-            Either::Second(()) => Err(Closed),
+        let result = async {
+            let ticket = self
+                .completion
+                .start(msg, Instant::now())
+                .map_err(|_| Closed)?;
+            let operation = async {
+                if !self.completion.submitted(ticket) {
+                    loop {
+                        if self
+                            .completion
+                            .admit_with(ticket, Instant::now(), || {
+                                self.control_out
+                                    .try_send(ControlWrite {
+                                        message: *msg,
+                                        ticket,
+                                    })
+                                    .is_ok()
+                            })
+                            .map_err(|_| Closed)?
+                        {
+                            break;
+                        }
+                        core::future::poll_fn(|cx| self.control_out.poll_ready_to_send(cx)).await;
+                    }
+                }
+                self.completion.wait(ticket).await.map_err(|_| Closed)?;
+                self.completion.acknowledge(ticket).map_err(|_| Closed)
+            };
+            match select(
+                with_deadline(ticket.deadline(), operation),
+                self.slot.wait_for_close(),
+            )
+            .await
+            {
+                Either::First(Ok(result)) => result,
+                _ => Err(Closed),
+            }
         }
+        .await;
+        if result.is_err() {
+            self.completion.retire();
+            self.slot.request_close();
+        }
+        result
     }
 
     async fn recv(&mut self) -> Result<Control, Closed> {
@@ -552,6 +603,7 @@ impl BleLink for EmbeddedBleLink {
         let EmbeddedBleControl {
             control_in,
             control_out,
+            completion,
             slot,
         } = self.control;
         let (source_slot, sink_slot, control) = match self.peer_protocol {
@@ -567,6 +619,7 @@ impl BleLink for EmbeddedBleLink {
                     Some(EmbeddedBleControl {
                         control_in,
                         control_out,
+                        completion,
                         slot: control,
                     }),
                 )
@@ -696,13 +749,85 @@ mod tests {
     }
 
     #[test]
+    fn canceled_native_sends_rejoin_the_same_queued_operation_and_worker_receipt() {
+        let (mut link, _worker, _pool, channels) = split_fixture(PeerProtocol::Native);
+        let message = Control::Close {
+            reason: CloseReason::DuplicateLink,
+        };
+        for _ in 0..3 {
+            assert!(matches!(
+                block_on(select(link.control_send(&message), core::future::ready(()))),
+                Either::Second(())
+            ));
+        }
+        let request = channels.control_out.try_receive().unwrap();
+        assert_eq!(request.message, message);
+        assert!(channels.control_out.try_receive().is_err());
+        // Dequeue is still not completion. Cancellation must not republish the request.
+        assert!(matches!(
+            block_on(select(link.control_send(&message), core::future::ready(()))),
+            Either::Second(())
+        ));
+        assert!(channels.control_out.try_receive().is_err());
+        assert!(channels.control_completion.complete(request.ticket, true));
+        assert!(block_on(link.control_send(&message)).is_ok());
+        assert!(channels.control_out.try_receive().is_err());
+    }
+
+    #[test]
+    fn different_message_cannot_consume_a_successful_worker_receipt() {
+        let (mut link, worker, _pool, channels) = split_fixture(PeerProtocol::Native);
+        let first = Control::Close {
+            reason: CloseReason::DuplicateLink,
+        };
+        let different = Control::Close {
+            reason: CloseReason::Incompatible,
+        };
+        assert!(matches!(
+            block_on(select(link.control_send(&first), core::future::ready(()))),
+            Either::Second(())
+        ));
+        let request = channels.control_out.try_receive().unwrap();
+        assert!(channels.control_completion.complete(request.ticket, true));
+        assert!(block_on(link.control_send(&different)).is_err());
+        assert!(worker.is_closed());
+        assert!(channels.control_out.try_receive().is_err());
+    }
+
+    #[test]
+    fn native_worker_failure_closes_only_its_owned_session() {
+        let (mut link, worker, _pool, channels) = split_fixture(PeerProtocol::Native);
+        let (_other_link, other_worker, _other_pool, _other_channels) =
+            split_fixture(PeerProtocol::Native);
+        let message = Control::Close {
+            reason: CloseReason::DuplicateLink,
+        };
+        assert!(matches!(
+            block_on(select(link.control_send(&message), core::future::ready(()))),
+            Either::Second(())
+        ));
+        let request = channels.control_out.try_receive().unwrap();
+        assert!(channels.control_completion.complete(request.ticket, false));
+        assert!(block_on(link.control_send(&message)).is_err());
+        assert!(worker.is_closed());
+        assert!(!other_worker.is_closed());
+        assert!(!channels.control_completion.complete(request.ticket, true));
+    }
+
+    #[test]
     fn native_split_keeps_the_handshake_control_lane_and_its_slot_owner() {
         let (mut link, worker, pool, channels) = split_fixture(PeerProtocol::Native);
         let message = Control::Close {
             reason: CloseReason::DuplicateLink,
         };
+        assert!(matches!(
+            block_on(select(link.control_send(&message), core::future::ready(()))),
+            Either::Second(())
+        ));
+        let request = channels.control_out.try_receive().unwrap();
+        assert_eq!(request.message, message);
+        assert!(channels.control_completion.complete(request.ticket, true));
         assert!(block_on(link.control_send(&message)).is_ok());
-        assert_eq!(channels.control_out.try_receive(), Ok(message));
         let BleLinkParts {
             source,
             sink,

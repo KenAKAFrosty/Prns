@@ -215,6 +215,13 @@ pub struct ConnectionSlotWorkerLease<M: RawMutex + 'static> {
 }
 
 impl<M: RawMutex + 'static> ConnectionSlotWorkerLease<M> {
+    pub fn is_closed(&self) -> bool {
+        self.owner
+            .slot
+            .closed
+            .lock(|closed| closed.borrow().requested)
+    }
+
     pub fn wait_for_close(&self) -> impl core::future::Future<Output = ()> + '_ {
         self.owner.wait_for_close()
     }
@@ -230,6 +237,10 @@ pub struct ConnectionSlotLinkLease<M: RawMutex + 'static> {
 }
 
 impl<M: RawMutex + 'static> ConnectionSlotLinkLease<M> {
+    pub fn request_close(&self) {
+        self.owner.slot.request_close();
+    }
+
     #[must_use]
     pub fn index(&self) -> usize {
         self.owner.index()
