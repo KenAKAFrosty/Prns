@@ -642,6 +642,49 @@ export async function listContacts(asyncOpts_?: { signal: AbortSignal }): Promis
     }
     }
 
+/**
+ * The latest message per conversation, paged independently of message volume.
+ */
+export async function listLxmfConversations(input: ListLxmfConversationsInput, asyncOpts_?: { signal: AbortSignal }): Promise<LxmfMessageListOutcome> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_prns_app_fn_func_list_lxmf_conversations(FfiConverterTypeListLxmfConversationsInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_prns_app_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_prns_app_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_prns_app_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_prns_app_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeLxmfMessageListOutcome.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
 export async function listLxmfMessages(input: ListLxmfMessagesInput, asyncOpts_?: { signal: AbortSignal }): Promise<LxmfMessageListOutcome> {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -4470,7 +4513,15 @@ const FfiConverterTypeLxmfHealthState = (() => {
 
 export type LxmfHealth = {
     state: LxmfHealthState,
-    inboundOverflowCount: bigint
+    inboundOverflowCount: bigint,
+    /**
+     * Committed mailbox changes, independent of unrelated network snapshots.
+     */
+    mailboxRevision: bigint,
+    /**
+     * Process-local LXMF changes, including active sends and discovered peers.
+     */
+    projectionRevision: bigint
 }
 
 /**
@@ -4495,16 +4546,22 @@ const FfiConverterTypeLxmfHealth = (() => {
         readFromCursor(c: Cursor): TypeName {
             return {
                 state: FfiConverterTypeLxmfHealthState.readFromCursor(c),
-                inboundOverflowCount: FfiConverterUInt64.readFromCursor(c)
+                inboundOverflowCount: FfiConverterUInt64.readFromCursor(c),
+                mailboxRevision: FfiConverterUInt64.readFromCursor(c),
+                projectionRevision: FfiConverterUInt64.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             FfiConverterTypeLxmfHealthState.writeIntoCursor(value.state, c);
             FfiConverterUInt64.writeIntoCursor(value.inboundOverflowCount, c);
+            FfiConverterUInt64.writeIntoCursor(value.mailboxRevision, c);
+            FfiConverterUInt64.writeIntoCursor(value.projectionRevision, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeLxmfHealthState.allocationSize(value.state) +
-             FfiConverterUInt64.allocationSize(value.inboundOverflowCount);
+             FfiConverterUInt64.allocationSize(value.inboundOverflowCount) +
+             FfiConverterUInt64.allocationSize(value.mailboxRevision) +
+             FfiConverterUInt64.allocationSize(value.projectionRevision);
 
         }
     };
@@ -7069,6 +7126,49 @@ const FfiConverterTypeInspectRemoteWifiTrialInput = (() => {
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUint8Array.allocationSize(value.targetIdentityFingerprint);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ListLxmfConversationsInput = {
+    before?: bigint | undefined,
+    limit: number
+}
+
+/**
+ * Generated factory for {@link ListLxmfConversationsInput} record objects.
+ */
+export const ListLxmfConversationsInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ListLxmfConversationsInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ListLxmfConversationsInput>,
+    });
+})();
+
+const FfiConverterTypeListLxmfConversationsInput = (() => {
+    type TypeName = ListLxmfConversationsInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                before: FfiConverterOptionalUInt64.readFromCursor(c),
+                limit: FfiConverterUInt16.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterOptionalUInt64.writeIntoCursor(value.before, c);
+            FfiConverterUInt16.writeIntoCursor(value.limit, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalUInt64.allocationSize(value.before) +
+             FfiConverterUInt16.allocationSize(value.limit);
 
         }
     };
@@ -15589,6 +15689,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_prns_app_checksum_func_list_contacts() !== 57283) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_list_contacts");
     }
+    if (nativeModule().uniffi_prns_app_checksum_func_list_lxmf_conversations() !== 3437) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_list_lxmf_conversations");
+    }
     if (nativeModule().uniffi_prns_app_checksum_func_list_lxmf_messages() !== 16395) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_list_lxmf_messages");
     }
@@ -15715,6 +15818,7 @@ export default Object.freeze({
     FfiConverterTypeIdentityImportPreviewOutcome,
     FfiConverterTypeInitiateRemoteControlPairingInput,
     FfiConverterTypeInspectRemoteWifiTrialInput,
+    FfiConverterTypeListLxmfConversationsInput,
     FfiConverterTypeListLxmfMessagesInput,
     FfiConverterTypeLocalAnnounceActivity,
     FfiConverterTypeLocalBluetoothPeerSnapshot,

@@ -56,7 +56,12 @@ const snapshot = (): Bindings.DevelopmentNodeSnapshot => ({
   runtime: Bindings.DevelopmentNodeRuntime.Stopped,
   primaryIdentity: Bindings.PrimaryIdentityState.Missing.new(),
   localHost: Bindings.LocalHostState.Stopped.new({ lastStartFailure: undefined }),
-  lxmf: { state: Bindings.LxmfHealthState.Stopped, inboundOverflowCount: 0n },
+  lxmf: {
+    state: Bindings.LxmfHealthState.Stopped,
+    inboundOverflowCount: 0n,
+    mailboxRevision: 0n,
+    projectionRevision: 0n,
+  },
   pairing: Bindings.RemoteControlPairingState.Searching.new(),
   pairingCandidates: [],
   pairedTargets: [],
@@ -176,6 +181,20 @@ test("checks both semantic contracts once and uses generated startup codecs", as
   );
   expect(api.bindingContract).toHaveBeenCalledTimes(1);
   expect(load).toHaveBeenCalledTimes(1);
+});
+
+test("conversation pages prepare offline storage without starting or admitting outbound work", async () => {
+  const input = { before: 18_446_744_073_709_551_615n, limit: 50 };
+  const outcome = Bindings.LxmfMessageListOutcome.Listed.new({ messages: [] });
+  const listLxmfConversations = jest.fn(async () => outcome);
+  const { runtime, native } = setup({ listLxmfConversations });
+  const controller = new AbortController();
+  await expect(runtime.listLxmfConversations(input, controller.signal)).resolves.toEqual(outcome);
+  await runtime.listLxmfConversations({ limit: 50 });
+  expect(listLxmfConversations).toHaveBeenNthCalledWith(1, input, { signal: controller.signal });
+  expect(native.prepareStorage).toHaveBeenCalledTimes(1);
+  expect(native.start).not.toHaveBeenCalled();
+  expect(native.prepareOutbound).not.toHaveBeenCalled();
 });
 
 test("clears only native network activity without storage or outbound preparation", async () => {

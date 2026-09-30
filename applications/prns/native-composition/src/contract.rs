@@ -437,6 +437,10 @@ pub enum LxmfHealthState {
 pub struct LxmfHealth {
     pub state: LxmfHealthState,
     pub inbound_overflow_count: u64,
+    /// Committed mailbox changes, independent of unrelated network snapshots.
+    pub mailbox_revision: u64,
+    /// Process-local LXMF changes, including active sends and discovered peers.
+    pub projection_revision: u64,
 }
 
 impl LxmfHealth {
@@ -445,6 +449,8 @@ impl LxmfHealth {
         Self {
             state: LxmfHealthState::Stopped,
             inbound_overflow_count: 0,
+            mailbox_revision: 0,
+            projection_revision: 0,
         }
     }
 }
@@ -468,6 +474,13 @@ pub struct MeasureLxmfTextInput {
 #[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct ListLxmfMessagesInput {
     pub peer: Option<[u8; 16]>,
+    pub before: Option<u64>,
+    pub limit: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
+pub struct ListLxmfConversationsInput {
     pub before: Option<u64>,
     pub limit: u16,
 }

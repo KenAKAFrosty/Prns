@@ -27,6 +27,7 @@ import type {
   DevelopmentRuntimeSession,
   InitiateRemoteControlPairingInput,
   ListLxmfMessagesInput,
+  ListLxmfConversationsInput,
   LxmfMessageListOutcome,
   LxmfPeerListOutcome,
   MeasureLxmfTextInput,
@@ -135,6 +136,9 @@ export type DevelopmentRuntimeView = {
   readonly listLxmfPeers: () => Promise<RuntimeCommandResult<LxmfPeerListOutcome>>;
   readonly listLxmfMessages: (
     input: ListLxmfMessagesInput,
+  ) => Promise<RuntimeCommandResult<LxmfMessageListOutcome>>;
+  readonly listLxmfConversations: (
+    input: ListLxmfConversationsInput,
   ) => Promise<RuntimeCommandResult<LxmfMessageListOutcome>>;
   readonly retryLxmfMessage: (
     localRecordId: bigint,
@@ -742,6 +746,12 @@ export function DevelopmentRuntimeProvider({
     [runAvailable],
   );
 
+  const listLxmfConversations = useCallback(
+    (input: ListLxmfConversationsInput) =>
+      runAvailable((runtime) => runtime.listLxmfConversations(input)),
+    [runAvailable],
+  );
+
   const retryLxmfMessage = useCallback(
     (localRecordId: bigint) => runAvailable((runtime) => runtime.retryLxmfMessage(localRecordId)),
     [runAvailable],
@@ -805,6 +815,7 @@ export function DevelopmentRuntimeProvider({
       saveObservedDestination,
       listLxmfPeers,
       listLxmfMessages,
+      listLxmfConversations,
       retryLxmfMessage,
       cancelLxmfMessage,
       announceLxmf,
@@ -845,6 +856,7 @@ export function DevelopmentRuntimeProvider({
       saveObservedDestination,
       listLxmfPeers,
       listLxmfMessages,
+      listLxmfConversations,
       retryLxmfMessage,
       cancelLxmfMessage,
       announceLxmf,

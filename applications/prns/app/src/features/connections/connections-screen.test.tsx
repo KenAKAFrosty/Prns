@@ -59,7 +59,12 @@ function snapshot(
     runtime,
     primaryIdentity: Bindings.PrimaryIdentityState.Missing.new(),
     localHost: Bindings.LocalHostState.Stopped.new({ lastStartFailure: undefined }),
-    lxmf: { state: Bindings.LxmfHealthState.Ready, inboundOverflowCount: 0n },
+    lxmf: {
+      state: Bindings.LxmfHealthState.Ready,
+      inboundOverflowCount: 0n,
+      mailboxRevision: 0n,
+      projectionRevision: 0n,
+    },
     bluetooth: {
       desiredEnabled: true,
       state: Bindings.LocalBluetoothState.WaitingForPeers.new(),

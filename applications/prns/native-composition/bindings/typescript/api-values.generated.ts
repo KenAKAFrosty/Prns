@@ -45,6 +45,7 @@ export {
   IdentityImportPreviewOutcome_Tags,
   InitiateRemoteControlPairingInput,
   InspectRemoteWifiTrialInput,
+  ListLxmfConversationsInput,
   ListLxmfMessagesInput,
   LocalAnnounceActivity,
   LocalBluetoothPeerSnapshot,

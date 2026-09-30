@@ -68,7 +68,12 @@ function snapshot(
           : Bindings.LocalBluetoothState.Stopped.new(),
       peers: [],
     },
-    lxmf: { state: Bindings.LxmfHealthState.Ready, inboundOverflowCount: 0n },
+    lxmf: {
+      state: Bindings.LxmfHealthState.Ready,
+      inboundOverflowCount: 0n,
+      mailboxRevision: 0n,
+      projectionRevision: 0n,
+    },
     controllerIdentityFingerprint: undefined,
     pairing: Bindings.RemoteControlPairingState.Searching.new(),
     pairingCandidates: [],

@@ -327,6 +327,11 @@ uint64_t uniffi_prns_app_fn_func_list_contacts(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_LIST_LXMF_CONVERSATIONS
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_LIST_LXMF_CONVERSATIONS
+uint64_t uniffi_prns_app_fn_func_list_lxmf_conversations(RustBuffer input
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_LIST_LXMF_MESSAGES
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_LIST_LXMF_MESSAGES
 uint64_t uniffi_prns_app_fn_func_list_lxmf_messages(RustBuffer input
@@ -826,6 +831,12 @@ uint16_t uniffi_prns_app_checksum_func_inspect_remote_wifi_trial(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_LIST_CONTACTS
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_LIST_CONTACTS
 uint16_t uniffi_prns_app_checksum_func_list_contacts(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_LIST_LXMF_CONVERSATIONS
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_LIST_LXMF_CONVERSATIONS
+uint16_t uniffi_prns_app_checksum_func_list_lxmf_conversations(void
 
 );
 #endif

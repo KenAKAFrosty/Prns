@@ -680,6 +680,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_prns_app_checksum_func_list_contacts(
     ): Int
+    external fun uniffi_prns_app_checksum_func_list_lxmf_conversations(
+    ): Int
     external fun uniffi_prns_app_checksum_func_list_lxmf_messages(
     ): Int
     external fun uniffi_prns_app_checksum_func_list_lxmf_peers(
@@ -781,6 +783,8 @@ external fun uniffi_prns_app_fn_func_initiate_pairing(`input`: RustBuffer.ByValu
 external fun uniffi_prns_app_fn_func_inspect_remote_wifi_trial(`input`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_prns_app_fn_func_list_contacts(
+): Long
+external fun uniffi_prns_app_fn_func_list_lxmf_conversations(`input`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_prns_app_fn_func_list_lxmf_messages(`input`: RustBuffer.ByValue,
 ): Long
@@ -1003,6 +1007,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_list_contacts() != 57283) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_prns_app_checksum_func_list_lxmf_conversations() != 3437) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_list_lxmf_messages() != 16395) {
@@ -2155,6 +2162,44 @@ public object FfiConverterTypeInspectRemoteWifiTrialInput: FfiConverterRustBuffe
 
 
 
+data class ListLxmfConversationsInput (
+    var `before`: kotlin.ULong?
+    ,
+    var `limit`: kotlin.UShort
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeListLxmfConversationsInput: FfiConverterRustBuffer<ListLxmfConversationsInput> {
+    override fun read(buf: ByteBuffer): ListLxmfConversationsInput {
+        return ListLxmfConversationsInput(
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterUShort.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ListLxmfConversationsInput) = (
+            FfiConverterOptionalULong.allocationSize(value.`before`) +
+            FfiConverterUShort.allocationSize(value.`limit`)
+    )
+
+    override fun write(value: ListLxmfConversationsInput, buf: ByteBuffer) {
+            FfiConverterOptionalULong.write(value.`before`, buf)
+            FfiConverterUShort.write(value.`limit`, buf)
+    }
+}
+
+
+
 data class ListLxmfMessagesInput (
     var `peer`: Bytes16?
     ,
@@ -2558,6 +2603,16 @@ data class LxmfHealth (
     var `state`: LxmfHealthState
     ,
     var `inboundOverflowCount`: kotlin.ULong
+    ,
+    /**
+     * Committed mailbox changes, independent of unrelated network snapshots.
+     */
+    var `mailboxRevision`: kotlin.ULong
+    ,
+    /**
+     * Process-local LXMF changes, including active sends and discovered peers.
+     */
+    var `projectionRevision`: kotlin.ULong
 
 ){
 
@@ -2576,17 +2631,23 @@ public object FfiConverterTypeLxmfHealth: FfiConverterRustBuffer<LxmfHealth> {
         return LxmfHealth(
             FfiConverterTypeLxmfHealthState.read(buf),
             FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
         )
     }
 
     override fun allocationSize(value: LxmfHealth) = (
             FfiConverterTypeLxmfHealthState.allocationSize(value.`state`) +
-            FfiConverterULong.allocationSize(value.`inboundOverflowCount`)
+            FfiConverterULong.allocationSize(value.`inboundOverflowCount`) +
+            FfiConverterULong.allocationSize(value.`mailboxRevision`) +
+            FfiConverterULong.allocationSize(value.`projectionRevision`)
     )
 
     override fun write(value: LxmfHealth, buf: ByteBuffer) {
             FfiConverterTypeLxmfHealthState.write(value.`state`, buf)
             FfiConverterULong.write(value.`inboundOverflowCount`, buf)
+            FfiConverterULong.write(value.`mailboxRevision`, buf)
+            FfiConverterULong.write(value.`projectionRevision`, buf)
     }
 }
 
@@ -11691,6 +11752,23 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
         { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeContactListOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+        /**
+         * The latest message per conversation, paged independently of message volume.
+         */
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `listLxmfConversations`(`input`: ListLxmfConversationsInput) : LxmfMessageListOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_list_lxmf_conversations(FfiConverterTypeListLxmfConversationsInput.lower(`input`),),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeLxmfMessageListOutcome.lift(it) },
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )

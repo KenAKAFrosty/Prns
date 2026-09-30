@@ -49,7 +49,12 @@ const mockSnapshot: DevelopmentNodeSnapshot = {
     state: Bindings.LocalBluetoothState.Stopped.new(),
     peers: [],
   },
-  lxmf: { state: Bindings.LxmfHealthState.Stopped, inboundOverflowCount: 0n },
+  lxmf: {
+    state: Bindings.LxmfHealthState.Stopped,
+    inboundOverflowCount: 0n,
+    mailboxRevision: 0n,
+    projectionRevision: 0n,
+  },
   controllerIdentityFingerprint: undefined,
   pairing: Bindings.RemoteControlPairingState.Searching.new(),
   pairingCandidates: [],

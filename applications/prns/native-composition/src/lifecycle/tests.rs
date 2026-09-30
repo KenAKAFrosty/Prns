@@ -1288,6 +1288,29 @@ fn assert_offline_list_retry_cancel(supervisor: &Supervisor, destination: [u8; 1
     ));
 
     assert_eq!(
+        foreign_block_on(admission::list_lxmf_conversations_with_supervisor(
+            supervisor,
+            ListLxmfConversationsInput {
+                before: None,
+                limit: 25
+            },
+        )),
+        LxmfMessageListOutcome::Listed {
+            messages: messages.clone()
+        },
+    );
+    assert_eq!(
+        foreign_block_on(admission::list_lxmf_conversations_with_supervisor(
+            supervisor,
+            ListLxmfConversationsInput {
+                before: Some(messages[0].local_record_id),
+                limit: 25
+            },
+        )),
+        LxmfMessageListOutcome::Listed { messages: vec![] },
+    );
+
+    assert_eq!(
         foreign_block_on(admission::retry_lxmf_message_with_supervisor(
             supervisor,
             RetryLxmfMessageInput { local_record_id: 1 }
@@ -1845,6 +1868,59 @@ fn admitted_send_waiter_requires_a_definitive_commit_outcome() {
         waiter.join().expect("waiter joins"),
         SendDirectTextOutcome::Accepted { local_record_id: 7 }
     );
+}
+
+#[test]
+fn conversation_query_uses_the_running_generation_and_preserves_its_cursor() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let storage = temporary.path().join("prns").join("development");
+    let supervisor = Arc::new(Supervisor {
+        snapshots: Arc::new(SnapshotStore::new()),
+        operation_admitted: Arc::new(AtomicBool::new(false)),
+        state: Mutex::new(SupervisorState::default()),
+    });
+    assert_eq!(
+        admission::prepare_native_storage_with_supervisor(&supervisor, &storage),
+        NativeStoragePreparationOutcome::Prepared
+    );
+    supervisor
+        .snapshots
+        .set_runtime(DevelopmentNodeRuntime::Running);
+    let (commands, mut receiver) = mpsc::channel(1);
+    let (shutdown_sender, _) = watch::channel(false);
+    let (_done_tx, done) = std_mpsc::sync_channel(1);
+    supervisor.lock_state().worker = Some(test_worker(
+        commands,
+        ShutdownSignal {
+            sender: shutdown_sender,
+            requested: Arc::new(AtomicBool::new(false)),
+        },
+        done,
+        None,
+        storage.canonicalize().unwrap(),
+    ));
+    let owner = Arc::clone(&supervisor);
+    let waiter = std::thread::spawn(move || {
+        foreign_block_on(admission::list_lxmf_conversations_with_supervisor(
+            &owner,
+            ListLxmfConversationsInput {
+                before: Some(u64::MAX),
+                limit: 51,
+            },
+        ))
+    });
+    let Some(Command::ListLxmfConversations(request, response)) = receiver.blocking_recv() else {
+        panic!("running conversation reads must use the generation");
+    };
+    assert_eq!(request.before, Some(u64::MAX));
+    assert_eq!(request.limit, 51);
+    let outcome = LxmfMessageListOutcome::DevelopmentResetRequired {
+        reason: "test corruption".to_owned(),
+    };
+    response
+        .send(outcome.clone())
+        .expect("publish typed query outcome");
+    assert_eq!(waiter.join().expect("query joins"), outcome);
 }
 
 #[test]
@@ -2730,6 +2806,8 @@ async fn transient_mailbox_refresh_failures_degrade_and_retry_without_stopping()
     snapshots.refresh_lxmf(crate::contract::LxmfHealth {
         state: crate::contract::LxmfHealthState::Ready,
         inbound_overflow_count: 7,
+        mailbox_revision: 0,
+        projection_revision: 0,
     });
 
     assert_eq!(
@@ -2799,6 +2877,8 @@ async fn delayed_mailbox_health_retry_coalesces_feedback_and_services_actor_inpu
     snapshots.refresh_lxmf(crate::contract::LxmfHealth {
         state: crate::contract::LxmfHealthState::Ready,
         inbound_overflow_count: 7,
+        mailbox_revision: 0,
+        projection_revision: 0,
     });
     let mut refresh = service.subscribe();
     let mut retry_timer = tokio::time::interval(LXMF_HEALTH_RETRY_DELAY);

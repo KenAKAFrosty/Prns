@@ -339,6 +339,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_fn_func_list_lxmf_conversations": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_fn_func_list_lxmf_messages": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -560,6 +565,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_checksum_func_list_contacts": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_list_lxmf_conversations": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -794,6 +804,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_fn_func_initiate_pairing(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_inspect_remote_wifi_trial(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_list_contacts(): bigint;
+    uniffi_prns_app_fn_func_list_lxmf_conversations(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_list_lxmf_messages(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_list_lxmf_peers(): bigint;
     uniffi_prns_app_fn_func_measure_lxmf_text(input: Uint8Array): bigint;
@@ -839,6 +850,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_checksum_func_initiate_pairing(): number;
     uniffi_prns_app_checksum_func_inspect_remote_wifi_trial(): number;
     uniffi_prns_app_checksum_func_list_contacts(): number;
+    uniffi_prns_app_checksum_func_list_lxmf_conversations(): number;
     uniffi_prns_app_checksum_func_list_lxmf_messages(): number;
     uniffi_prns_app_checksum_func_list_lxmf_peers(): number;
     uniffi_prns_app_checksum_func_measure_lxmf_text(): number;
