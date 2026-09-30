@@ -42,6 +42,13 @@ export function messagePeer(message: LxmfMessage): Uint8Array {
     : message.destination;
 }
 
+export function hasUnverifiedSender(message: LxmfMessage): boolean {
+  return (
+    message.direction === Bindings.LxmfDirection.Inbound &&
+    message.verification !== Bindings.LxmfVerification.Verified
+  );
+}
+
 export function textPresentation(value: LxmfText): {
   readonly text: string;
   readonly validUtf8: boolean;

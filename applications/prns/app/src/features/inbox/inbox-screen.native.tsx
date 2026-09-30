@@ -2,25 +2,19 @@ import { StoragePreparationFailure } from "@/native/storage-preparation-failure"
 import * as Bindings from "@prns-internal/expo";
 import type {
   CancelLxmfMessageOutcome,
-  Contact,
-  ContactListOutcome,
   DevelopmentNodeSnapshot,
   LxmfMessage,
-  LxmfMessageListOutcome,
-  LxmfPeerListOutcome,
-  LxmfPeerSummary,
   MeasureLxmfTextOutcome,
   RetryLxmfMessageOutcome,
   SendDirectTextOutcome,
 } from "@prns-internal/expo";
 import type { Href } from "expo-router";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Text } from "react-native";
 
 import { formatContactHash, parseDestinationHash } from "@/features/contacts/format";
 import { lastHeardLabel, useMessagingDirectory } from "@/features/contacts/messaging-directory";
-import { useContactRuntime } from "@/native/contact-runtime-context";
 import {
   type RuntimeCommandResult,
   useDevelopmentRuntime,
@@ -42,103 +36,14 @@ import {
 import { TextField } from "@/ui/text-field";
 import {
   deliveryLabel,
+  hasUnverifiedSender,
   messagePeer,
   peerLabel,
   textPresentation,
   timestampLabel,
   verificationLabel,
 } from "./format";
-
-const pageLimit = 100;
-
-type LxmfData = {
-  readonly peers: readonly LxmfPeerSummary[];
-  readonly messages: readonly LxmfMessage[];
-  readonly contacts: readonly Contact[];
-  readonly pending: boolean;
-  readonly messagesLoaded: boolean;
-  readonly failure: string | Bindings.NativeStoragePreparationError | null;
-  readonly refresh: () => Promise<void>;
-};
-
-function useLxmfData(peer: Uint8Array | null): LxmfData {
-  const development = useDevelopmentRuntime();
-  const contactRuntime = useContactRuntime();
-  const [peers, setPeers] = useState<readonly LxmfPeerSummary[]>([]);
-  const [messages, setMessages] = useState<readonly LxmfMessage[]>([]);
-  const [contacts, setContacts] = useState<readonly Contact[]>([]);
-  const [pending, setPending] = useState(false);
-  const [messagesLoaded, setMessagesLoaded] = useState(false);
-  const [failure, setFailure] = useState<string | Bindings.NativeStoragePreparationError | null>(
-    null,
-  );
-  const peerKey = peer === null ? null : formatContactHash(peer);
-  const nodeRunning =
-    development.phase === "ready" &&
-    development.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running;
-
-  const refresh = useCallback(async () => {
-    if (development.availability.type !== "available") {
-      return;
-    }
-    // Saved data is storage-owned, even before network startup completes.
-    // The public facade prepares that owner independently of a generation.
-    const selectedPeer = peerKey === null ? null : parseDestinationHash(peerKey);
-    if (peerKey !== null && selectedPeer === null) {
-      setFailure("The selected conversation destination is invalid.");
-      return;
-    }
-    setPending(true);
-    setFailure(null);
-    const [peerResult, messageResult] = await Promise.all([
-      nodeRunning ? development.listLxmfPeers() : Promise.resolve(null),
-      development.listLxmfMessages({
-        peer: selectedPeer ?? undefined,
-        before: undefined,
-        limit: pageLimit,
-      }),
-    ]);
-    if (peerResult === null) {
-      setPeers([]);
-    } else {
-      applyPeerResult(peerResult, setPeers, setFailure);
-    }
-    applyMessageResult(
-      messageResult,
-      (messages) => {
-        setMessages(messages);
-        setMessagesLoaded(true);
-      },
-      setFailure,
-    );
-    if (contactRuntime.runtime !== null) {
-      try {
-        applyContactResult(await contactRuntime.runtime.listContacts(), setContacts);
-      } catch (failure) {
-        setFailure(
-          failure instanceof Bindings.NativeStoragePreparationError
-            ? failure
-            : "Contacts could not be loaded.",
-        );
-      }
-    }
-    setPending(false);
-  }, [
-    contactRuntime.runtime,
-    development.availability.type,
-    development.listLxmfMessages,
-    development.listLxmfPeers,
-    nodeRunning,
-    peerKey,
-  ]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: lifecycle and snapshot changes refresh durable rows even when no network session is available.
-  useEffect(() => {
-    void refresh();
-  }, [development.phase, development.snapshot?.revision, refresh]);
-
-  return { peers, messages, contacts, pending, messagesLoaded, failure, refresh };
-}
+import { useLxmfData } from "./use-lxmf-data";
 
 export function InboxScreen() {
   const development = useDevelopmentRuntime();
@@ -146,8 +51,6 @@ export function InboxScreen() {
   const nodeRunning =
     development.phase === "ready" &&
     development.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running;
-
-  const conversations = useMemo(() => conversationDestinations(data.messages), [data.messages]);
 
   return (
     <Screen>
@@ -173,7 +76,7 @@ export function InboxScreen() {
               <BodyText muted>Loading saved messages…</BodyText>
             </Card>
           ) : null}
-          {conversations.length === 0 ? (
+          {data.messages.length === 0 ? (
             data.messagesLoaded && data.failure === null && !data.pending ? (
               <Card>
                 <Badge>No conversations</Badge>
@@ -185,22 +88,22 @@ export function InboxScreen() {
               </Card>
             ) : null
           ) : (
-            conversations.map((destination) => {
+            data.messages.map((latest) => {
+              const destination = messagePeer(latest);
               const encoded = formatContactHash(destination);
               const compatiblePeer = data.peers.find(
                 (peer) => formatContactHash(peer.destination) === encoded,
               );
-              const peerMessages = data.messages.filter(
-                (message) => formatContactHash(messagePeer(message)) === encoded,
-              );
-              const latest = peerMessages[0];
+              const label = peerLabel(destination, data.peers, data.contacts);
+              const unverified = hasUnverifiedSender(latest);
               const href: Href = {
                 pathname: "/inbox/conversation/[destination]",
                 params: { destination: encoded },
               };
               return (
                 <Card key={encoded}>
-                  <Subheading>{peerLabel(destination, data.peers, data.contacts)}</Subheading>
+                  {unverified ? <Badge tone="warning">{verificationLabel(latest)}</Badge> : null}
+                  <Subheading>{unverified ? `Claims to be ${label}` : label}</Subheading>
                   <KeyValue
                     label="Last seen"
                     value={
@@ -209,17 +112,19 @@ export function InboxScreen() {
                         : lastHeardLabel(compatiblePeer.lastObservedAgeMillis)
                     }
                   />
-                  <KeyValue label="Messages" value={peerMessages.length.toString()} />
-                  {latest === undefined ? null : (
-                    <BodyText muted>
-                      {textPresentation(latest.content).text} · {deliveryLabel(latest)}
-                    </BodyText>
-                  )}
+                  <BodyText muted>
+                    {textPresentation(latest.content).text} · {deliveryLabel(latest)}
+                  </BodyText>
                   <NavigationLink href={href}>Open conversation</NavigationLink>
                 </Card>
               );
             })
           )}
+          {data.hasMore ? (
+            <Button disabled={data.pending} tone="secondary" onPress={() => void data.loadOlder()}>
+              {data.pending ? "Loading…" : "Load older conversations"}
+            </Button>
+          ) : null}
           {nodeRunning ? null : (
             <BodyText muted>
               Open Nodes to check this device&apos;s connection before writing a new message.
@@ -232,10 +137,21 @@ export function InboxScreen() {
 }
 
 export function ConversationScreen({ destination }: { readonly destination: Uint8Array }) {
+  return <ConversationJourney key={formatContactHash(destination)} destination={destination} />;
+}
+
+function ConversationJourney({ destination }: { readonly destination: Uint8Array }) {
   const development = useDevelopmentRuntime();
   const data = useLxmfData(destination);
   const [mutationStatus, setMutationStatus] = useState<string | null>(null);
   const [activeMutationId, setActiveMutationId] = useState<bigint | null>(null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const encoded = formatContactHash(destination);
   const peer = data.peers.find((candidate) => formatContactHash(candidate.destination) === encoded);
   const nodeRunning =
@@ -249,13 +165,14 @@ export function ConversationScreen({ destination }: { readonly destination: Uint
       kind === "retry"
         ? await development.retryLxmfMessage(localRecordId)
         : await development.cancelLxmfMessage(localRecordId);
+    if (!mounted.current) return;
     setMutationStatus(
       result.type === "operationFailure"
         ? `Could not ${kind} this message. Try again.`
         : mailboxMutationLabel(kind, result.outcome),
     );
     await data.refresh();
-    setActiveMutationId(null);
+    if (mounted.current) setActiveMutationId(null);
   };
 
   if (development.availability.type !== "available") {
@@ -328,6 +245,11 @@ export function ConversationScreen({ destination }: { readonly destination: Uint
           />
         ))
       )}
+      {data.hasMore ? (
+        <Button disabled={data.pending} tone="secondary" onPress={() => void data.loadOlder()}>
+          {data.pending ? "Loading…" : "Load older messages"}
+        </Button>
+      ) : null}
       <NavigationLink href="/inbox" direction="back">
         Back to Inbox
       </NavigationLink>
@@ -651,7 +573,7 @@ function MessageCard({
 }) {
   const title = textPresentation(message.title);
   const content = textPresentation(message.content);
-  const unverified = message.verification !== Bindings.LxmfVerification.Verified;
+  const unverified = hasUnverifiedSender(message);
   const [showDetails, setShowDetails] = useState(false);
   const direction = message.direction === Bindings.LxmfDirection.Inbound ? "Received" : "Sent";
   const detailsLabel = title.text.length === 0 ? timestampLabel(message.timestamp) : title.text;
@@ -661,6 +583,7 @@ function MessageCard({
 
   return (
     <Card>
+      {unverified ? <Badge tone="warning">{verificationLabel(message)}</Badge> : null}
       {title.text.length === 0 ? (
         directionBadge
       ) : (
@@ -670,7 +593,6 @@ function MessageCard({
       <BodyText muted>
         {timestampLabel(message.timestamp)} · <Text>{deliveryLabel(message)}</Text>
       </BodyText>
-      {unverified ? <Badge tone="warning">{verificationLabel(message)}</Badge> : null}
       <ActionRow>
         {onRetry === undefined ? null : (
           <Button disabled={pending} onPress={() => void onRetry()} tone="secondary">
@@ -864,66 +786,6 @@ function messagingStateLabel(state: NonNullable<DevelopmentNodeSnapshot["lxmf"]>
       return "Limited";
     case Bindings.LxmfHealthState.Stopped:
       return "Offline";
-  }
-}
-
-function conversationDestinations(messages: readonly LxmfMessage[]): readonly Uint8Array[] {
-  const destinations = new Map<string, Uint8Array>();
-  for (const message of messages) {
-    const destination = messagePeer(message);
-    destinations.set(formatContactHash(destination), destination);
-  }
-  return [...destinations.values()].sort((left, right) =>
-    formatContactHash(left).localeCompare(formatContactHash(right)),
-  );
-}
-
-function applyPeerResult(
-  result: RuntimeCommandResult<LxmfPeerListOutcome>,
-  publish: (peers: readonly LxmfPeerSummary[]) => void,
-  fail: (detail: string | Bindings.NativeStoragePreparationError) => void,
-): void {
-  if (result.type === "operationFailure") {
-    fail("Contacts could not be found right now.");
-  } else if (result.outcome.tag === Bindings.LxmfPeerListOutcome_Tags.Listed) {
-    publish(result.outcome.inner.peers);
-  } else {
-    fail(
-      result.outcome.tag === Bindings.LxmfPeerListOutcome_Tags.Busy
-        ? "Another messaging action is in progress."
-        : "Messaging is offline.",
-    );
-  }
-}
-
-function applyMessageResult(
-  result: RuntimeCommandResult<LxmfMessageListOutcome>,
-  publish: (messages: readonly LxmfMessage[]) => void,
-  fail: (detail: string | Bindings.NativeStoragePreparationError) => void,
-): void {
-  if (result.type === "operationFailure") {
-    fail(
-      result.storagePreparation === undefined
-        ? "Messages could not be loaded. Try again."
-        : new Bindings.NativeStoragePreparationError(result.storagePreparation),
-    );
-  } else if (result.outcome.tag === Bindings.LxmfMessageListOutcome_Tags.Listed) {
-    publish(result.outcome.inner.messages);
-  } else if (result.outcome.tag === Bindings.LxmfMessageListOutcome_Tags.InvalidInput) {
-    fail("Messages could not be loaded for this destination.");
-  } else if (result.outcome.tag === Bindings.LxmfMessageListOutcome_Tags.DevelopmentUnavailable) {
-    fail("Messages are not available right now.");
-  } else if (result.outcome.tag === Bindings.LxmfMessageListOutcome_Tags.DevelopmentResetRequired) {
-    fail("Reset app data to use messaging again.");
-  }
-}
-
-function applyContactResult(
-  outcome: ContactListOutcome,
-  publish: (contacts: readonly Contact[]) => void,
-): void {
-  if (outcome.tag === Bindings.ContactListOutcome_Tags.Listed) {
-    publish(outcome.inner.contacts);
   }
 }
 

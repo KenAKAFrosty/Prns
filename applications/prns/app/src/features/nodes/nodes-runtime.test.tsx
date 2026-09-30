@@ -142,7 +142,12 @@ function snapshot(
         },
       },
     }),
-    lxmf: { state: Bindings.LxmfHealthState.Ready, inboundOverflowCount: 0n },
+    lxmf: {
+      state: Bindings.LxmfHealthState.Ready,
+      inboundOverflowCount: 0n,
+      mailboxRevision: 0n,
+      projectionRevision: 0n,
+    },
     controllerIdentityFingerprint: undefined,
     pairing,
     pairingCandidates,
@@ -215,6 +220,7 @@ function fakeProvider(
       Bindings.LxmfPeerListOutcome.Listed.new({
         peers: [],
       }),
+    listLxmfConversations: async () => Bindings.LxmfMessageListOutcome.Listed.new({ messages: [] }),
     listLxmfMessages: async () =>
       Bindings.LxmfMessageListOutcome.Listed.new({
         messages: [],
@@ -1447,6 +1453,9 @@ describe("Foundation 1 Nodes runtime binding", () => {
     const listLxmfMessages = jest.fn(async () =>
       Bindings.LxmfMessageListOutcome.Listed.new({ messages: [message] }),
     );
+    const listLxmfConversations = jest.fn(async () =>
+      Bindings.LxmfMessageListOutcome.Listed.new({ messages: [message] }),
+    );
     const retryLxmfMessage = jest.fn(async (localRecordId: bigint) => {
       message = {
         ...message,
@@ -1467,6 +1476,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
     const base = fakeProvider(stop, {
       listContacts,
       listLxmfMessages,
+      listLxmfConversations,
       retryLxmfMessage,
       cancelLxmfMessage,
       listLxmfPeers,
@@ -1523,6 +1533,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(message.messageId).toEqual(new Uint8Array(32).fill(0x77));
     expect(listContacts).toHaveBeenCalled();
     expect(listLxmfMessages).toHaveBeenCalled();
+    expect(listLxmfConversations).toHaveBeenCalled();
     expect(acquire).toHaveBeenCalledTimes(1);
     expect(listLxmfPeers).not.toHaveBeenCalled();
     expect(view.queryByText("Send message")).toBeNull();

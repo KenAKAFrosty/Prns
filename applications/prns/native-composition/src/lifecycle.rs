@@ -217,6 +217,10 @@ enum Command {
         prns_lxmf::mailbox::MailboxListRequest,
         Reply<LxmfMessageListOutcome>,
     ),
+    ListLxmfConversations(
+        prns_lxmf::mailbox::MailboxConversationListRequest,
+        Reply<LxmfMessageListOutcome>,
+    ),
     RetryLxmfMessage(u64, Reply<RetryLxmfMessageOutcome>),
     CancelLxmfMessage(u64, u64, Reply<CancelLxmfMessageOutcome>),
     MeasureLxmfText(MeasureLxmfTextInput, Reply<MeasureLxmfTextOutcome>),
@@ -1402,6 +1406,18 @@ async fn dispatch_lxmf_message_list(
     response: Reply<LxmfMessageListOutcome>,
 ) {
     let outcome = match service.snapshot(request).await {
+        Ok(snapshot) => crate::lxmf::project_messages(&snapshot.messages),
+        Err(failure) => crate::lxmf::message_list_failure(failure),
+    };
+    let _ = response.send(outcome);
+}
+
+async fn dispatch_lxmf_conversation_list(
+    service: &prns_lxmf::mailbox::DurableDirectLxmfService,
+    request: prns_lxmf::mailbox::MailboxConversationListRequest,
+    response: Reply<LxmfMessageListOutcome>,
+) {
+    let outcome = match service.conversation_snapshot(request).await {
         Ok(snapshot) => crate::lxmf::project_messages(&snapshot.messages),
         Err(failure) => crate::lxmf::message_list_failure(failure),
     };
@@ -2706,6 +2722,9 @@ async fn run_actor_loop(
                 }
                 Some(Command::ListLxmfMessages(request, response)) => {
                     dispatch_lxmf_message_list(lxmf_service, request, response).await;
+                }
+                Some(Command::ListLxmfConversations(request, response)) => {
+                    dispatch_lxmf_conversation_list(lxmf_service, request, response).await;
                 }
                 Some(Command::RetryLxmfMessage(local_record_id, response)) => {
                     let outcome = lxmf_service.retry_lxmf_message(local_record_id).await;

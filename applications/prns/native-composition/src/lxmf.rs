@@ -1,7 +1,8 @@
 use prns_lxmf::mailbox::{
     CancelLxmfMessageOutcome as ServiceCancelOutcome, DurableLxmfDeliveryState, DurableLxmfMessage,
-    DurableLxmfSnapshot, DurableSendDirectTextOutcome, MailboxDirectionFilter, MailboxFailure,
-    MailboxListRequest, MailboxProjectionHealth, RetryLxmfMessageOutcome as ServiceRetryOutcome,
+    DurableLxmfSnapshot, DurableSendDirectTextOutcome, MailboxConversationListRequest,
+    MailboxDirectionFilter, MailboxFailure, MailboxListRequest, MailboxProjectionHealth,
+    RetryLxmfMessageOutcome as ServiceRetryOutcome,
 };
 use prns_lxmf::wire::{
     encoded_basic_lxmf_payload_len, EMPTY_LXMF_FIELDS_ENCODED_BYTES, MAX_BASIC_LXMF_WIRE_BYTES,
@@ -9,10 +10,11 @@ use prns_lxmf::wire::{
 };
 
 use crate::contract::{
-    CancelLxmfMessageOutcome, ListLxmfMessagesInput, LxmfDeliveryFailure, LxmfDeliveryState,
-    LxmfDirection, LxmfHealth, LxmfHealthState, LxmfMessage, LxmfMessageListOutcome,
-    LxmfPeerListOutcome, LxmfPeerSummary, LxmfText, LxmfVerification, MeasureLxmfTextInput,
-    MeasureLxmfTextOutcome, RetryLxmfMessageOutcome, SendDirectTextOutcome,
+    CancelLxmfMessageOutcome, ListLxmfConversationsInput, ListLxmfMessagesInput,
+    LxmfDeliveryFailure, LxmfDeliveryState, LxmfDirection, LxmfHealth, LxmfHealthState,
+    LxmfMessage, LxmfMessageListOutcome, LxmfPeerListOutcome, LxmfPeerSummary, LxmfText,
+    LxmfVerification, MeasureLxmfTextInput, MeasureLxmfTextOutcome, RetryLxmfMessageOutcome,
+    SendDirectTextOutcome,
 };
 
 const MAX_MESSAGE_PAGE_SIZE: u16 = 100;
@@ -33,6 +35,8 @@ pub(crate) fn project_health(snapshot: &DurableLxmfSnapshot) -> Result<LxmfHealt
             (prns_lxmf::LxmfHealthState::Ready, false) => LxmfHealthState::Ready,
         },
         inbound_overflow_count: snapshot.health.inbound_overflow_count,
+        mailbox_revision: snapshot.durable_revision,
+        projection_revision: snapshot.projection_revision,
     })
 }
 
@@ -94,6 +98,20 @@ pub(crate) fn project_messages(messages: &[DurableLxmfMessage]) -> LxmfMessageLi
     LxmfMessageListOutcome::Listed {
         messages: messages.iter().map(project_message).collect(),
     }
+}
+
+pub(crate) fn conversation_list_request(
+    input: ListLxmfConversationsInput,
+) -> Result<MailboxConversationListRequest, LxmfMessageListOutcome> {
+    let request = mailbox_list_request(ListLxmfMessagesInput {
+        peer: None,
+        before: input.before,
+        limit: input.limit,
+    })?;
+    Ok(MailboxConversationListRequest {
+        before: request.before,
+        limit: request.limit,
+    })
 }
 
 pub(crate) fn measure_text(input: &MeasureLxmfTextInput) -> MeasureLxmfTextOutcome {
@@ -372,6 +390,39 @@ mod tests {
     }
 
     #[test]
+    fn conversation_pages_validate_limits_and_preserve_exclusive_cursor() {
+        for limit in [0, 101, u16::MAX] {
+            assert!(matches!(
+                conversation_list_request(ListLxmfConversationsInput {
+                    before: None,
+                    limit
+                }),
+                Err(LxmfMessageListOutcome::InvalidInput { .. })
+            ));
+        }
+        let request = conversation_list_request(ListLxmfConversationsInput {
+            before: Some(u64::MAX),
+            limit: 100,
+        })
+        .expect("valid conversation page");
+        assert_eq!(request.before, Some(u64::MAX));
+        assert_eq!(request.limit, 100);
+    }
+
+    #[test]
+    fn mailbox_and_projection_revisions_are_independent_and_lossless() {
+        let mut snapshot = health_snapshot(
+            prns_lxmf::LxmfHealthState::Ready,
+            MailboxProjectionHealth::Ready,
+        );
+        snapshot.durable_revision = u64::MAX;
+        snapshot.projection_revision = 9_007_199_254_740_993;
+        let health = project_health(&snapshot).expect("ready health");
+        assert_eq!(health.mailbox_revision, u64::MAX);
+        assert_eq!(health.projection_revision, 9_007_199_254_740_993);
+    }
+
+    #[test]
     fn durable_health_combines_callback_and_mailbox_failures() {
         for snapshot in [
             health_snapshot(
@@ -392,6 +443,8 @@ mod tests {
                 Ok(LxmfHealth {
                     state: LxmfHealthState::Degraded,
                     inbound_overflow_count: 3,
+                    mailbox_revision: 0,
+                    projection_revision: 1,
                 })
             );
         }
@@ -403,6 +456,8 @@ mod tests {
             Ok(LxmfHealth {
                 state: LxmfHealthState::Ready,
                 inbound_overflow_count: 3,
+                mailbox_revision: 0,
+                projection_revision: 1,
             })
         );
         assert_eq!(
@@ -413,6 +468,8 @@ mod tests {
             Ok(LxmfHealth {
                 state: LxmfHealthState::Stopped,
                 inbound_overflow_count: 3,
+                mailbox_revision: 0,
+                projection_revision: 1,
             })
         );
         assert_eq!(

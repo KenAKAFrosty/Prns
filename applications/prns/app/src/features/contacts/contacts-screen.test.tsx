@@ -142,7 +142,12 @@ function snapshot(): DevelopmentNodeSnapshot {
       state: Bindings.LocalBluetoothState.Stopped.new(),
       peers: [],
     },
-    lxmf: { state: Bindings.LxmfHealthState.Stopped, inboundOverflowCount: 0n },
+    lxmf: {
+      state: Bindings.LxmfHealthState.Stopped,
+      inboundOverflowCount: 0n,
+      mailboxRevision: 0n,
+      projectionRevision: 0n,
+    },
     controllerIdentityFingerprint: undefined,
     pairing: Bindings.RemoteControlPairingState.Searching.new(),
     pairingCandidates: [],
@@ -202,6 +207,7 @@ function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRu
       Bindings.LxmfPeerListOutcome.Listed.new({
         peers: [],
       }),
+    listLxmfConversations: async () => Bindings.LxmfMessageListOutcome.Listed.new({ messages: [] }),
     listLxmfMessages: async () =>
       Bindings.LxmfMessageListOutcome.Listed.new({
         messages: [],

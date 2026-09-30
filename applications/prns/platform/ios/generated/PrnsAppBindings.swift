@@ -1529,6 +1529,60 @@ public func FfiConverterTypeInspectRemoteWifiTrialInput_lower(_ value: InspectRe
 }
 
 
+public struct ListLxmfConversationsInput: Equatable, Hashable {
+    public var before: UInt64?
+    public var limit: UInt16
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(before: UInt64?, limit: UInt16) {
+        self.before = before
+        self.limit = limit
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ListLxmfConversationsInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeListLxmfConversationsInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ListLxmfConversationsInput {
+        return
+            try ListLxmfConversationsInput(
+                before: FfiConverterOptionUInt64.read(from: &buf),
+                limit: FfiConverterUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ListLxmfConversationsInput, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt64.write(value.before, into: &buf)
+        FfiConverterUInt16.write(value.limit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeListLxmfConversationsInput_lift(_ buf: RustBuffer) throws -> ListLxmfConversationsInput {
+    return try FfiConverterTypeListLxmfConversationsInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeListLxmfConversationsInput_lower(_ value: ListLxmfConversationsInput) -> RustBuffer {
+    return FfiConverterTypeListLxmfConversationsInput.lower(value)
+}
+
+
 public struct ListLxmfMessagesInput: Equatable, Hashable {
     public var peer: Bytes16?
     public var before: UInt64?
@@ -2046,12 +2100,28 @@ public func FfiConverterTypeLocalNetworkSnapshot_lower(_ value: LocalNetworkSnap
 public struct LxmfHealth: Equatable, Hashable {
     public var state: LxmfHealthState
     public var inboundOverflowCount: UInt64
+    /**
+     * Committed mailbox changes, independent of unrelated network snapshots.
+     */
+    public var mailboxRevision: UInt64
+    /**
+     * Process-local LXMF changes, including active sends and discovered peers.
+     */
+    public var projectionRevision: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(state: LxmfHealthState, inboundOverflowCount: UInt64) {
+    public init(state: LxmfHealthState, inboundOverflowCount: UInt64,
+        /**
+         * Committed mailbox changes, independent of unrelated network snapshots.
+         */mailboxRevision: UInt64,
+        /**
+         * Process-local LXMF changes, including active sends and discovered peers.
+         */projectionRevision: UInt64) {
         self.state = state
         self.inboundOverflowCount = inboundOverflowCount
+        self.mailboxRevision = mailboxRevision
+        self.projectionRevision = projectionRevision
     }
 
 
@@ -2071,13 +2141,17 @@ public struct FfiConverterTypeLxmfHealth: FfiConverterRustBuffer {
         return
             try LxmfHealth(
                 state: FfiConverterTypeLxmfHealthState.read(from: &buf),
-                inboundOverflowCount: FfiConverterUInt64.read(from: &buf)
+                inboundOverflowCount: FfiConverterUInt64.read(from: &buf),
+                mailboxRevision: FfiConverterUInt64.read(from: &buf),
+                projectionRevision: FfiConverterUInt64.read(from: &buf)
         )
     }
 
     public static func write(_ value: LxmfHealth, into buf: inout [UInt8]) {
         FfiConverterTypeLxmfHealthState.write(value.state, into: &buf)
         FfiConverterUInt64.write(value.inboundOverflowCount, into: &buf)
+        FfiConverterUInt64.write(value.mailboxRevision, into: &buf)
+        FfiConverterUInt64.write(value.projectionRevision, into: &buf)
     }
 }
 
@@ -11485,6 +11559,24 @@ public func listContacts()async  -> ContactListOutcome  {
 
         )
 }
+/**
+ * The latest message per conversation, paged independently of message volume.
+ */
+public func listLxmfConversations(input: ListLxmfConversationsInput)async  -> LxmfMessageListOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_list_lxmf_conversations(FfiConverterTypeListLxmfConversationsInput_lower(input)
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeLxmfMessageListOutcome_lift,
+            errorHandler: nil
+
+        )
+}
 public func listLxmfMessages(input: ListLxmfMessagesInput)async  -> LxmfMessageListOutcome  {
     return
         try!  await uniffiRustCallAsync(
@@ -11927,6 +12019,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_list_contacts() != 57283) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_prns_app_checksum_func_list_lxmf_conversations() != 3437) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_list_lxmf_messages() != 16395) {

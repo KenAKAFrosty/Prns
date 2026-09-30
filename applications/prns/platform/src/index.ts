@@ -56,6 +56,7 @@ export const {
   inspectDevelopmentIdentity,
   initiateRemoteControlPairing,
   listLxmfMessages,
+  listLxmfConversations,
   listLxmfPeers,
   listContacts,
   measureLxmfText,

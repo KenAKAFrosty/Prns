@@ -293,6 +293,12 @@ pub async fn list_lxmf_messages(input: ListLxmfMessagesInput) -> LxmfMessageList
     crate::lifecycle::admission::list_lxmf_messages(input).await
 }
 
+/// The latest message per conversation, paged independently of message volume.
+#[uniffi::export]
+pub async fn list_lxmf_conversations(input: ListLxmfConversationsInput) -> LxmfMessageListOutcome {
+    crate::lifecycle::admission::list_lxmf_conversations(input).await
+}
+
 #[uniffi::export]
 pub async fn retry_lxmf_message(input: RetryLxmfMessageInput) -> RetryLxmfMessageOutcome {
     crate::lifecycle::admission::retry_lxmf_message(input).await

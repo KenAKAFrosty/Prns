@@ -691,6 +691,43 @@ pub(super) async fn list_lxmf_messages_with_supervisor(
     }
 }
 
+pub async fn list_lxmf_conversations(input: ListLxmfConversationsInput) -> LxmfMessageListOutcome {
+    list_lxmf_conversations_with_supervisor(supervisor(), input).await
+}
+
+pub(super) async fn list_lxmf_conversations_with_supervisor(
+    supervisor: &Supervisor,
+    input: ListLxmfConversationsInput,
+) -> LxmfMessageListOutcome {
+    let request = match crate::lxmf::conversation_list_request(input) {
+        Ok(request) => request,
+        Err(outcome) => return outcome,
+    };
+    match admit_mailbox(
+        supervisor,
+        MailboxRequest::ListConversations(request),
+        |response| Command::ListLxmfConversations(request, response),
+    ) {
+        Ok(MailboxResponse::Running(receiver)) => bounded_reply(receiver, LXMF_QUERY_TIMEOUT)
+            .await
+            .unwrap_or_else(|detail| LxmfMessageListOutcome::DevelopmentUnavailable {
+                detail: detail.to_owned(),
+            }),
+        Ok(MailboxResponse::Offline(receiver)) => {
+            match bounded_reply(receiver, LXMF_QUERY_TIMEOUT).await {
+                Ok(Ok(MailboxReply::ConversationsListed { messages, .. })) => {
+                    crate::lxmf::project_messages(&messages)
+                }
+                Ok(Err(failure)) => crate::lxmf::message_list_failure(failure),
+                _ => LxmfMessageListOutcome::DevelopmentUnavailable {
+                    detail: "The database owner did not return the conversation query.".to_owned(),
+                },
+            }
+        }
+        Err(failure) => crate::lxmf::message_list_failure(failure),
+    }
+}
+
 pub async fn retry_lxmf_message(input: RetryLxmfMessageInput) -> RetryLxmfMessageOutcome {
     retry_lxmf_message_with_supervisor(supervisor(), input).await
 }

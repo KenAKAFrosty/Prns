@@ -100,7 +100,12 @@ function snapshot(network: Partial<Network> = {}): DevelopmentNodeSnapshot {
       state: Bindings.LocalBluetoothState.Connected.new(),
       peers: [peer],
     },
-    lxmf: { state: Bindings.LxmfHealthState.Ready, inboundOverflowCount: 0n },
+    lxmf: {
+      state: Bindings.LxmfHealthState.Ready,
+      inboundOverflowCount: 0n,
+      mailboxRevision: 0n,
+      projectionRevision: 0n,
+    },
     controllerIdentityFingerprint: undefined,
     pairing: Bindings.RemoteControlPairingState.Searching.new(),
     pairingCandidates: [],

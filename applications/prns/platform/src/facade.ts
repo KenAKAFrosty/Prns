@@ -231,6 +231,8 @@ export function createDevelopmentRuntime(
       call((api) => api.clearLxmfDiscovery(asyncOptions(signal)), signal),
     listLxmfMessages: (input: Bindings.ListLxmfMessagesInput, signal?: AbortSignal) =>
       call((api) => api.listLxmfMessages(input, asyncOptions(signal)), signal, "storage"),
+    listLxmfConversations: (input: Bindings.ListLxmfConversationsInput, signal?: AbortSignal) =>
+      call((api) => api.listLxmfConversations(input, asyncOptions(signal)), signal, "storage"),
     retryLxmfMessage: (localRecordId: bigint, signal?: AbortSignal) =>
       call(
         (api) => api.retryLxmfMessage({ localRecordId }, asyncOptions(signal)),
