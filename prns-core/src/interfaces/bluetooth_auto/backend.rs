@@ -1,5 +1,6 @@
 use super::handshake::{Control, L2capPlan, LinkCapabilities, PeerProtocol};
 use super::identity::{BleAddress, BleIdentity};
+use super::liveness::LivenessMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdvertisingMode {
@@ -92,6 +93,13 @@ pub trait BleBackend<const MAX_PEERS: usize> {
         None
     }
 
+    /// Opt in only when the caller drives the negotiated session-liveness protocol.
+    /// Configure this before starting the radio. Backends default to legacy behavior;
+    /// a failed opt-in must not advertise support. Existing sessions keep their mode.
+    async fn set_session_liveness(&mut self, _enabled: bool) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Self::Error>;
     async fn set_scanning(&mut self, _mode: ScanningMode) -> Result<(), Self::Error> {
         Ok(())
@@ -157,6 +165,12 @@ pub struct BleLinkParts<S, T, C> {
 #[allow(async_fn_in_trait)]
 pub trait BleControl {
     type Error: core::fmt::Debug;
+
+    /// Capability evidence for this exact physical session, never cached by address.
+    /// A listener remains passive until a valid probe proves peer support on this session.
+    fn liveness_mode(&self) -> LivenessMode {
+        LivenessMode::Disabled
+    }
 
     /// Unless the backend explicitly supports resumable sends, keep a started
     /// send alive until completion or retirement of the entire session.
