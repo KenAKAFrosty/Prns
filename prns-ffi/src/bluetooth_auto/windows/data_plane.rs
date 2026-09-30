@@ -4,7 +4,9 @@ use prns_core::interfaces::bluetooth_auto::{
     fragments_of, BleAddress, BleIdentity, Control, Fragment, L2capPlan, PeerProtocol, Reassembler,
     BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
 };
-use prns_core::interfaces::bluetooth_auto::{BleLink, BleSink, BleSource};
+use prns_core::interfaces::bluetooth_auto::{
+    BleControl, BleLink, BleLinkParts, BleSink, BleSource,
+};
 use tokio::sync::{mpsc as tokio_mpsc, watch};
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
     GattCharacteristic, GattDeviceService, GattLocalCharacteristic, GattSession,
@@ -91,6 +93,7 @@ impl BleLink for WinGattLink {
     type Error = WindowsBleError;
     type Source = WinGattSource;
     type Sink = WinGattSink;
+    type Control = WinGattControl;
 
     fn peer_protocol(&self) -> PeerProtocol {
         self.peer_protocol
@@ -121,45 +124,11 @@ impl BleLink for WinGattLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), WindowsBleError> {
-        let mut buf = [0u8; CONTROL_MAX_LEN];
-        let len = msg
-            .encode(&mut buf)
-            .ok_or(WindowsBleError::ControlTooLarge)?;
-        let bytes = buf
-            .get(..len)
-            .ok_or(WindowsBleError::ControlTooLarge)?
-            .to_vec();
-        match &self.plane {
-            LinkPlane::Central { control_char, .. } => {
-                gatt_write(
-                    control_char.clone(),
-                    bytes,
-                    GattWriteOption::WriteWithResponse,
-                )
-                .await?;
-            }
-            LinkPlane::Peripheral {
-                control_char,
-                control_client,
-                ..
-            } => {
-                notify_local(control_char.clone(), control_client.clone(), bytes).await?;
-            }
-        }
-        crate::diagnostic_log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
-        Ok(())
+        WinGattControl::send_on(&self.plane, self.address, msg).await
     }
 
     async fn control_recv(&mut self) -> Result<Control, WindowsBleError> {
-        if *self.closed.borrow() {
-            return Err(WindowsBleError::Closed);
-        }
-        let control = tokio::select! {
-            msg = self.control_rx.recv() => msg.ok_or(WindowsBleError::Closed)?,
-            _ = self.closed.changed() => return Err(WindowsBleError::Closed),
-        };
-        crate::diagnostic_log::debug!("bluetooth: {:02x?} <- {control:?}", self.address.octets());
-        Ok(control)
+        WinGattControl::recv_on(&mut self.control_rx, &mut self.closed, self.address).await
     }
 
     async fn upgrade(&mut self, _plan: &L2capPlan) -> Result<(), WindowsBleError> {
@@ -168,7 +137,7 @@ impl BleLink for WinGattLink {
         Ok(())
     }
 
-    fn into_data(self) -> (WinGattSource, WinGattSink) {
+    fn into_parts(self) -> BleLinkParts<WinGattSource, WinGattSink, WinGattControl> {
         let (merged_tx, merged_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
         if let Some(mut inbound_rx) = self.data_rx {
             tokio::spawn(async move {
@@ -193,7 +162,7 @@ impl BleLink for WinGattLink {
                 }
             });
         }
-        let (keepalive, sink_plane) = match self.plane {
+        let (keepalive, sink_plane) = match &self.plane {
             LinkPlane::Central {
                 data_char,
                 device,
@@ -203,16 +172,16 @@ impl BleLink for WinGattLink {
                 ..
             } => {
                 let sink_session = session.clone();
-                let fragment_mtu = central_fragment_mtu(&session);
+                let fragment_mtu = central_fragment_mtu(session);
                 (
                     SourceKeepalive::Central {
-                        _device: device,
-                        _service: service,
-                        _session: session,
-                        _connection_request: connection_request,
+                        _device: device.clone(),
+                        _service: service.clone(),
+                        _session: session.clone(),
+                        _connection_request: connection_request.clone(),
                     },
                     SinkPlane::Central {
-                        data_char,
+                        data_char: data_char.clone(),
                         _session: sink_session,
                         fragment_mtu,
                     },
@@ -225,19 +194,101 @@ impl BleLink for WinGattLink {
             } => (
                 SourceKeepalive::Peripheral,
                 SinkPlane::Peripheral {
-                    data_char,
-                    data_client,
+                    data_char: data_char.clone(),
+                    data_client: data_client.clone(),
                 },
             ),
         };
-        (
-            WinGattSource {
+        BleLinkParts {
+            source: WinGattSource {
                 inbound: merged_rx,
-                closed: self.closed,
+                closed: self.closed.clone(),
                 _keepalive: keepalive,
             },
-            WinGattSink { plane: sink_plane },
-        )
+            sink: WinGattSink { plane: sink_plane },
+            control: if self.peer_protocol == PeerProtocol::Native {
+                Some(WinGattControl {
+                    address: self.address,
+                    inbound: self.control_rx,
+                    closed: self.closed,
+                    plane: self.plane,
+                })
+            } else {
+                None
+            },
+        }
+    }
+}
+
+/// Retains the native characteristics, subscription receiver and WinRT session resources.
+pub struct WinGattControl {
+    address: BleAddress,
+    inbound: tokio_mpsc::Receiver<Control>,
+    closed: watch::Receiver<bool>,
+    plane: LinkPlane,
+}
+
+impl WinGattControl {
+    async fn send_on(
+        plane: &LinkPlane,
+        address: BleAddress,
+        msg: &Control,
+    ) -> Result<(), WindowsBleError> {
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let len = msg
+            .encode(&mut buf)
+            .ok_or(WindowsBleError::ControlTooLarge)?;
+        let bytes = buf
+            .get(..len)
+            .ok_or(WindowsBleError::ControlTooLarge)?
+            .to_vec();
+        match plane {
+            LinkPlane::Central { control_char, .. } => {
+                gatt_write(
+                    control_char.clone(),
+                    bytes,
+                    GattWriteOption::WriteWithResponse,
+                )
+                .await?;
+            }
+            LinkPlane::Peripheral {
+                control_char,
+                control_client,
+                ..
+            } => {
+                notify_local(control_char.clone(), control_client.clone(), bytes).await?;
+            }
+        }
+        crate::diagnostic_log::debug!("bluetooth: {:02x?} -> {msg:?}", address.octets());
+        Ok(())
+    }
+
+    async fn recv_on(
+        inbound: &mut tokio_mpsc::Receiver<Control>,
+        closed: &mut watch::Receiver<bool>,
+        address: BleAddress,
+    ) -> Result<Control, WindowsBleError> {
+        if *closed.borrow() {
+            return Err(WindowsBleError::Closed);
+        }
+        let control = tokio::select! {
+            msg = inbound.recv() => msg.ok_or(WindowsBleError::Closed)?,
+            _ = closed.changed() => return Err(WindowsBleError::Closed),
+        };
+        crate::diagnostic_log::debug!("bluetooth: {:02x?} <- {control:?}", address.octets());
+        Ok(control)
+    }
+}
+
+impl BleControl for WinGattControl {
+    type Error = WindowsBleError;
+
+    async fn send(&mut self, msg: &Control) -> Result<(), WindowsBleError> {
+        Self::send_on(&self.plane, self.address, msg).await
+    }
+
+    async fn recv(&mut self) -> Result<Control, WindowsBleError> {
+        Self::recv_on(&mut self.inbound, &mut self.closed, self.address).await
     }
 }
 
@@ -333,6 +384,46 @@ pub(super) const FRAGMENT_SCRATCH: usize = 8;
 mod receive_tests {
     use super::*;
     use prns_core::interfaces::bluetooth_auto::BLE_WIRE_FRAME_LEN;
+
+    #[tokio::test]
+    async fn control_receiver_preserves_queued_messages_and_observes_native_close() {
+        use prns_core::interfaces::bluetooth_auto::CloseReason;
+        let (sender, mut inbound) = tokio_mpsc::channel(2);
+        let (open, mut closed) = watch::channel(false);
+        let address = BleAddress::new([1; 6]);
+        let message = Control::Close {
+            reason: CloseReason::DuplicateLink,
+        };
+        sender.send(message).await.unwrap();
+        assert_eq!(
+            WinGattControl::recv_on(&mut inbound, &mut closed, address)
+                .await
+                .unwrap(),
+            message
+        );
+        open.send(true).unwrap();
+        assert!(matches!(
+            WinGattControl::recv_on(&mut inbound, &mut closed, address).await,
+            Err(WindowsBleError::Closed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn pending_control_receiver_is_woken_by_native_close() {
+        let (_sender, mut inbound) = tokio_mpsc::channel(2);
+        let (open, mut closed) = watch::channel(false);
+        let receiving = WinGattControl::recv_on(&mut inbound, &mut closed, BleAddress::new([1; 6]));
+        let closing = async {
+            tokio::task::yield_now().await;
+            open.send(true).unwrap();
+        };
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(receiving, closing)
+        })
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(WindowsBleError::Closed)));
+    }
 
     #[tokio::test]
     async fn small_receive_buffers_refuse_whole_frames_and_preserve_the_next_frame() {

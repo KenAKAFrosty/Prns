@@ -9,7 +9,11 @@ use tokio::sync::Notify;
 use prns_core::interfaces::bluetooth_auto::{AdvertisingMode, RadioMode, ScanningMode};
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, PeerProtocol};
 
-use super::outbound::{BoundedByteQueue, BoundedMessageQueue};
+use super::outbound::{BoundedByteQueue, BoundedMessageQueue, ControlOutbox};
+use super::{
+    AndroidBleControlOutput, AndroidBleControlTicket, AndroidBleError, LivenessMode,
+    LIVENESS_CAPABILITY_BYTES,
+};
 use super::{RADIO_ADVERTISING, RADIO_ENABLED, RADIO_SCANNING};
 
 const CONTROL_IN_DEPTH: usize = 8;
@@ -18,6 +22,8 @@ const OUTBOUND_BYTE_CAP: usize = 8 * prns_core::interfaces::bluetooth_auto::BLE_
 const OUTBOUND_FRAME_DEPTH: usize = 16;
 pub(super) const PEER_CAPACITY: usize = 7;
 const LIFECYCLE_EVENT_DEPTH: usize = 3 * PEER_CAPACITY;
+// Process-wide, including bridge/radio recreation. Exhaustion fails link admission.
+static NEXT_CONTROL_SESSION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AndroidBleIngressAdmission {
@@ -76,7 +82,7 @@ pub(super) struct Endpoints {
     control_in_tx: Sender<Vec<u8>>,
     l2cap_in_tx: Sender<Vec<u8>>,
     data_in_tx: Sender<Vec<u8>>,
-    pub(super) control_out: Arc<BoundedMessageQueue>,
+    pub(super) control_out: Arc<ControlOutbox>,
     l2cap_out: Arc<BoundedByteQueue>,
     pub(super) data_out: Arc<BoundedMessageQueue>,
     l2cap_up: Arc<LinkSignal>,
@@ -168,10 +174,11 @@ pub(super) struct PendingLink {
     pub(super) dialed: bool,
     pub(super) peer_protocol: PeerProtocol,
     pub(super) peer_identity: Option<BleIdentity>,
+    pub(super) liveness_mode: LivenessMode,
     pub(super) control_in: Receiver<Vec<u8>>,
     pub(super) l2cap_in: Receiver<Vec<u8>>,
     pub(super) data_in: Receiver<Vec<u8>>,
-    pub(super) control_out: Arc<BoundedMessageQueue>,
+    pub(super) control_out: Arc<ControlOutbox>,
     pub(super) l2cap_out: Arc<BoundedByteQueue>,
     pub(super) data_out: Arc<BoundedMessageQueue>,
     pub(super) l2cap_up: Arc<LinkSignal>,
@@ -214,6 +221,7 @@ impl RadioState {
 
 pub(super) struct Shared {
     radio: Mutex<RadioState>,
+    session_liveness: AtomicBool,
     local_identity: Mutex<Option<[u8; 16]>>,
     pub(super) psm: Mutex<Option<u16>>,
     psm_ready: Notify,
@@ -231,6 +239,12 @@ pub struct AndroidBleBridge {
     pub(super) shared: Arc<Shared>,
 }
 
+struct LinkProfile {
+    protocol: PeerProtocol,
+    identity: Option<[u8; 16]>,
+    liveness_mode: LivenessMode,
+}
+
 impl Clone for AndroidBleBridge {
     fn clone(&self) -> Self {
         Self {
@@ -245,6 +259,7 @@ impl AndroidBleBridge {
         Self {
             shared: Arc::new(Shared {
                 radio: Mutex::new(RadioState::default()),
+                session_liveness: AtomicBool::new(false),
                 local_identity: Mutex::new(None),
                 psm: Mutex::new(None),
                 psm_ready: Notify::new(),
@@ -257,6 +272,21 @@ impl AndroidBleBridge {
                 work: Arc::new(WorkSignal::default()),
                 ingress_pressure_events: AtomicU64::new(0),
             }),
+        }
+    }
+
+    pub fn set_session_liveness(&self, enabled: bool) {
+        self.shared
+            .session_liveness
+            .store(enabled, Ordering::Release);
+    }
+
+    /// Only a running supervisor opts in; old platform consumers expose no capability.
+    pub fn liveness_capability(&self) -> &'static [u8] {
+        if self.shared.session_liveness.load(Ordering::Acquire) {
+            &LIVENESS_CAPABILITY_BYTES
+        } else {
+            &[]
         }
     }
 
@@ -412,7 +442,39 @@ impl AndroidBleBridge {
     }
 
     pub fn link_up(&self, conn_id: u32, address: [u8; 6], rssi: Option<i8>, dialed: bool) -> bool {
-        self.link_up_with_protocol(conn_id, address, rssi, dialed, PeerProtocol::Native, None)
+        self.link_up_with_liveness(conn_id, address, rssi, dialed, false)
+    }
+
+    /// `supported` is scoped to this physical attempt: a successful strict capability read
+    /// for a central, or the current published service registration for a peripheral.
+    pub fn link_up_with_liveness(
+        &self,
+        conn_id: u32,
+        address: [u8; 6],
+        rssi: Option<i8>,
+        dialed: bool,
+        supported: bool,
+    ) -> bool {
+        let mode = if supported && self.shared.session_liveness.load(Ordering::Acquire) {
+            if dialed {
+                LivenessMode::Initiator
+            } else {
+                LivenessMode::Listener
+            }
+        } else {
+            LivenessMode::Disabled
+        };
+        self.link_up_with_protocol(
+            conn_id,
+            address,
+            rssi,
+            dialed,
+            LinkProfile {
+                protocol: PeerProtocol::Native,
+                identity: None,
+                liveness_mode: mode,
+            },
+        )
     }
 
     pub fn columba_link_up(
@@ -428,8 +490,11 @@ impl AndroidBleBridge {
             address,
             rssi,
             dialed,
-            PeerProtocol::Columba,
-            Some(peer_identity),
+            LinkProfile {
+                protocol: PeerProtocol::Columba,
+                identity: Some(peer_identity),
+                liveness_mode: LivenessMode::Disabled,
+            },
         )
     }
 
@@ -439,20 +504,26 @@ impl AndroidBleBridge {
         address: [u8; 6],
         rssi: Option<i8>,
         dialed: bool,
-        peer_protocol: PeerProtocol,
-        peer_identity: Option<[u8; 16]>,
+        profile: LinkProfile,
     ) -> bool {
         let (control_tx, control_rx) = channel::<Vec<u8>>(CONTROL_IN_DEPTH);
         let (l2cap_tx, l2cap_rx) = channel::<Vec<u8>>(DATA_IN_DEPTH);
         let (data_tx, data_rx) = channel::<Vec<u8>>(DATA_IN_DEPTH);
-        let control_out = Arc::new(BoundedMessageQueue::with_byte_limit(OUTBOUND_BYTE_CAP));
+        let Ok(session) =
+            NEXT_CONTROL_SESSION.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
+        else {
+            return false;
+        };
+        let control_out = Arc::new(ControlOutbox::new(session));
         let l2cap_out = Arc::new(BoundedByteQueue::new(OUTBOUND_BYTE_CAP));
         let data_out = Arc::new(BoundedMessageQueue::with_count_limit(OUTBOUND_FRAME_DEPTH));
         let l2cap_up = Arc::new(LinkSignal {
             is_up: AtomicBool::new(false),
             notify: Notify::new(),
         });
-        let peer_identity = peer_identity.map(BleIdentity::new);
+        let peer_identity = profile.identity.map(BleIdentity::new);
         if let Ok(mut links) = self.shared.links.lock() {
             if links.len() >= PEER_CAPACITY || links.contains_key(&conn_id) {
                 return false;
@@ -487,8 +558,9 @@ impl AndroidBleBridge {
                 address: BleAddress::new(address),
                 rssi,
                 dialed,
-                peer_protocol,
+                peer_protocol: profile.protocol,
                 peer_identity,
+                liveness_mode: profile.liveness_mode,
                 control_in: control_rx,
                 l2cap_in: l2cap_rx,
                 data_in: data_rx,
@@ -520,18 +592,48 @@ impl AndroidBleBridge {
         AndroidBleIngressAdmission::Closed
     }
 
-    pub fn control_out(&self, conn_id: u32, out: &mut [u8]) -> usize {
-        match self.out_message_queue(conn_id, |ep| Arc::clone(&ep.control_out)) {
-            Some(queue) => queue.peek(out),
-            None => 0,
-        }
+    pub fn control_out(&self, conn_id: u32, out: &mut [u8]) -> AndroidBleControlOutput {
+        self.shared
+            .links
+            .lock()
+            .ok()
+            .and_then(|links| {
+                links
+                    .get(&conn_id)
+                    .and_then(LinkRecord::active)
+                    .map(|ep| ep.control_out.peek(out))
+            })
+            .unwrap_or(AndroidBleControlOutput::Closed)
     }
 
-    pub fn commit_control_out(&self, conn_id: u32) -> bool {
-        match self.out_message_queue(conn_id, |ep| Arc::clone(&ep.control_out)) {
-            Some(queue) => queue.commit(),
-            None => false,
+    /// Only a matching native callback may acknowledge a control operation.
+    pub fn complete_control_out(
+        &self,
+        conn_id: u32,
+        ticket: AndroidBleControlTicket,
+        success: bool,
+    ) -> bool {
+        let Some((control, owner)) = self.shared.links.lock().ok().and_then(|links| {
+            links
+                .get(&conn_id)
+                .and_then(LinkRecord::active)
+                .map(|ep| (Arc::clone(&ep.control_out), Arc::clone(&ep.data_out)))
+        }) else {
+            return false;
+        };
+        let result = if success {
+            Ok(())
+        } else {
+            Err(AndroidBleError::ControlWriteFailed)
+        };
+        let Some(result) = control.complete(ticket, result) else {
+            return false;
+        };
+        if result.is_err() {
+            self.close_owned_connection(conn_id, &owner);
         }
+        self.shared.work.wake();
+        true
     }
 
     pub fn l2cap_in(&self, conn_id: u32, bytes: &[u8]) -> bool {
@@ -723,18 +825,6 @@ impl AndroidBleBridge {
                 AndroidBleIngressAdmission::Closed
             }
         }
-    }
-
-    fn out_message_queue(
-        &self,
-        conn_id: u32,
-        pick: impl Fn(&Endpoints) -> Arc<BoundedMessageQueue>,
-    ) -> Option<Arc<BoundedMessageQueue>> {
-        self.shared
-            .links
-            .lock()
-            .ok()
-            .and_then(|links| links.get(&conn_id).and_then(LinkRecord::active).map(pick))
     }
 
     fn out_byte_queue(

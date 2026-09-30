@@ -1,10 +1,14 @@
 // JNI adaptation of the upstream Android platform bridge. Protocol and queue ownership
 // remain in prns-ffi; the native host supplies its reserved lifecycle session.
 use super::ble_bridge;
-use jni::objects::{JByteBuffer, JClass};
-use jni::sys::{jboolean, jint, jlong};
+use jni::objects::{JByteArray, JByteBuffer, JClass, JLongArray};
+use jni::sys::{jboolean, jbyteArray, jint, jlong};
 use jni::JNIEnv;
 use prns_ffi::bluetooth_auto::android::AndroidBleIngressAdmission;
+use prns_ffi::bluetooth_auto::android::{
+    supports_liveness_capability, AndroidBleControlOutput, AndroidBleControlTicket,
+    CONTROL_BUFFER_LEN, LIVENESS_CAPABILITY_BYTES, LIVENESS_UUID_BYTES,
+};
 
 #[no_mangle]
 pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleSetPsm(
@@ -161,13 +165,54 @@ pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBle
     address: JByteBuffer,
     rssi: jint,
     dialed: jboolean,
+    liveness_supported: jboolean,
 ) -> jboolean {
     if let Some(octets) = ble_octets(&env, &address) {
         return ble_bridge()
-            .link_up(conn_id as u32, octets, ble_rssi(rssi), dialed != 0)
+            .link_up_with_liveness(
+                conn_id as u32,
+                octets,
+                ble_rssi(rssi),
+                dialed != 0,
+                liveness_supported != 0,
+            )
             .into();
     }
     0
+}
+
+#[no_mangle]
+pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleLivenessUuid(
+    env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    env.byte_array_from_slice(&LIVENESS_UUID_BYTES)
+        .map(JByteArray::into_raw)
+        .unwrap_or(core::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleLivenessCapability(
+    env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    env.byte_array_from_slice(ble_bridge().liveness_capability())
+        .map(JByteArray::into_raw)
+        .unwrap_or(core::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleSupportsLiveness(
+    env: JNIEnv,
+    _class: JClass,
+    value: JByteArray,
+) -> jboolean {
+    if env.get_array_length(&value).ok() != Some(LIVENESS_CAPABILITY_BYTES.len() as jint) {
+        return 0;
+    }
+    env.convert_byte_array(&value)
+        .is_ok_and(|bytes| supports_liveness_capability(&bytes))
+        .into()
 }
 
 #[no_mangle]
@@ -227,29 +272,74 @@ pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBle
     _class: JClass,
     conn_id: jint,
     buffer: JByteBuffer,
+    receipt: JLongArray,
 ) -> jint {
+    if env
+        .get_array_length(&receipt)
+        .ok()
+        .is_none_or(|len| len < 2)
+    {
+        return -3;
+    }
     let Ok(address) = env.get_direct_buffer_address(&buffer) else {
-        return 0;
+        return -3;
     };
     let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
-        return 0;
+        return -3;
     };
     if address.is_null() || capacity == 0 {
-        return 0;
+        return -3;
     }
     // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for this call;
     // nothing else aliases it while we drain the outgoing control PDU into it.
     let out = unsafe { core::slice::from_raw_parts_mut(address, capacity) };
-    ble_bridge().control_out(conn_id as u32, out) as jint
+    match ble_bridge().control_out(conn_id as u32, out) {
+        AndroidBleControlOutput::Empty => 0,
+        AndroidBleControlOutput::Closed => -1,
+        AndroidBleControlOutput::BufferTooSmall { .. } => -2,
+        AndroidBleControlOutput::Ready { len, ticket } => {
+            if env
+                .set_long_array_region(
+                    &receipt,
+                    0,
+                    &[ticket.session as jlong, ticket.operation as jlong],
+                )
+                .is_err()
+            {
+                return -3;
+            }
+            len as jint
+        }
+    }
 }
 
 #[no_mangle]
-pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleCommitControlOut(
+pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleControlCapacity(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    CONTROL_BUFFER_LEN as jint
+}
+
+#[no_mangle]
+pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleCompleteControlOut(
     _env: JNIEnv,
     _class: JClass,
     conn_id: jint,
+    session: jlong,
+    operation: jlong,
+    success: jboolean,
 ) -> jboolean {
-    ble_bridge().commit_control_out(conn_id as u32).into()
+    ble_bridge()
+        .complete_control_out(
+            conn_id as u32,
+            AndroidBleControlTicket {
+                session: session as u64,
+                operation: operation as u64,
+            },
+            success != 0,
+        )
+        .into()
 }
 
 #[no_mangle]

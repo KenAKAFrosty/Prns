@@ -27,13 +27,21 @@ pub fn ensure_linked() {
         bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleDialFailed
             as *const (),
         bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleLinkUp as *const (),
+        bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleLivenessUuid
+            as *const (),
+        bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleLivenessCapability
+            as *const (),
+        bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleSupportsLiveness
+            as *const (),
         bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleColumbaLinkUp
             as *const (),
         bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleControlIn
             as *const (),
         bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleControlOut
             as *const (),
-        bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleCommitControlOut
+        bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleControlCapacity
+            as *const (),
+        bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleCompleteControlOut
             as *const (),
         bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleL2capIn
             as *const (),

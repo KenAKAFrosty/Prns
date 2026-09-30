@@ -153,9 +153,9 @@ fn spawn_l2cap_lane(
             _pump: pump.clone(),
         });
         let _read_pump = pump;
-        // A new Hello may retire the old exact-peer GATT session without an OS
-        // unsubscribe or CoC-close callback. The old fast lane must not keep that
-        // member alive, or compete with its replacement for the same identity.
+        // Explicit retirement can end the exact-peer GATT session without an OS
+        // unsubscribe or CoC-close callback; a new Hello alone cannot. The old
+        // fast lane must not keep that member alive or compete with its replacement.
         receive_l2cap_until_end(&mut inbound_rx, &frames, &mut gatt_merge, end_with_gatt).await;
         match end_action {
             EndAction::RetainGattFloor => {

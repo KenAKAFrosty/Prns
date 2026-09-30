@@ -1,5 +1,6 @@
 use super::handshake::{Control, L2capPlan, LinkCapabilities, PeerProtocol};
 use super::identity::{BleAddress, BleIdentity};
+use super::liveness::LivenessMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdvertisingMode {
@@ -92,6 +93,13 @@ pub trait BleBackend<const MAX_PEERS: usize> {
         None
     }
 
+    /// Opt in only when the caller drives the negotiated session-liveness protocol.
+    /// Configure this before starting the radio. Backends default to legacy behavior;
+    /// a failed opt-in must not advertise support. Existing sessions keep their mode.
+    async fn set_session_liveness(&mut self, _enabled: bool) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Self::Error>;
     async fn set_scanning(&mut self, _mode: ScanningMode) -> Result<(), Self::Error> {
         Ok(())
@@ -115,6 +123,7 @@ pub trait BleLink {
     type Error: core::fmt::Debug;
     type Source: BleSource<Error = Self::Error>;
     type Sink: BleSink<Error = Self::Error>;
+    type Control: BleControl<Error = Self::Error>;
 
     fn peer_protocol(&self) -> PeerProtocol;
     fn address(&self) -> BleAddress;
@@ -127,12 +136,73 @@ pub trait BleLink {
         Ok(())
     }
 
+    /// Uses the same completion and cancellation contract as [`BleControl::send`].
+    /// A backend used by a supervisor that recreates this future must explicitly
+    /// support resuming the original operation rather than submitting another write.
     async fn control_send(&mut self, msg: &Control) -> Result<(), Self::Error>;
     async fn control_recv(&mut self) -> Result<Control, Self::Error>;
 
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), Self::Error>;
 
-    fn into_data(self) -> (Self::Source, Self::Sink);
+    /// Settles this exact physical session without discarding its control owner.
+    /// Native links retain controls even with a legacy peer or an L2CAP data plane.
+    /// Columba has no native control channel and returns `None`.
+    fn into_parts(self) -> BleLinkParts<Self::Source, Self::Sink, Self::Control>;
+}
+
+/// Independently owned channels of one settled physical session.
+#[must_use]
+pub struct BleLinkParts<S, T, C> {
+    pub source: S,
+    pub sink: T,
+    pub control: Option<C>,
+}
+
+/// Transport-only access to the existing native control channel.
+///
+/// Retaining this owner does not negotiate a liveness protocol. Send completion has
+/// the backend's existing semantics; queue admission is not proof of remote receipt.
+#[allow(async_fn_in_trait)]
+pub trait BleControl {
+    type Error: core::fmt::Debug;
+
+    /// Capability evidence for this exact physical session, never cached by address.
+    /// A listener remains passive until a valid probe proves peer support on this session.
+    fn liveness_mode(&self) -> LivenessMode {
+        LivenessMode::Disabled
+    }
+
+    /// Unless the backend explicitly supports resumable sends, keep a started
+    /// send alive until completion or retirement of the entire session.
+    /// Cancellation is not rollback: re-entering this method is not generally safe.
+    /// A resumable backend must rejoin the same message's original operation and
+    /// deadline, never duplicate a possibly submitted write or transfer its result
+    /// to another message. Local completion does not establish remote receipt.
+    async fn send(&mut self, message: &Control) -> Result<(), Self::Error>;
+
+    /// Cancellation-safe receive: dropping a pending future must not consume a
+    /// message or lose partial parsing state. Embedded supervisors recreate this
+    /// future when unrelated work wins their bounded event selection.
+    async fn recv(&mut self) -> Result<Control, Self::Error>;
+}
+
+/// Uninhabited control type for data-only adapters. Always use `None`, never a
+/// placeholder owner whose drop could close the data session.
+pub struct NoBleControl<E = core::convert::Infallible> {
+    impossible: core::convert::Infallible,
+    error: core::marker::PhantomData<fn() -> E>,
+}
+
+impl<E: core::fmt::Debug> BleControl for NoBleControl<E> {
+    type Error = E;
+
+    async fn send(&mut self, _message: &Control) -> Result<(), E> {
+        match self.impossible {}
+    }
+
+    async fn recv(&mut self) -> Result<Control, E> {
+        match self.impossible {}
+    }
 }
 
 #[allow(async_fn_in_trait)]
