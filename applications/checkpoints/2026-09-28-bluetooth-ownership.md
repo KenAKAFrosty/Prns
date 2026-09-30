@@ -58,11 +58,12 @@ Keep this in shared core/platform ownership, outside contact and app policy.
 - SDK package staging: six tests and direct canonical-helper inclusion checks
   passed. The deleted duplicate is absent from the staged source inventory.
 
-Android logs and the source hash manifest are under
+Android logs and the source hash manifest were recorded under
 `/Volumes/wavlink/dev/prns-android-gatt-lifetime-*-20260928.*`; Gradle XML results
-are retained in the external adoption checkout's staged SDK and Hopspot build
-directories. This records compiled code and JVM behavior, not physical GATT
-callback timing on Android.
+were recorded in the external adoption checkout's staged SDK and Hopspot build
+directories. That checkout was removed during September 29 cleanup; these are
+historical evidence locations, not current build paths. This records compiled
+code and JVM behavior, not physical GATT callback timing on Android.
 
 Hosted CI, updated APK/iOS builds, phone installs and physical recovery tests
 were not performed for these changes.

@@ -17,6 +17,7 @@ its staged SDK package selects the single aggregate image.
 | --- | --- | --- |
 | [Standalone SDK qualification](../../prns-react-native/docs/qualification.md) | Detached Android/iOS installation and strict TypeScript; Android compilation and full unsigned iOS simulator consumer build; physical default-provider ownership and Hermes reload; Android Release cold startup and direct iOS/Android TCP exchange | Retained app-owner continuity, public-registry distribution or broad background/restoration qualification |
 | [App SDK adoption](../checkpoints/2026-09-24-sdk-adoption.md) | All 23 current-source detached checks; actual packed aggregate TypeScript/Android compilation; physical iOS/Android Hermes reload with native-owner continuity; standalone Release cold starts and retained identity, pairing and mailbox/contact data | Detached aggregate iOS compilation, new board/BLE messaging acceptance, production distribution or recorded-release qualification |
+| [September 29 mobile persistence and BLE](../checkpoints/2026-09-29-mobile-persistence-recovery.md) | Retained-data standalone Release upgrades; sandbox persistence regression and repair; successful interval saves on both phones; reciprocal source-verified BLE delivery; Android restart send | Isolated iOS restart still fails until Android's app Bluetooth is reset; no broader background, radio/permission or liveness qualification |
 
 The default provider's JS-owned session reopens after reload. The app's native
 owner survives JS replacement and lends clients without stop authority. Keep

@@ -49,6 +49,11 @@ Connection states and the announcing/discovery/contact journey are implemented
 with the bounded evidence in the [messaging checkpoint](../checkpoints/2026-09-24-messaging-discovery.md).
 Finish [shared Bluetooth restart recovery](../../docs/bluetooth-session-recovery.md)
 and qualify it on both phones before adding bounded network inspection.
+The [September 29 physical checkpoint](../checkpoints/2026-09-29-mobile-persistence-recovery.md)
+confirms interval saves after a shared sandbox persistence fix, reciprocal
+source-verified BLE delivery and an Android restart send. Isolated iOS restart
+still fails while Android retains a stale session. Keep settled control ownership
+and negotiated liveness next; do not mask the failure with app-level retries.
 TCP remains outside this product milestone. Preserve
 native background ownership and qualify foreground, locked/background and
 recovery behavior separately. The app uses ordinary Bluetooth permission and
