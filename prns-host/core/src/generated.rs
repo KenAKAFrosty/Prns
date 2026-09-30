@@ -1,4 +1,6 @@
-pub const HOST_SCHEMA_VERSION: u32 = 1;
+pub const HOST_SEMANTIC_FINGERPRINT: &str =
+    "b5ca02be1ea5d61771f3a75eacb4d44447f99754adbeb02b6cd98537ed2fa239";
+pub const HOST_SCHEMA_VERSION: u32 = 2;
 pub const HOST_SCHEMA_ABI: u32 = 1;
 pub const HOST_SCHEMA_PRODUCT_VERSION: &str = "0.3.7";
 pub const DESTINATION_HASH_LENGTH: usize = 16;
@@ -1546,6 +1548,8 @@ pub enum EventField {
     PersistenceCause = 38,
     PersistenceTarget = 39,
     AppData = 40,
+    LocalDestination = 41,
+    ArrivedAtMillis = 42,
 }
 
 impl EventField {
@@ -1592,6 +1596,8 @@ impl EventField {
             Self::PersistenceCause => "PersistenceCause",
             Self::PersistenceTarget => "PersistenceTarget",
             Self::AppData => "AppData",
+            Self::LocalDestination => "LocalDestination",
+            Self::ArrivedAtMillis => "ArrivedAtMillis",
         }
     }
 }
@@ -1641,6 +1647,8 @@ impl TryFrom<u32> for EventField {
             38 => Ok(Self::PersistenceCause),
             39 => Ok(Self::PersistenceTarget),
             40 => Ok(Self::AppData),
+            41 => Ok(Self::LocalDestination),
+            42 => Ok(Self::ArrivedAtMillis),
             _ => Err(()),
         }
     }
@@ -2156,6 +2164,8 @@ mod tests {
             (EventField::PersistenceCause, 38, "PersistenceCause"),
             (EventField::PersistenceTarget, 39, "PersistenceTarget"),
             (EventField::AppData, 40, "AppData"),
+            (EventField::LocalDestination, 41, "LocalDestination"),
+            (EventField::ArrivedAtMillis, 42, "ArrivedAtMillis"),
         ]);
     }
 }

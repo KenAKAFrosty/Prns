@@ -21,6 +21,8 @@
     "contract.js",
     "contract.cjs",
     "contract.d.ts",
+    "remote-control.js",
+    "remote-control.d.ts",
     "native.js",
     "native.cjs",
     "native.d.ts",
@@ -67,6 +69,10 @@
       "types": "./contract.d.ts",
       "import": "./contract.js",
       "require": "./contract.cjs"
+    },
+    "./remote-control": {
+      "types": "./remote-control.d.ts",
+      "import": "./remote-control.js"
     },
     "./native": {
       "types": "./native.d.ts",

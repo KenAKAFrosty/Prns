@@ -4,7 +4,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    AnnounceRateState, CommandId, Journaled, SendRequestFailure, Settlement, WakeSchedules,
+    AnnounceRateState, CommandId, Journaled, SendRequestFailure, SendRequestRejection,
+    SendResourceFailure, SendResourceRejection, Settlement, WakeSchedules,
 };
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
 use crate::routing::links::resources::ResourceHash;
@@ -213,6 +214,33 @@ impl JournalDelivery {
                         (Err(failure), _) => Err(failure),
                     };
                     let _ = entry.completion.send(resolved);
+                    return None;
+                }
+            }
+            Journaled::CommandSettled {
+                id,
+                settlement: Settlement::SendResource(Err(failure)),
+            } => {
+                // RequestAny can use a Resource before a response receipt exists.
+                // A rejected or failed outbound transfer must settle that same
+                // request waiter; successful transfer alone is not a response.
+                if let Some(entry) = self.requests.remove(id) {
+                    let failure = match failure {
+                        SendResourceFailure::Rejected(SendResourceRejection::NoSuchLink) => {
+                            SendRequestFailure::Rejected(SendRequestRejection::NoSuchLink)
+                        }
+                        SendResourceFailure::Rejected(SendResourceRejection::LinkNotActive) => {
+                            SendRequestFailure::Rejected(SendRequestRejection::LinkNotActive)
+                        }
+                        SendResourceFailure::Timeout => SendRequestFailure::Timeout,
+                        SendResourceFailure::LinkClosed => SendRequestFailure::LinkClosed,
+                        SendResourceFailure::Rejected(_)
+                        | SendResourceFailure::WriteFailed
+                        | SendResourceFailure::RejectedByPeer
+                        | SendResourceFailure::Sequencing
+                        | SendResourceFailure::PredecessorFailed => SendRequestFailure::WriteFailed,
+                    };
+                    let _ = entry.completion.send(Err(failure));
                     return None;
                 }
             }

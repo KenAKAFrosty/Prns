@@ -17,7 +17,8 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, DialOutcome, Origin, RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, BluetoothRadioState, DialOutcome, Origin, RadioMode,
+    ScanningMode,
 };
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
@@ -35,9 +36,9 @@ use super::{
     CoreBluetoothRestorationIdentifiers,
 };
 use super::{
-    manager_signal_channel, start_scan, CoreBluetoothPeerId, L2capPublicationState, MacosBleError,
-    ManagerSignals, PublicationState, SendCentralDelegate, SendCentralManager, SendPeripheral,
-    SendPeripheralDelegate, Sighting,
+    manager_signal_channel, start_scan, CoreBluetoothPeerId, CoreBluetoothRadioStatus,
+    L2capPublicationState, MacosBleError, ManagerSignals, PublicationState, SendCentralDelegate,
+    SendCentralManager, SendPeripheral, SendPeripheralDelegate, Sighting,
 };
 
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
@@ -150,6 +151,13 @@ pub(super) const fn scan_op(enabled: bool, is_scanning: bool, restart: bool) -> 
     }
 }
 
+pub(super) fn take_inbound_event<T>(event: Option<T>, inbound_open: &mut bool) -> Option<T> {
+    if event.is_none() {
+        *inbound_open = false;
+    }
+    event
+}
+
 pub(super) fn manager_readiness(signals: ManagerSignals) -> Result<Option<Psm>, MacosBleError> {
     if signals.gatt == PublicationState::Failed {
         crate::diagnostic_log::error!("bluetooth: GATT service publication failed at startup");
@@ -162,7 +170,9 @@ pub(super) fn manager_readiness(signals: ManagerSignals) -> Result<Option<Psm>, 
     let L2capPublicationState::Published(psm) = signals.l2cap else {
         return Ok(None);
     };
-    if signals.central_powered_generation == 0 || signals.gatt != PublicationState::Published {
+    if signals.radio_state() != BluetoothRadioState::PoweredOn
+        || signals.gatt != PublicationState::Published
+    {
         return Ok(None);
     }
     Ok(Some(Psm::new(psm).ok_or(MacosBleError::PublishFailed)?))
@@ -430,6 +440,7 @@ pub struct MacosBleBackend {
     manager_signals_open: bool,
     central_powered_generation: u64,
     inbound: tokio_mpsc::Receiver<GattLink>,
+    inbound_open: bool,
     sighting_events: tokio_mpsc::Receiver<()>,
     psm: Psm,
     seen: BoundedRecentSet<[u8; 6]>,
@@ -497,6 +508,11 @@ impl MacosBleBackend {
     pub const MAX_PEERS: usize = 7;
     #[cfg(target_os = "macos")]
     pub const MAX_PEERS: usize = 8;
+
+    #[must_use]
+    pub fn radio_status(&self) -> CoreBluetoothRadioStatus {
+        CoreBluetoothRadioStatus(self.manager_signals.clone())
+    }
 
     /// Creates CoreBluetooth managers with the existing iOS restoration identifiers.
     ///
@@ -795,6 +811,11 @@ impl MacosBleBackend {
 }
 
 impl PreparedMacosBleBackend {
+    #[must_use]
+    pub fn radio_status(&self) -> CoreBluetoothRadioStatus {
+        CoreBluetoothRadioStatus(self.manager_signals.clone())
+    }
+
     pub async fn ready(mut self) -> Result<MacosBleBackend, MacosBleError> {
         let Handles {
             central,
@@ -826,6 +847,7 @@ impl PreparedMacosBleBackend {
             manager_signals_open: true,
             central_powered_generation,
             inbound: self.inbound,
+            inbound_open: true,
             sighting_events: self.sighting_events,
             psm,
             seen: BoundedRecentSet::new(central_peripheral_capacity(MacosBleBackend::MAX_PEERS)),
@@ -914,9 +936,11 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                     }
                     continue;
                 }
-                inbound = self.inbound.recv() => match inbound {
-                    Some(link) => return BleEvent::Inbound(link),
-                    None => core::future::pending().await,
+                inbound = self.inbound.recv(), if self.inbound_open => {
+                    if let Some(link) = take_inbound_event(inbound, &mut self.inbound_open) {
+                        return BleEvent::Inbound(link);
+                    }
+                    continue;
                 },
                 Some(done) = self.dials.join_next(), if pending_dials => {
                     match done {

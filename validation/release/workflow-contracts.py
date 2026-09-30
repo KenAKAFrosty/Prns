@@ -147,6 +147,41 @@ def validate_ci_compiler_environment(text: str) -> list[str]:
     return errors
 
 
+def validate_release_sdk_bootstrap(text: str) -> list[str]:
+    """SDK suites belong to the deterministic group but need their own npm setup."""
+    qualify = dict(workflow_jobs(text)).get("qualify", "")
+    steps = re.split(r"(?m)(?=^      - )", qualify)
+    setup = next((step for step in steps if "npm --prefix prns-react-native ci" in step), "")
+    condition = "if: matrix.id == 'react-native-sdk' || matrix.id == 'react-native-generated'"
+    if condition not in setup:
+        return ["release-readiness.yml must bootstrap both standalone SDK suite IDs"]
+
+    toolchain = json.loads((ROOT / "vendor/ubrn/source-lock.json").read_text())["toolchain"]
+    commands = (
+        f'rustup toolchain install {toolchain["rust"]} --profile minimal --component rustfmt',
+        f'printf \'RUSTUP_TOOLCHAIN={toolchain["rust"]}\\n\' >> "$GITHUB_ENV"',
+        f'npm install --global npm@{toolchain["npm"]}',
+        f'test "$(node --version)" = "v{toolchain["node"]}"',
+        f'test "$(npm --version)" = "{toolchain["npm"]}"',
+        "npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund",
+        "npm --prefix prns-js run build:code",
+        "npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund",
+    )
+    positions = [setup.find(command) for command in commands]
+    errors = []
+    if -1 in positions or positions != sorted(positions):
+        errors.append(
+            "release-readiness.yml must select the pinned SDK toolchain, build the core contract, "
+            "then install the standalone SDK dependencies"
+        )
+    node = qualify.find("uses: actions/setup-node@")
+    bootstrap = qualify.find(setup)
+    execution = qualify.find("name: Run exact-SHA suite")
+    if not 0 <= node < bootstrap < execution:
+        errors.append("release-readiness.yml must bootstrap the SDK before running its suite")
+    return errors
+
+
 def validate() -> list[str]:
     errors: list[str] = []
     lock_path = ROOT / "release" / "flash" / "action-pins.json"
@@ -370,6 +405,7 @@ def validate() -> list[str]:
     readiness = (
         ROOT / ".github" / "workflows" / "release-readiness.yml"
     ).read_text(encoding="utf-8")
+    errors.extend(validate_release_sdk_bootstrap(readiness))
     for preflight_fragment in (
         "./tools/prns repo notices check-inputs",
         "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86",
@@ -711,6 +747,43 @@ def validate() -> list[str]:
                     f"ci.yml {resource_job_name} does not upload {evidence}"
                 )
     release_critical = ci_jobs.get("release-critical", "")
+    for job, result in (
+        ("react-native-sdk", "REACT_NATIVE_SDK_RESULT"),
+        ("react-native-apple-platform", "REACT_NATIVE_APPLE_RESULT"),
+        ("react-native-android", "REACT_NATIVE_ANDROID_RESULT"),
+        ("react-native-apple-image", "REACT_NATIVE_IMAGE_RESULT"),
+    ):
+        if not ci_jobs.get(job) or any(gate not in release_critical for gate in (
+            f"- {job}", f"{result}: ${{{{ needs.{job}.result }}}}", f'"${result}"',
+        )):
+            errors.append(f"release-critical does not require standalone SDK lane {job}")
+        if "applications/" in ci_jobs.get(job, ""):
+            errors.append(f"standalone SDK lane {job} depends on the application tree")
+    sdk_job = ci_jobs.get("react-native-sdk", "")
+    for suite in ("react-native-sdk", "react-native-generated", "host-native-session",
+                  "host-uniffi-session", "host-uniffi-conformance"):
+        if f"--suite {suite}" not in sdk_job:
+            errors.append(f"standalone SDK CI omits validation suite {suite}")
+    for job, suites in (
+        ("react-native-apple-platform", ("react-native-apple-platform",)),
+        ("react-native-android", ("react-native-android-image", "react-native-android-consumer")),
+        ("react-native-apple-image", ("react-native-apple-image", "react-native-mobile-archive",
+                                      "react-native-apple-consumer")),
+    ):
+        for suite in suites:
+            if f"--suite {suite}" not in ci_jobs.get(job, ""):
+                errors.append(f"standalone SDK lane {job} omits validation suite {suite}")
+    sdk_toolchain = json.loads((ROOT / "vendor/ubrn/source-lock.json").read_text())["toolchain"]
+    android_job = ci_jobs.get("react-native-android", "")
+    for pinned_tool in (f'ndk;{sdk_toolchain["androidNdk"]}',
+                        f'cargo install cargo-ndk --locked --version {sdk_toolchain["cargoNdk"]}'):
+        if pinned_tool not in android_job:
+            errors.append(f"standalone Android SDK CI lacks pinned tool {pinned_tool}")
+    for job in ("react-native-android", "react-native-apple-image"):
+        if f'RUSTUP_TOOLCHAIN: "{sdk_toolchain["rust"]}"' not in ci_jobs.get(job, ""):
+            errors.append(f"standalone SDK lane {job} differs from the reviewed Rust toolchain")
+        if "name: react-native-android-image-${{ github.sha }}" not in ci_jobs.get(job, ""):
+            errors.append(f"standalone SDK lane {job} lacks exact-commit Android artifact custody")
     for capstone_gate in (
         "- integration-capstones",
         "INTEGRATION_CAPSTONES_RESULT: ${{ needs.integration-capstones.result }}",

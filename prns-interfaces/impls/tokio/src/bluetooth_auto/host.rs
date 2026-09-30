@@ -158,14 +158,14 @@ enum AppleManagerPreparation {
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
+use prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 impl AppleManagerPreparation {
     async fn prepare(
         &self,
         identity: BleIdentity,
-    ) -> Result<
-        prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend,
-        prns_ffi::bluetooth_auto::macos::MacosBleError,
-    > {
+    ) -> Result<PreparedMacosBleBackend, prns_ffi::bluetooth_auto::macos::MacosBleError> {
         use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
 
         match self {
@@ -181,23 +181,62 @@ impl AppleManagerPreparation {
     }
 }
 
+#[cfg(all(test, any(target_os = "macos", target_os = "ios")))]
+mod apple_manager_preparation_tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_preparation_retains_no_restoration_policy_for_retry() {
+        let identity = BleIdentity::new([0; 16]);
+        let prepared = AutoBle::unavailable_without_restoration(identity);
+        assert_eq!(
+            prepared.manager_preparation,
+            AppleManagerPreparation::WithoutRestoration
+        );
+    }
+
+    #[cfg(target_os = "ios")]
+    #[test]
+    fn unavailable_preparation_retains_its_restoration_identifiers() {
+        let identity = BleIdentity::new([0; 16]);
+        let identifiers = CoreBluetoothRestorationIdentifiers::new("central", "peripheral")
+            .expect("the fixture identifiers are valid");
+        let prepared = AutoBle::unavailable_with_restoration(identity, identifiers.clone());
+        assert_eq!(
+            prepared.manager_preparation,
+            AppleManagerPreparation::RestorationAware(identifiers)
+        );
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 impl PreparedAutoBle {
     fn new(
         identity: BleIdentity,
         manager_preparation: AppleManagerPreparation,
-        backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+        backend: Option<PreparedMacosBleBackend>,
     ) -> Self {
+        let status = BluetoothAutoStatus::new();
+        if let Some(backend) = &backend {
+            let radio = backend.radio_status();
+            status.observe_radio_state(move || radio.state());
+        }
         Self {
             identity,
             policy: prns_runtime::interfaces::bluetooth_auto::defaults_for_bitrate(
                 prns_runtime::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
             )
             .configured(ConfiguredInterfacePolicy::default()),
-            status: BluetoothAutoStatus::new(),
+            status,
             manager_preparation,
             backend,
         }
+    }
+
+    /// Allows an owner to apply its desired state before the supervisor starts radio work.
+    #[must_use]
+    pub fn status(&self) -> BluetoothAutoStatus {
+        self.status.clone()
     }
 }
 
@@ -214,7 +253,7 @@ pub struct PreparedAutoBle {
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
     manager_preparation: AppleManagerPreparation,
-    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+    backend: Option<PreparedMacosBleBackend>,
 }
 
 /// Canonical name for a prepared Apple-platform Bluetooth LE auto-interface.
@@ -340,7 +379,7 @@ struct PreparedPlatformBluetooth {
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
     manager_preparation: AppleManagerPreparation,
-    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+    backend: Option<PreparedMacosBleBackend>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -382,13 +421,35 @@ impl InterfaceSupervisor for PreparedPlatformBluetooth {
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
+async fn suspend_disabled_preparation<T>(status: &BluetoothAutoStatus, prepared: &mut Option<T>) {
+    while let Some(generation) = status.disabled_request() {
+        // Dropping prepared ownership stops and joins its native thread. Shutdown must not wait
+        // for permission or a powered-on radio before acknowledging the disabled request.
+        drop(prepared.take());
+        status.acknowledge_disabled(generation);
+        status.wait_for_enabled_change(generation).await;
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+async fn while_bluetooth_enabled<T>(
+    status: &BluetoothAutoStatus,
+    work: impl core::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::select! {
+        result = work => Some(result),
+        () = status.wait_until_disabled() => None,
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 async fn run_prepared_platform_bluetooth(
     fleet: Fleet,
     ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
     policy: EffectiveInterfacePolicy,
     manager_preparation: AppleManagerPreparation,
-    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+    backend: Option<PreparedMacosBleBackend>,
 ) {
     use super::BluetoothAuto;
     use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
@@ -398,6 +459,7 @@ async fn run_prepared_platform_bluetooth(
 
     let mut prepared = backend;
     loop {
+        suspend_disabled_preparation(&status, &mut prepared).await;
         let candidate = match prepared.take() {
             Some(backend) => backend,
             None => match manager_preparation.prepare(ble_identity).await {
@@ -408,13 +470,22 @@ async fn run_prepared_platform_bluetooth(
                         "bluetooth manager preparation failed ({error:?}); retrying in {}s",
                         APPLE_BLE_READINESS_RETRY_DELAY.as_secs()
                     );
-                    tokio::time::sleep(APPLE_BLE_READINESS_RETRY_DELAY).await;
+                    let _ = while_bluetooth_enabled(
+                        &status,
+                        tokio::time::sleep(APPLE_BLE_READINESS_RETRY_DELAY),
+                    )
+                    .await;
                     continue;
                 }
             },
         };
 
-        match candidate.ready().await {
+        let radio = candidate.radio_status();
+        status.observe_radio_state(move || radio.state());
+        let Some(readiness) = while_bluetooth_enabled(&status, candidate.ready()).await else {
+            continue;
+        };
+        match readiness {
             Ok(backend) => {
                 status.clear_failure();
                 let psm = backend.psm();
@@ -450,7 +521,11 @@ async fn run_prepared_platform_bluetooth(
                     "bluetooth readiness unavailable ({error:?}); retrying manager preparation in {}s",
                     APPLE_BLE_READINESS_RETRY_DELAY.as_secs()
                 );
-                tokio::time::sleep(APPLE_BLE_READINESS_RETRY_DELAY).await;
+                let _ = while_bluetooth_enabled(
+                    &status,
+                    tokio::time::sleep(APPLE_BLE_READINESS_RETRY_DELAY),
+                )
+                .await;
             }
         }
     }
@@ -524,6 +599,8 @@ async fn run_platform_bluetooth(
 
     match MacosBleBackend::new(ble_identity).await {
         Ok(backend) => {
+            let radio = backend.radio_status();
+            status.observe_radio_state(move || radio.state());
             let psm = backend.psm();
             let bluetooth = BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::with_status(
                 backend,
@@ -567,6 +644,8 @@ async fn run_platform_bluetooth(
 
     match MacosBleBackend::new(ble_identity).await {
         Ok(backend) => {
+            let radio = backend.radio_status();
+            status.observe_radio_state(move || radio.state());
             let psm = backend.psm();
             let bluetooth = BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::with_status(
                 backend,
@@ -708,6 +787,51 @@ mod tests {
         ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe,
     };
     use prns_runtime::storage::GrowableHeap;
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[tokio::test]
+    async fn disabling_prepared_bluetooth_drops_ownership_without_waiting_for_radio_readiness() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        struct Owner(Arc<AtomicBool>);
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
+        let status = BluetoothAutoStatus::new();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let owner = Owner(Arc::clone(&dropped));
+        let (waiting_tx, waiting_rx) = tokio::sync::oneshot::channel();
+        let owner_task = async {
+            let readiness = async move {
+                let _owner = owner;
+                let _ = waiting_tx.send(());
+                std::future::pending::<()>().await;
+            };
+            assert!(while_bluetooth_enabled(&status, readiness).await.is_none());
+            assert!(dropped.load(Ordering::Acquire));
+            let mut prepared: Option<Owner> = None;
+            suspend_disabled_preparation(&status, &mut prepared).await;
+        };
+        let change = async {
+            waiting_rx.await.unwrap();
+            status.disable();
+            assert!(!status.is_disabled());
+            while !status.is_disabled() {
+                tokio::task::yield_now().await;
+            }
+            assert!(dropped.load(Ordering::Acquire));
+            status.enable();
+        };
+        tokio::time::timeout(core::time::Duration::from_secs(1), async {
+            tokio::join!(owner_task, change);
+        })
+        .await
+        .unwrap();
+    }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     #[test]

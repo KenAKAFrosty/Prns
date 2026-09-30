@@ -1170,7 +1170,7 @@ fn failed_discovery_group_write_retains_the_last_durable_snapshot() {
         );
 
         fail_next_write.set(true);
-        assert!(matches!(
+        assert_eq!(
             persistence
                 .store_discovery_group_configuration_snapshot(
                     &engine,
@@ -1180,9 +1180,9 @@ fn failed_discovery_group_write_retains_the_last_durable_snapshot() {
                 .await,
             StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
                 failure: EmbeddedPersistenceFailure::Flash,
-                ..
+                retry_at: Some(InstantMillis(2 + persistence.policy.retry_interval_millis)),
             },
-        ));
+        );
         assert_eq!(
             restored_discovery_group_configuration_now(),
             Some(confirmed)
@@ -1382,6 +1382,7 @@ fn group_store_commits_restored_state_only_after_durable_success() {
 
 #[test]
 fn authorization_store_returns_the_flash_retry_policy_deadline() {
+    let _group_store = lock_discovery_group_store();
     embassy_futures::block_on(async {
         let (flash, fail_next_write) = TestFlash::controlled();
         let mut policy =
@@ -1450,6 +1451,7 @@ fn authorization_store_returns_the_flash_retry_policy_deadline() {
 
 #[test]
 fn authorization_store_returns_the_compaction_cooldown_deadline() {
+    let _group_store = lock_discovery_group_store();
     embassy_futures::block_on(async {
         let mut persistence = ready();
         let engine = EngineState::<crate::storage::GrowableHeap>::default();
@@ -1496,6 +1498,7 @@ fn authorization_store_returns_the_compaction_cooldown_deadline() {
 
 #[test]
 fn authorization_store_exposes_retry_after_a_failed_compaction_step() {
+    let _group_store = lock_discovery_group_store();
     embassy_futures::block_on(async {
         let (flash, fail_next_write) = TestFlash::controlled();
         let mut persistence = EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
@@ -1545,6 +1548,7 @@ fn authorization_store_exposes_retry_after_a_failed_compaction_step() {
 
 #[test]
 fn unavailable_authorization_store_has_no_retry_schedule() {
+    let _group_store = lock_discovery_group_store();
     embassy_futures::block_on(async {
         let mut persistence = ready();
         persistence.journal = None;

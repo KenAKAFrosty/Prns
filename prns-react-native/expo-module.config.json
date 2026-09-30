@@ -1,0 +1,5 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": { "modules": ["PrnsHostModule"] },
+  "android": { "modules": ["rs.reticulum.prns.expo.PrnsHostModule"] }
+}

@@ -2,7 +2,7 @@ import Foundation
 
 public enum HostContract {
     public static let abi: UInt32 = 1
-    public static let schemaVersion: UInt32 = 1
+    public static let schemaVersion: UInt32 = 2
     public static let productVersion = "0.3.7"
     public static let destinationHashLength = 16
     public static let identityHashLength = 16
@@ -386,6 +386,8 @@ public enum EventField: UInt32, Sendable {
     case persistenceCause = 38
     case persistenceTarget = 39
     case appData = 40
+    case localDestination = 41
+    case arrivedAtMillis = 42
 }
 
 public struct DestinationHash: Hashable, Sendable {
@@ -900,7 +902,7 @@ public enum ApplicationEvent: Sendable {
     case resourceSegment(linkId: LinkId, originalHash: ResourceHash, segmentIndex: UInt64, totalSegments: UInt64, metadata: [UInt8]?, data: [UInt8])
     case resourceNeedsDecompression(linkId: LinkId, hash: ResourceHash, stream: [UInt8], uncompressedDataBytes: UInt64)
     case channelMessage(linkId: LinkId, messageType: UInt16, data: [UInt8])
-    case linkDelivery(linkId: LinkId, sourceInterface: InterfaceId, plaintext: [UInt8])
+    case linkDelivery(linkId: LinkId, sourceInterface: InterfaceId, plaintext: [UInt8], localDestination: DestinationHash?, arrivedAtMillis: UInt64)
 }
 
 public enum DiagnosticEvent: Sendable {

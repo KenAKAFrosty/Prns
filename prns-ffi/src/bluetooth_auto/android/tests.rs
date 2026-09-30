@@ -204,7 +204,21 @@ fn policy_closes_stay_bounded_and_owned_until_kotlin_acknowledges() {
         assert!(bridge.link_up(conn_id, address, None, false));
     }
 
-    assert!(bridge.close_by_address(address));
+    let owners = {
+        let links = bridge.shared.links.lock().unwrap();
+        conn_ids
+            .clone()
+            .map(|id| {
+                (
+                    id,
+                    links.get(&id).unwrap().active().unwrap().data_out.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    for (id, owner) in &owners {
+        assert!(bridge.close_owned_connection(*id, owner));
+    }
     assert_eq!(
         bridge.shared.close_requests.lock().unwrap().len(),
         super::bridge::PEER_CAPACITY
@@ -215,7 +229,9 @@ fn policy_closes_stay_bounded_and_owned_until_kotlin_acknowledges() {
         "closing links must retain their bridge slots"
     );
 
-    assert!(bridge.close_by_address(address));
+    for (id, owner) in &owners {
+        assert!(bridge.close_owned_connection(*id, owner));
+    }
     assert_eq!(
         bridge.shared.close_requests.lock().unwrap().len(),
         super::bridge::PEER_CAPACITY,
@@ -247,11 +263,37 @@ fn connection_ids_cannot_be_reused_before_disconnect_acknowledgement() {
     let bridge = AndroidBleBridge::new();
     let address = [1, 2, 3, 4, 5, 6];
     assert!(bridge.link_up(7, address, None, false));
-    assert!(bridge.close_by_address(address));
+    let owner = bridge
+        .shared
+        .links
+        .lock()
+        .unwrap()
+        .get(&7)
+        .unwrap()
+        .active()
+        .unwrap()
+        .data_out
+        .clone();
+    assert!(bridge.close_owned_connection(7, &owner));
 
     assert!(!bridge.link_up(7, [6, 5, 4, 3, 2, 1], None, true));
     bridge.disconnected(7);
     assert!(bridge.link_up(7, [6, 5, 4, 3, 2, 1], None, true));
+    assert!(bridge.close_owned_connection(7, &owner));
+    assert!(bridge
+        .shared
+        .links
+        .lock()
+        .unwrap()
+        .get(&7)
+        .unwrap()
+        .active()
+        .is_some());
+    assert_eq!(
+        bridge.next_close(),
+        None,
+        "the old owner cannot close a reused connection ID"
+    );
 }
 
 #[test]
@@ -259,7 +301,18 @@ fn radio_reset_discards_pending_physical_closes() {
     let bridge = AndroidBleBridge::new();
     let address = [1, 2, 3, 4, 5, 6];
     assert!(bridge.link_up(7, address, None, false));
-    assert!(bridge.close_by_address(address));
+    let owner = bridge
+        .shared
+        .links
+        .lock()
+        .unwrap()
+        .get(&7)
+        .unwrap()
+        .active()
+        .unwrap()
+        .data_out
+        .clone();
+    assert!(bridge.close_owned_connection(7, &owner));
     assert_eq!(bridge.shared.close_requests.lock().unwrap().len(), 1);
 
     bridge.set_radio_mode(RadioMode::Off);
@@ -267,6 +320,83 @@ fn radio_reset_discards_pending_physical_closes() {
     assert!(bridge.shared.links.lock().unwrap().is_empty());
     assert!(bridge.shared.close_requests.lock().unwrap().is_empty());
     assert_eq!(bridge.next_close(), None);
+}
+
+#[tokio::test]
+async fn dropping_a_challenger_closes_only_its_physical_connection() {
+    use prns_core::interfaces::bluetooth_auto::{BleBackend, BleEvent, BleLink, BleSink};
+    let bridge = AndroidBleBridge::new();
+    let mut backend = super::AndroidBleBackend::new(bridge.clone());
+    let address = [1, 2, 3, 4, 5, 6];
+    assert!(bridge.link_up(1, address, None, false));
+    let BleEvent::Inbound(keeper) = backend.next_event().await else {
+        panic!("keeper")
+    };
+    let (source, mut sink) = keeper.into_data();
+    assert_eq!(
+        bridge.next_close(),
+        None,
+        "settlement retains physical ownership"
+    );
+
+    assert!(bridge.link_up(2, address, None, false));
+    let BleEvent::Inbound(challenger) = backend.next_event().await else {
+        panic!("challenger")
+    };
+    drop(challenger);
+    backend
+        .on_link_closed(prns_core::interfaces::bluetooth_auto::BleAddress::new(
+            address,
+        ))
+        .await;
+    assert_eq!(bridge.next_close(), Some(2));
+    assert_eq!(bridge.next_close(), None);
+    sink.send_frame(&[1, 2, 3]).await.unwrap();
+    let mut frame = [0; 32];
+    assert!(
+        bridge.data_out(1, &mut frame) > 0,
+        "the keeper is still usable"
+    );
+
+    drop(source);
+    assert_eq!(
+        bridge.next_close(),
+        None,
+        "the other half still owns the connection"
+    );
+    drop(sink);
+    assert_eq!(bridge.next_close(), Some(1));
+    assert_eq!(bridge.next_close(), None);
+}
+
+#[tokio::test]
+async fn delayed_link_drop_after_radio_reset_cannot_close_a_reused_id() {
+    use prns_core::interfaces::bluetooth_auto::{BleBackend, BleEvent};
+    let bridge = AndroidBleBridge::new();
+    let mut backend = super::AndroidBleBackend::new(bridge.clone());
+    let address = [1, 2, 3, 4, 5, 6];
+    assert!(bridge.link_up(1, address, None, false));
+    let BleEvent::Inbound(old) = backend.next_event().await else {
+        panic!("old link")
+    };
+    bridge.set_radio_mode(RadioMode::Off);
+    assert!(bridge.link_up(1, address, None, false));
+    let BleEvent::Inbound(current) = backend.next_event().await else {
+        panic!("current link")
+    };
+    drop(old);
+    assert_eq!(bridge.next_close(), None);
+    assert!(bridge
+        .shared
+        .links
+        .lock()
+        .unwrap()
+        .get(&1)
+        .unwrap()
+        .active()
+        .is_some());
+    drop(current);
+    assert_eq!(bridge.next_close(), Some(1));
 }
 
 #[test]

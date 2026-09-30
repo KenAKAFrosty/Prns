@@ -1891,6 +1891,8 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
                 if let EngineReaction::Journaled(Journaled::Delivered(Delivery::Link(link))) =
                     reaction
                 {
+                    assert_eq!(link.local_destination, Some(peer_destination()));
+                    assert_eq!(link.arrived_at, InstantMillis(2_100));
                     delivered.push((link.link_id, link.plaintext.to_vec()));
                 }
             },
@@ -4448,4 +4450,30 @@ fn a_repeated_entropy_draw_is_refused_as_a_duplicate_link() {
         },
     ));
     assert_eq!(state.links.len(), 1, "the original establishment stands");
+}
+
+#[test]
+fn initiated_link_delivery_does_not_invent_a_local_destination() {
+    use crate::routing::delivery::Delivery;
+    let (mut initiator, mut responder, link_id) = established_pair();
+    let mut wire = commanded_link_data(&mut responder, link_id, b"reply", 2_000, 0xC1);
+    let received = initiator.ingest_for_test(
+        InboundPacket {
+            arrived_at: InstantMillis(2_100),
+            source_interface: arrival(),
+            bytes: &mut wire,
+        },
+        AttachedInterfaces::new(&arrival_interfaces()),
+    );
+    let IngestPacketOutcome::Delivery {
+        delivery: Delivery::Link(delivery),
+        ..
+    } = received
+    else {
+        panic!("expected an authenticated link delivery");
+    };
+    assert_eq!(delivery.link_id, link_id);
+    assert_eq!(delivery.local_destination, None);
+    assert_eq!(delivery.arrived_at, InstantMillis(2_100));
+    assert_eq!(delivery.plaintext, b"reply");
 }

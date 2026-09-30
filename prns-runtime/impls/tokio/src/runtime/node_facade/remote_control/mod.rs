@@ -38,9 +38,10 @@ use prns_core::remote_control::{
     RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
     RemoteControlLoRaProfile, RemoteControlModeOutcome, RemoteControlPeerPage,
     RemoteControlPowerOutcome, RemoteControlRequest, RemoteControlRequestSet,
-    RemoteControlRevokeControllerOutcome, RemoteControlSleepOutcome, RemoteControlStationUplink,
-    RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
-    RemoteControlWifiStation, RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
+    RemoteControlResponse, RemoteControlResponseKind, RemoteControlRevokeControllerOutcome,
+    RemoteControlSleepOutcome, RemoteControlStationUplink, RemoteControlSystemPower,
+    RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome, RemoteControlWifiStation,
+    RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
 };
 
 use super::{PrnsNodeHandle, RequestOptions};
@@ -89,6 +90,51 @@ impl PrnsNodeHandle {
 }
 
 impl RemoteControlHandle<'_> {
+    /// Execute any current protocol request using its own bounded response contract.
+    /// This is the shared typed primitive used by host SDKs; callers never marshal
+    /// remote-control packet bytes or reproduce an operation dispatcher.
+    pub async fn exchange(
+        &self,
+        request: RemoteControlRequest,
+    ) -> Result<(RemoteControlResponse, RttMillis), RemoteControlError> {
+        let expected = RemoteControlResponseKind::ALL
+            .into_iter()
+            .find(|kind| kind.wire_value() == request.kind().wire_value())
+            .ok_or(RemoteControlError::UnsupportedRequestKind(request.kind()))?;
+        let maximum_response_bytes =
+            crate::units::ByteLimit::Maximum(request.maximum_response_encoded_len() as u64);
+        let mut encoded = std::vec![0u8; request.encoded_len()];
+        let written = request
+            .write_into(&mut encoded)
+            .map_err(RemoteControlError::Encode)?;
+        encoded.truncate(written);
+        let (bytes, rtt) = self
+            .node
+            .request_owned_with_options(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                encoded,
+                RequestOptions {
+                    response_timeout: RequestResponseTimeout::LinkDefault,
+                    maximum_response_bytes,
+                },
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let response =
+            RemoteControlResponse::parse(&bytes).map_err(RemoteControlError::Response)?;
+        if let RemoteControlResponse::ProtocolError(error) = response {
+            return Err(RemoteControlError::Remote(error));
+        }
+        if response.kind() != expected {
+            return Err(RemoteControlError::UnexpectedResponse {
+                expected,
+                found: response.kind(),
+            });
+        }
+        Ok((response, rtt))
+    }
+
     remote_control_apply_method!(
         set_system_power,
         RemoteControlSetSystemPower,

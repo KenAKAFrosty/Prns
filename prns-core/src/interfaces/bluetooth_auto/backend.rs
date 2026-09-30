@@ -37,6 +37,19 @@ impl RadioMode {
     }
 }
 
+/// Observed platform radio state, independent of the application's desired [`RadioMode`].
+/// Backends without an authoritative observation report [`Self::Unknown`].
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum BluetoothRadioState {
+    #[default]
+    Unknown,
+    Resetting,
+    Unsupported,
+    Unauthorized,
+    PoweredOff,
+    PoweredOn,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
     Dialed,
