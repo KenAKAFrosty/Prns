@@ -662,6 +662,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_prns_app_checksum_func_clear_lxmf_discovery(
     ): Int
+    external fun uniffi_prns_app_checksum_func_clear_network_activity(
+    ): Int
     external fun uniffi_prns_app_checksum_func_create_manual_contact(
     ): Int
     external fun uniffi_prns_app_checksum_func_delete_contact(
@@ -761,6 +763,8 @@ external fun uniffi_prns_app_fn_func_cancel_lxmf_message(`input`: RustBuffer.ByV
 external fun uniffi_prns_app_fn_func_change_remote_node(`input`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_prns_app_fn_func_clear_lxmf_discovery(
+): Long
+external fun uniffi_prns_app_fn_func_clear_network_activity(`input`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_prns_app_fn_func_create_manual_contact(`input`: RustBuffer.ByValue,
 ): Long
@@ -972,6 +976,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_clear_lxmf_discovery() != 10179) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_prns_app_checksum_func_clear_network_activity() != 38833) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_create_manual_contact() != 1882) {
@@ -1607,6 +1614,39 @@ public object FfiConverterTypeChangeRemoteNodeInput: FfiConverterRustBuffer<Chan
 
 
 
+data class ClearNetworkActivityInput (
+    var `generationId`: kotlin.ULong
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeClearNetworkActivityInput: FfiConverterRustBuffer<ClearNetworkActivityInput> {
+    override fun read(buf: ByteBuffer): ClearNetworkActivityInput {
+        return ClearNetworkActivityInput(
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ClearNetworkActivityInput) = (
+            FfiConverterULong.allocationSize(value.`generationId`)
+    )
+
+    override fun write(value: ClearNetworkActivityInput, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`generationId`, buf)
+    }
+}
+
+
+
 data class Contact (
     var `destination`: Bytes16
     ,
@@ -1865,6 +1905,8 @@ data class DevelopmentNodeSnapshot (
     ,
     var `bluetooth`: LocalBluetoothSnapshot
     ,
+    var `network`: LocalNetworkSnapshot
+    ,
     var `lxmf`: LxmfHealth
     ,
     var `controllerIdentityFingerprint`: kotlin.ByteArray?
@@ -1907,6 +1949,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterTypePrimaryIdentityState.read(buf),
             FfiConverterTypeLocalHostState.read(buf),
             FfiConverterTypeLocalBluetoothSnapshot.read(buf),
+            FfiConverterTypeLocalNetworkSnapshot.read(buf),
             FfiConverterTypeLxmfHealth.read(buf),
             FfiConverterOptionalByteArray.read(buf),
             FfiConverterTypeRemoteControlPairingState.read(buf),
@@ -1928,6 +1971,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterTypePrimaryIdentityState.allocationSize(value.`primaryIdentity`) +
             FfiConverterTypeLocalHostState.allocationSize(value.`localHost`) +
             FfiConverterTypeLocalBluetoothSnapshot.allocationSize(value.`bluetooth`) +
+            FfiConverterTypeLocalNetworkSnapshot.allocationSize(value.`network`) +
             FfiConverterTypeLxmfHealth.allocationSize(value.`lxmf`) +
             FfiConverterOptionalByteArray.allocationSize(value.`controllerIdentityFingerprint`) +
             FfiConverterTypeRemoteControlPairingState.allocationSize(value.`pairing`) +
@@ -1948,6 +1992,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterTypePrimaryIdentityState.write(value.`primaryIdentity`, buf)
             FfiConverterTypeLocalHostState.write(value.`localHost`, buf)
             FfiConverterTypeLocalBluetoothSnapshot.write(value.`bluetooth`, buf)
+            FfiConverterTypeLocalNetworkSnapshot.write(value.`network`, buf)
             FfiConverterTypeLxmfHealth.write(value.`lxmf`, buf)
             FfiConverterOptionalByteArray.write(value.`controllerIdentityFingerprint`, buf)
             FfiConverterTypeRemoteControlPairingState.write(value.`pairing`, buf)
@@ -2153,6 +2198,75 @@ public object FfiConverterTypeListLxmfMessagesInput: FfiConverterRustBuffer<List
 
 
 
+data class LocalAnnounceActivity (
+    /**
+     * Unique within the aggregate generation; clear never reuses record IDs.
+     */
+    var `recordId`: kotlin.ULong
+    ,
+    var `destination`: Bytes16
+    ,
+    var `announcedIdentity`: Bytes16
+    ,
+    /**
+     * Exact ingress when accepted, even after that interface is retired.
+     */
+    var `sourceInterface`: kotlin.ByteArray
+    ,
+    var `hops`: kotlin.UByte
+    ,
+    var `ageMillis`: kotlin.ULong
+    ,
+    var `isPathResponse`: kotlin.Boolean
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalAnnounceActivity: FfiConverterRustBuffer<LocalAnnounceActivity> {
+    override fun read(buf: ByteBuffer): LocalAnnounceActivity {
+        return LocalAnnounceActivity(
+            FfiConverterULong.read(buf),
+            FfiConverterTypeBytes16.read(buf),
+            FfiConverterTypeBytes16.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterUByte.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LocalAnnounceActivity) = (
+            FfiConverterULong.allocationSize(value.`recordId`) +
+            FfiConverterTypeBytes16.allocationSize(value.`destination`) +
+            FfiConverterTypeBytes16.allocationSize(value.`announcedIdentity`) +
+            FfiConverterByteArray.allocationSize(value.`sourceInterface`) +
+            FfiConverterUByte.allocationSize(value.`hops`) +
+            FfiConverterULong.allocationSize(value.`ageMillis`) +
+            FfiConverterBoolean.allocationSize(value.`isPathResponse`)
+    )
+
+    override fun write(value: LocalAnnounceActivity, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`recordId`, buf)
+            FfiConverterTypeBytes16.write(value.`destination`, buf)
+            FfiConverterTypeBytes16.write(value.`announcedIdentity`, buf)
+            FfiConverterByteArray.write(value.`sourceInterface`, buf)
+            FfiConverterUByte.write(value.`hops`, buf)
+            FfiConverterULong.write(value.`ageMillis`, buf)
+            FfiConverterBoolean.write(value.`isPathResponse`, buf)
+    }
+}
+
+
+
 data class LocalBluetoothPeerSnapshot (
     /**
      * Opaque physical interface identifier; this is not an authenticated RNS identity.
@@ -2301,6 +2415,140 @@ public object FfiConverterTypeLocalMessagingProfile: FfiConverterRustBuffer<Loca
     override fun write(value: LocalMessagingProfile, buf: ByteBuffer) {
             FfiConverterString.write(value.`displayName`, buf)
             FfiConverterOptionalTypeBytes16.write(value.`destination`, buf)
+    }
+}
+
+
+
+data class LocalNetworkRouteSnapshot (
+    var `destination`: Bytes16
+    ,
+    var `viaIdentity`: Bytes16?
+    ,
+    /**
+     * The canonical logical interface, not an inferred physical next hop.
+     */
+    var `interfaceId`: kotlin.ByteArray
+    ,
+    var `hops`: kotlin.UByte
+    ,
+    var `learnedAgeMillis`: kotlin.ULong
+    ,
+    var `lastActivityAgeMillis`: kotlin.ULong
+    ,
+    var `expiresInMillis`: kotlin.ULong
+    ,
+    var `expired`: kotlin.Boolean
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalNetworkRouteSnapshot: FfiConverterRustBuffer<LocalNetworkRouteSnapshot> {
+    override fun read(buf: ByteBuffer): LocalNetworkRouteSnapshot {
+        return LocalNetworkRouteSnapshot(
+            FfiConverterTypeBytes16.read(buf),
+            FfiConverterOptionalTypeBytes16.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterUByte.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LocalNetworkRouteSnapshot) = (
+            FfiConverterTypeBytes16.allocationSize(value.`destination`) +
+            FfiConverterOptionalTypeBytes16.allocationSize(value.`viaIdentity`) +
+            FfiConverterByteArray.allocationSize(value.`interfaceId`) +
+            FfiConverterUByte.allocationSize(value.`hops`) +
+            FfiConverterULong.allocationSize(value.`learnedAgeMillis`) +
+            FfiConverterULong.allocationSize(value.`lastActivityAgeMillis`) +
+            FfiConverterULong.allocationSize(value.`expiresInMillis`) +
+            FfiConverterBoolean.allocationSize(value.`expired`)
+    )
+
+    override fun write(value: LocalNetworkRouteSnapshot, buf: ByteBuffer) {
+            FfiConverterTypeBytes16.write(value.`destination`, buf)
+            FfiConverterOptionalTypeBytes16.write(value.`viaIdentity`, buf)
+            FfiConverterByteArray.write(value.`interfaceId`, buf)
+            FfiConverterUByte.write(value.`hops`, buf)
+            FfiConverterULong.write(value.`learnedAgeMillis`, buf)
+            FfiConverterULong.write(value.`lastActivityAgeMillis`, buf)
+            FfiConverterULong.write(value.`expiresInMillis`, buf)
+            FfiConverterBoolean.write(value.`expired`, buf)
+    }
+}
+
+
+
+/**
+ * App presentation over one native inspection. Ages are measured at that
+ * inspection, not live JavaScript-clock estimates or historical message paths.
+ */
+data class LocalNetworkSnapshot (
+    var `state`: LocalNetworkState
+    ,
+    var `routes`: List<LocalNetworkRouteSnapshot>
+    ,
+    /**
+     * Newest admission first; at most 200 rows from this native generation.
+     */
+    var `announces`: List<LocalAnnounceActivity>
+    ,
+    var `activityRevision`: kotlin.ULong
+    ,
+    /**
+     * Retention-window evictions since clear, not packet or Bluetooth loss.
+     */
+    var `droppedAnnounceCount`: kotlin.ULong
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalNetworkSnapshot: FfiConverterRustBuffer<LocalNetworkSnapshot> {
+    override fun read(buf: ByteBuffer): LocalNetworkSnapshot {
+        return LocalNetworkSnapshot(
+            FfiConverterTypeLocalNetworkState.read(buf),
+            FfiConverterSequenceTypeLocalNetworkRouteSnapshot.read(buf),
+            FfiConverterSequenceTypeLocalAnnounceActivity.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LocalNetworkSnapshot) = (
+            FfiConverterTypeLocalNetworkState.allocationSize(value.`state`) +
+            FfiConverterSequenceTypeLocalNetworkRouteSnapshot.allocationSize(value.`routes`) +
+            FfiConverterSequenceTypeLocalAnnounceActivity.allocationSize(value.`announces`) +
+            FfiConverterULong.allocationSize(value.`activityRevision`) +
+            FfiConverterULong.allocationSize(value.`droppedAnnounceCount`)
+    )
+
+    override fun write(value: LocalNetworkSnapshot, buf: ByteBuffer) {
+            FfiConverterTypeLocalNetworkState.write(value.`state`, buf)
+            FfiConverterSequenceTypeLocalNetworkRouteSnapshot.write(value.`routes`, buf)
+            FfiConverterSequenceTypeLocalAnnounceActivity.write(value.`announces`, buf)
+            FfiConverterULong.write(value.`activityRevision`, buf)
+            FfiConverterULong.write(value.`droppedAnnounceCount`, buf)
     }
 }
 
@@ -4035,6 +4283,107 @@ public object FfiConverterTypeChangeRemoteNodeOutcome : FfiConverterRustBuffer<C
 
 
 
+sealed class ClearNetworkActivityOutcome {
+
+    data class Cleared(
+        val `activityRevision`: kotlin.ULong) : ClearNetworkActivityOutcome()
+
+    {
+
+
+        companion object
+    }
+
+    object GenerationChanged : ClearNetworkActivityOutcome()
+
+
+    object LocalNodeStopped : ClearNetworkActivityOutcome()
+
+
+    object Busy : ClearNetworkActivityOutcome()
+
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeClearNetworkActivityOutcome : FfiConverterRustBuffer<ClearNetworkActivityOutcome>{
+    override fun read(buf: ByteBuffer): ClearNetworkActivityOutcome {
+        return when(buf.getInt()) {
+            1 -> ClearNetworkActivityOutcome.Cleared(
+                FfiConverterULong.read(buf),
+                )
+            2 -> ClearNetworkActivityOutcome.GenerationChanged
+            3 -> ClearNetworkActivityOutcome.LocalNodeStopped
+            4 -> ClearNetworkActivityOutcome.Busy
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: ClearNetworkActivityOutcome) = when(value) {
+        is ClearNetworkActivityOutcome.Cleared -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`activityRevision`)
+            )
+        }
+        is ClearNetworkActivityOutcome.GenerationChanged -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is ClearNetworkActivityOutcome.LocalNodeStopped -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is ClearNetworkActivityOutcome.Busy -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: ClearNetworkActivityOutcome, buf: ByteBuffer) {
+        when(value) {
+            is ClearNetworkActivityOutcome.Cleared -> {
+                buf.putInt(1)
+                FfiConverterULong.write(value.`activityRevision`, buf)
+                Unit
+            }
+            is ClearNetworkActivityOutcome.GenerationChanged -> {
+                buf.putInt(2)
+                Unit
+            }
+            is ClearNetworkActivityOutcome.LocalNodeStopped -> {
+                buf.putInt(3)
+                Unit
+            }
+            is ClearNetworkActivityOutcome.Busy -> {
+                buf.putInt(4)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
 sealed class ContactListOutcome {
 
     data class Listed(
@@ -5664,6 +6013,110 @@ public object FfiConverterTypeLocalMessagingProfileOutcome : FfiConverterRustBuf
             is LocalMessagingProfileOutcome.DevelopmentResetRequired -> {
                 buf.putInt(6)
                 FfiConverterString.write(value.`reason`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class LocalNetworkState {
+
+    object Stopped : LocalNetworkState()
+
+
+    object Starting : LocalNetworkState()
+
+
+    object Ready : LocalNetworkState()
+
+
+    /**
+     * Inspection failed; this does not establish that the network is down.
+     */
+    data class Unavailable(
+        val `detail`: kotlin.String) : LocalNetworkState()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalNetworkState : FfiConverterRustBuffer<LocalNetworkState>{
+    override fun read(buf: ByteBuffer): LocalNetworkState {
+        return when(buf.getInt()) {
+            1 -> LocalNetworkState.Stopped
+            2 -> LocalNetworkState.Starting
+            3 -> LocalNetworkState.Ready
+            4 -> LocalNetworkState.Unavailable(
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: LocalNetworkState) = when(value) {
+        is LocalNetworkState.Stopped -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalNetworkState.Starting -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalNetworkState.Ready -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is LocalNetworkState.Unavailable -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+    }
+
+    override fun write(value: LocalNetworkState, buf: ByteBuffer) {
+        when(value) {
+            is LocalNetworkState.Stopped -> {
+                buf.putInt(1)
+                Unit
+            }
+            is LocalNetworkState.Starting -> {
+                buf.putInt(2)
+                Unit
+            }
+            is LocalNetworkState.Ready -> {
+                buf.putInt(3)
+                Unit
+            }
+            is LocalNetworkState.Unavailable -> {
+                buf.putInt(4)
+                FfiConverterString.write(value.`detail`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -10695,6 +11148,34 @@ public object FfiConverterSequenceTypeContact: FfiConverterRustBuffer<List<Conta
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeLocalAnnounceActivity: FfiConverterRustBuffer<List<LocalAnnounceActivity>> {
+    override fun read(buf: ByteBuffer): List<LocalAnnounceActivity> {
+        val len = buf.getInt()
+        return List<LocalAnnounceActivity>(len) {
+            FfiConverterTypeLocalAnnounceActivity.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<LocalAnnounceActivity>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeLocalAnnounceActivity.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<LocalAnnounceActivity>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeLocalAnnounceActivity.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeLocalBluetoothPeerSnapshot: FfiConverterRustBuffer<List<LocalBluetoothPeerSnapshot>> {
     override fun read(buf: ByteBuffer): List<LocalBluetoothPeerSnapshot> {
         val len = buf.getInt()
@@ -10713,6 +11194,34 @@ public object FfiConverterSequenceTypeLocalBluetoothPeerSnapshot: FfiConverterRu
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeLocalBluetoothPeerSnapshot.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeLocalNetworkRouteSnapshot: FfiConverterRustBuffer<List<LocalNetworkRouteSnapshot>> {
+    override fun read(buf: ByteBuffer): List<LocalNetworkRouteSnapshot> {
+        val len = buf.getInt()
+        return List<LocalNetworkRouteSnapshot>(len) {
+            FfiConverterTypeLocalNetworkRouteSnapshot.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<LocalNetworkRouteSnapshot>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeLocalNetworkRouteSnapshot.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<LocalNetworkRouteSnapshot>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeLocalNetworkRouteSnapshot.write(it, buf)
         }
     }
 }
@@ -11053,6 +11562,23 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
         { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeLxmfDiscoveryClearOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+        /**
+         * Clear only this generation's ephemeral accepted-announce activity.
+         */
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `clearNetworkActivity`(`input`: ClearNetworkActivityInput) : ClearNetworkActivityOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_clear_network_activity(FfiConverterTypeClearNetworkActivityInput.lower(`input`),),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeClearNetworkActivityOutcome.lift(it) },
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )

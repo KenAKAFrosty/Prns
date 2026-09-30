@@ -30,6 +30,13 @@ const target = {
 };
 const mockSnapshot: DevelopmentNodeSnapshot = {
   contractFingerprint: "test",
+  network: {
+    state: Bindings.LocalNetworkState.Stopped.new(),
+    routes: [],
+    announces: [],
+    activityRevision: 0n,
+    droppedAnnounceCount: 0n,
+  },
   revision: 1n,
   generationId: 1n,
   runtime: Bindings.DevelopmentNodeRuntime.Running,

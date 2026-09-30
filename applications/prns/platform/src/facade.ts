@@ -143,6 +143,8 @@ export function createDevelopmentRuntime(
     },
     readDevelopmentNodeSnapshot: (signal?: AbortSignal) =>
       call((api) => api.readSnapshot(asyncOptions(signal)), signal),
+    clearNetworkActivity: (input: Bindings.ClearNetworkActivityInput, signal?: AbortSignal) =>
+      call((api) => api.clearNetworkActivity(input, asyncOptions(signal)), signal),
     readBluetoothSettings: () => call((api) => api.readBluetoothSettings(), undefined, "storage"),
     setBluetoothEnabled: (enabled: boolean) =>
       call((api) => api.setBluetoothEnabled(enabled), undefined, "storage"),

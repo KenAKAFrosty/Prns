@@ -281,6 +281,11 @@ uint64_t uniffi_prns_app_fn_func_clear_lxmf_discovery(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CLEAR_NETWORK_ACTIVITY
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CLEAR_NETWORK_ACTIVITY
+uint64_t uniffi_prns_app_fn_func_clear_network_activity(RustBuffer input
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CREATE_MANUAL_CONTACT
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CREATE_MANUAL_CONTACT
 uint64_t uniffi_prns_app_fn_func_create_manual_contact(RustBuffer input
@@ -767,6 +772,12 @@ uint16_t uniffi_prns_app_checksum_func_change_remote_node(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CLEAR_LXMF_DISCOVERY
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CLEAR_LXMF_DISCOVERY
 uint16_t uniffi_prns_app_checksum_func_clear_lxmf_discovery(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CLEAR_NETWORK_ACTIVITY
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CLEAR_NETWORK_ACTIVITY
+uint16_t uniffi_prns_app_checksum_func_clear_network_activity(void
 
 );
 #endif

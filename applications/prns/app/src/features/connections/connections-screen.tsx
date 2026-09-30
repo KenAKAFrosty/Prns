@@ -75,6 +75,7 @@ export function ConnectionsScreen() {
         </CardHeader>
         {runtime.canStartNode ? <Button onPress={runtime.startNode}>Start node</Button> : null}
         <NavigationLink href="/nodes/local">Node diagnostics</NavigationLink>
+        <NavigationLink href="/more/activity">Network details</NavigationLink>
       </Card>
       <Card>
         <CardHeader title="Bluetooth connections">
@@ -119,8 +120,14 @@ export function ConnectionsScreen() {
                   {peer.rssiDbm === undefined ? null : (
                     <KeyValue label="Signal" value={`${peer.rssiDbm} dBm`} />
                   )}
-                  <KeyValue label="Received" value={`${peer.rxBytes.toString()} bytes`} />
-                  <KeyValue label="Sent" value={`${peer.txBytes.toString()} bytes`} />
+                  <KeyValue
+                    label="Received on this connection"
+                    value={`${peer.rxBytes.toString()} bytes`}
+                  />
+                  <KeyValue
+                    label="Sent on this connection"
+                    value={`${peer.txBytes.toString()} bytes`}
+                  />
                 </CardSection>
               ))
           : null}

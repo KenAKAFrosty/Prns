@@ -18,6 +18,7 @@ its staged SDK package selects the single aggregate image.
 | [Standalone SDK qualification](../../prns-react-native/docs/qualification.md) | Detached Android/iOS installation and strict TypeScript; Android compilation and full unsigned iOS simulator consumer build; physical default-provider ownership and Hermes reload; Android Release cold startup and direct iOS/Android TCP exchange | Retained app-owner continuity, public-registry distribution or broad background/restoration qualification |
 | [App SDK adoption](../checkpoints/2026-09-24-sdk-adoption.md) | All 23 current-source detached checks; actual packed aggregate TypeScript/Android compilation; physical iOS/Android Hermes reload with native-owner continuity; standalone Release cold starts and retained identity, pairing and mailbox/contact data | Detached aggregate iOS compilation, new board/BLE messaging acceptance, production distribution or recorded-release qualification |
 | [September 29 mobile persistence and BLE](../checkpoints/2026-09-29-mobile-persistence-recovery.md) | Retained-data standalone Release upgrades; sandbox persistence regression and repair; successful interval saves on both phones; reciprocal source-verified BLE delivery; Android restart send | Isolated iOS restart still fails until Android's app Bluetooth is reset; no broader background, radio/permission or liveness qualification |
+| [September 30 mobile recovery](../checkpoints/2026-09-30-mobile-liveness.md) | Isolated restarts and saved-contact delivery in both directions; Android Stop/Start and radio recovery; iOS interface off/on; bounded off-screen receipt on both phones | Long locked/unplugged idle, silent-peer expiry, dependable background delivery or a cause for two automatically recovered native disconnects |
 
 The default provider's JS-owned session reopens after reload. The app's native
 owner survives JS replacement and lends clients without stop authority. Keep
@@ -33,6 +34,32 @@ of inherited firmware-assurance and tester-roster failures using fresh upstream
 evidence. The September 29 reconciliation adopts upstream's subsequent repairs;
 the earlier failure records are historical, not outstanding landing work. Consult
 the PR checks for hosted status.
+
+## Network inspection source checks — September 30
+
+The app-only Network slice separates physical Bluetooth connections, current
+routes and a 200-entry accepted-announcement history. It uses existing public
+inspection/observer APIs and regenerated TypeScript, Swift and Kotlin bindings;
+the canonical Host contract is unchanged. Clear is generation-bound and does
+not mutate contacts, routes or messages. Times describe the last native network
+update, and current routes are not historical message-path evidence.
+
+The isolated source checkpoint passes:
+
+- 212 native unit tests, the generated-snapshot integration test, strict native
+  Clippy and formatting. Regressions cover bounded retention, observer delegation,
+  concurrent clear/admission, generation changes and failed route inspection.
+- 430 app tests and 67 app-platform tests, including clear acknowledgement across
+  navigation/refresh failure, newer observations, Stop and exact-width integers.
+- Both TypeScript, formatting and lint gates, plus app routes, configuration and
+  version checks. Product binding generation and its clean-output check pass,
+  as does the app's web export (without a native runtime).
+
+These are source checks, not a new phone installation or physical UI acceptance.
+The native contract changed: a Metro refresh alone cannot test it. Rebuild both
+phones for one focused Network journey (connections, announce, routes, clear and
+larger text); do not repeat broad Bluetooth lifecycle qualification for this slice.
+Conversation delivery details remain separate implementation work.
 
 ## Historical validation
 

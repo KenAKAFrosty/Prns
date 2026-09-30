@@ -279,6 +279,49 @@ export async function clearLxmfDiscovery(asyncOpts_?: { signal: AbortSignal }): 
     }
     }
 
+/**
+ * Clear only this generation's ephemeral accepted-announce activity.
+ */
+export async function clearNetworkActivity(input: ClearNetworkActivityInput, asyncOpts_?: { signal: AbortSignal }): Promise<ClearNetworkActivityOutcome> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_prns_app_fn_func_clear_network_activity(FfiConverterTypeClearNetworkActivityInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_prns_app_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_prns_app_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_prns_app_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_prns_app_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeClearNetworkActivityOutcome.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
 export async function createManualContact(input: CreateManualContactInput, asyncOpts_?: { signal: AbortSignal }): Promise<ContactMutationOutcome> {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -2593,6 +2636,45 @@ const FfiConverterTypeChangeRemoteNodeInput = (() => {
     return new FFIConverter();
 })();
 
+export type ClearNetworkActivityInput = {
+    generationId: bigint
+}
+
+/**
+ * Generated factory for {@link ClearNetworkActivityInput} record objects.
+ */
+export const ClearNetworkActivityInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClearNetworkActivityInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClearNetworkActivityInput>,
+    });
+})();
+
+const FfiConverterTypeClearNetworkActivityInput = (() => {
+    type TypeName = ClearNetworkActivityInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                generationId: FfiConverterUInt64.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterUInt64.writeIntoCursor(value.generationId, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt64.allocationSize(value.generationId);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 /**
  * Typealias from the type name used in the UDL file to the builtin type.  This
  * is needed because the UDL type name is used in function/method signatures.
@@ -3950,6 +4032,405 @@ const FfiConverterTypeLocalBluetoothSnapshot = (() => {
             return FfiConverterOptionalBoolean.allocationSize(value.desiredEnabled) +
              FfiConverterTypeLocalBluetoothState.allocationSize(value.state) +
              FfiConverterSequenceTypeLocalBluetoothPeerSnapshot.allocationSize(value.peers);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+
+// Enum: LocalNetworkState
+export enum LocalNetworkState_Tags {
+    Stopped = "Stopped",
+    Starting = "Starting",
+    Ready = "Ready",
+    Unavailable = "Unavailable"
+}
+export const LocalNetworkState = (() => {
+
+    type Stopped__interface = {
+        tag: LocalNetworkState_Tags.Stopped
+    };
+    class Stopped_ extends UniffiEnum implements Stopped__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalNetworkState";
+        readonly tag = LocalNetworkState_Tags.Stopped;
+        constructor() {
+            super("LocalNetworkState", "Stopped");
+        }
+
+        static new(): Stopped_ {
+            return new Stopped_();
+        }
+
+        static instanceOf(obj: any): obj is Stopped_ {
+            return obj.tag === LocalNetworkState_Tags.Stopped;
+        }
+
+    }
+
+    type Starting__interface = {
+        tag: LocalNetworkState_Tags.Starting
+    };
+    class Starting_ extends UniffiEnum implements Starting__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalNetworkState";
+        readonly tag = LocalNetworkState_Tags.Starting;
+        constructor() {
+            super("LocalNetworkState", "Starting");
+        }
+
+        static new(): Starting_ {
+            return new Starting_();
+        }
+
+        static instanceOf(obj: any): obj is Starting_ {
+            return obj.tag === LocalNetworkState_Tags.Starting;
+        }
+
+    }
+
+    type Ready__interface = {
+        tag: LocalNetworkState_Tags.Ready
+    };
+    class Ready_ extends UniffiEnum implements Ready__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalNetworkState";
+        readonly tag = LocalNetworkState_Tags.Ready;
+        constructor() {
+            super("LocalNetworkState", "Ready");
+        }
+
+        static new(): Ready_ {
+            return new Ready_();
+        }
+
+        static instanceOf(obj: any): obj is Ready_ {
+            return obj.tag === LocalNetworkState_Tags.Ready;
+        }
+
+    }
+
+    type Unavailable__interface = {
+        tag: LocalNetworkState_Tags.Unavailable;
+        inner:
+Readonly<{detail: string}>
+    };
+    /**
+     * Inspection failed; this does not establish that the network is down.
+     */
+    class Unavailable_ extends UniffiEnum implements Unavailable__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "LocalNetworkState";
+        readonly tag = LocalNetworkState_Tags.Unavailable;
+        readonly inner:
+Readonly<{detail: string}>;
+        constructor(
+inner: {detail: string }) {
+            super("LocalNetworkState", "Unavailable");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {detail: string }): Unavailable_ {
+            return new Unavailable_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Unavailable_ {
+            return obj.tag === LocalNetworkState_Tags.Unavailable;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is LocalNetworkState {
+        return obj[uniffiTypeNameSymbol] === "LocalNetworkState";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Stopped: Stopped_,
+  Starting: Starting_,
+  Ready: Ready_,
+  Unavailable: Unavailable_
+    });
+
+})();
+export type LocalNetworkState = InstanceType<
+    typeof LocalNetworkState['Stopped' | 'Starting' | 'Ready' | 'Unavailable']
+>;
+
+// FfiConverter for enum LocalNetworkState
+const FfiConverterTypeLocalNetworkState = (() => {
+    type TypeName = LocalNetworkState;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new LocalNetworkState.Stopped();
+                case 2: return new LocalNetworkState.Starting();
+                case 3: return new LocalNetworkState.Ready();
+                case 4: return new LocalNetworkState.Unavailable({detail: FfiConverterString.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case LocalNetworkState_Tags.Stopped: {
+                    c.writeI32(1);
+                    return;
+                }
+                case LocalNetworkState_Tags.Starting: {
+                    c.writeI32(2);
+                    return;
+                }
+                case LocalNetworkState_Tags.Ready: {
+                    c.writeI32(3);
+                    return;
+                }
+                case LocalNetworkState_Tags.Unavailable: {
+                    c.writeI32(4);
+                    const inner = value.inner;
+                    FfiConverterString.writeIntoCursor(inner.detail, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that LocalNetworkState_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case LocalNetworkState_Tags.Stopped: {
+                    return 4;
+                }
+                case LocalNetworkState_Tags.Starting: {
+                    return 4;
+                }
+                case LocalNetworkState_Tags.Ready: {
+                    return 4;
+                }
+                case LocalNetworkState_Tags.Unavailable: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterString.allocationSize(inner.detail);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type LocalNetworkRouteSnapshot = {
+    destination: Bytes16,
+    viaIdentity?: Bytes16 | undefined,
+    /**
+     * The canonical logical interface, not an inferred physical next hop.
+     */
+    interfaceId: Uint8Array,
+    hops: number,
+    learnedAgeMillis: bigint,
+    lastActivityAgeMillis: bigint,
+    expiresInMillis: bigint,
+    expired: boolean
+}
+
+/**
+ * Generated factory for {@link LocalNetworkRouteSnapshot} record objects.
+ */
+export const LocalNetworkRouteSnapshot = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<LocalNetworkRouteSnapshot, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<LocalNetworkRouteSnapshot>,
+    });
+})();
+
+const FfiConverterTypeLocalNetworkRouteSnapshot = (() => {
+    type TypeName = LocalNetworkRouteSnapshot;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                destination: FfiConverterTypeBytes16.readFromCursor(c),
+                viaIdentity: FfiConverterOptionalTypeBytes16.readFromCursor(c),
+                interfaceId: FfiConverterUint8Array.readFromCursor(c),
+                hops: FfiConverterUInt8.readFromCursor(c),
+                learnedAgeMillis: FfiConverterUInt64.readFromCursor(c),
+                lastActivityAgeMillis: FfiConverterUInt64.readFromCursor(c),
+                expiresInMillis: FfiConverterUInt64.readFromCursor(c),
+                expired: FfiConverterBool.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterTypeBytes16.writeIntoCursor(value.destination, c);
+            FfiConverterOptionalTypeBytes16.writeIntoCursor(value.viaIdentity, c);
+            FfiConverterUint8Array.writeIntoCursor(value.interfaceId, c);
+            FfiConverterUInt8.writeIntoCursor(value.hops, c);
+            FfiConverterUInt64.writeIntoCursor(value.learnedAgeMillis, c);
+            FfiConverterUInt64.writeIntoCursor(value.lastActivityAgeMillis, c);
+            FfiConverterUInt64.writeIntoCursor(value.expiresInMillis, c);
+            FfiConverterBool.writeIntoCursor(value.expired, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeBytes16.allocationSize(value.destination) +
+             FfiConverterOptionalTypeBytes16.allocationSize(value.viaIdentity) +
+             FfiConverterUint8Array.allocationSize(value.interfaceId) +
+             FfiConverterUInt8.allocationSize(value.hops) +
+             FfiConverterUInt64.allocationSize(value.learnedAgeMillis) +
+             FfiConverterUInt64.allocationSize(value.lastActivityAgeMillis) +
+             FfiConverterUInt64.allocationSize(value.expiresInMillis) +
+             FfiConverterBool.allocationSize(value.expired);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type LocalAnnounceActivity = {
+    /**
+     * Unique within the aggregate generation; clear never reuses record IDs.
+     */
+    recordId: bigint,
+    destination: Bytes16,
+    announcedIdentity: Bytes16,
+    /**
+     * Exact ingress when accepted, even after that interface is retired.
+     */
+    sourceInterface: Uint8Array,
+    hops: number,
+    ageMillis: bigint,
+    isPathResponse: boolean
+}
+
+/**
+ * Generated factory for {@link LocalAnnounceActivity} record objects.
+ */
+export const LocalAnnounceActivity = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<LocalAnnounceActivity, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<LocalAnnounceActivity>,
+    });
+})();
+
+const FfiConverterTypeLocalAnnounceActivity = (() => {
+    type TypeName = LocalAnnounceActivity;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                recordId: FfiConverterUInt64.readFromCursor(c),
+                destination: FfiConverterTypeBytes16.readFromCursor(c),
+                announcedIdentity: FfiConverterTypeBytes16.readFromCursor(c),
+                sourceInterface: FfiConverterUint8Array.readFromCursor(c),
+                hops: FfiConverterUInt8.readFromCursor(c),
+                ageMillis: FfiConverterUInt64.readFromCursor(c),
+                isPathResponse: FfiConverterBool.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterUInt64.writeIntoCursor(value.recordId, c);
+            FfiConverterTypeBytes16.writeIntoCursor(value.destination, c);
+            FfiConverterTypeBytes16.writeIntoCursor(value.announcedIdentity, c);
+            FfiConverterUint8Array.writeIntoCursor(value.sourceInterface, c);
+            FfiConverterUInt8.writeIntoCursor(value.hops, c);
+            FfiConverterUInt64.writeIntoCursor(value.ageMillis, c);
+            FfiConverterBool.writeIntoCursor(value.isPathResponse, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt64.allocationSize(value.recordId) +
+             FfiConverterTypeBytes16.allocationSize(value.destination) +
+             FfiConverterTypeBytes16.allocationSize(value.announcedIdentity) +
+             FfiConverterUint8Array.allocationSize(value.sourceInterface) +
+             FfiConverterUInt8.allocationSize(value.hops) +
+             FfiConverterUInt64.allocationSize(value.ageMillis) +
+             FfiConverterBool.allocationSize(value.isPathResponse);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * App presentation over one native inspection. Ages are measured at that
+ * inspection, not live JavaScript-clock estimates or historical message paths.
+ */
+export type LocalNetworkSnapshot = {
+    state: LocalNetworkState,
+    routes: Array<LocalNetworkRouteSnapshot>,
+    /**
+     * Newest admission first; at most 200 rows from this native generation.
+     */
+    announces: Array<LocalAnnounceActivity>,
+    activityRevision: bigint,
+    /**
+     * Retention-window evictions since clear, not packet or Bluetooth loss.
+     */
+    droppedAnnounceCount: bigint
+}
+
+/**
+ * Generated factory for {@link LocalNetworkSnapshot} record objects.
+ */
+export const LocalNetworkSnapshot = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<LocalNetworkSnapshot, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<LocalNetworkSnapshot>,
+    });
+})();
+
+const FfiConverterTypeLocalNetworkSnapshot = (() => {
+    type TypeName = LocalNetworkSnapshot;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                state: FfiConverterTypeLocalNetworkState.readFromCursor(c),
+                routes: FfiConverterSequenceTypeLocalNetworkRouteSnapshot.readFromCursor(c),
+                announces: FfiConverterSequenceTypeLocalAnnounceActivity.readFromCursor(c),
+                activityRevision: FfiConverterUInt64.readFromCursor(c),
+                droppedAnnounceCount: FfiConverterUInt64.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterTypeLocalNetworkState.writeIntoCursor(value.state, c);
+            FfiConverterSequenceTypeLocalNetworkRouteSnapshot.writeIntoCursor(value.routes, c);
+            FfiConverterSequenceTypeLocalAnnounceActivity.writeIntoCursor(value.announces, c);
+            FfiConverterUInt64.writeIntoCursor(value.activityRevision, c);
+            FfiConverterUInt64.writeIntoCursor(value.droppedAnnounceCount, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeLocalNetworkState.allocationSize(value.state) +
+             FfiConverterSequenceTypeLocalNetworkRouteSnapshot.allocationSize(value.routes) +
+             FfiConverterSequenceTypeLocalAnnounceActivity.allocationSize(value.announces) +
+             FfiConverterUInt64.allocationSize(value.activityRevision) +
+             FfiConverterUInt64.allocationSize(value.droppedAnnounceCount);
 
         }
     };
@@ -6299,6 +6780,7 @@ export type DevelopmentNodeSnapshot = {
     primaryIdentity: PrimaryIdentityState,
     localHost: LocalHostState,
     bluetooth: LocalBluetoothSnapshot,
+    network: LocalNetworkSnapshot,
     lxmf: LxmfHealth,
     controllerIdentityFingerprint?: Uint8Array | undefined,
     pairing: RemoteControlPairingState,
@@ -6339,6 +6821,7 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
                 primaryIdentity: FfiConverterTypePrimaryIdentityState.readFromCursor(c),
                 localHost: FfiConverterTypeLocalHostState.readFromCursor(c),
                 bluetooth: FfiConverterTypeLocalBluetoothSnapshot.readFromCursor(c),
+                network: FfiConverterTypeLocalNetworkSnapshot.readFromCursor(c),
                 lxmf: FfiConverterTypeLxmfHealth.readFromCursor(c),
                 controllerIdentityFingerprint: FfiConverterOptionalBytes.readFromCursor(c),
                 pairing: FfiConverterTypeRemoteControlPairingState.readFromCursor(c),
@@ -6359,6 +6842,7 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
             FfiConverterTypePrimaryIdentityState.writeIntoCursor(value.primaryIdentity, c);
             FfiConverterTypeLocalHostState.writeIntoCursor(value.localHost, c);
             FfiConverterTypeLocalBluetoothSnapshot.writeIntoCursor(value.bluetooth, c);
+            FfiConverterTypeLocalNetworkSnapshot.writeIntoCursor(value.network, c);
             FfiConverterTypeLxmfHealth.writeIntoCursor(value.lxmf, c);
             FfiConverterOptionalBytes.writeIntoCursor(value.controllerIdentityFingerprint, c);
             FfiConverterTypeRemoteControlPairingState.writeIntoCursor(value.pairing, c);
@@ -6378,6 +6862,7 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
              FfiConverterTypePrimaryIdentityState.allocationSize(value.primaryIdentity) +
              FfiConverterTypeLocalHostState.allocationSize(value.localHost) +
              FfiConverterTypeLocalBluetoothSnapshot.allocationSize(value.bluetooth) +
+             FfiConverterTypeLocalNetworkSnapshot.allocationSize(value.network) +
              FfiConverterTypeLxmfHealth.allocationSize(value.lxmf) +
              FfiConverterOptionalBytes.allocationSize(value.controllerIdentityFingerprint) +
              FfiConverterTypeRemoteControlPairingState.allocationSize(value.pairing) +
@@ -9875,6 +10360,198 @@ const FfiConverterTypeChangeRemoteNodeOutcome = (() => {
                     size += FfiConverterTypeRemoteManagementFailureStage.allocationSize(inner.stage);
                     size += FfiConverterString.allocationSize(inner.detail);
                     return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: ClearNetworkActivityOutcome
+export enum ClearNetworkActivityOutcome_Tags {
+    Cleared = "Cleared",
+    GenerationChanged = "GenerationChanged",
+    LocalNodeStopped = "LocalNodeStopped",
+    Busy = "Busy"
+}
+export const ClearNetworkActivityOutcome = (() => {
+
+    type Cleared__interface = {
+        tag: ClearNetworkActivityOutcome_Tags.Cleared;
+        inner:
+Readonly<{activityRevision: bigint}>
+    };
+    class Cleared_ extends UniffiEnum implements Cleared__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ClearNetworkActivityOutcome";
+        readonly tag = ClearNetworkActivityOutcome_Tags.Cleared;
+        readonly inner:
+Readonly<{activityRevision: bigint}>;
+        constructor(
+inner: {activityRevision: bigint }) {
+            super("ClearNetworkActivityOutcome", "Cleared");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {activityRevision: bigint }): Cleared_ {
+            return new Cleared_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Cleared_ {
+            return obj.tag === ClearNetworkActivityOutcome_Tags.Cleared;
+        }
+
+    }
+
+    type GenerationChanged__interface = {
+        tag: ClearNetworkActivityOutcome_Tags.GenerationChanged
+    };
+    class GenerationChanged_ extends UniffiEnum implements GenerationChanged__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ClearNetworkActivityOutcome";
+        readonly tag = ClearNetworkActivityOutcome_Tags.GenerationChanged;
+        constructor() {
+            super("ClearNetworkActivityOutcome", "GenerationChanged");
+        }
+
+        static new(): GenerationChanged_ {
+            return new GenerationChanged_();
+        }
+
+        static instanceOf(obj: any): obj is GenerationChanged_ {
+            return obj.tag === ClearNetworkActivityOutcome_Tags.GenerationChanged;
+        }
+
+    }
+
+    type LocalNodeStopped__interface = {
+        tag: ClearNetworkActivityOutcome_Tags.LocalNodeStopped
+    };
+    class LocalNodeStopped_ extends UniffiEnum implements LocalNodeStopped__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ClearNetworkActivityOutcome";
+        readonly tag = ClearNetworkActivityOutcome_Tags.LocalNodeStopped;
+        constructor() {
+            super("ClearNetworkActivityOutcome", "LocalNodeStopped");
+        }
+
+        static new(): LocalNodeStopped_ {
+            return new LocalNodeStopped_();
+        }
+
+        static instanceOf(obj: any): obj is LocalNodeStopped_ {
+            return obj.tag === ClearNetworkActivityOutcome_Tags.LocalNodeStopped;
+        }
+
+    }
+
+    type Busy__interface = {
+        tag: ClearNetworkActivityOutcome_Tags.Busy
+    };
+    class Busy_ extends UniffiEnum implements Busy__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ClearNetworkActivityOutcome";
+        readonly tag = ClearNetworkActivityOutcome_Tags.Busy;
+        constructor() {
+            super("ClearNetworkActivityOutcome", "Busy");
+        }
+
+        static new(): Busy_ {
+            return new Busy_();
+        }
+
+        static instanceOf(obj: any): obj is Busy_ {
+            return obj.tag === ClearNetworkActivityOutcome_Tags.Busy;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is ClearNetworkActivityOutcome {
+        return obj[uniffiTypeNameSymbol] === "ClearNetworkActivityOutcome";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Cleared: Cleared_,
+  GenerationChanged: GenerationChanged_,
+  LocalNodeStopped: LocalNodeStopped_,
+  Busy: Busy_
+    });
+
+})();
+export type ClearNetworkActivityOutcome = InstanceType<
+    typeof ClearNetworkActivityOutcome['Cleared' | 'GenerationChanged' | 'LocalNodeStopped' | 'Busy']
+>;
+
+// FfiConverter for enum ClearNetworkActivityOutcome
+const FfiConverterTypeClearNetworkActivityOutcome = (() => {
+    type TypeName = ClearNetworkActivityOutcome;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new ClearNetworkActivityOutcome.Cleared({activityRevision: FfiConverterUInt64.readFromCursor(c) });
+                case 2: return new ClearNetworkActivityOutcome.GenerationChanged();
+                case 3: return new ClearNetworkActivityOutcome.LocalNodeStopped();
+                case 4: return new ClearNetworkActivityOutcome.Busy();
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case ClearNetworkActivityOutcome_Tags.Cleared: {
+                    c.writeI32(1);
+                    const inner = value.inner;
+                    FfiConverterUInt64.writeIntoCursor(inner.activityRevision, c);
+                    return;
+                }
+                case ClearNetworkActivityOutcome_Tags.GenerationChanged: {
+                    c.writeI32(2);
+                    return;
+                }
+                case ClearNetworkActivityOutcome_Tags.LocalNodeStopped: {
+                    c.writeI32(3);
+                    return;
+                }
+                case ClearNetworkActivityOutcome_Tags.Busy: {
+                    c.writeI32(4);
+                    return;
+                }
+                default:
+                    // Throwing from here means that ClearNetworkActivityOutcome_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case ClearNetworkActivityOutcome_Tags.Cleared: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterUInt64.allocationSize(inner.activityRevision);
+                    return size;
+                }
+                case ClearNetworkActivityOutcome_Tags.GenerationChanged: {
+                    return 4;
+                }
+                case ClearNetworkActivityOutcome_Tags.LocalNodeStopped: {
+                    return 4;
+                }
+                case ClearNetworkActivityOutcome_Tags.Busy: {
+                    return 4;
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
@@ -14770,6 +15447,12 @@ const FfiConverterOptionalInt16 = new FfiConverterOptional(FfiConverterInt16);
 // FfiConverter for Array<LocalBluetoothPeerSnapshot>
 const FfiConverterSequenceTypeLocalBluetoothPeerSnapshot = new FfiConverterArray(FfiConverterTypeLocalBluetoothPeerSnapshot);
 
+// FfiConverter for Array<LocalNetworkRouteSnapshot>
+const FfiConverterSequenceTypeLocalNetworkRouteSnapshot = new FfiConverterArray(FfiConverterTypeLocalNetworkRouteSnapshot);
+
+// FfiConverter for Array<LocalAnnounceActivity>
+const FfiConverterSequenceTypeLocalAnnounceActivity = new FfiConverterArray(FfiConverterTypeLocalAnnounceActivity);
+
 // FfiConverter for Uint8Array | undefined
 const FfiConverterOptionalBytes = new FfiConverterOptional(FfiConverterUint8Array);
 
@@ -14878,6 +15561,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_prns_app_checksum_func_clear_lxmf_discovery() !== 10179) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_clear_lxmf_discovery");
+    }
+    if (nativeModule().uniffi_prns_app_checksum_func_clear_network_activity() !== 38833) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_clear_network_activity");
     }
     if (nativeModule().uniffi_prns_app_checksum_func_create_manual_contact() !== 1882) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_create_manual_contact");
@@ -15005,6 +15691,8 @@ export default Object.freeze({
     FfiConverterTypeCanonicalHostSnapshot,
     FfiConverterTypeChangeRemoteNodeInput,
     FfiConverterTypeChangeRemoteNodeOutcome,
+    FfiConverterTypeClearNetworkActivityInput,
+    FfiConverterTypeClearNetworkActivityOutcome,
     FfiConverterTypeContact,
     FfiConverterTypeContactDestinationInput,
     FfiConverterTypeContactListOutcome,
@@ -15028,6 +15716,7 @@ export default Object.freeze({
     FfiConverterTypeInitiateRemoteControlPairingInput,
     FfiConverterTypeInspectRemoteWifiTrialInput,
     FfiConverterTypeListLxmfMessagesInput,
+    FfiConverterTypeLocalAnnounceActivity,
     FfiConverterTypeLocalBluetoothPeerSnapshot,
     FfiConverterTypeLocalBluetoothSettingsOutcome,
     FfiConverterTypeLocalBluetoothSnapshot,
@@ -15035,6 +15724,9 @@ export default Object.freeze({
     FfiConverterTypeLocalHostState,
     FfiConverterTypeLocalMessagingProfile,
     FfiConverterTypeLocalMessagingProfileOutcome,
+    FfiConverterTypeLocalNetworkRouteSnapshot,
+    FfiConverterTypeLocalNetworkSnapshot,
+    FfiConverterTypeLocalNetworkState,
     FfiConverterTypeLxmfDeliveryFailure,
     FfiConverterTypeLxmfDeliveryState,
     FfiConverterTypeLxmfDirection,

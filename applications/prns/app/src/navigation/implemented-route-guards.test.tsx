@@ -7,6 +7,7 @@ import ExploreRoute from "../../app/(shell)/explore/index";
 import ComposeRoute from "../../app/(shell)/inbox/compose";
 import ConversationRoute from "../../app/(shell)/inbox/conversation/[destination]";
 import InboxRoute from "../../app/(shell)/inbox/index";
+import ActivityRoute from "../../app/(shell)/more/activity/index";
 import HelpRoute from "../../app/(shell)/more/help/index";
 import MoreRoute from "../../app/(shell)/more/index";
 import ConnectionsRoute from "../../app/(shell)/more/interfaces/index";
@@ -51,6 +52,7 @@ jest.mock("@/features/nodes/nodes-screen", () => ({
 }));
 
 jest.mock("@/features/connections/connections-screen", () => ({ ConnectionsScreen: () => null }));
+jest.mock("@/features/network/network-screen", () => ({ NetworkScreen: () => null }));
 
 jest.mock("@/features/explore/explore-screen", () => ({
   ExploreScreen: () => null,
@@ -101,6 +103,7 @@ const implementedRoutes: readonly ImplementedRouteCase[] = [
   { label: "explore", Component: ExploreRoute, validParams: {} },
   { label: "more", Component: MoreRoute, validParams: {} },
   { label: "connections", Component: ConnectionsRoute, validParams: {} },
+  { label: "network", Component: ActivityRoute, validParams: { filter: "routes" } },
   { label: "settings", Component: SettingsRoute, validParams: {} },
   { label: "about", Component: AboutRoute, validParams: {} },
   { label: "help", Component: HelpRoute, validParams: {} },

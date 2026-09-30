@@ -79,6 +79,13 @@ function snapshot(
 ): DevelopmentNodeSnapshot {
   return {
     contractFingerprint: "test-contract",
+    network: {
+      state: Bindings.LocalNetworkState.Ready.new(),
+      routes: [],
+      announces: [],
+      activityRevision: 0n,
+      droppedAnnounceCount: 0n,
+    },
     bluetooth: {
       desiredEnabled: true,
       state: Bindings.LocalBluetoothState.WaitingForPeers.new(),
@@ -193,6 +200,7 @@ function fakeProvider(
     finishRemoteWifiTrial: async () => Bindings.RemoteWifiCommandOutcome.Busy.new(),
     saveDiscoveredContact: async () => Bindings.ContactMutationOutcome.NotObserved.new(),
     clearLxmfDiscovery: async () => Bindings.LxmfDiscoveryClearOutcome.Cleared,
+    clearNetworkActivity: async () => Bindings.ClearNetworkActivityOutcome.Busy.new(),
     saveObservedDestination: async () => Bindings.ContactMutationOutcome.NotObserved.new(),
     createManualContact: async () => Bindings.ContactMutationOutcome.NotFound.new(),
     setContactAlias: async () => Bindings.ContactMutationOutcome.NotFound.new(),
@@ -231,6 +239,7 @@ function fakeProvider(
     ...overrides,
   };
   const effectRuntime: EffectDevelopmentRuntime = {
+    clearNetworkActivity: Bindings.makeEffectDevelopmentRuntime(runtime).clearNetworkActivity,
     startDevelopmentNode: (input) => Effect.promise(() => runtime.startDevelopmentNode(input)),
     readDevelopmentNodeSnapshot: Effect.promise(runtime.readDevelopmentNodeSnapshot),
     initiateRemoteControlPairing: (input) =>
@@ -408,6 +417,111 @@ describe("Foundation 1 Nodes runtime binding", () => {
     jest
       .mocked(useLocalSearchParams)
       .mockReturnValue({ nodeId: "44444444444444444444444444444444" });
+  });
+  it("refreshes after an acknowledged activity clear without rewriting newer observations", async () => {
+    const fixture = androidRestartFixture();
+    const clear = jest
+      .spyOn(fixture.runtime, "clearNetworkActivity")
+      .mockResolvedValue(
+        Bindings.ClearNetworkActivityOutcome.Cleared.new({ activityRevision: 4n }),
+      );
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60000}>
+        <RuntimeViewProbe publish={publish} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].phase).toBe("ready"));
+    const next = snapshot(5n);
+    next.network.activityRevision = 5n;
+    next.network.announces.push({
+      recordId: 12n,
+      destination: new Uint8Array(16).fill(1),
+      announcedIdentity: new Uint8Array(16).fill(2),
+      sourceInterface: new Uint8Array(8).fill(3),
+      hops: 1,
+      ageMillis: 0n,
+      isPathResponse: false,
+    });
+    fixture.runtime.readDevelopmentNodeSnapshot.mockResolvedValue(next);
+    await act(async () => {
+      expect(
+        await publish.mock.calls.at(-1)?.[0].clearNetworkActivity({ generationId: 0n }),
+      ).toEqual({
+        type: "outcome",
+        outcome: Bindings.ClearNetworkActivityOutcome.Cleared.new({ activityRevision: 4n }),
+      });
+    });
+    expect(clear).toHaveBeenCalledWith({ generationId: 0n }, expect.anything());
+    expect(publish.mock.calls.at(-1)?.[0].snapshot?.network).toEqual(next.network);
+    expect(fixture.start).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+  it("does not turn an acknowledged clear into a failure when refresh fails", async () => {
+    const fixture = androidRestartFixture();
+    const outcome = Bindings.ClearNetworkActivityOutcome.Cleared.new({ activityRevision: 4n });
+    jest.spyOn(fixture.runtime, "clearNetworkActivity").mockResolvedValue(outcome);
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60000}>
+        <RuntimeViewProbe publish={publish} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].phase).toBe("ready"));
+    fixture.runtime.readDevelopmentNodeSnapshot.mockRejectedValueOnce(
+      new Error("temporarily busy"),
+    );
+    await act(async () => {
+      expect(
+        await publish.mock.calls.at(-1)?.[0].clearNetworkActivity({ generationId: 0n }),
+      ).toEqual({ type: "outcome", outcome });
+    });
+    expect(publish.mock.calls.at(-1)?.[0].snapshot?.revision).toBe(2n);
+    expect(publish.mock.calls.at(-1)?.[0].networkActivityClear).toEqual({
+      generationId: 0n,
+      activityRevision: 4n,
+    });
+    act(() => fixture.emit({ ...snapshot(6n), generationId: 6n }));
+    expect(publish.mock.calls.at(-1)?.[0].networkActivityClear).toBeNull();
+    view.unmount();
+  });
+  it("fences an activity clear acknowledgement after Stop", async () => {
+    const fixture = androidRestartFixture();
+    let finishClear: ((outcome: Bindings.ClearNetworkActivityOutcome) => void) | undefined;
+    const clear = jest.spyOn(fixture.runtime, "clearNetworkActivity").mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishClear = resolve;
+        }),
+    );
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60000}>
+        <RuntimeViewProbe publish={publish} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].phase).toBe("ready"));
+    const pending = publish.mock.calls.at(-1)?.[0].clearNetworkActivity({ generationId: 0n });
+    await waitFor(() => expect(clear).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      fixture.emit(stoppedSnapshot());
+      await publish.mock.calls.at(-1)?.[0].stopNode();
+    });
+    // Stop refreshes its own state; only a refresh from the late clear is forbidden.
+    expect(fixture.runtime.readDevelopmentNodeSnapshot).toHaveBeenCalledTimes(1);
+    fixture.runtime.readDevelopmentNodeSnapshot.mockClear();
+    await act(async () => {
+      finishClear?.(Bindings.ClearNetworkActivityOutcome.Cleared.new({ activityRevision: 4n }));
+      expect(await pending).toEqual({
+        type: "operationFailure",
+        detail: "This device's node changed while the request was running. Try again.",
+      });
+    });
+    expect(fixture.runtime.readDevelopmentNodeSnapshot).not.toHaveBeenCalled();
+    expect(publish.mock.calls.at(-1)?.[0].snapshot?.runtime).toBe(
+      Bindings.DevelopmentNodeRuntime.Stopped,
+    );
+    view.unmount();
   });
   it("changes a stopped node's Bluetooth preference without starting the node or resetting data", async () => {
     const fixture = androidRestartFixture();
@@ -1077,7 +1191,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
     );
     expect(acquire).toHaveBeenCalledTimes(1);
   });
-  it("polls snapshots only for visible Nodes and Inbox routes", () => {
+  it("polls snapshots only for routes consuming local node data", () => {
     expect(routeConsumesDevelopmentSnapshot("/nodes")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/nodes/pair")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/inbox")).toBe(true);
@@ -1085,6 +1199,8 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(routeConsumesDevelopmentSnapshot("/contacts/0011")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/more/interfaces")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/more/interfaces/ble")).toBe(true);
+    expect(routeConsumesDevelopmentSnapshot("/more/activity")).toBe(true);
+    expect(routeConsumesDevelopmentSnapshot("/more/activity-missing")).toBe(false);
     expect(routeConsumesDevelopmentSnapshot("/inbox/0011")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/")).toBe(false);
     expect(routeConsumesDevelopmentSnapshot("/settings")).toBe(false);

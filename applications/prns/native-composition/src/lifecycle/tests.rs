@@ -1053,6 +1053,108 @@ fn running_host_state() -> LocalHostState {
     }
 }
 
+#[test]
+fn network_clear_is_generation_scoped_and_preserves_routes_host_and_lxmf() {
+    let snapshots = SnapshotStore::new();
+    snapshots.begin_generation(PrimaryIdentityState::Missing);
+    snapshots.set_runtime(DevelopmentNodeRuntime::Running);
+    let generation = snapshots.read().generation_id;
+    let activity = Arc::new(NetworkActivityStore::new(generation));
+    let clock = personal_rns::manifold::tokio::TokioClock::new();
+    let mut observer = activity.compose_observer(|_| {});
+    observer(prns_host_native::AuthenticatedAnnounce {
+        destination: prns_host::DestinationHash::new([1; 16]),
+        announced_identity: prns_host::IdentityHash::new([2; 16]),
+        source_interface: prns_host::InterfaceId::new([3; 8]),
+        hops: 1,
+        app_data: &[],
+        arrived_at_millis: clock.now().0,
+        is_path_response: false,
+    });
+    let LocalHostState::Running { host } = running_host_state() else {
+        panic!("host fixture")
+    };
+    let mut projected = activity.project_network(&host, clock.now().0);
+    projected.routes.push(LocalNetworkRouteSnapshot {
+        destination: [1; 16],
+        via_identity: None,
+        interface_id: vec![3; 8],
+        hops: 1,
+        learned_age_millis: 10,
+        last_activity_age_millis: 5,
+        expires_in_millis: 100,
+        expired: false,
+    });
+    assert!(snapshots.publish_host_inspection(
+        generation,
+        *host.clone(),
+        projected,
+        LocalBluetoothSnapshot::stopped
+    ));
+    let before = snapshots.read();
+    assert_eq!(
+        clear_network_activity(
+            &activity,
+            &snapshots,
+            &clock,
+            ClearNetworkActivityInput {
+                generation_id: generation + 1
+            }
+        ),
+        ClearNetworkActivityOutcome::GenerationChanged
+    );
+    assert_eq!(snapshots.read(), before);
+    assert!(matches!(
+        clear_network_activity(
+            &activity,
+            &snapshots,
+            &clock,
+            ClearNetworkActivityInput {
+                generation_id: generation
+            }
+        ),
+        ClearNetworkActivityOutcome::Cleared { .. }
+    ));
+    let after = snapshots.read();
+    assert!(after.network.announces.is_empty());
+    assert!(after.network.activity_revision > before.network.activity_revision);
+    assert_eq!(after.network.routes, before.network.routes);
+    assert_eq!(after.local_host, before.local_host);
+    assert_eq!(after.lxmf, before.lxmf);
+    assert_eq!(after.paired_targets, before.paired_targets);
+    // A captured successful inspection cannot republish pre-clear history.
+    assert!(!snapshots.publish_host_inspection(
+        generation,
+        *host.clone(),
+        before.network,
+        |_| panic!("stale capture must not project Bluetooth")
+    ));
+    snapshots.begin_stop(1);
+    assert!(!snapshots.publish_host_inspection(
+        generation,
+        *host,
+        activity.project_network(
+            match &after.local_host {
+                LocalHostState::Running { host } => host,
+                _ => panic!("running"),
+            },
+            clock.now().0
+        ),
+        |_| panic!("stopping capture must not publish")
+    ));
+    assert_eq!(
+        clear_network_activity(
+            &activity,
+            &snapshots,
+            &clock,
+            ClearNetworkActivityInput {
+                generation_id: generation
+            }
+        ),
+        ClearNetworkActivityOutcome::LocalNodeStopped
+    );
+}
+
 fn seed_active_pairing(snapshots: &SnapshotStore, pairing: RemoteControlPairingState) {
     snapshots.update(|snapshot| {
         snapshot.runtime = DevelopmentNodeRuntime::Running;
@@ -2278,6 +2380,7 @@ async fn initial_mailbox_refresh_failure_stops_the_paused_service() {
             Arc::new(AtomicBool::new(false)),
             client,
             Arc::new(OnceLock::new()),
+            Arc::new(NetworkActivityStore::new(snapshots.read().generation_id)),
             native.clock(),
             snapshots.clone(),
             Arc::new(AtomicBool::new(false)),

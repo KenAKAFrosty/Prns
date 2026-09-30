@@ -48,6 +48,13 @@ function snapshot(
 ): DevelopmentNodeSnapshot {
   return {
     contractFingerprint: "test-contract",
+    network: {
+      state: Bindings.LocalNetworkState.Stopped.new(),
+      routes: [],
+      announces: [],
+      activityRevision: 0n,
+      droppedAnnounceCount: 0n,
+    },
     revision: 1n,
     runtime,
     primaryIdentity: Bindings.PrimaryIdentityState.Missing.new(),

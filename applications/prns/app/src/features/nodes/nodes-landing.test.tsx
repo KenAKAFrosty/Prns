@@ -49,6 +49,13 @@ function snapshot(
 ): DevelopmentNodeSnapshot {
   return {
     contractFingerprint: "test-contract",
+    network: {
+      state: Bindings.LocalNetworkState.Stopped.new(),
+      routes: [],
+      announces: [],
+      activityRevision: 0n,
+      droppedAnnounceCount: 0n,
+    },
     revision: 1n,
     runtime,
     primaryIdentity: Bindings.PrimaryIdentityState.Missing.new(),
@@ -121,9 +128,11 @@ test("puts this phone, its connections and controls before paired nodes", () => 
   expect(headings.indexOf("Bluetooth access")).toBeLessThan(headings.indexOf("Paired nodes"));
   expect(headings.indexOf("Node controls")).toBeLessThan(headings.indexOf("Paired nodes"));
   expect(view.getByRole("link", { name: "Connections" })).toBeTruthy();
+  expect(view.getByRole("link", { name: "Network" })).toBeTruthy();
   expect(view.UNSAFE_getAllByType(Link).map((link) => link.props.href)).toContain(
     "/more/interfaces",
   );
+  expect(view.UNSAFE_getAllByType(Link).map((link) => link.props.href)).toContain("/more/activity");
   expect(view.getByText("Paired")).toBeTruthy();
   expect(view.queryByText("Connected")).toBeNull();
   expect(view.getByRole("link", { name: "Manage node" })).toBeTruthy();

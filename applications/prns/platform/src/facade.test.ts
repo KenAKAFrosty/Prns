@@ -43,6 +43,13 @@ function encode<T>(codec: FfiConverter<Uint8Array, T>, value: T): number[] {
 }
 const snapshot = (): Bindings.DevelopmentNodeSnapshot => ({
   contractFingerprint: Bindings.NATIVE_CONTRACT_FINGERPRINT,
+  network: {
+    state: Bindings.LocalNetworkState.Stopped.new(),
+    routes: [],
+    announces: [],
+    activityRevision: 0n,
+    droppedAnnounceCount: 0n,
+  },
   bluetooth: { desiredEnabled: true, state: Bindings.LocalBluetoothState.Stopped.new(), peers: [] },
   revision: 18_446_744_073_709_551_615n,
   generationId: 9_007_199_254_740_993n,
@@ -169,6 +176,57 @@ test("checks both semantic contracts once and uses generated startup codecs", as
   );
   expect(api.bindingContract).toHaveBeenCalledTimes(1);
   expect(load).toHaveBeenCalledTimes(1);
+});
+
+test("clears only native network activity without storage or outbound preparation", async () => {
+  const input = { generationId: 9_007_199_254_740_993n };
+  const outcome = Bindings.ClearNetworkActivityOutcome.Cleared.new({
+    activityRevision: 18_446_744_073_709_551_615n,
+  });
+  const clearNetworkActivity = jest.fn(async () => outcome);
+  const { runtime, native } = setup({ clearNetworkActivity });
+  const controller = new AbortController();
+  await expect(runtime.clearNetworkActivity(input, controller.signal)).resolves.toEqual(outcome);
+  expect(clearNetworkActivity).toHaveBeenCalledWith(input, { signal: controller.signal });
+  expect(native.prepareStorage).not.toHaveBeenCalled();
+  expect(native.prepareOutbound).not.toHaveBeenCalled();
+  controller.abort();
+  await expect(runtime.clearNetworkActivity(input, controller.signal)).rejects.toThrow();
+  expect(clearNetworkActivity).toHaveBeenCalledTimes(1);
+});
+
+test("generated network codecs preserve full-width durations and activity IDs", () => {
+  const maximum = 18_446_744_073_709_551_615n;
+  const network: Bindings.LocalNetworkSnapshot = {
+    state: Bindings.LocalNetworkState.Ready.new(),
+    routes: [
+      {
+        destination: new Uint8Array(16).fill(1),
+        viaIdentity: undefined,
+        interfaceId: new Uint8Array(8).fill(2),
+        hops: 3,
+        learnedAgeMillis: maximum,
+        lastActivityAgeMillis: maximum - 1n,
+        expiresInMillis: maximum - 2n,
+        expired: false,
+      },
+    ],
+    announces: [
+      {
+        recordId: maximum,
+        destination: new Uint8Array(16).fill(3),
+        announcedIdentity: new Uint8Array(16).fill(4),
+        sourceInterface: new Uint8Array(8).fill(5),
+        hops: 2,
+        ageMillis: maximum - 3n,
+        isPathResponse: true,
+      },
+    ],
+    activityRevision: maximum - 4n,
+    droppedAnnounceCount: maximum - 5n,
+  };
+  const codec = codecs.FfiConverterTypeLocalNetworkSnapshot;
+  expect(codec.lift(Uint8Array.from(encode(codec, network)))).toEqual(network);
 });
 
 test.each(["app", "host"] as const)(
