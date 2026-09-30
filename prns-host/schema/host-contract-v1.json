@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "abi": 1,
   "productVersion": "0.3.7",
   "scalars": [
@@ -619,7 +619,9 @@
         { "name": "Dropped", "value": 37 },
         { "name": "PersistenceCause", "value": 38 },
         { "name": "PersistenceTarget", "value": 39 },
-        { "name": "AppData", "value": 40 }
+        { "name": "AppData", "value": 40 },
+        { "name": "LocalDestination", "value": 41 },
+        { "name": "ArrivedAtMillis", "value": 42 }
       ]
     }
   ],
@@ -1246,7 +1248,9 @@
           "fields": [
             { "name": "linkId", "type": "LinkId" },
             { "name": "sourceInterface", "type": "InterfaceId" },
-            { "name": "plaintext", "type": "bytes" }
+            { "name": "plaintext", "type": "bytes" },
+            { "name": "localDestination", "type": "DestinationHash", "optional": true },
+            { "name": "arrivedAtMillis", "type": "safeUint" }
           ]
         }
       ]
@@ -1428,7 +1432,28 @@
     "union": "HostCommand",
     "receiver": "Host",
     "result": "IssuedCommand",
-    "cPrefix": "prns_host_"
+    "cPrefix": "prns_host_",
+    "outcomes": {
+      "Announce": "Announced",
+      "SendSinglePacket": "PacketDelivered",
+      "CloseLink": "LinkCloseQueued",
+      "AttachTcpServer": "InterfaceAttached",
+      "AttachTcpClient": "InterfaceAttached",
+      "AttachUdp": "InterfaceAttached",
+      "DetachInterface": "InterfaceDetached",
+      "EstablishLink": "LinkEstablished",
+      "RequestPath": "PathDiscovered",
+      "Identify": "Identified",
+      "SendLinkPacket": "PacketDelivered",
+      "Request": "ResponseReceived",
+      "Respond": "ResponseSent",
+      "SendResource": "ResourceSent",
+      "SetLinkResourceStrategy": "ResourceStrategySet",
+      "SetDestinationResourceStrategy": "ResourceStrategySet",
+      "SendChannelMessage": "PacketDelivered",
+      "AllowRequester": "RequesterAllowed",
+      "AttachInterface": "InterfaceAttached"
+    }
   },
   "operations": [
     { "name": "contractInfo", "kind": "query", "parameters": [], "result": { "type": "ContractInfo", "ownership": "copied" }, "status": true },
@@ -1478,5 +1503,187 @@
     { "name": "eventResourceStream", "kind": "claim", "receiver": { "type": "Event", "mutable": true }, "parameters": [], "result": { "type": "ResourceStream", "ownership": "owned", "exclusive": true }, "status": true },
     { "name": "resourceStreamRelease", "kind": "release", "receiver": { "type": "ResourceStream", "mutable": true, "consumed": true }, "parameters": [], "status": false },
     { "name": "resourceStreamNext", "kind": "pull", "receiver": { "type": "ResourceStream", "mutable": true }, "parameters": [{ "name": "maximumBytes", "type": "size", "passing": "value" }], "result": { "type": "ResourceChunk", "ownership": "borrowed", "validUntil": "resourceStreamNextOrRelease" }, "status": true }
-  ]
+  ],
+  "session": {
+    "records": [
+      {
+        "name": "PrnsLimits",
+        "fields": [
+          {
+            "name": "pendingCommands",
+            "type": "safeUint"
+          },
+          {
+            "name": "applicationEvents",
+            "type": "safeUint"
+          },
+          {
+            "name": "retainedEventBytes",
+            "type": "safeUint"
+          },
+          {
+            "name": "diagnostics",
+            "type": "safeUint"
+          }
+        ]
+      },
+      {
+        "name": "HostConfig",
+        "fields": [
+          {
+            "name": "identity",
+            "type": "IdentityConfig"
+          },
+          {
+            "name": "persistence",
+            "type": "PersistenceConfig"
+          },
+          {
+            "name": "role",
+            "type": "HostRole"
+          },
+          {
+            "name": "destinations",
+            "type": {
+              "array": "DestinationConfig"
+            }
+          },
+          {
+            "name": "requiredCapabilities",
+            "type": {
+              "array": "Capability"
+            }
+          },
+          {
+            "name": "limits",
+            "type": "PrnsLimits"
+          }
+        ]
+      },
+      {
+        "name": "LifecycleSnapshot",
+        "fields": [
+          {
+            "name": "revision",
+            "type": "u64"
+          },
+          {
+            "name": "state",
+            "type": "HostLifecycleState"
+          }
+        ]
+      }
+    ],
+    "unions": [
+      {
+        "name": "HostFailure",
+        "cases": [
+          {
+            "name": "EventBackpressureExceeded",
+            "value": 0,
+            "fields": [
+              {
+                "name": "limits",
+                "type": "PrnsLimits"
+              },
+              {
+                "name": "rejectedEventBytes",
+                "type": "safeUint"
+              }
+            ]
+          },
+          {
+            "name": "BackendFailed",
+            "value": 1,
+            "fields": [
+              {
+                "name": "component",
+                "type": "string"
+              },
+              {
+                "name": "detail",
+                "type": "string"
+              }
+            ]
+          },
+          {
+            "name": "ContractViolated",
+            "value": 2,
+            "fields": [
+              {
+                "name": "detail",
+                "type": "string"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "HostLifecycleState",
+        "cases": [
+          {
+            "name": "Starting",
+            "value": 0,
+            "fields": []
+          },
+          {
+            "name": "Running",
+            "value": 1,
+            "fields": []
+          },
+          {
+            "name": "Stopping",
+            "value": 2,
+            "fields": []
+          },
+          {
+            "name": "Stopped",
+            "value": 3,
+            "fields": [
+              {
+                "name": "reason",
+                "type": "StopReason"
+              }
+            ]
+          },
+          {
+            "name": "Failed",
+            "value": 4,
+            "fields": [
+              {
+                "name": "failure",
+                "type": "HostFailure"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "CommandSettlement",
+        "cases": [
+          {
+            "name": "Succeeded",
+            "value": 0,
+            "fields": [
+              {
+                "name": "outcome",
+                "type": "CommandOutcome"
+              }
+            ]
+          },
+          {
+            "name": "Failed",
+            "value": 1,
+            "fields": [
+              {
+                "name": "failure",
+                "type": "CommandFailure"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+
 }

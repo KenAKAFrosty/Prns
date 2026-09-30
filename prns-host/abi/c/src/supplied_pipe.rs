@@ -228,10 +228,11 @@ pub unsafe extern "C" fn prns_supplied_pipe_register_readiness(
             return status(AbiStatus::InvalidArgument);
         };
         let readiness = Arc::clone(&supplied_pipe.request_readiness);
-        let registered = match readiness.register(callback, context) {
-            Ok(registered) => registered,
-            Err(_) => return status(AbiStatus::AlreadyClaimed),
-        };
+        let registered =
+            match readiness.register(crate::readiness::callback_signal(callback, context)) {
+                Ok(registered) => registered,
+                Err(_) => return status(AbiStatus::AlreadyClaimed),
+            };
         *lock(&supplied_pipe.readiness_registration) = Some(Arc::clone(&registered));
         *out = Box::into_raw(Box::new(PrnsReadinessRegistration {
             readiness,

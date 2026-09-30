@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 
-import { startNode, type InterfaceConfigSpec } from '../../index.js';
+import { hostSchemaVersion, startNode, type InterfaceConfigSpec } from '../../index.js';
 
 type FixtureInterface = InterfaceConfigSpec & {
   bitrate?: { kind: 'Auto' | 'BitsPerSecond'; value?: number };
@@ -58,7 +58,7 @@ test('every shared typed interface fixture marshals without touching hardware', 
       'utf8'
     )
   ) as InterfaceFixture;
-  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.schemaVersion, hostSchemaVersion());
   assert.equal(fixture.interfaces.length, 19);
 
   const node = startNode({}, () => {});

@@ -1,0 +1,387 @@
+diff --git a/cpp/test-harness/test-runner.cpp b/cpp/test-harness/test-runner.cpp
+index d80ce8a..0fa6cd5 100644
+--- a/cpp/test-harness/test-runner.cpp
++++ b/cpp/test-harness/test-runner.cpp
+@@ -55,12 +55,19 @@ typedef void (*RegisterPlayerFN)(
+     facebook::jsi::Runtime &rt,
+     std::shared_ptr<facebook::react::CallInvoker> callInvoker,
+     Resolver resolver);
++typedef void *(*RegisterPlayerWithCleanupFN)(
++    facebook::jsi::Runtime &rt,
++    std::shared_ptr<facebook::react::CallInvoker> callInvoker,
++    Resolver resolver);
++typedef void (*ReleasePlayerCleanupFN)(void *token, bool queueStopped);
+ 
+ // A native library exports one of two entries: the player's three-argument
+ // `ubrnRegisterPlayer`, or v1's two-argument `registerNatives`.
+ struct NativeLib {
+   RegisterNativesFN legacy = nullptr;
+   RegisterPlayerFN player = nullptr;
++  RegisterPlayerWithCleanupFN playerWithCleanup = nullptr;
++  ReleasePlayerCleanupFN releaseCleanup = nullptr;
+ };
+ 
+ #ifndef _WIN32
+@@ -73,6 +80,10 @@ static NativeLib loadNativeLib(const char *libraryPath) {
+   NativeLib lib;
+   dlerror();
+   lib.player = (RegisterPlayerFN)dlsym(handle, "ubrnRegisterPlayer");
++  lib.playerWithCleanup = (RegisterPlayerWithCleanupFN)dlsym(
++      handle, "ubrnRegisterPlayerWithCleanup");
++  lib.releaseCleanup =
++      (ReleasePlayerCleanupFN)dlsym(handle, "ubrnReleasePlayerCleanup");
+   if (!lib.player) {
+     dlerror();
+     lib.legacy = (RegisterNativesFN)dlsym(handle, "registerNatives");
+@@ -94,6 +105,10 @@ static NativeLib loadNativeLib(const char *libraryPath) {
+   }
+   NativeLib lib;
+   lib.player = (RegisterPlayerFN)GetProcAddress(hModule, "ubrnRegisterPlayer");
++  lib.playerWithCleanup = (RegisterPlayerWithCleanupFN)GetProcAddress(
++      hModule, "ubrnRegisterPlayerWithCleanup");
++  lib.releaseCleanup = (ReleasePlayerCleanupFN)GetProcAddress(
++      hModule, "ubrnReleasePlayerCleanup");
+   if (!lib.player) {
+     lib.legacy = (RegisterNativesFN)GetProcAddress(hModule, "registerNatives");
+   }
+@@ -348,6 +363,45 @@ int main(int argc, char **argv) {
+     for (int i = 0; i < iterations; i++) {
+       std::cout << "Running iteration " << (i + 1) << std::endl;
+ 
++      if (std::getenv("UBRN_TEST_JOINED_QUEUE_TEARDOWN")) {
++        std::shared_ptr<facebook::jsi::Runtime> runtime;
++        std::shared_ptr<uniffi::testing::MyCallInvoker> invoker;
++        std::vector<void *> cleanupTokens;
++        int status = 1;
++        std::thread jsThread([&]() {
++          try {
++            runtime = createRuntime();
++            invoker = std::make_shared<uniffi::testing::MyCallInvoker>(*runtime);
++            for (const auto &lib : nativeLibs) {
++              if (!lib.playerWithCleanup || !lib.releaseCleanup) {
++                throw std::runtime_error("player lacks host cleanup test entry");
++              }
++              cleanupTokens.push_back(
++                  lib.playerWithCleanup(*runtime, invoker, makeResolver()));
++            }
++            status = runEventLoop(*runtime, invoker, *optCode, jsPath);
++          } catch (const std::exception &error) {
++            std::cerr << error.what() << std::endl;
++          }
++        });
++        jsThread.join();
++        std::cout << "-- JS queue joined; native cleanup and Hermes destruction "
++                     "run on the host thread" << std::endl;
++        const bool cleanupEnabled =
++            std::getenv("UBRN_TEST_SKIP_QUEUE_CLEANUP") == nullptr;
++        for (size_t j = 0; j < cleanupTokens.size(); j++) {
++          nativeLibs[j].releaseCleanup(cleanupTokens[j], cleanupEnabled);
++        }
++        // Match Android: its JS queue is stopped before module invalidation,
++        // and resetNative then destroys Hermes on the host executor thread.
++        runtime.reset();
++        invoker.reset();
++        if (status != 0) {
++          return status;
++        }
++        continue;
++      }
++
+       auto runtime = createRuntime();
+       auto invoker = std::make_shared<uniffi::testing::MyCallInvoker>(*runtime);
+ 
+diff --git a/runtimes/jsi/android/cpp-adapter.cpp b/runtimes/jsi/android/cpp-adapter.cpp
+index bc0ba7e..7ce52e6 100644
+--- a/runtimes/jsi/android/cpp-adapter.cpp
++++ b/runtimes/jsi/android/cpp-adapter.cpp
+@@ -9,7 +9,7 @@
+ 
+ #include "ubrn_jsi_player.h"
+ 
+-extern "C" JNIEXPORT jboolean JNICALL
++extern "C" JNIEXPORT jlong JNICALL
+ Java_dev_ubjs_reactnative_UniffiPlayerModule_nativeInstall(
+     JNIEnv *env, jobject /*thiz*/, jlong rtPtr,
+     jobject callInvokerHolderJavaObj) {
+@@ -22,7 +22,19 @@ Java_dev_ubjs_reactnative_UniffiPlayerModule_nativeInstall(
+ 
+   // A library's jniLibs land in the app's native-library directory, which the
+   // linker already searches, so a soname is enough.
+-  ubrn::jsi_player::install(*runtime, jsCallInvoker,
+-                            [](const std::string &name) { return "lib" + name + ".so"; });
+-  return JNI_TRUE;
++  auto cleanup = ubrn::jsi_player::install(
++      *runtime, jsCallInvoker,
++      [](const std::string &name) { return "lib" + name + ".so"; });
++  return reinterpret_cast<jlong>(
++      new ubrn::jsi_player::RuntimeCleanup(std::move(cleanup)));
++}
++
++extern "C" JNIEXPORT void JNICALL
++Java_dev_ubjs_reactnative_UniffiPlayerModule_nativeRelease(
++    JNIEnv *, jobject, jlong token, jboolean jsQueueStopped) {
++  auto cleanup = std::unique_ptr<ubrn::jsi_player::RuntimeCleanup>(
++      reinterpret_cast<ubrn::jsi_player::RuntimeCleanup *>(token));
++  if (cleanup && jsQueueStopped == JNI_TRUE) {
++    (*cleanup)();
++  }
+ }
+diff --git a/runtimes/jsi/android/src/main/java/dev/ubjs/reactnative/UniffiPlayerModule.kt b/runtimes/jsi/android/src/main/java/dev/ubjs/reactnative/UniffiPlayerModule.kt
+index c780f4e..acebe39 100644
+--- a/runtimes/jsi/android/src/main/java/dev/ubjs/reactnative/UniffiPlayerModule.kt
++++ b/runtimes/jsi/android/src/main/java/dev/ubjs/reactnative/UniffiPlayerModule.kt
+@@ -5,6 +5,7 @@
+  */
+ package dev.ubjs.reactnative
+ 
++import android.util.Log
+ import com.facebook.react.bridge.ReactApplicationContext
+ import com.facebook.react.module.annotations.ReactModule
+ import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
+@@ -13,17 +14,52 @@ import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder
+ class UniffiPlayerModule(reactContext: ReactApplicationContext) :
+   NativeUniffiPlayerSpec(reactContext) {
+ 
++  private var nativeToken: Long = 0
++  private var installedJSThread: Thread? = null
++  private var invalidated = false
++
+   override fun getName(): String = NAME
+ 
+   // Implemented in cpp-adapter.cpp: installs `globalThis.uniffi` on the runtime.
+-  external fun nativeInstall(runtimePointer: Long, callInvoker: CallInvokerHolder): Boolean
++  external fun nativeInstall(runtimePointer: Long, callInvoker: CallInvokerHolder): Long
++  external fun nativeRelease(token: Long, jsQueueStopped: Boolean)
+ 
++  @Synchronized
+   override fun install(): Boolean {
++    if (invalidated) return false
++    if (nativeToken != 0L) return true
+     val context = reactApplicationContext
+-    return nativeInstall(
++    check(context.isOnJSQueueThread) { "UniffiPlayer.install must run on the JS thread" }
++    nativeToken = nativeInstall(
+       context.javaScriptContextHolder!!.get(),
+       context.jsCallInvokerHolder!!,
+     )
++    installedJSThread = Thread.currentThread()
++    return nativeToken != 0L
++  }
++
++  @Synchronized
++  override fun invalidate() {
++    invalidated = true
++    val token = nativeToken
++    nativeToken = 0
++    val thread = installedJSThread
++    installedJSThread = null
++    if (token != 0L) {
++      // RN's ReactInstance.destroy quits and joins its queues before calling
++      // TurboModuleManager.invalidate, then destroys Hermes on the host thread.
++      // Verify the actual installed JS thread terminated; never infer that an
++      // arbitrary module invalidation or HostObject GC is safe to abort.
++      val queueStopped = thread != null && !thread.isAlive
++      if (!queueStopped) {
++        Log.e(NAME, "JS queue still alive during invalidation; retaining native work for safety")
++      }
++      nativeRelease(token, queueStopped)
++      if (queueStopped) {
++        Log.d(NAME, "Native teardown completed after JS thread termination")
++      }
++    }
++    super.invalidate()
+   }
+ 
+   companion object {
+diff --git a/runtimes/jsi/cpp/CMakeLists.txt b/runtimes/jsi/cpp/CMakeLists.txt
+index 7d217d7..67f8b26 100644
+--- a/runtimes/jsi/cpp/CMakeLists.txt
++++ b/runtimes/jsi/cpp/CMakeLists.txt
+@@ -49,6 +49,7 @@ endif ()
+ 
+ set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+ add_library(ubrn_jsi_player SHARED shim.cpp callbacks.cpp abi_assert.cpp)
++target_compile_definitions(ubrn_jsi_player PRIVATE UBRN_JSI_TEST_HARNESS)
+ if (MSVC)
+     target_compile_definitions(ubrn_jsi_player PRIVATE NOMINMAX)
+ endif ()
+diff --git a/runtimes/jsi/cpp/callbacks.h b/runtimes/jsi/cpp/callbacks.h
+index f34b293..af33124 100644
+--- a/runtimes/jsi/cpp/callbacks.h
++++ b/runtimes/jsi/cpp/callbacks.h
+@@ -57,20 +57,17 @@ struct AbortState {
+ // runtime. A released waiter leaves its return bytes zeroed, which is what
+ // core's unloading path produces anyway.
+ //
+-// Call it only on the thread that drains this module's CallInvoker, and only
+-// with that runtime about to be destroyed. A released worker returns and pops
++// Call it on the thread that drains this module's CallInvoker with the runtime
++// about to be destroyed, OR after the host has stopped and joined that queue.
++// A released worker returns and pops
+ // its frame, while a task already posted for it writes the callback's result
+ // through out_return and RustCallStatus pointers into that same frame. Nothing
+ // stops such a task running except teardown discarding the queue, so aborting
+ // from anywhere else hands a live task a dead stack.
+ //
+-// The sole caller is ~UniffiPlayerRoot, and JSI promises neither half of that:
+-// a host object's dtor runs on an unspecified thread and may be as late as
+-// runtime shutdown. What holds it up is reachability. The root is owned by the
+-// `uniffi` global and by every live module object, so nothing collects it while
+-// the runtime those belong to is still serving calls. The caller checks the
+-// thread half at runtime rather than trusting it: the shim builds with NDEBUG,
+-// so its assert is documentation only.
++// The player root checks thread identity for destructor-triggered cleanup.
++// Android instead supplies an explicit host cleanup token, invoked only after
++// its recorded JS thread has terminated. Arbitrary off-thread GC cannot abort.
+ void abortModule(const ModuleCallbackInfo &info);
+ 
+ // Mirror of core::RustCallStatusC (repr(C), natural alignment — do NOT pack).
+diff --git a/runtimes/jsi/cpp/shim.cpp b/runtimes/jsi/cpp/shim.cpp
+index 34d0d68..06d34cf 100644
+--- a/runtimes/jsi/cpp/shim.cpp
++++ b/runtimes/jsi/cpp/shim.cpp
+@@ -509,10 +509,27 @@ public:
+     // JSI reserves the right to finalize a host object on any thread, so the
+     // thread is checked and not merely asserted: the shim ships with NDEBUG.
+     const bool onJsThread = std::this_thread::get_id() == jsThreadId_;
+-    assert(onJsThread && "uniffi player root finalized off the JS thread");
++    // JSI explicitly allows arbitrary-thread GC. Unless the host has already
++    // proved its JS queue stopped, only the JS-thread destructor can release
++    // workers/futures. Other finalizers remain conservatively disarm-only.
++    if (!closed_) {
++      close(onJsThread);
++    }
++    g_rootTeardowns.fetch_add(1, std::memory_order_relaxed);
++  }
++
++  // The caller has joined the JS queue. No VM operations are allowed here.
++  void closeAfterQueueStopped() { close(true); }
++
++private:
++  void close(bool queueStoppedOrOnJsThread) {
++    if (closed_) {
++      return;
++    }
++    closed_ = true;
+     // Stop callbacks in every module before freeing any future: its Drop can
+     // reach another namespace in the same process-owned Rust library.
+-    if (onJsThread) {
++    if (queueStoppedOrOnJsThread) {
+       for (const auto &info : modules_) {
+         try {
+           ubrn_cb::abortModule(*info);
+@@ -524,26 +541,19 @@ public:
+       // Per module, because one that fails must not strand the rest still
+       // armed — and because a destructor that throws terminates.
+       try {
+-        // abortModule releases workers whose posted tasks still hold pointers
+-        // into the frames those workers are about to pop, and only this thread
+-        // discards those tasks before they can run. Off it, leave the workers
+-        // parked: a stuck worker is a leak, a task writing a popped frame is
+-        // memory corruption. Disarm regardless — a flag and a hook, safe from
+-        // any thread, and the half that stops the next call reaching a dead
+-        // runtime. A worker released here loops straight back into another
+-        // call; what turns that call away is the aborted flag, which
+-        // cb_dispatch checks before posting, since the disarm below has not run
+-        // yet.
+-        if (onJsThread) {
++        // Release native ownership only when queued callbacks cannot run: JS
++        // teardown on its own thread, or an explicitly stopped/joined queue.
++        // An arbitrary off-thread GC has neither guarantee, so disarm alone.
++        if (queueStoppedOrOnJsThread) {
+           freePendingRustFutures(*info);
+         }
+         ubrn_jsi_disarm(info->module);
+       } catch (...) {
+       }
+     }
+-    g_rootTeardowns.fetch_add(1, std::memory_order_relaxed);
+   }
+ 
++public:
+   jsi::Value get(jsi::Runtime &rt, const jsi::PropNameID &name) override;
+ 
+   // The invoker and JS thread of the runtime this root belongs to.
+@@ -562,6 +572,7 @@ public:
+   }
+ 
+ private:
++  bool closed_ = false;
+   std::shared_ptr<facebook::react::CallInvoker> callInvoker_;
+   std::thread::id jsThreadId_;
+   ubrn::jsi_player::Resolver resolver_;
+@@ -919,25 +930,50 @@ jsi::Value UniffiPlayerRoot::get(jsi::Runtime &rt,
+   return jsi::Value::undefined();
+ }
+ 
+-void installUniffiHostObject(
++ubrn::jsi_player::RuntimeCleanup installUniffiHostObject(
+     jsi::Runtime &rt, std::shared_ptr<facebook::react::CallInvoker> callInvoker,
+     ubrn::jsi_player::Resolver resolver) {
+   auto root = std::make_shared<UniffiPlayerRoot>(
+       std::move(callInvoker), std::this_thread::get_id(), std::move(resolver));
++  std::weak_ptr<UniffiPlayerRoot> weakRoot = root;
+   rt.global().setProperty(
+       rt, "uniffi", jsi::Object::createFromHostObject(rt, std::move(root)));
++  return [weakRoot]() {
++    if (auto root = weakRoot.lock()) {
++      root->closeAfterQueueStopped();
++    }
++  };
+ }
+ 
+ } // namespace
+ 
+ namespace ubrn::jsi_player {
+-void install(jsi::Runtime &rt,
++RuntimeCleanup install(jsi::Runtime &rt,
+              std::shared_ptr<facebook::react::CallInvoker> callInvoker,
+              Resolver resolver) {
+-  installUniffiHostObject(rt, std::move(callInvoker), std::move(resolver));
++  return installUniffiHostObject(rt, std::move(callInvoker), std::move(resolver));
+ }
+ } // namespace ubrn::jsi_player
+ 
++#ifdef UBRN_JSI_TEST_HARNESS
++// The standalone host exercises Android's joined-queue teardown using the
++// same native cleanup token that the Kotlin module retains. Not shipped.
++extern "C" void *ubrnRegisterPlayerWithCleanup(
++    jsi::Runtime &rt, std::shared_ptr<facebook::react::CallInvoker> invoker,
++    ubrn::jsi_player::Resolver resolver) {
++  return new ubrn::jsi_player::RuntimeCleanup(
++      ubrn::jsi_player::install(rt, std::move(invoker), std::move(resolver)));
++}
++
++extern "C" void ubrnReleasePlayerCleanup(void *token, bool queueStopped) {
++  auto cleanup = std::unique_ptr<ubrn::jsi_player::RuntimeCleanup>(
++      static_cast<ubrn::jsi_player::RuntimeCleanup *>(token));
++  if (queueStopped) {
++    (*cleanup)();
++  }
++}
++#endif
++
+ // Two-argument entry kept for the Hermes test-runner, which dlsyms this symbol
+ // from v1's generated Entrypoint too: names are taken as paths.
+ extern "C" void
+diff --git a/runtimes/jsi/cpp/ubrn_jsi_player.h b/runtimes/jsi/cpp/ubrn_jsi_player.h
+index 309516d..9814107 100644
+--- a/runtimes/jsi/cpp/ubrn_jsi_player.h
++++ b/runtimes/jsi/cpp/ubrn_jsi_player.h
+@@ -19,8 +19,15 @@ namespace ubrn::jsi_player {
+ // soname on Android, an embedded framework on iOS, a directory on the host.
+ using Resolver = std::function<std::string(const std::string &name)>;
+ 
++// Host-only teardown, with no JSI access. May be called from another thread
++// ONLY after the host has stopped and joined the JS queue: no callback can
++// still execute, and none of its queued tasks can execute in the future.
++// Idempotent; does not keep the JS runtime or its player root alive.
++using RuntimeCleanup = std::function<void()>;
++
+ // Installs `globalThis.uniffi` on `rt`. Call once per JS runtime.
+-void install(facebook::jsi::Runtime &rt,
++// Hosts that destroy on their JS thread can ignore the returned cleanup.
++RuntimeCleanup install(facebook::jsi::Runtime &rt,
+              std::shared_ptr<facebook::react::CallInvoker> callInvoker,
+              Resolver resolver);
+ 

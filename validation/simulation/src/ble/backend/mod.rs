@@ -4,9 +4,9 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use personal_rns::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, Control, ControlParseError, DialOutcome,
-    L2capPlan, LinkCapabilities, Origin, PeerProtocol, RadioMode, ScanningMode, BLE_HW_MTU,
-    CONTROL_MAX_LEN,
+    AdvertisingMode, BleBackend, BleControl, BleEvent, BleLink, BleLinkParts, Control,
+    ControlParseError, DialOutcome, L2capPlan, LinkCapabilities, Origin, PeerProtocol, RadioMode,
+    ScanningMode, BLE_HW_MTU, CONTROL_MAX_LEN,
 };
 use tokio::sync::{mpsc, watch};
 
@@ -585,8 +585,7 @@ impl Drop for VirtualBleBackend {
 
 pub struct VirtualBleLink {
     peer_address: BleAddress,
-    control_tx: mpsc::Sender<ControlValue>,
-    control_rx: mpsc::Receiver<ControlValue>,
+    control: VirtualBleControl,
     data_tx: mpsc::Sender<Vec<u8>>,
     data_rx: mpsc::Receiver<Vec<u8>>,
     maximum_frame_length: usize,
@@ -600,13 +599,26 @@ impl VirtualBleLink {
         self.peer_signal_strength_dbm
     }
 
+    /// Sends one bounded wire value, including malformed PDUs for parser-refusal scenarios.
+    pub async fn send_control_value(&mut self, bytes: &[u8]) -> Result<(), VirtualBleError> {
+        self.control.send_control_value(bytes).await
+    }
+}
+
+pub struct VirtualBleControl {
+    control_tx: mpsc::Sender<ControlValue>,
+    control_rx: mpsc::Receiver<ControlValue>,
+    value_limit: usize,
+    endpoint: Arc<ConnectionEndpoint>,
+}
+
+impl VirtualBleControl {
     fn closed(&self) -> watch::Receiver<bool> {
         self.endpoint.connection.subscribe()
     }
 
-    /// Sends one bounded wire value, including malformed PDUs for parser-refusal scenarios.
-    pub async fn send_control_value(&mut self, bytes: &[u8]) -> Result<(), VirtualBleError> {
-        let value = ControlValue::new(bytes, self.gatt.control_value_limit)?;
+    async fn send_control_value(&mut self, bytes: &[u8]) -> Result<(), VirtualBleError> {
+        let value = ControlValue::new(bytes, self.value_limit)?;
         let mut closed = self.closed();
         if *closed.borrow_and_update() {
             return Err(VirtualBleError::LinkClosed);
@@ -623,20 +635,10 @@ impl VirtualBleLink {
     }
 }
 
-impl BleLink for VirtualBleLink {
+impl BleControl for VirtualBleControl {
     type Error = VirtualBleError;
-    type Source = VirtualBleSource;
-    type Sink = VirtualBleSink;
 
-    fn peer_protocol(&self) -> PeerProtocol {
-        PeerProtocol::Native
-    }
-
-    fn address(&self) -> BleAddress {
-        self.peer_address
-    }
-
-    async fn control_send(&mut self, message: &Control) -> Result<(), Self::Error> {
+    async fn send(&mut self, message: &Control) -> Result<(), Self::Error> {
         let mut value = [0; CONTROL_MAX_LEN];
         let len = message
             .encode(&mut value)
@@ -644,7 +646,7 @@ impl BleLink for VirtualBleLink {
         self.send_control_value(&value[..len]).await
     }
 
-    async fn control_recv(&mut self) -> Result<Control, Self::Error> {
+    async fn recv(&mut self) -> Result<Control, Self::Error> {
         let mut closed = self.closed();
         if *closed.borrow_and_update() {
             return Err(VirtualBleError::LinkClosed);
@@ -657,6 +659,29 @@ impl BleLink for VirtualBleLink {
                 Control::try_decode(value.as_bytes()).map_err(VirtualBleError::ControlParse)
             },
         }
+    }
+}
+
+impl BleLink for VirtualBleLink {
+    type Error = VirtualBleError;
+    type Source = VirtualBleSource;
+    type Sink = VirtualBleSink;
+    type Control = VirtualBleControl;
+
+    fn peer_protocol(&self) -> PeerProtocol {
+        PeerProtocol::Native
+    }
+
+    fn address(&self) -> BleAddress {
+        self.peer_address
+    }
+
+    async fn control_send(&mut self, message: &Control) -> Result<(), Self::Error> {
+        self.control.send(message).await
+    }
+
+    async fn control_recv(&mut self) -> Result<Control, Self::Error> {
+        self.control.recv().await
     }
 
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), Self::Error> {
@@ -672,16 +697,17 @@ impl BleLink for VirtualBleLink {
         }
     }
 
-    fn into_data(self) -> (Self::Source, Self::Sink) {
-        (
-            VirtualBleSource::new(self.data_rx, self.endpoint.clone()),
-            VirtualBleSink::new(
+    fn into_parts(self) -> BleLinkParts<Self::Source, Self::Sink, Self::Control> {
+        BleLinkParts {
+            source: VirtualBleSource::new(self.data_rx, self.endpoint.clone()),
+            sink: VirtualBleSink::new(
                 self.data_tx,
                 self.maximum_frame_length,
                 self.gatt.data_value_limit,
                 self.endpoint,
             ),
-        )
+            control: Some(self.control),
+        }
     }
 }
 
@@ -706,34 +732,44 @@ fn link_pair(
     let (control_b_tx, control_b_rx) = mpsc::channel(control_capacity);
     let (data_a_tx, data_a_rx) = mpsc::channel(data_capacity);
     let (data_b_tx, data_b_rx) = mpsc::channel(data_capacity);
+    let endpoint_a = Arc::new(ConnectionEndpoint {
+        connection: lifecycle.clone(),
+        side: super::connection::ConnectionSide::Dialer,
+    });
+    let endpoint_b = Arc::new(ConnectionEndpoint {
+        connection: lifecycle,
+        side: super::connection::ConnectionSide::Listener,
+    });
     (
         VirtualBleLink {
             peer_address: address_b,
-            control_tx: control_a_tx,
-            control_rx: control_b_rx,
+            control: VirtualBleControl {
+                control_tx: control_a_tx,
+                control_rx: control_b_rx,
+                value_limit: gatt.control_value_limit,
+                endpoint: endpoint_a.clone(),
+            },
             data_tx: data_a_tx,
             data_rx: data_b_rx,
             maximum_frame_length,
             gatt,
             peer_signal_strength_dbm: signal_strength_b,
-            endpoint: Arc::new(ConnectionEndpoint {
-                connection: lifecycle.clone(),
-                side: super::connection::ConnectionSide::Dialer,
-            }),
+            endpoint: endpoint_a,
         },
         VirtualBleLink {
             peer_address: address_a,
-            control_tx: control_b_tx,
-            control_rx: control_a_rx,
+            control: VirtualBleControl {
+                control_tx: control_b_tx,
+                control_rx: control_a_rx,
+                value_limit: gatt.control_value_limit,
+                endpoint: endpoint_b.clone(),
+            },
             data_tx: data_b_tx,
             data_rx: data_a_rx,
             maximum_frame_length,
             gatt,
             peer_signal_strength_dbm: signal_strength_a,
-            endpoint: Arc::new(ConnectionEndpoint {
-                connection: lifecycle,
-                side: super::connection::ConnectionSide::Listener,
-            }),
+            endpoint: endpoint_b,
         },
     )
 }
@@ -745,8 +781,8 @@ mod capture_tests;
 mod tests {
     use super::*;
     use personal_rns::interfaces::bluetooth_auto::{
-        AppleHost, BleIdentity, BleSink, CloseReason, DiscoveryGroupId, DiscoveryGroupSet,
-        Endpoint, PeerDiscoveryGroups,
+        AppleHost, BleIdentity, BleSink, BleSource, CloseReason, DiscoveryGroupId,
+        DiscoveryGroupSet, Endpoint, PeerDiscoveryGroups,
     };
 
     fn wire_links(
@@ -776,6 +812,7 @@ mod tests {
         };
         first.control_send(&close).await?;
         let value = second
+            .control
             .control_rx
             .recv()
             .await
@@ -807,6 +844,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn settled_native_control_remains_on_the_same_connection_as_data(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let gatt = VirtualGattConfig::new(CONTROL_MAX_LEN, 20)?;
+        let (first, second) = wire_links(gatt, gatt)?;
+        let mut first = first.into_parts();
+        let mut second = second.into_parts();
+        let close = Control::Close {
+            reason: CloseReason::Incompatible,
+        };
+        first
+            .control
+            .as_mut()
+            .ok_or(VirtualBleError::LinkClosed)?
+            .send(&close)
+            .await?;
+        assert_eq!(
+            second
+                .control
+                .as_mut()
+                .ok_or(VirtualBleError::LinkClosed)?
+                .recv()
+                .await?,
+            close
+        );
+        first.sink.send_frame(b"same session").await?;
+        let mut frame = [0; 32];
+        let len = second.source.recv_frame(&mut frame).await?;
+        assert_eq!(&frame[..len], b"same session");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn negotiated_control_limit_and_parser_refusals_are_exact(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (mut first, mut second) = wire_links(
@@ -821,7 +890,7 @@ mod tests {
             })
         );
         assert!(matches!(
-            second.control_rx.try_recv(),
+            second.control.control_rx.try_recv(),
             Err(mpsc::error::TryRecvError::Empty)
         ));
         for (bytes, expected) in [
@@ -856,7 +925,11 @@ mod tests {
             Err(VirtualBleError::L2capUnavailable)
         );
         assert_eq!(first.upgrade(&L2capPlan::None).await, Ok(()));
-        let (_source, mut sink) = first.into_data();
+        let BleLinkParts {
+            source: _source,
+            mut sink,
+            control: _source_control,
+        } = first.into_parts();
         let (sent, values) = tokio::join!(sink.send_frame(b"hello-world"), async {
             let mut values = Vec::new();
             for _ in 0..3 {

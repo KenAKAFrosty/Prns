@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn first_release_baseline_is_synchronized() {
         assert_eq!(HOST_CONTRACT.abi, 1);
-        assert_eq!(HOST_CONTRACT.schema_version, 1);
+        assert_eq!(HOST_CONTRACT.schema_version, 2);
         assert_eq!(HOST_CONTRACT.product_version, env!("CARGO_PKG_VERSION"));
     }
 }

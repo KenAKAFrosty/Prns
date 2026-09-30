@@ -169,3 +169,86 @@ async fn describe_preserves_transport_and_response_failures() {
         )))
     ));
 }
+
+#[tokio::test]
+async fn generic_exchange_uses_request_specific_bounds_and_rejects_mismatched_responses() {
+    use prns_core::remote_control::{RemoteControlRequest, RemoteControlRequestKind};
+    for kind in RemoteControlRequestKind::ALL {
+        assert!(
+            RemoteControlResponseKind::ALL
+                .into_iter()
+                .any(|response| response.wire_value() == kind.wire_value()),
+            "every request has an exact response kind"
+        );
+    }
+    let (handle, mut command_rx) = test_handle();
+    let link_id = LinkId::new([0x78; 16]);
+    let requesting = tokio::spawn(async move {
+        handle
+            .remote_control(link_id)
+            .exchange(RemoteControlRequest::DescribePower)
+            .await
+    });
+    let Some(HostCommand::RequestAny(request)) = command_rx.recv().await else {
+        panic!("generic typed request")
+    };
+    assert_eq!(
+        request.maximum_response_bytes,
+        crate::units::ByteLimit::Maximum(
+            RemoteControlRequestKind::DescribePower.maximum_response_encoded_len() as u64
+        )
+    );
+    assert_eq!(
+        RemoteControlRequest::parse(request.data.as_slice()),
+        Ok(RemoteControlRequest::DescribePower)
+    );
+    let unexpected =
+        RemoteControlResponse::AnnounceSelf(RemoteControlAnnounceSelfOutcome::Announced);
+    assert!(request
+        .completion
+        .send(Ok((encoded_response(&unexpected), RttMillis::new(8))))
+        .is_ok());
+    assert!(matches!(
+        requesting.await,
+        Ok(Err(RemoteControlError::UnexpectedResponse {
+            expected: RemoteControlResponseKind::DescribePower,
+            found: RemoteControlResponseKind::AnnounceSelf
+        }))
+    ));
+}
+
+#[tokio::test]
+async fn generic_exchange_preserves_protocol_failures_and_exact_rtt() {
+    use prns_core::remote_control::RemoteControlRequest;
+    for response in [
+        RemoteControlResponse::DescribePower(
+            prns_core::capabilities::power::PowerSnapshot::UNKNOWN,
+        ),
+        RemoteControlResponse::ProtocolError(RemoteControlProtocolError::UnknownRequestKind {
+            found: 99,
+        }),
+    ] {
+        let (handle, mut command_rx) = test_handle();
+        let requesting = tokio::spawn(async move {
+            handle
+                .remote_control(LinkId::new([0x79; 16]))
+                .exchange(RemoteControlRequest::DescribePower)
+                .await
+        });
+        let Some(HostCommand::RequestAny(request)) = command_rx.recv().await else {
+            panic!("generic typed request")
+        };
+        assert!(request
+            .completion
+            .send(Ok((encoded_response(&response), RttMillis::new(u64::MAX))))
+            .is_ok());
+        match response {
+            RemoteControlResponse::ProtocolError(error) => assert!(
+                matches!(requesting.await, Ok(Err(RemoteControlError::Remote(found))) if found == error)
+            ),
+            expected => assert!(
+                matches!(requesting.await, Ok(Ok((found,rtt))) if found == expected && rtt.millis() == u64::MAX)
+            ),
+        }
+    }
+}

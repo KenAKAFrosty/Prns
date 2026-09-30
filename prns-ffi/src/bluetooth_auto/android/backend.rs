@@ -4,7 +4,7 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::bluetooth_auto::{BleAddress, LinkCapabilities, Psm};
 
 use super::bridge::{AndroidBleBridge, Event, PEER_CAPACITY};
-use super::link::AndroidBleLink;
+use super::link::{AndroidBleControl, AndroidBleLink, LinkLease};
 use super::AndroidBleError;
 
 pub struct AndroidBleBackend {
@@ -23,6 +23,11 @@ impl AndroidBleBackend {
 impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
     type Error = AndroidBleError;
     type Link = AndroidBleLink;
+
+    async fn set_session_liveness(&mut self, enabled: bool) -> Result<(), AndroidBleError> {
+        self.bridge.set_session_liveness(enabled);
+        Ok(())
+    }
 
     async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), AndroidBleError> {
         self.bridge.set_radio_mode(mode);
@@ -68,14 +73,23 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
                     let dialed = pending.dialed;
                     let peer_rssi = pending.rssi;
                     let link = AndroidBleLink {
+                        control: AndroidBleControl {
+                            lease: LinkLease::new(
+                                self.bridge.clone(),
+                                pending.conn_id,
+                                pending.data_out.clone(),
+                            ),
+                            inbound: pending.control_in,
+                            outbound: pending.control_out,
+                            work: pending.work.clone(),
+                            liveness_mode: pending.liveness_mode,
+                        },
                         conn_id: pending.conn_id,
                         address: pending.address,
                         peer_protocol: pending.peer_protocol,
                         peer_identity: pending.peer_identity,
-                        control_in: pending.control_in,
                         l2cap_in: Some(pending.l2cap_in),
                         data_in: Some(pending.data_in),
-                        control_out: pending.control_out,
                         l2cap_out: pending.l2cap_out,
                         data_out: pending.data_out,
                         l2cap_up: pending.l2cap_up,
@@ -104,12 +118,6 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
         }
     }
 
-    async fn on_link_closed(&mut self, address: BleAddress) {
-        if !self.bridge.close_by_address(*address.octets()) {
-            crate::diagnostic_log::error!(
-                "bluetooth: could not queue Android physical close for {:02x?}",
-                address.octets()
-            );
-        }
-    }
+    // Physical cleanup belongs to LinkLease, not an address-level policy notice:
+    // an incumbent and a rejected challenger can share the same Bluetooth address.
 }

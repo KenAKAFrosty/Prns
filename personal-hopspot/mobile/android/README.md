@@ -15,6 +15,12 @@ crate adds the other platform adapters Android needs:
 plain Android `View` so the same APK can run on old Android devices as well as
 modern phones.
 
+The Bluetooth adapter compiles the transport-only
+[GATT ownership helpers](../../../prns-react-native/android/src/main/java/rs/reticulum/prns/bluetooth)
+and their shared tests from the general Android SDK sources. They have no Expo
+dependency and are compiled into this app's existing artifact. Keep operation
+deadlines and callback ownership there instead of adding a second Hopspot copy.
+
 ## Native ABI — `org.personal.hopspot.NativeBridge`
 
 ```

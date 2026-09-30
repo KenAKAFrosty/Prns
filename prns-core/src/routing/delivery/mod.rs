@@ -50,6 +50,9 @@ pub enum Delivery<'p> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkDelivery<'p> {
     pub link_id: LinkId,
+    /// The local receiving destination for a responder link. Initiated links
+    /// receive from a remote destination and have no local destination owner.
+    pub local_destination: Option<DestinationHash>,
     pub plaintext: &'p [u8],
     pub arrived_at: InstantMillis,
     pub source_interface: InterfaceId,

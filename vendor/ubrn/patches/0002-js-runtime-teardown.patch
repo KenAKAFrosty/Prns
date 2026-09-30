@@ -1,0 +1,404 @@
+diff --git a/cpp/test-harness/test-runner.cpp b/cpp/test-harness/test-runner.cpp
+index 5afd6f0..d80ce8a 100644
+--- a/cpp/test-harness/test-runner.cpp
++++ b/cpp/test-harness/test-runner.cpp
+@@ -220,6 +220,18 @@ static int runEventLoop(facebook::jsi::Runtime &runtime,
+                         std::shared_ptr<uniffi::testing::MyCallInvoker> invoker,
+                         const std::string &jsCode, const char *jsPath) {
+   try {
++    bool reloadRequested = false;
++    runtime.global().setProperty(
++        runtime, "__testRequestReload",
++        facebook::jsi::Function::createFromHostFunction(
++            runtime,
++            facebook::jsi::PropNameID::forAscii(runtime, "__testRequestReload"),
++            0, [&reloadRequested](facebook::jsi::Runtime &,
++                                 const facebook::jsi::Value &,
++                                 const facebook::jsi::Value *, size_t) {
++              reloadRequested = true;
++              return facebook::jsi::Value::undefined();
++            }));
+     installPerformanceNow(runtime);
+     installHeapInfo(runtime);
+     installGc(runtime);
+@@ -258,7 +270,8 @@ static int runEventLoop(facebook::jsi::Runtime &runtime,
+     constexpr int64_t kGcGrowthThreshold = 4 * 1024 * 1024; // 4 MB
+     int64_t lastGcBytes = allocatedBytes();
+     uint64_t loopCount = 0;
+-    while ((nextTimeMs = peekMacroTask.call(runtime).getNumber()) >= 0) {
++    while (!reloadRequested &&
++           (nextTimeMs = peekMacroTask.call(runtime).getNumber()) >= 0) {
+       double duration = nextTimeMs - currentTimeMillis();
+       if (duration > 0) {
+         invoker->waitForTaskOrTimeout(duration);
+@@ -324,8 +337,15 @@ int main(int argc, char **argv) {
+   try {
+     auto nativeLibs = loadNativeLibraries(argc, argv);
+ 
+-    // Run the test twice
+-    for (int i = 0; i < 2; i++) {
++    // Default to the reload boundary; lifecycle stress tests can repeat it.
++    int iterations = 2;
++    if (const char *value = std::getenv("UBRN_TEST_RUNTIME_ITERATIONS")) {
++      iterations = std::stoi(value);
++      if (iterations < 1 || iterations > 1000) {
++        throw std::runtime_error("UBRN_TEST_RUNTIME_ITERATIONS must be 1..1000");
++      }
++    }
++    for (int i = 0; i < iterations; i++) {
+       std::cout << "Running iteration " << (i + 1) << std::endl;
+ 
+       auto runtime = createRuntime();
+diff --git a/fixtures/reload-safety/src/lib.rs b/fixtures/reload-safety/src/lib.rs
+index 4e310ff..5b9566b 100644
+--- a/fixtures/reload-safety/src/lib.rs
++++ b/fixtures/reload-safety/src/lib.rs
+@@ -11,8 +11,12 @@
+ //! only way a test can hold something built by the first runtime and reach it
+ //! from the second.
+ 
++use std::future::Future;
++use std::pin::Pin;
+ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+ use std::sync::{Arc, Mutex};
++use std::task::{Context, Poll, Waker};
++use std::time::Duration;
+ 
+ uniffi::setup_scaffolding!();
+ 
+@@ -81,3 +85,70 @@ pub fn pinger_started() -> bool {
+ pub fn pinger_returned() -> bool {
+     PINGER_RETURNED.load(Ordering::Acquire)
+ }
++
++static ASYNC_STARTED: AtomicU32 = AtomicU32::new(0);
++static ASYNC_DROPPED: AtomicU32 = AtomicU32::new(0);
++static PROCESS_WORK_COMPLETED: AtomicU32 = AtomicU32::new(0);
++
++struct DelayedState {
++    ready: bool,
++    waker: Option<Waker>,
++}
++
++struct DelayedQuery {
++    state: Arc<Mutex<DelayedState>>,
++}
++
++impl Drop for DelayedQuery {
++    fn drop(&mut self) {
++        ASYNC_DROPPED.fetch_add(1, Ordering::SeqCst);
++    }
++}
++
++impl Future for DelayedQuery {
++    type Output = u32;
++
++    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
++        let mut state = self.state.lock().unwrap();
++        if state.ready {
++            Poll::Ready(PROCESS_WORK_COMPLETED.load(Ordering::SeqCst))
++        } else {
++            state.waker = Some(cx.waker().clone());
++            Poll::Pending
++        }
++    }
++}
++
++/// The process-owned worker continues even if its exported query future drops.
++#[uniffi::export]
++pub async fn delayed_query(delay_ms: u32) -> u32 {
++    ASYNC_STARTED.fetch_add(1, Ordering::SeqCst);
++    let state = Arc::new(Mutex::new(DelayedState {
++        ready: false,
++        waker: None,
++    }));
++    let worker_state = state.clone();
++    std::thread::spawn(move || {
++        std::thread::sleep(Duration::from_millis(delay_ms.into()));
++        PROCESS_WORK_COMPLETED.fetch_add(1, Ordering::SeqCst);
++        let wake = {
++            let mut state = worker_state.lock().unwrap();
++            state.ready = true;
++            state.waker.take()
++        };
++        if let Some(waker) = wake {
++            waker.wake();
++        }
++    });
++    DelayedQuery { state }.await
++}
++
++#[uniffi::export]
++pub fn active_query_count() -> u32 {
++    ASYNC_STARTED.load(Ordering::SeqCst) - ASYNC_DROPPED.load(Ordering::SeqCst)
++}
++
++#[uniffi::export]
++pub fn process_work_completed() -> u32 {
++    PROCESS_WORK_COMPLETED.load(Ordering::SeqCst)
++}
+diff --git a/fixtures/reload-safety/tests/bindings/test_reload_pending_async.ts b/fixtures/reload-safety/tests/bindings/test_reload_pending_async.ts
+new file mode 100644
+index 0000000..a040e53
+--- /dev/null
++++ b/fixtures/reload-safety/tests/bindings/test_reload_pending_async.ts
+@@ -0,0 +1,94 @@
++/*
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/
++ */
++import { asyncTest } from "@/asserts";
++import { uniffiRustFutureHandleCount } from "@ubjs/core";
++import theModule, {
++  activeQueryCount,
++  delayedQuery,
++  noteIteration,
++  processWorkCompleted,
++} from "@/generated/reload_safety";
++import nativeModule from "@/generated/reload_safety-ffi";
++
++theModule.initialize();
++
++declare const __testRequestReload: () => void;
++const delay = (ms: number) =>
++  new Promise<void>((resolve) => setTimeout(resolve, ms));
++
++void asyncTest(
++  "pending async calls are released when JavaScript is replaced",
++  async (t) => {
++    const iteration = noteIteration();
++    const diagnostics = nativeModule() as unknown as {
++      $uniffiTrampolineCount(): number;
++    };
++    // New module initialization happens before any abandoned worker wakes.
++    t.assertEqual(
++      activeQueryCount(),
++      0,
++      "destroyed runtime must release pending Rust futures",
++    );
++    t.assertEqual(
++      uniffiRustFutureHandleCount(),
++      0,
++      "replacement starts with no JS resolvers",
++    );
++    if (iteration > 1) {
++      await delay(500);
++      t.assertEqual(
++        processWorkCompleted(),
++        (iteration - 1) * 14,
++        "the same Rust process state survives each replacement",
++      );
++    }
++
++    t.assertEqual(activeQueryCount(), 0);
++    await delayedQuery(5);
++    t.assertEqual(activeQueryCount(), 0, "completed query releases its future");
++    const trampolines = diagnostics.$uniffiTrampolineCount();
++    const abort = new AbortController();
++    const cancelled = delayedQuery(250, { signal: abort.signal });
++    abort.abort();
++    let aborted = false;
++    try {
++      await cancelled;
++    } catch (error) {
++      aborted = (error as Error).name === "AbortError";
++    }
++    t.assertTrue(aborted, "explicit cancellation rejects the promise");
++    t.assertEqual(
++      activeQueryCount(),
++      0,
++      "explicit cancellation releases its future",
++    );
++    t.assertEqual(
++      uniffiRustFutureHandleCount(),
++      0,
++      "no completed/cancelled resolver retained",
++    );
++    for (let i = 0; i < 12; i++) {
++      void delayedQuery(350);
++    }
++    t.assertEqual(
++      activeQueryCount(),
++      12,
++      "queries really are pending at teardown",
++    );
++    t.assertEqual(uniffiRustFutureHandleCount(), 12);
++    t.assertEqual(
++      diagnostics.$uniffiTrampolineCount(),
++      trampolines,
++      "async polling reuses its continuation trampoline",
++    );
++    console.info(
++      `iteration ${iteration}: completed/cancelled futures released; 12 pending at teardown`,
++    );
++    t.end();
++    __testRequestReload();
++  },
++  10000,
++);
+diff --git a/fixtures/reload-safety/tests/test_bindings.rs b/fixtures/reload-safety/tests/test_bindings.rs
+index 7ecb0df..2539bd1 100644
+--- a/fixtures/reload-safety/tests/test_bindings.rs
++++ b/fixtures/reload-safety/tests/test_bindings.rs
+@@ -13,4 +13,5 @@ ubrn_macros::build_foreign_language_testcases! {
+     "tests/bindings/test_reload_stale_callback.ts" => [Jsi2],
+     "tests/bindings/test_reload_root_pinned.ts" => [Jsi2],
+     "tests/bindings/test_reload_parked_worker.ts" => [Jsi2],
++    "tests/bindings/test_reload_pending_async.ts" => [Jsi2],
+ }
+diff --git a/runtimes/jsi/cpp/callbacks.cpp b/runtimes/jsi/cpp/callbacks.cpp
+index ff84198..b05cfd6 100644
+--- a/runtimes/jsi/cpp/callbacks.cpp
++++ b/runtimes/jsi/cpp/callbacks.cpp
+@@ -435,6 +435,15 @@ const void *trampolineForJsFn(jsi::Runtime &rt, UbrnJsiModule *module,
+ static void cb_on_js_thread_impl(const uint8_t *args, uint8_t *ret,
+                                  const void *udPtr) {
+   const auto *ud = static_cast<const CbUserData *>(udPtr);
++  // Dropping a pending Rust future during teardown can synchronously invoke
++  // its continuation. The core is still callable so we can free it, but no
++  // callback may touch the runtime while its HostObjects are finalizing.
++  if (ud->abortState != nullptr) {
++    std::lock_guard<std::mutex> lk(ud->abortState->mtx);
++    if (ud->abortState->aborted) {
++      return;
++    }
++  }
+   jsi::Runtime &rt = *ud->rt;
+   const CallbackShape &shape = ud->shape;
+ 
+diff --git a/runtimes/jsi/cpp/callbacks.h b/runtimes/jsi/cpp/callbacks.h
+index 306286c..f34b293 100644
+--- a/runtimes/jsi/cpp/callbacks.h
++++ b/runtimes/jsi/cpp/callbacks.h
+@@ -198,6 +198,11 @@ struct ModuleCallbackInfo {
+   // can disarm it at teardown. Borrowed: core owns it and it is never freed.
+   UbrnJsiModule *module = nullptr;
+ 
++  // Rust futures polled by this runtime and not yet freed by generated JS.
++  // The JS `finally` cannot run after runtime destruction. Only the JS thread
++  // mutates this map; root teardown consumes it after stopping callbacks.
++  std::map<uint64_t, std::string> pendingRustFutures;
++
+   // Copied off the runtime-scoped root at registration and handed to every
+   // trampoline this module builds; see CbUserData for why they are not global.
+   std::shared_ptr<facebook::react::CallInvoker> callInvoker;
+diff --git a/runtimes/jsi/cpp/shim.cpp b/runtimes/jsi/cpp/shim.cpp
+index ffcd551..34d0d68 100644
+--- a/runtimes/jsi/cpp/shim.cpp
++++ b/runtimes/jsi/cpp/shim.cpp
+@@ -39,8 +39,51 @@ struct FnInfo {
+   // Core's slot width for retTag, resolved at registration (0 for void).
+   size_t retSize;
+   bool hasRcs;
++  std::string futureFree;
++  bool isFutureFree = false;
+ };
+ 
++// UniFFI supplies a poll/free pair for each async FFI result type. Resolve
++// those stable ABI symbols once and verify their shapes, so ownership works
++// for generated wrappers in both normal and verbose modes without JS hooks.
++void identifyFutureFunctions(std::vector<FnInfo> &fns) {
++  const std::string pollMarker = "_rust_future_poll_";
++  for (auto &poll : fns) {
++    const auto marker = poll.name.find(pollMarker);
++    if (poll.name.rfind("ffi_", 0) != 0 || marker == std::string::npos ||
++        poll.args.size() != 3 || poll.args[0].tag != UBRN_TY_HANDLE ||
++        poll.args[1].tag != UBRN_TY_CALLBACK ||
++        poll.args[1].name != "RustFutureContinuationCallback" ||
++        poll.args[2].tag != UBRN_TY_HANDLE || poll.retTag != UBRN_TY_VOID ||
++        poll.hasRcs) {
++      continue;
++    }
++    auto freeName = poll.name;
++    freeName.replace(marker, pollMarker.size(), "_rust_future_free_");
++    for (auto &free : fns) {
++      if (free.name == freeName && free.args.size() == 1 &&
++          free.args[0].tag == UBRN_TY_HANDLE && free.retTag == UBRN_TY_VOID &&
++          !free.hasRcs) {
++        poll.futureFree = free.name;
++        free.isFutureFree = true;
++        break;
++      }
++    }
++  }
++}
++
++void freePendingRustFutures(ubrn_cb::ModuleCallbackInfo &info) {
++  for (const auto &[future, freeName] : info.pendingRustFutures) {
++    const void *args[] = {&future};
++    const size_t sizes[] = {sizeof(future)};
++    // Still armed here: root teardown aborts every callback first, frees
++    // futures second, and only then disarms the module's native call path.
++    ubrn_jsi_call(info.module, freeName.c_str(), args, sizes, 1, nullptr, nullptr,
++                  0);
++  }
++  info.pendingRustFutures.clear();
++}
++
+ // A jsi buffer that owns the std::string holding its bytes.
+ //
+ // Used by string_to_buffer: `jsi::String::utf8()` already returns a string
+@@ -108,6 +151,7 @@ buildModuleObject(jsi::Runtime &rt, UbrnJsiModule *handle,
+                   std::shared_ptr<ubrn_cb::ModuleCallbackInfo> cbInfo,
+                   std::shared_ptr<UniffiPlayerRoot> root) {
+   jsi::Object mod(rt);
++  identifyFutureFunctions(*fns);
+   for (const auto &fn : *fns) {
+     FnInfo info = fn; // copy into the closure
+     auto hostFn = jsi::Function::createFromHostFunction(
+@@ -198,6 +242,16 @@ buildModuleObject(jsi::Runtime &rt, UbrnJsiModule *handle,
+                         std::to_string(rc));
+           }
+ 
++          if (!info.futureFree.empty() || info.isFutureFree) {
++            uint64_t future;
++            memcpy(&future, backing[0].data(), sizeof(future));
++            if (info.isFutureFree) {
++              cbInfo->pendingRustFutures.erase(future);
++            } else {
++              cbInfo->pendingRustFutures.emplace(future, info.futureFree);
++            }
++          }
++
+           // Write the RustCallStatus code back into the JS status object so the
+           // generated uniffiCheckCallStatus can see it. On error (code != 0)
+           // with a populated error buffer, copy the error bytes into a fresh JS
+@@ -438,8 +492,9 @@ std::atomic<uint64_t> g_rootTeardowns{0};
+ //
+ // The destructor performs no VM operation — no jsi::Value, no property, no call
+ // into the runtime. JSI runs host-object dtors from inside the GC with no
+-// usable Runtime& guaranteed, so it may only touch the shim's own mutexes and a
+-// C flag, and must stay cheap.
++// usable Runtime& guaranteed. It stops callbacks and releases native future
++// ownership without evaluating JS. Rust future destructors must not wait for
++// frontend work; independently owned service tasks can continue running.
+ class UniffiPlayerRoot : public jsi::HostObject,
+                          public std::enable_shared_from_this<UniffiPlayerRoot> {
+ public:
+@@ -455,6 +510,16 @@ public:
+     // thread is checked and not merely asserted: the shim ships with NDEBUG.
+     const bool onJsThread = std::this_thread::get_id() == jsThreadId_;
+     assert(onJsThread && "uniffi player root finalized off the JS thread");
++    // Stop callbacks in every module before freeing any future: its Drop can
++    // reach another namespace in the same process-owned Rust library.
++    if (onJsThread) {
++      for (const auto &info : modules_) {
++        try {
++          ubrn_cb::abortModule(*info);
++        } catch (...) {
++        }
++      }
++    }
+     for (const auto &info : modules_) {
+       // Per module, because one that fails must not strand the rest still
+       // armed — and because a destructor that throws terminates.
+@@ -470,7 +535,7 @@ public:
+         // cb_dispatch checks before posting, since the disarm below has not run
+         // yet.
+         if (onJsThread) {
+-          ubrn_cb::abortModule(*info);
++          freePendingRustFutures(*info);
+         }
+         ubrn_jsi_disarm(info->module);
+       } catch (...) {
