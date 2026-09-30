@@ -26,16 +26,9 @@ controls. Web renders the shell with an explicitly unavailable native runtime;
 there is no browser or Tauri application provider.
 
 The [Connections checkpoint](../../checkpoints/2026-09-24-local-bluetooth.md)
-records retained-data iOS/Android installs, persisted app-off cold launches and
-reciprocal physical-peer reconnect. Android OS-radio recovery and 1.5x/2x text
-also passed. Final layout builds passed Android 2x and iOS maximum accessibility
-text checks, retained saved data and each reported one physical peer; the checkpoint
-distinguishes the checks repeated after those layout changes. iOS radio recovery,
-permission-denial trials and broader background/restoration qualification remain
-open. No new message-delivery or USB-unplugged acceptance is claimed for this
-Connections slice. The messaging slice below has separate acceptance in the
-[two-phone demo plan](../../docs/phone-node-demo.md). Earlier transport checks do
-not qualify the new controls or broader background/restoration behavior.
+records the original control and large-text checks; the
+[validation index](../../docs/validation.md) distinguishes them from later
+messaging and lifecycle evidence.
 
 **Contacts** now owns the editable messaging name, My address sharing and explicit
 **Announce yourself**. Saving a name updates future announces and path responses;
@@ -48,31 +41,44 @@ discovery can upgrade a manually saved address through **Save messaging contact*
 preserving its private name and pin setting.
 
 **New message** selects saved messaging contacts or discovered recipients; manual
-address entry remains available. Inbox lists actual conversations. A fresh send
+address entry remains available. Inbox lists actual conversations with a latest
+message per contact, independent of how busy other conversations are. Both Inbox
+and individual conversations offer older-history paging. A fresh send
 can resolve missing recipient metadata through a bounded native path lookup,
 including after restart, before committing a message. It checks saved identity
 associations and current stamp requirements; **Finding contact…** is not durable
 acceptance. Existing proof-backed delivery, explicit retry and cancellation remain
-unchanged. The [messaging checkpoint](../../checkpoints/2026-09-24-messaging-discovery.md)
-records reciprocal delivery, discovery-clear sends and Android cold-launch
-resolution before the final Apple notification repair. That repair subsequently
-passed the retained-message retry, fresh Saved send and reverse delivery on
-September 25. Incoming source verification remains separate from delivery proof:
+unchanged. Incoming source verification remains separate from delivery proof:
 a missing sender public key produces an Unverified receipt, even for a saved
-contact. The checkpoint records this limitation and the key-retention follow-up.
-Automatic iOS cold-launch recovery remains blocked by a stale Bluetooth peer at
-the other phone; the lookup keeps the draft unqueued. A controlled repeat on the
-final repair confirmed a working baseline followed by failed lookup after iOS
-restart; resetting only Android's app Bluetooth restored delivery of the same
-draft without data loss.
-Settled Bluetooth link recovery is the next prerequisite in the demo plan.
+contact. Inbox previews warn before showing an unverified sender's claimed name.
+A later verified copy of the same message upgrades the existing receipt without
+creating a second row; learning a key alone does not reverify saved messages.
+The [messaging checkpoint](../../checkpoints/2026-09-24-messaging-discovery.md)
+records the discovery/send journey and sender-key follow-up.
+
+The [September 30 recovery checkpoint](../../checkpoints/2026-09-30-mobile-liveness.md)
+supersedes the earlier stale-peer restart blocker with successful isolated app
+restarts and saved-contact delivery in both directions. These are bounded
+observations, not a guarantee of silent-peer expiry or background delivery.
+
+**Network**, available from Nodes, Connections and More, separates physical
+Bluetooth connections, current routes and the latest 200 accepted announcements.
+It shows traffic, route age/expiry and expandable technical IDs. Times reflect
+the last native update; current routes are not evidence of a past message's path.
+Announcement history lasts for the current node session. Clearing it does not
+delete contacts, routes or messages, and the next announcement can be heard
+normally. The [Network checkpoint](../../checkpoints/2026-09-30-network-inspection.md)
+records focused checks on rebuilt standalone apps on both phones.
 
 Pairing is authorization, not a live connection. Contacts and mailbox rows are
 local application records, not proof that their peer is reachable. Development
 data is resettable and is not promised to survive incompatible upgrades.
 
-The current integration is based on upstream `8c211827b` and represents all 30
-RemoteControl request kinds. New board pairings grant Administrator authority
+The app represents all 30 RemoteControl request kinds in the integrated upstream
+protocol. The original read/write integration is recorded in its
+[September 21 checkpoint](../../checkpoints/2026-09-21-remote-control-management.md);
+that checkpoint's upstream revision is historical, not a current branch pin.
+New board pairings grant Administrator authority
 and the board's exact supported request set. Confirmation shows a short access
 summary and keeps administrator powers visible; exact controls and the node ID
 are available under **Show pairing details**. This is a single preset, not a

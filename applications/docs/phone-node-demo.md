@@ -24,9 +24,11 @@ results qualify only their recorded builds and scenarios.
 
 The LXMF service refreshes bounded authenticated-key retention;
 [automated checks](../checkpoints/2026-09-24-messaging-discovery.md#authenticated-key-retention-follow-up)
-passed. Broader retained-key validation remains open. Unknown-sender resolution and
-stored-message re-verification remain separate work; delivery proof does not establish
-the sender's identity. The user accepts losing ASK's extra force-quit relaunch
+passed. Broader retained-key validation remains open. A later verified receipt of
+the same message can now upgrade an earlier unverified copy in place. Learning a
+sender key without receiving the message again does not reverify saved history;
+that and unknown-sender resolution remain separate work. Delivery proof does not
+establish the sender's identity. The user accepts losing ASK's extra force-quit relaunch
 support to make the phone usable as its own node,
 without a board or per-peer authorization.
 Control Center Bluetooth-toggle recovery is another documented ASK difference;
