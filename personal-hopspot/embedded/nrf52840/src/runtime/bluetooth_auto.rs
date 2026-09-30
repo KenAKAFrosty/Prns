@@ -262,6 +262,19 @@ struct ColumbaReticulumClient {
     identity: GattValue,
 }
 
+impl ColumbaReticulumClient {
+    // Use the generated wrapper's discovered handle and native call, borrowing the encoded
+    // fragment instead of retaining a second GATT-sized payload while backpressure is pending.
+    async fn write_fragment_bytes(&self, bytes: &[u8]) -> Result<(), ControlIoError> {
+        if bytes.len() > GATT_VALUE_CAPACITY {
+            return Err(ControlIoError);
+        }
+        gatt_client::write_without_response(&self.conn, self.rx_value_handle, bytes)
+            .await
+            .map_err(|_| ControlIoError)
+    }
+}
+
 pub(super) fn set_columba_identity(sd: &Softdevice, server: &Server, identity: BleIdentity) {
     let _ = server.set_columba_identity(sd, identity.as_bytes());
 }
@@ -1109,36 +1122,6 @@ enum ServerNotification {
     ColumbaData,
 }
 
-async fn notify_with_backpressure(
-    server: &Server,
-    conn: &Connection,
-    target: ServerNotification,
-    bytes: &[u8],
-) -> Result<(), Closed> {
-    if bytes.len() > GATT_VALUE_CAPACITY {
-        return Err(Closed);
-    }
-    loop {
-        // Native notification methods already accept slices. The owning wire/frame keeps the
-        // bytes alive through retries and completion; no second GATT-sized value is needed.
-        let result = match target {
-            ServerNotification::Control => server.notify_control(conn, bytes),
-            ServerNotification::NativeData => server.notify_native_data(conn, bytes),
-            ServerNotification::ColumbaData => server.notify_columba_data(conn, bytes),
-        };
-        match result {
-            Ok(()) => return Ok(()),
-            Err(gatt_server::NotifyValueError::Raw(RawError::Resources)) => {
-                // S140's default notification queue is intentionally one entry: increasing it for
-                // all seven reserved connections would exceed this target's RAM budget. Yield
-                // until the next link event drains that entry, then submit this same fragment.
-                Timer::after(NOTIFY_BACKPRESSURE_RETRY).await;
-            }
-            Err(_) => return Err(Closed),
-        }
-    }
-}
-
 struct NotificationWriter<'a> {
     server: &'a Server,
     connection: &'a Connection,
@@ -1155,16 +1138,41 @@ impl NotificationWriter<'_> {
     ) -> Result<(), Closed> {
         // Pin at the owning worker instead of passing an owned future through another async
         // wrapper; otherwise Rust retains two copies in every statically pooled slot task.
-        let operation = core::pin::pin!(async {
+        // Move the borrowed inputs into it so separate captured argument slots need not survive.
+        let writes = self.writes;
+        let operation = core::pin::pin!(async move {
             // Register before submission so an immediate connection-local completion is retained.
             self.completion.begin()?;
-            notify_with_backpressure(self.server, self.connection, target, bytes)
-                .await
-                .map_err(|_| ControlIoError)?;
+            if bytes.len() > GATT_VALUE_CAPACITY {
+                return Err(ControlIoError);
+            }
+            loop {
+                // Keep retry state in this operation, not another async wrapper. The owning
+                // wire/frame retains the bytes through retries and native completion.
+                let result = match target {
+                    ServerNotification::Control => {
+                        self.server.notify_control(self.connection, bytes)
+                    }
+                    ServerNotification::NativeData => {
+                        self.server.notify_native_data(self.connection, bytes)
+                    }
+                    ServerNotification::ColumbaData => {
+                        self.server.notify_columba_data(self.connection, bytes)
+                    }
+                };
+                match result {
+                    Ok(()) => break,
+                    Err(gatt_server::NotifyValueError::Raw(RawError::Resources)) => {}
+                    Err(_) => return Err(ControlIoError),
+                }
+                // Preserve the single-entry S140 notification queue. Wait for it to drain,
+                // then retry the same fragment within the original operation deadline.
+                Timer::after(NOTIFY_BACKPRESSURE_RETRY).await;
+            }
             self.completion.wait().await;
             Ok(())
         });
-        self.writes
+        writes
             .run_pinned(deadline, operation)
             .await
             .map_err(|_| Closed)
@@ -1301,15 +1309,15 @@ async fn process_acknowledged_writes(slot: &'static LinkChannels) {
                 true
             }
             WriteTarget::Data => {
-                if let Some(fragment) = Fragment::decode(write.value()) {
-                    match reassembler.absorb(&fragment) {
-                        Some(frame) => admit_inbound_frame_with_backpressure(&data_in_tx, frame)
-                            .await
-                            .is_ok(),
-                        None => true,
-                    }
-                } else {
-                    true
+                // Absorption copies the fragment into the reassembler. End the decoded view's
+                // lifetime before waiting for frame capacity; the acknowledged write stays owned.
+                let frame = Fragment::decode(write.value())
+                    .and_then(|fragment| reassembler.absorb(&fragment));
+                match frame {
+                    Some(frame) => admit_inbound_frame_with_backpressure(&data_in_tx, frame)
+                        .await
+                        .is_ok(),
+                    None => true,
                 }
             }
             WriteTarget::ColumbaRx => {
@@ -1320,17 +1328,13 @@ async fn process_acknowledged_writes(slot: &'static LinkChannels) {
                     slot.set_peer_protocol(PeerProtocol::Columba);
                     true
                 } else if slot.peer_protocol() == Some(PeerProtocol::Columba) {
-                    if let Some(fragment) = Fragment::decode(write.value()) {
-                        match reassembler.absorb(&fragment) {
-                            Some(frame) => {
-                                admit_inbound_frame_with_backpressure(&data_in_tx, frame)
-                                    .await
-                                    .is_ok()
-                            }
-                            None => true,
-                        }
-                    } else {
-                        true
+                    let frame = Fragment::decode(write.value())
+                        .and_then(|fragment| reassembler.absorb(&fragment));
+                    match frame {
+                        Some(frame) => admit_inbound_frame_with_backpressure(&data_in_tx, frame)
+                            .await
+                            .is_ok(),
+                        None => true,
                     }
                 } else {
                     true
@@ -1486,9 +1490,16 @@ async fn serve_peripheral(
             None => loop {
                 let frame = data_out_rx.receive().await;
                 let frame = frame.lock().await;
-                for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
+                let mut fragments = fragments_of(&frame, GATT_FRAGMENT_PAYLOAD);
+                loop {
                     let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
-                    if let Some(n) = fragment.encode(&mut buf) {
+                    let encoded = {
+                        let Some(fragment) = fragments.next() else {
+                            break;
+                        };
+                        fragment.encode(&mut buf)
+                    };
+                    if let Some(n) = encoded {
                         let target = match protocol {
                             PeerProtocol::Native => ServerNotification::NativeData,
                             PeerProtocol::Columba => ServerNotification::ColumbaData,
@@ -1761,10 +1772,8 @@ async fn serve_columba_central(
             for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
                 let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                 if let Some(n) = fragment.encode(&mut buf) {
-                    if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                        if client.rx_write_without_response(&value).await.is_err() {
-                            return;
-                        }
+                    if client.write_fragment_bytes(&buf[..n]).await.is_err() {
+                        return;
                     }
                 }
             }
