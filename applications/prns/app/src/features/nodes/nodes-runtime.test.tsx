@@ -507,6 +507,9 @@ describe("Foundation 1 Nodes runtime binding", () => {
       fixture.emit(stoppedSnapshot());
       await publish.mock.calls.at(-1)?.[0].stopNode();
     });
+    // Stop refreshes its own state; only a refresh from the late clear is forbidden.
+    expect(fixture.runtime.readDevelopmentNodeSnapshot).toHaveBeenCalledTimes(1);
+    fixture.runtime.readDevelopmentNodeSnapshot.mockClear();
     await act(async () => {
       finishClear?.(Bindings.ClearNetworkActivityOutcome.Cleared.new({ activityRevision: 4n }));
       expect(await pending).toEqual({
