@@ -1716,6 +1716,7 @@ mod tests {
 
     #[derive(Debug, PartialEq, Eq)]
     enum StartupCall {
+        SessionLiveness(bool),
         Radio(RadioMode),
         Capabilities(LinkCapabilities),
         Advertising(AdvertisingMode),
@@ -1733,6 +1734,11 @@ mod tests {
     impl BleBackend<7> for RecordingStartupBackend {
         type Error = Closed;
         type Link = LoopbackLink;
+
+        async fn set_session_liveness(&mut self, enabled: bool) -> Result<(), Closed> {
+            self.calls.push(StartupCall::SessionLiveness(enabled));
+            Ok(())
+        }
 
         async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), Closed> {
             self.calls.push(StartupCall::Radio(mode));
@@ -1811,6 +1817,7 @@ mod tests {
         assert_eq!(
             calls,
             vec![
+                StartupCall::SessionLiveness(true),
                 StartupCall::Radio(RadioMode::On),
                 StartupCall::Capabilities(capabilities),
                 StartupCall::Advertising(AdvertisingMode::On),
@@ -1860,6 +1867,7 @@ mod tests {
                 StartupCall::Advertising(AdvertisingMode::Off),
                 StartupCall::Scanning(ScanningMode::Off),
                 StartupCall::Radio(RadioMode::Off),
+                StartupCall::SessionLiveness(true),
                 StartupCall::Radio(RadioMode::On),
                 StartupCall::Capabilities(capabilities),
                 StartupCall::Advertising(AdvertisingMode::On),
