@@ -10,7 +10,10 @@ use prns_core::interfaces::bluetooth_auto::{AdvertisingMode, RadioMode, Scanning
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, PeerProtocol};
 
 use super::outbound::{BoundedByteQueue, BoundedMessageQueue, ControlOutbox};
-use super::{AndroidBleControlOutput, AndroidBleControlTicket, AndroidBleError};
+use super::{
+    AndroidBleControlOutput, AndroidBleControlTicket, AndroidBleError, LivenessMode,
+    LIVENESS_CAPABILITY_BYTES,
+};
 use super::{RADIO_ADVERTISING, RADIO_ENABLED, RADIO_SCANNING};
 
 const CONTROL_IN_DEPTH: usize = 8;
@@ -171,6 +174,7 @@ pub(super) struct PendingLink {
     pub(super) dialed: bool,
     pub(super) peer_protocol: PeerProtocol,
     pub(super) peer_identity: Option<BleIdentity>,
+    pub(super) liveness_mode: LivenessMode,
     pub(super) control_in: Receiver<Vec<u8>>,
     pub(super) l2cap_in: Receiver<Vec<u8>>,
     pub(super) data_in: Receiver<Vec<u8>>,
@@ -217,6 +221,7 @@ impl RadioState {
 
 pub(super) struct Shared {
     radio: Mutex<RadioState>,
+    session_liveness: AtomicBool,
     local_identity: Mutex<Option<[u8; 16]>>,
     pub(super) psm: Mutex<Option<u16>>,
     psm_ready: Notify,
@@ -234,6 +239,12 @@ pub struct AndroidBleBridge {
     pub(super) shared: Arc<Shared>,
 }
 
+struct LinkProfile {
+    protocol: PeerProtocol,
+    identity: Option<[u8; 16]>,
+    liveness_mode: LivenessMode,
+}
+
 impl Clone for AndroidBleBridge {
     fn clone(&self) -> Self {
         Self {
@@ -248,6 +259,7 @@ impl AndroidBleBridge {
         Self {
             shared: Arc::new(Shared {
                 radio: Mutex::new(RadioState::default()),
+                session_liveness: AtomicBool::new(false),
                 local_identity: Mutex::new(None),
                 psm: Mutex::new(None),
                 psm_ready: Notify::new(),
@@ -260,6 +272,21 @@ impl AndroidBleBridge {
                 work: Arc::new(WorkSignal::default()),
                 ingress_pressure_events: AtomicU64::new(0),
             }),
+        }
+    }
+
+    pub fn set_session_liveness(&self, enabled: bool) {
+        self.shared
+            .session_liveness
+            .store(enabled, Ordering::Release);
+    }
+
+    /// Only a running supervisor opts in; old platform consumers expose no capability.
+    pub fn liveness_capability(&self) -> &'static [u8] {
+        if self.shared.session_liveness.load(Ordering::Acquire) {
+            &LIVENESS_CAPABILITY_BYTES
+        } else {
+            &[]
         }
     }
 
@@ -415,7 +442,39 @@ impl AndroidBleBridge {
     }
 
     pub fn link_up(&self, conn_id: u32, address: [u8; 6], rssi: Option<i8>, dialed: bool) -> bool {
-        self.link_up_with_protocol(conn_id, address, rssi, dialed, PeerProtocol::Native, None)
+        self.link_up_with_liveness(conn_id, address, rssi, dialed, false)
+    }
+
+    /// `supported` is scoped to this physical attempt: a successful strict capability read
+    /// for a central, or the current published service registration for a peripheral.
+    pub fn link_up_with_liveness(
+        &self,
+        conn_id: u32,
+        address: [u8; 6],
+        rssi: Option<i8>,
+        dialed: bool,
+        supported: bool,
+    ) -> bool {
+        let mode = if supported && self.shared.session_liveness.load(Ordering::Acquire) {
+            if dialed {
+                LivenessMode::Initiator
+            } else {
+                LivenessMode::Listener
+            }
+        } else {
+            LivenessMode::Disabled
+        };
+        self.link_up_with_protocol(
+            conn_id,
+            address,
+            rssi,
+            dialed,
+            LinkProfile {
+                protocol: PeerProtocol::Native,
+                identity: None,
+                liveness_mode: mode,
+            },
+        )
     }
 
     pub fn columba_link_up(
@@ -431,8 +490,11 @@ impl AndroidBleBridge {
             address,
             rssi,
             dialed,
-            PeerProtocol::Columba,
-            Some(peer_identity),
+            LinkProfile {
+                protocol: PeerProtocol::Columba,
+                identity: Some(peer_identity),
+                liveness_mode: LivenessMode::Disabled,
+            },
         )
     }
 
@@ -442,8 +504,7 @@ impl AndroidBleBridge {
         address: [u8; 6],
         rssi: Option<i8>,
         dialed: bool,
-        peer_protocol: PeerProtocol,
-        peer_identity: Option<[u8; 16]>,
+        profile: LinkProfile,
     ) -> bool {
         let (control_tx, control_rx) = channel::<Vec<u8>>(CONTROL_IN_DEPTH);
         let (l2cap_tx, l2cap_rx) = channel::<Vec<u8>>(DATA_IN_DEPTH);
@@ -462,7 +523,7 @@ impl AndroidBleBridge {
             is_up: AtomicBool::new(false),
             notify: Notify::new(),
         });
-        let peer_identity = peer_identity.map(BleIdentity::new);
+        let peer_identity = profile.identity.map(BleIdentity::new);
         if let Ok(mut links) = self.shared.links.lock() {
             if links.len() >= PEER_CAPACITY || links.contains_key(&conn_id) {
                 return false;
@@ -497,8 +558,9 @@ impl AndroidBleBridge {
                 address: BleAddress::new(address),
                 rssi,
                 dialed,
-                peer_protocol,
+                peer_protocol: profile.protocol,
                 peer_identity,
+                liveness_mode: profile.liveness_mode,
                 control_in: control_rx,
                 l2cap_in: l2cap_rx,
                 data_in: data_rx,

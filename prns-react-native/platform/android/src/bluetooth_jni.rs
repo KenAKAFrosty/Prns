@@ -1,12 +1,13 @@
 // JNI adaptation of the upstream Android platform bridge. Protocol and queue ownership
 // remain in prns-ffi; the native host supplies its reserved lifecycle session.
 use super::ble_bridge;
-use jni::objects::{JByteBuffer, JClass, JLongArray};
-use jni::sys::{jboolean, jint, jlong};
+use jni::objects::{JByteArray, JByteBuffer, JClass, JLongArray};
+use jni::sys::{jboolean, jbyteArray, jint, jlong};
 use jni::JNIEnv;
 use prns_ffi::bluetooth_auto::android::AndroidBleIngressAdmission;
 use prns_ffi::bluetooth_auto::android::{
-    AndroidBleControlOutput, AndroidBleControlTicket, CONTROL_BUFFER_LEN,
+    supports_liveness_capability, AndroidBleControlOutput, AndroidBleControlTicket,
+    CONTROL_BUFFER_LEN, LIVENESS_CAPABILITY_BYTES, LIVENESS_UUID_BYTES,
 };
 
 #[no_mangle]
@@ -164,13 +165,54 @@ pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBle
     address: JByteBuffer,
     rssi: jint,
     dialed: jboolean,
+    liveness_supported: jboolean,
 ) -> jboolean {
     if let Some(octets) = ble_octets(&env, &address) {
         return ble_bridge()
-            .link_up(conn_id as u32, octets, ble_rssi(rssi), dialed != 0)
+            .link_up_with_liveness(
+                conn_id as u32,
+                octets,
+                ble_rssi(rssi),
+                dialed != 0,
+                liveness_supported != 0,
+            )
             .into();
     }
     0
+}
+
+#[no_mangle]
+pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleLivenessUuid(
+    env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    env.byte_array_from_slice(&LIVENESS_UUID_BYTES)
+        .map(JByteArray::into_raw)
+        .unwrap_or(core::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleLivenessCapability(
+    env: JNIEnv,
+    _class: JClass,
+) -> jbyteArray {
+    env.byte_array_from_slice(ble_bridge().liveness_capability())
+        .map(JByteArray::into_raw)
+        .unwrap_or(core::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleSupportsLiveness(
+    env: JNIEnv,
+    _class: JClass,
+    value: JByteArray,
+) -> jboolean {
+    if env.get_array_length(&value).ok() != Some(LIVENESS_CAPABILITY_BYTES.len() as jint) {
+        return 0;
+    }
+    env.convert_byte_array(&value)
+        .is_ok_and(|bytes| supports_liveness_capability(&bytes))
+        .into()
 }
 
 #[no_mangle]

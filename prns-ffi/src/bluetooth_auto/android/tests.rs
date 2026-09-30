@@ -19,6 +19,78 @@ async fn control_link(bridge: &AndroidBleBridge, conn_id: u32) -> super::Android
     link
 }
 
+#[tokio::test]
+async fn liveness_requires_supervisor_readiness_and_this_physical_attempts_capability() {
+    use super::LivenessMode;
+    for enabled in [false, true] {
+        for supported in [false, true] {
+            for dialed in [false, true] {
+                let bridge = AndroidBleBridge::new();
+                let mut backend = super::AndroidBleBackend::new(bridge.clone());
+                assert!(bridge.liveness_capability().is_empty());
+                backend.set_session_liveness(enabled).await.unwrap();
+                assert_eq!(!bridge.liveness_capability().is_empty(), enabled,);
+                assert!(bridge.link_up_with_liveness(1, [1; 6], None, dialed, supported));
+                let link = match backend.next_event().await {
+                    BleEvent::Inbound(link) | BleEvent::LinkReady { link, .. } => link,
+                    _ => panic!("native link"),
+                };
+                let expected = match (enabled && supported, dialed) {
+                    (false, _) => LivenessMode::Disabled,
+                    (true, false) => LivenessMode::Listener,
+                    (true, true) => LivenessMode::Initiator,
+                };
+                assert_eq!(link.control.liveness_mode(), expected);
+                // Readiness changes cannot rewrite an already admitted physical session.
+                backend.set_session_liveness(!enabled).await.unwrap();
+                assert_eq!(link.control.liveness_mode(), expected);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn legacy_admission_and_same_address_replacement_never_inherit_liveness() {
+    use super::LivenessMode;
+    let bridge = AndroidBleBridge::new();
+    bridge.set_session_liveness(true);
+    let mut backend = super::AndroidBleBackend::new(bridge.clone());
+    assert_eq!(
+        bridge.liveness_capability(),
+        &super::LIVENESS_CAPABILITY_BYTES
+    );
+    assert!(bridge.link_up_with_liveness(1, [1; 6], None, true, true));
+    let BleEvent::LinkReady { link: old, .. } = backend.next_event().await else {
+        panic!("capable link")
+    };
+    assert_eq!(old.control.liveness_mode(), LivenessMode::Initiator);
+    bridge.disconnected(1);
+    assert!(bridge.link_up(1, [1; 6], None, false));
+    let BleEvent::Inbound(replacement) = backend.next_event().await else {
+        panic!("legacy replacement")
+    };
+    assert_eq!(replacement.control.liveness_mode(), LivenessMode::Disabled);
+    drop(old);
+    assert_eq!(
+        bridge.control_in(1, &[0]),
+        AndroidBleIngressAdmission::Accepted
+    );
+}
+
+#[tokio::test]
+async fn columba_cannot_gain_a_liveness_control_from_local_readiness() {
+    use prns_core::interfaces::bluetooth_auto::BleLink;
+    let bridge = AndroidBleBridge::new();
+    bridge.set_session_liveness(true);
+    let mut backend = super::AndroidBleBackend::new(bridge.clone());
+    assert!(bridge.columba_link_up(1, [1; 6], None, false, [2; 16]));
+    let BleEvent::Inbound(link) = backend.next_event().await else {
+        panic!("Columba link")
+    };
+    assert_eq!(link.control.liveness_mode(), super::LivenessMode::Disabled);
+    assert!(link.into_parts().control.is_none());
+}
+
 fn control_ticket(bridge: &AndroidBleBridge, conn_id: u32) -> AndroidBleControlTicket {
     let mut bytes = [0; super::CONTROL_BUFFER_LEN];
     let AndroidBleControlOutput::Ready { ticket, .. } = bridge.control_out(conn_id, &mut bytes)

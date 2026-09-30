@@ -15,7 +15,7 @@ use prns_core::interfaces::bluetooth_auto::{
 
 use super::bridge::{AndroidBleBridge, LinkSignal, WorkSignal};
 use super::outbound::{BoundedByteQueue, BoundedMessageQueue, ControlOutbox, OutboundQueueError};
-use super::AndroidBleError;
+use super::{AndroidBleError, LivenessMode};
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const GATT_REASSEMBLY_CAP: usize = 600;
@@ -198,10 +198,15 @@ pub struct AndroidBleControl {
     pub(super) inbound: Receiver<Vec<u8>>,
     pub(super) outbound: Arc<ControlOutbox>,
     pub(super) work: Arc<WorkSignal>,
+    pub(super) liveness_mode: LivenessMode,
 }
 
 impl BleControl for AndroidBleControl {
     type Error = AndroidBleError;
+
+    fn liveness_mode(&self) -> LivenessMode {
+        self.liveness_mode
+    }
 
     async fn send(&mut self, msg: &Control) -> Result<(), AndroidBleError> {
         let deadline = tokio::time::Instant::now() + CONTROL_WRITE_TIMEOUT;

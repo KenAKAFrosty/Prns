@@ -82,6 +82,20 @@ internal fun expireGattOperation(
     return true
 }
 
+/** A callback cannot extend startup merely by beating a delayed watchdog thread. */
+internal fun continueGattStartup(
+    state: GattState,
+    nowMillis: Long,
+    timeoutMillis: Long,
+    closePhysicalOwner: () -> Unit,
+): Boolean {
+    if (state.expireStartup(nowMillis, timeoutMillis)) {
+        closePhysicalOwner()
+        return false
+    }
+    return state.isOpen()
+}
+
 internal enum class GattOperationKind {
     Mtu,
     ServiceDiscovery,
@@ -179,10 +193,13 @@ internal class GattState(private val nowMillis: () -> Long = { System.nanoTime()
 
     @Synchronized
     fun markReady(): Boolean {
-        if (closed || ready) return false
+        if (closed || ready || pending != null) return false
         ready = true
         return true
     }
+
+    @Synchronized
+    fun isOpen(): Boolean = !closed
 
     @Synchronized
     fun expireStartup(nowMillis: Long, timeoutMillis: Long): Boolean {

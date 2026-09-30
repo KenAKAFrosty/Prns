@@ -269,7 +269,14 @@ object NativeBridge {
 
     external fun nativeBleDialFailed(address: ByteBuffer): Boolean
 
-    external fun nativeBleLinkUp(connId: Int, address: ByteBuffer, rssi: Int, dialed: Boolean): Boolean
+    external fun nativeBleLinkUp(connId: Int, address: ByteBuffer, rssi: Int, dialed: Boolean, livenessSupported: Boolean): Boolean
+
+    external fun nativeBleLivenessUuid(): ByteArray
+
+    /** Empty until the owning native supervisor has enabled its session control loop. */
+    external fun nativeBleLivenessCapability(): ByteArray
+
+    external fun nativeBleSupportsLiveness(value: ByteArray): Boolean
 
     external fun nativeBleColumbaLinkUp(
         connId: Int,
