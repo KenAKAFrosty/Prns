@@ -153,6 +153,14 @@ pub(crate) fn bluetooth_control_to_js(control: bluetooth_contract::Control) -> J
             set_str(&object, "type", "close");
             set_str(&object, "reason", &format!("{reason:?}"));
         }
+        bluetooth_contract::Control::Probe { nonce } => {
+            set_str(&object, "type", "probe");
+            set_bigint(&object, "nonce", nonce);
+        }
+        bluetooth_contract::Control::ProbeReply { nonce } => {
+            set_str(&object, "type", "probeReply");
+            set_bigint(&object, "nonce", nonce);
+        }
     }
     object.into()
 }
