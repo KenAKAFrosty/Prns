@@ -156,11 +156,12 @@ fn remote_control_output_keeps_counter_width_and_nested_failure() {
         tx_bytes: u64::MAX,
         rx_bytes: (1 << 53) + 1,
         links: 1,
-        rate_bytes_per_sec: 1,
+        rate_bytes_per_sec: core::num::NonZeroU32::new(1),
     };
     let projected: rc::RemoteControlInterfaceEntry = entry.into();
     assert_eq!(projected.tx_bytes, u64::MAX);
     assert_eq!(projected.rx_bytes, (1 << 53) + 1);
+    assert_eq!(projected.rate_bytes_per_sec, Some(1));
     let failure = prns_host_native::NativeRemoteControlError::Admission(
         prns_host_native::NativeSubmitError::Busy,
     );
@@ -170,4 +171,92 @@ fn remote_control_output_keeps_counter_width_and_nested_failure() {
     else {
         panic!("typed failure changed")
     };
+}
+
+#[test]
+fn remote_control_app_message_projection_preserves_bytes_and_enforces_the_core_bound() {
+    use prns_core::remote_control::{
+        RemoteControlAppMessage, RemoteControlRequest, RemoteControlResponse,
+        REMOTE_CONTROL_APP_MESSAGE_CAP,
+    };
+    use prns_host_uniffi::remote_control as rc;
+    for length in [0, REMOTE_CONTROL_APP_MESSAGE_CAP] {
+        let bytes = vec![0xa5; length];
+        let lowered = RemoteControlRequest::try_from(rc::RemoteControlRequest::AppMessage {
+            value: rc::RemoteControlAppMessage {
+                value: bytes.clone(),
+            },
+        })
+        .unwrap();
+        assert_eq!(
+            lowered,
+            RemoteControlRequest::AppMessage(RemoteControlAppMessage::from_slice(&bytes).unwrap())
+        );
+        let projected = rc::RemoteControlResponse::from(RemoteControlResponse::AppMessage(
+            RemoteControlAppMessage::from_slice(&bytes).unwrap(),
+        ));
+        let rc::RemoteControlResponse::AppMessage { value } = projected else {
+            panic!("app-message response changed")
+        };
+        assert_eq!(value.value, bytes);
+    }
+    assert!(
+        RemoteControlRequest::try_from(rc::RemoteControlRequest::AppMessage {
+            value: rc::RemoteControlAppMessage {
+                value: vec![0; REMOTE_CONTROL_APP_MESSAGE_CAP + 1]
+            },
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn remote_control_watch_projection_enforces_the_core_stream_id_range() {
+    use prns_core::remote_control::RemoteControlRequest;
+    use prns_core::routing::links::channel::byte_stream::{StreamId, STREAM_ID_MAX};
+    use prns_host_uniffi::remote_control as rc;
+    let request = RemoteControlRequest::try_from(rc::RemoteControlRequest::WatchInterfaces {
+        stream_id: rc::RemoteControlStreamId {
+            value: STREAM_ID_MAX,
+        },
+    })
+    .unwrap();
+    assert_eq!(
+        request,
+        RemoteControlRequest::WatchInterfaces {
+            stream_id: StreamId::new(STREAM_ID_MAX).unwrap()
+        }
+    );
+    assert!(
+        RemoteControlRequest::try_from(rc::RemoteControlRequest::WatchInterfaces {
+            stream_id: rc::RemoteControlStreamId {
+                value: STREAM_ID_MAX + 1
+            },
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn remote_control_node_name_projection_retains_canonical_validation() {
+    use prns_core::remote_control::{RemoteControlNodeName, REMOTE_CONTROL_NODE_NAME_CAP};
+    use prns_host_uniffi::remote_control as rc;
+    for name in [
+        String::new(),
+        " leading".into(),
+        "trailing ".into(),
+        "line\nbreak".into(),
+        "x".repeat(REMOTE_CONTROL_NODE_NAME_CAP + 1),
+    ] {
+        assert!(
+            RemoteControlNodeName::try_from(rc::RemoteControlNodeName { value: name }).is_err()
+        );
+    }
+    let name = "n".repeat(REMOTE_CONTROL_NODE_NAME_CAP);
+    let lowered = RemoteControlNodeName::try_from(rc::RemoteControlNodeName {
+        value: name.clone(),
+    })
+    .unwrap();
+    assert_eq!(lowered.as_str(), name);
+    assert_eq!(rc::RemoteControlNodeName::from(lowered).value, name);
 }

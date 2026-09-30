@@ -1,9 +1,11 @@
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
+use core::future::poll_fn;
+use core::task::Poll;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::semaphore::{FairSemaphore, Semaphore, SemaphoreReleaser};
-use embassy_sync::signal::Signal;
+use embassy_sync::waitqueue::MultiWakerRegistration;
 use portable_atomic::{AtomicU8, Ordering};
 use prns_core::interfaces::bluetooth_auto::Origin;
 
@@ -18,7 +20,13 @@ struct ConnectionSlotState<M: RawMutex + 'static> {
     owners: AtomicU8,
     index: AtomicU8,
     availability: BlockingMutex<M, Cell<Option<&'static Availability<M>>>>,
-    closed: Signal<M, ()>,
+    closed: BlockingMutex<M, RefCell<CloseState>>,
+}
+
+struct CloseState {
+    requested: bool,
+    // The worker, source, sink and retained control can all wait independently.
+    waiters: MultiWakerRegistration<4>,
 }
 
 impl<M: RawMutex + 'static> ConnectionSlotState<M> {
@@ -27,7 +35,10 @@ impl<M: RawMutex + 'static> ConnectionSlotState<M> {
             owners: AtomicU8::new(0),
             index: AtomicU8::new(0),
             availability: BlockingMutex::new(Cell::new(None)),
-            closed: Signal::new(),
+            closed: BlockingMutex::new(RefCell::new(CloseState {
+                requested: false,
+                waiters: MultiWakerRegistration::new(),
+            })),
         }
     }
 
@@ -36,7 +47,11 @@ impl<M: RawMutex + 'static> ConnectionSlotState<M> {
     }
 
     fn request_close(&self) {
-        self.closed.signal(());
+        self.closed.lock(|closed| {
+            let mut closed = closed.borrow_mut();
+            closed.requested = true;
+            closed.waiters.wake();
+        });
     }
 
     fn release(&self) {
@@ -103,7 +118,12 @@ impl<M: RawMutex + 'static, const SLOTS: usize> ConnectionSlotPool<M, SLOTS> {
                 slot.index.store(index as u8, Ordering::Release);
                 slot.availability
                     .lock(|availability| availability.set(Some(&self.availability)));
-                slot.closed.reset();
+                slot.closed.lock(|closed| {
+                    *closed.borrow_mut() = CloseState {
+                        requested: false,
+                        waiters: MultiWakerRegistration::new(),
+                    };
+                });
                 permit.disarm();
                 return Some(ConnectionSlotLease {
                     owner: ConnectionSlotOwner { slot },
@@ -141,7 +161,17 @@ impl<M: RawMutex + 'static> ConnectionSlotOwner<M> {
     }
 
     fn wait_for_close(&self) -> impl core::future::Future<Output = ()> + '_ {
-        self.slot.closed.wait()
+        poll_fn(|cx| {
+            self.slot.closed.lock(|closed| {
+                let mut closed = closed.borrow_mut();
+                if closed.requested {
+                    Poll::Ready(())
+                } else {
+                    closed.waiters.register(cx.waker());
+                    Poll::Pending
+                }
+            })
+        })
     }
 
     fn split(self) -> (Self, Self) {
@@ -185,6 +215,13 @@ pub struct ConnectionSlotWorkerLease<M: RawMutex + 'static> {
 }
 
 impl<M: RawMutex + 'static> ConnectionSlotWorkerLease<M> {
+    pub fn is_closed(&self) -> bool {
+        self.owner
+            .slot
+            .closed
+            .lock(|closed| closed.borrow().requested)
+    }
+
     pub fn wait_for_close(&self) -> impl core::future::Future<Output = ()> + '_ {
         self.owner.wait_for_close()
     }
@@ -200,6 +237,10 @@ pub struct ConnectionSlotLinkLease<M: RawMutex + 'static> {
 }
 
 impl<M: RawMutex + 'static> ConnectionSlotLinkLease<M> {
+    pub fn request_close(&self) {
+        self.owner.slot.request_close();
+    }
+
     #[must_use]
     pub fn index(&self) -> usize {
         self.owner.index()
@@ -220,6 +261,26 @@ impl<M: RawMutex + 'static> ConnectionSlotLinkLease<M> {
             sink: ConnectionSlotSinkLease { owner: sink },
         }
     }
+
+    /// Native sessions retain the original link owner as their control lease.
+    /// Columba must use `into_data`, without creating and dropping a control owner.
+    pub fn into_parts(self) -> ConnectionSlotParts<M> {
+        let (control, data) = self.owner.split();
+        let ConnectionSlotDataOwners { source, sink } =
+            ConnectionSlotLinkLease { owner: data }.into_data();
+        ConnectionSlotParts {
+            control: ConnectionSlotLinkLease { owner: control },
+            source,
+            sink,
+        }
+    }
+}
+
+#[must_use]
+pub struct ConnectionSlotParts<M: RawMutex + 'static> {
+    pub control: ConnectionSlotLinkLease<M>,
+    pub source: ConnectionSlotSourceLease<M>,
+    pub sink: ConnectionSlotSinkLease<M>,
 }
 
 #[must_use]
@@ -274,6 +335,13 @@ pub struct ReadyConnectionSlotParts<M: RawMutex + 'static> {
 #[cfg(test)]
 mod tests {
     use core::future::ready;
+    use core::future::Future;
+    use core::pin::pin;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use core::task::{Context, Waker};
+    use std::boxed::Box;
+    use std::sync::Arc;
+    use std::task::Wake;
 
     use embassy_futures::block_on;
     use embassy_futures::select::{select, Either};
@@ -282,8 +350,182 @@ mod tests {
 
     use super::{
         ConnectionSlotAcquireError, ConnectionSlotDataOwners, ConnectionSlotOwners,
-        ConnectionSlotPool, ReadyConnectionSlotParts,
+        ConnectionSlotParts, ConnectionSlotPool, ReadyConnectionSlotParts,
     };
+
+    #[derive(Default)]
+    struct WakeCounter(AtomicUsize);
+
+    impl Wake for WakeCounter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn native_split_retains_all_owners_until_control_and_worker_exit() {
+        let pool = Box::leak(Box::new(
+            ConnectionSlotPool::<CriticalSectionRawMutex, 1>::new(),
+        ));
+        let lease = pool.try_acquire().ok().flatten();
+        assert!(lease.is_some(), "fresh slot must be available");
+        let Some(lease) = lease else {
+            return;
+        };
+        let ConnectionSlotOwners { worker, link } = lease.activate();
+        let ConnectionSlotParts {
+            source,
+            sink,
+            control,
+        } = link.into_parts();
+        assert!(matches!(
+            block_on(select(worker.wait_for_close(), ready(()))),
+            Either::Second(())
+        ));
+        drop(source);
+        assert!(matches!(
+            block_on(select(worker.wait_for_close(), ready(()))),
+            Either::First(())
+        ));
+        drop(sink);
+        drop(worker);
+        assert_eq!(pool.try_acquire().map(|slot| slot.is_none()), Ok(true));
+        assert!(matches!(
+            block_on(select(control.wait_for_close(), ready(()))),
+            Either::First(())
+        ));
+        drop(control);
+        assert_eq!(pool.try_acquire().map(|slot| slot.is_some()), Ok(true));
+    }
+
+    #[test]
+    fn close_is_broadcast_and_latched_for_every_native_owner() {
+        let pool = Box::leak(Box::new(
+            ConnectionSlotPool::<CriticalSectionRawMutex, 1>::new(),
+        ));
+        let lease = pool.try_acquire().ok().flatten();
+        assert!(lease.is_some(), "fresh slot must be available");
+        let Some(lease) = lease else {
+            return;
+        };
+        let ConnectionSlotOwners { worker, link } = lease.activate();
+        let ConnectionSlotParts {
+            source,
+            sink,
+            control,
+        } = link.into_parts();
+        let wakes: [_; 4] = core::array::from_fn(|_| Arc::new(WakeCounter::default()));
+        let wakers = wakes.each_ref().map(|wake| Waker::from(Arc::clone(wake)));
+        {
+            let mut worker_wait = pin!(worker.wait_for_close());
+            let mut source_wait = pin!(source.wait_for_close());
+            let mut sink_wait = pin!(sink.wait_for_close());
+            let mut control_wait = pin!(control.wait_for_close());
+            assert!(worker_wait
+                .as_mut()
+                .poll(&mut Context::from_waker(&wakers[0]))
+                .is_pending());
+            assert!(source_wait
+                .as_mut()
+                .poll(&mut Context::from_waker(&wakers[1]))
+                .is_pending());
+            assert!(sink_wait
+                .as_mut()
+                .poll(&mut Context::from_waker(&wakers[2]))
+                .is_pending());
+            assert!(control_wait
+                .as_mut()
+                .poll(&mut Context::from_waker(&wakers[3]))
+                .is_pending());
+            pool.request_close(0);
+            assert_eq!(
+                wakes.each_ref().map(|wake| wake.0.load(Ordering::Relaxed)),
+                [1; 4]
+            );
+            assert!(worker_wait
+                .as_mut()
+                .poll(&mut Context::from_waker(&wakers[0]))
+                .is_ready());
+            assert!(source_wait
+                .as_mut()
+                .poll(&mut Context::from_waker(&wakers[1]))
+                .is_ready());
+            assert!(sink_wait
+                .as_mut()
+                .poll(&mut Context::from_waker(&wakers[2]))
+                .is_ready());
+            assert!(control_wait
+                .as_mut()
+                .poll(&mut Context::from_waker(&wakers[3]))
+                .is_ready());
+        }
+        assert!(matches!(
+            block_on(select(control.wait_for_close(), ready(()))),
+            Either::First(())
+        ));
+        drop(control);
+        drop(source);
+        drop(sink);
+        assert_eq!(pool.try_acquire().map(|slot| slot.is_none()), Ok(true));
+        drop(worker);
+        let reused = pool.try_acquire().ok().flatten();
+        assert!(reused.is_some(), "last drop must release the slot");
+        let Some(reused) = reused else {
+            return;
+        };
+        let ConnectionSlotOwners { worker, link } = reused.activate();
+        assert!(matches!(
+            block_on(select(worker.wait_for_close(), ready(()))),
+            Either::Second(())
+        ));
+        drop(link);
+        assert!(matches!(
+            block_on(select(worker.wait_for_close(), ready(()))),
+            Either::First(())
+        ));
+    }
+
+    #[test]
+    fn cancelled_close_waiters_cannot_exhaust_or_consume_the_close_notification() {
+        let pool = Box::leak(Box::new(
+            ConnectionSlotPool::<CriticalSectionRawMutex, 1>::new(),
+        ));
+        let lease = pool.try_acquire().ok().flatten();
+        assert!(lease.is_some());
+        let Some(lease) = lease else { return };
+        let ConnectionSlotOwners { worker, link } = lease.activate();
+        let stale: [_; 4] = core::array::from_fn(|_| Arc::new(WakeCounter::default()));
+        for wake in &stale {
+            let waker = Waker::from(Arc::clone(wake));
+            let mut waiting = pin!(link.wait_for_close());
+            assert!(waiting
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending());
+            // Leave four different canceled task registrations, filling the bounded list.
+        }
+        let live = Arc::new(WakeCounter::default());
+        let live_waker = Waker::from(Arc::clone(&live));
+        let mut waiting = pin!(link.wait_for_close());
+        assert!(waiting
+            .as_mut()
+            .poll(&mut Context::from_waker(&live_waker))
+            .is_pending());
+        assert_eq!(
+            stale.each_ref().map(|wake| wake.0.load(Ordering::Relaxed)),
+            [1; 4]
+        );
+        worker.request_close();
+        assert_eq!(live.0.load(Ordering::Relaxed), 1);
+        assert!(waiting
+            .as_mut()
+            .poll(&mut Context::from_waker(&live_waker))
+            .is_ready());
+        assert!(matches!(
+            block_on(select(worker.wait_for_close(), ready(()))),
+            Either::First(())
+        ));
+    }
 
     #[test]
     fn leases_reserve_unique_slots_until_drop() {

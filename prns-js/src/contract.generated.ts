@@ -6,10 +6,10 @@ declare const brand: unique symbol;
 type Brand<Name extends string> = { readonly [brand]: Name };
 type BrandedBytes<Name extends string> = Uint8Array & Brand<Name>;
 
-export const HOST_SEMANTIC_FINGERPRINT = "b5ca02be1ea5d61771f3a75eacb4d44447f99754adbeb02b6cd98537ed2fa239";
+export const HOST_SEMANTIC_FINGERPRINT = "300d77d158eca0f1b473e4c8d3204d1f2da3031427a64cbd7ee3a8339c3c67ff";
 export const HOST_CONTRACT_ABI = 1;
 export const HOST_SCHEMA_VERSION = 2;
-export const PRODUCT_VERSION = "0.3.7";
+export const PRODUCT_VERSION = "0.3.8";
 export const DESTINATION_HASH_LENGTH = 16;
 export const IDENTITY_HASH_LENGTH = 16;
 export const INTERFACE_ID_LENGTH = 8;

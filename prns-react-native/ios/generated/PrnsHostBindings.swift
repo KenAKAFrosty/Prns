@@ -2487,6 +2487,56 @@ public func FfiConverterTypeRNodeRadioConfig_lower(_ value: RNodeRadioConfig) ->
 }
 
 
+public struct RemoteControlAppMessage: Equatable, Hashable {
+    public var value: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(value: Data) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlAppMessage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlAppMessage: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlAppMessage {
+        return
+            try RemoteControlAppMessage(
+                value: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteControlAppMessage, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlAppMessage_lift(_ buf: RustBuffer) throws -> RemoteControlAppMessage {
+    return try FfiConverterTypeRemoteControlAppMessage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlAppMessage_lower(_ value: RemoteControlAppMessage) -> RustBuffer {
+    return FfiConverterTypeRemoteControlAppMessage.lower(value)
+}
+
+
 public struct RemoteControlApproveRemoteControlControllerPairing: Equatable, Hashable {
     public var attemptId: RemoteControlPairingAttemptId
 
@@ -3755,11 +3805,11 @@ public struct RemoteControlInterfaceEntry: Equatable, Hashable {
     public var txBytes: UInt64
     public var rxBytes: UInt64
     public var links: UInt32
-    public var rateBytesPerSec: UInt32
+    public var rateBytesPerSec: UInt32?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: RemoteControlInterfaceId, kind: RemoteControlInterfaceKind, mode: RemoteControlInterfaceMode, connection: RemoteControlConnectionState, enabled: Bool, txBytes: UInt64, rxBytes: UInt64, links: UInt32, rateBytesPerSec: UInt32) {
+    public init(id: RemoteControlInterfaceId, kind: RemoteControlInterfaceKind, mode: RemoteControlInterfaceMode, connection: RemoteControlConnectionState, enabled: Bool, txBytes: UInt64, rxBytes: UInt64, links: UInt32, rateBytesPerSec: UInt32?) {
         self.id = id
         self.kind = kind
         self.mode = mode
@@ -3795,7 +3845,7 @@ public struct FfiConverterTypeRemoteControlInterfaceEntry: FfiConverterRustBuffe
                 txBytes: FfiConverterUInt64.read(from: &buf),
                 rxBytes: FfiConverterUInt64.read(from: &buf),
                 links: FfiConverterUInt32.read(from: &buf),
-                rateBytesPerSec: FfiConverterUInt32.read(from: &buf)
+                rateBytesPerSec: FfiConverterOptionUInt32.read(from: &buf)
         )
     }
 
@@ -3808,7 +3858,7 @@ public struct FfiConverterTypeRemoteControlInterfaceEntry: FfiConverterRustBuffe
         FfiConverterUInt64.write(value.txBytes, into: &buf)
         FfiConverterUInt64.write(value.rxBytes, into: &buf)
         FfiConverterUInt32.write(value.links, into: &buf)
-        FfiConverterUInt32.write(value.rateBytesPerSec, into: &buf)
+        FfiConverterOptionUInt32.write(value.rateBytesPerSec, into: &buf)
     }
 }
 
@@ -3989,13 +4039,13 @@ public struct RemoteControlInterfacePeer: Equatable, Hashable {
     public var rxBytes: UInt64
     public var links: UInt32
     public var destinations: UInt32
-    public var rateBytesPerSec: UInt32
+    public var rateBytesPerSec: UInt32?
     public var radio: RemoteControlRadioIndication
     public var details: RemoteControlPeerDetails
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: RemoteControlInterfaceId, connection: RemoteControlConnectionState, txBytes: UInt64, rxBytes: UInt64, links: UInt32, destinations: UInt32, rateBytesPerSec: UInt32, radio: RemoteControlRadioIndication, details: RemoteControlPeerDetails) {
+    public init(id: RemoteControlInterfaceId, connection: RemoteControlConnectionState, txBytes: UInt64, rxBytes: UInt64, links: UInt32, destinations: UInt32, rateBytesPerSec: UInt32?, radio: RemoteControlRadioIndication, details: RemoteControlPeerDetails) {
         self.id = id
         self.connection = connection
         self.txBytes = txBytes
@@ -4029,7 +4079,7 @@ public struct FfiConverterTypeRemoteControlInterfacePeer: FfiConverterRustBuffer
                 rxBytes: FfiConverterUInt64.read(from: &buf),
                 links: FfiConverterUInt32.read(from: &buf),
                 destinations: FfiConverterUInt32.read(from: &buf),
-                rateBytesPerSec: FfiConverterUInt32.read(from: &buf),
+                rateBytesPerSec: FfiConverterOptionUInt32.read(from: &buf),
                 radio: FfiConverterTypeRemoteControlRadioIndication.read(from: &buf),
                 details: FfiConverterTypeRemoteControlPeerDetails.read(from: &buf)
         )
@@ -4042,7 +4092,7 @@ public struct FfiConverterTypeRemoteControlInterfacePeer: FfiConverterRustBuffer
         FfiConverterUInt64.write(value.rxBytes, into: &buf)
         FfiConverterUInt32.write(value.links, into: &buf)
         FfiConverterUInt32.write(value.destinations, into: &buf)
-        FfiConverterUInt32.write(value.rateBytesPerSec, into: &buf)
+        FfiConverterOptionUInt32.write(value.rateBytesPerSec, into: &buf)
         FfiConverterTypeRemoteControlRadioIndication.write(value.radio, into: &buf)
         FfiConverterTypeRemoteControlPeerDetails.write(value.details, into: &buf)
     }
@@ -4405,6 +4455,56 @@ public func FfiConverterTypeRemoteControlNativeRemoteControlConfirmation_lift(_ 
 #endif
 public func FfiConverterTypeRemoteControlNativeRemoteControlConfirmation_lower(_ value: RemoteControlNativeRemoteControlConfirmation) -> RustBuffer {
     return FfiConverterTypeRemoteControlNativeRemoteControlConfirmation.lower(value)
+}
+
+
+public struct RemoteControlNodeName: Equatable, Hashable {
+    public var value: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(value: String) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlNodeName: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlNodeName: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlNodeName {
+        return
+            try RemoteControlNodeName(
+                value: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteControlNodeName, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlNodeName_lift(_ buf: RustBuffer) throws -> RemoteControlNodeName {
+    return try FfiConverterTypeRemoteControlNodeName.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlNodeName_lower(_ value: RemoteControlNodeName) -> RustBuffer {
+    return FfiConverterTypeRemoteControlNodeName.lower(value)
 }
 
 
@@ -5657,6 +5757,56 @@ public func FfiConverterTypeRemoteControlSnrQuarterDb_lift(_ buf: RustBuffer) th
 #endif
 public func FfiConverterTypeRemoteControlSnrQuarterDb_lower(_ value: RemoteControlSnrQuarterDb) -> RustBuffer {
     return FfiConverterTypeRemoteControlSnrQuarterDb.lower(value)
+}
+
+
+public struct RemoteControlStreamId: Equatable, Hashable {
+    public var value: UInt16
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(value: UInt16) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlStreamId: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlStreamId: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlStreamId {
+        return
+            try RemoteControlStreamId(
+                value: FfiConverterUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteControlStreamId, into buf: inout [UInt8]) {
+        FfiConverterUInt16.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlStreamId_lift(_ buf: RustBuffer) throws -> RemoteControlStreamId {
+    return try FfiConverterTypeRemoteControlStreamId.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlStreamId_lower(_ value: RemoteControlStreamId) -> RustBuffer {
+    return FfiConverterTypeRemoteControlStreamId.lower(value)
 }
 
 
@@ -15499,6 +15649,8 @@ public enum RemoteControlError: Equatable, Hashable {
     )
     case unexpectedResponse(expected: RemoteControlResponseKind, found: RemoteControlResponseKind
     )
+    case unexpectedStream(expected: RemoteControlStreamId, found: RemoteControlStreamId
+    )
     case announceSelf(value: RemoteControlAnnounceSelfFailure
     )
 
@@ -15540,7 +15692,10 @@ public struct FfiConverterTypeRemoteControlError: FfiConverterRustBuffer {
         case 6: return .unexpectedResponse(expected: try FfiConverterTypeRemoteControlResponseKind.read(from: &buf), found: try FfiConverterTypeRemoteControlResponseKind.read(from: &buf)
         )
 
-        case 7: return .announceSelf(value: try FfiConverterTypeRemoteControlAnnounceSelfFailure.read(from: &buf)
+        case 7: return .unexpectedStream(expected: try FfiConverterTypeRemoteControlStreamId.read(from: &buf), found: try FfiConverterTypeRemoteControlStreamId.read(from: &buf)
+        )
+
+        case 8: return .announceSelf(value: try FfiConverterTypeRemoteControlAnnounceSelfFailure.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -15582,8 +15737,14 @@ public struct FfiConverterTypeRemoteControlError: FfiConverterRustBuffer {
             FfiConverterTypeRemoteControlResponseKind.write(found, into: &buf)
 
 
-        case let .announceSelf(value):
+        case let .unexpectedStream(expected,found):
             writeInt(&buf, Int32(7))
+            FfiConverterTypeRemoteControlStreamId.write(expected, into: &buf)
+            FfiConverterTypeRemoteControlStreamId.write(found, into: &buf)
+
+
+        case let .announceSelf(value):
+            writeInt(&buf, Int32(8))
             FfiConverterTypeRemoteControlAnnounceSelfFailure.write(value, into: &buf)
 
         }
@@ -16873,6 +17034,9 @@ public enum RemoteControlInterfaceKind: Equatable, Hashable {
     case i2pPeer
     case weave
     case weavePeer
+    case wifiHaLow
+    case wifiHaLowPeer
+    case wifiHaLowBroadcast
 
 
 
@@ -16961,6 +17125,12 @@ public struct FfiConverterTypeRemoteControlInterfaceKind: FfiConverterRustBuffer
         case 33: return .weave
 
         case 34: return .weavePeer
+
+        case 35: return .wifiHaLow
+
+        case 36: return .wifiHaLowPeer
+
+        case 37: return .wifiHaLowBroadcast
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -17104,6 +17274,18 @@ public struct FfiConverterTypeRemoteControlInterfaceKind: FfiConverterRustBuffer
 
         case .weavePeer:
             writeInt(&buf, Int32(34))
+
+
+        case .wifiHaLow:
+            writeInt(&buf, Int32(35))
+
+
+        case .wifiHaLowPeer:
+            writeInt(&buf, Int32(36))
+
+
+        case .wifiHaLowBroadcast:
+            writeInt(&buf, Int32(37))
 
         }
     }
@@ -20702,12 +20884,151 @@ public func FfiConverterTypeRemoteControlProtocolError_lower(_ value: RemoteCont
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum RemoteControlRadioBands: Equatable, Hashable {
+
+    case subG
+    case subGAndGhz24
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlRadioBands: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlRadioBands: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlRadioBands
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlRadioBands {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .subG
+
+        case 2: return .subGAndGhz24
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlRadioBands, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .subG:
+            writeInt(&buf, Int32(1))
+
+
+        case .subGAndGhz24:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioBands_lift(_ buf: RustBuffer) throws -> RemoteControlRadioBands {
+    return try FfiConverterTypeRemoteControlRadioBands.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioBands_lower(_ value: RemoteControlRadioBands) -> RustBuffer {
+    return FfiConverterTypeRemoteControlRadioBands.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteControlRadioConfiguration: Equatable, Hashable {
+
+    case unconfigured
+    case profile(value: RemoteControlLoRaProfile
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlRadioConfiguration: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlRadioConfiguration: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlRadioConfiguration
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlRadioConfiguration {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unconfigured
+
+        case 2: return .profile(value: try FfiConverterTypeRemoteControlLoRaProfile.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlRadioConfiguration, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unconfigured:
+            writeInt(&buf, Int32(1))
+
+
+        case let .profile(value):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeRemoteControlLoRaProfile.write(value, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioConfiguration_lift(_ buf: RustBuffer) throws -> RemoteControlRadioConfiguration {
+    return try FfiConverterTypeRemoteControlRadioConfiguration.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioConfiguration_lower(_ value: RemoteControlRadioConfiguration) -> RustBuffer {
+    return FfiConverterTypeRemoteControlRadioConfiguration.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum RemoteControlRadioIndication: Equatable, Hashable {
 
     case notRadio
     case bluetooth(value: RemoteControlBluetoothIndication
     )
     case wifi(value: RemoteControlWifiIndication
+    )
+    case haLow(value: RemoteControlWifiIndication
     )
     case loRa(value: RemoteControlLoRaIndication
     )
@@ -20740,7 +21061,10 @@ public struct FfiConverterTypeRemoteControlRadioIndication: FfiConverterRustBuff
         case 3: return .wifi(value: try FfiConverterTypeRemoteControlWifiIndication.read(from: &buf)
         )
 
-        case 4: return .loRa(value: try FfiConverterTypeRemoteControlLoRaIndication.read(from: &buf)
+        case 4: return .haLow(value: try FfiConverterTypeRemoteControlWifiIndication.read(from: &buf)
+        )
+
+        case 5: return .loRa(value: try FfiConverterTypeRemoteControlLoRaIndication.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -20765,8 +21089,13 @@ public struct FfiConverterTypeRemoteControlRadioIndication: FfiConverterRustBuff
             FfiConverterTypeRemoteControlWifiIndication.write(value, into: &buf)
 
 
-        case let .loRa(value):
+        case let .haLow(value):
             writeInt(&buf, Int32(4))
+            FfiConverterTypeRemoteControlWifiIndication.write(value, into: &buf)
+
+
+        case let .loRa(value):
+            writeInt(&buf, Int32(5))
             FfiConverterTypeRemoteControlLoRaIndication.write(value, into: &buf)
 
         }
@@ -20786,6 +21115,352 @@ public func FfiConverterTypeRemoteControlRadioIndication_lift(_ buf: RustBuffer)
 #endif
 public func FfiConverterTypeRemoteControlRadioIndication_lower(_ value: RemoteControlRadioIndication) -> RustBuffer {
     return FfiConverterTypeRemoteControlRadioIndication.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteControlRadioOperatingState: Equatable, Hashable {
+
+    case unconfigured
+    case disabled
+    case operating
+    case failed
+    case changing
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlRadioOperatingState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlRadioOperatingState: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlRadioOperatingState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlRadioOperatingState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unconfigured
+
+        case 2: return .disabled
+
+        case 3: return .operating
+
+        case 4: return .failed
+
+        case 5: return .changing
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlRadioOperatingState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unconfigured:
+            writeInt(&buf, Int32(1))
+
+
+        case .disabled:
+            writeInt(&buf, Int32(2))
+
+
+        case .operating:
+            writeInt(&buf, Int32(3))
+
+
+        case .failed:
+            writeInt(&buf, Int32(4))
+
+
+        case .changing:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioOperatingState_lift(_ buf: RustBuffer) throws -> RemoteControlRadioOperatingState {
+    return try FfiConverterTypeRemoteControlRadioOperatingState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioOperatingState_lower(_ value: RemoteControlRadioOperatingState) -> RustBuffer {
+    return FfiConverterTypeRemoteControlRadioOperatingState.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteControlRadioOutcome: Equatable, Hashable {
+
+    case saved
+    case unknownInterface
+    case hardwareFailed
+    case persistenceFailed
+    case recoveryRequired
+    case busy
+    case identityExhausted
+    case publicationFailed
+    case invalidConfiguration
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlRadioOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlRadioOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlRadioOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlRadioOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .saved
+
+        case 2: return .unknownInterface
+
+        case 3: return .hardwareFailed
+
+        case 4: return .persistenceFailed
+
+        case 5: return .recoveryRequired
+
+        case 6: return .busy
+
+        case 7: return .identityExhausted
+
+        case 8: return .publicationFailed
+
+        case 9: return .invalidConfiguration
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlRadioOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .saved:
+            writeInt(&buf, Int32(1))
+
+
+        case .unknownInterface:
+            writeInt(&buf, Int32(2))
+
+
+        case .hardwareFailed:
+            writeInt(&buf, Int32(3))
+
+
+        case .persistenceFailed:
+            writeInt(&buf, Int32(4))
+
+
+        case .recoveryRequired:
+            writeInt(&buf, Int32(5))
+
+
+        case .busy:
+            writeInt(&buf, Int32(6))
+
+
+        case .identityExhausted:
+            writeInt(&buf, Int32(7))
+
+
+        case .publicationFailed:
+            writeInt(&buf, Int32(8))
+
+
+        case .invalidConfiguration:
+            writeInt(&buf, Int32(9))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioOutcome_lift(_ buf: RustBuffer) throws -> RemoteControlRadioOutcome {
+    return try FfiConverterTypeRemoteControlRadioOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioOutcome_lower(_ value: RemoteControlRadioOutcome) -> RustBuffer {
+    return FfiConverterTypeRemoteControlRadioOutcome.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteControlRadioSaved: Equatable, Hashable {
+
+    case unknown
+    case confirmed(value: RemoteControlRadioConfiguration
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlRadioSaved: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlRadioSaved: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlRadioSaved
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlRadioSaved {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unknown
+
+        case 2: return .confirmed(value: try FfiConverterTypeRemoteControlRadioConfiguration.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlRadioSaved, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unknown:
+            writeInt(&buf, Int32(1))
+
+
+        case let .confirmed(value):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeRemoteControlRadioConfiguration.write(value, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioSaved_lift(_ buf: RustBuffer) throws -> RemoteControlRadioSaved {
+    return try FfiConverterTypeRemoteControlRadioSaved.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioSaved_lower(_ value: RemoteControlRadioSaved) -> RustBuffer {
+    return FfiConverterTypeRemoteControlRadioSaved.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteControlRadioStatus: Equatable, Hashable {
+
+    case unknownInterface
+    case status(bands: RemoteControlRadioBands, operating: RemoteControlRadioOperatingState, saved: RemoteControlRadioSaved
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlRadioStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlRadioStatus: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlRadioStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlRadioStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unknownInterface
+
+        case 2: return .status(bands: try FfiConverterTypeRemoteControlRadioBands.read(from: &buf), operating: try FfiConverterTypeRemoteControlRadioOperatingState.read(from: &buf), saved: try FfiConverterTypeRemoteControlRadioSaved.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlRadioStatus, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unknownInterface:
+            writeInt(&buf, Int32(1))
+
+
+        case let .status(bands,operating,saved):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeRemoteControlRadioBands.write(bands, into: &buf)
+            FfiConverterTypeRemoteControlRadioOperatingState.write(operating, into: &buf)
+            FfiConverterTypeRemoteControlRadioSaved.write(saved, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioStatus_lift(_ buf: RustBuffer) throws -> RemoteControlRadioStatus {
+    return try FfiConverterTypeRemoteControlRadioStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlRadioStatus_lower(_ value: RemoteControlRadioStatus) -> RustBuffer {
+    return FfiConverterTypeRemoteControlRadioStatus.lower(value)
 }
 
 
@@ -21654,6 +22329,10 @@ public enum RemoteControlRequest: Equatable, Hashable {
 
     case describe
     case announceSelf
+    case appMessage(value: RemoteControlAppMessage
+    )
+    case watchInterfaces(streamId: RemoteControlStreamId
+    )
     case inventoryInterfaces(page: RemoteControlInterfacePage
     )
     case setInterfacePower(id: RemoteControlInterfaceId, power: RemoteControlInterfacePower
@@ -21669,6 +22348,10 @@ public enum RemoteControlRequest: Equatable, Hashable {
     case inventoryInterfacePeers(id: RemoteControlInterfaceId, page: RemoteControlPeerPage
     )
     case inventoryInterfaceConfig(id: RemoteControlInterfaceId
+    )
+    case inspectRadio(id: RemoteControlInterfaceId
+    )
+    case configureRadio(id: RemoteControlInterfaceId, configuration: RemoteControlRadioConfiguration
     )
     case setInterfaceLoRaProfile(id: RemoteControlInterfaceId, profile: RemoteControlLoRaProfile
     )
@@ -21705,6 +22388,9 @@ public enum RemoteControlRequest: Equatable, Hashable {
     case cancelWifiCredentials(revision: RemoteControlWifiCredentialRevision
     )
     case inspectWifiTransaction
+    case setNodeName(name: RemoteControlNodeName
+    )
+    case describeNodeName
 
 
 
@@ -21730,84 +22416,101 @@ public struct FfiConverterTypeRemoteControlRequest: FfiConverterRustBuffer {
 
         case 2: return .announceSelf
 
-        case 3: return .inventoryInterfaces(page: try FfiConverterTypeRemoteControlInterfacePage.read(from: &buf)
+        case 3: return .appMessage(value: try FfiConverterTypeRemoteControlAppMessage.read(from: &buf)
         )
 
-        case 4: return .setInterfacePower(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), power: try FfiConverterTypeRemoteControlInterfacePower.read(from: &buf)
+        case 4: return .watchInterfaces(streamId: try FfiConverterTypeRemoteControlStreamId.read(from: &buf)
         )
 
-        case 5: return .setInterfaceMode(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), mode: try FfiConverterTypeRemoteControlInterfaceMode.read(from: &buf)
+        case 5: return .inventoryInterfaces(page: try FfiConverterTypeRemoteControlInterfacePage.read(from: &buf)
         )
 
-        case 6: return .setInterfaceGroup(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), group: try FfiConverterTypeRemoteControlInterfaceGroup.read(from: &buf)
+        case 6: return .setInterfacePower(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), power: try FfiConverterTypeRemoteControlInterfacePower.read(from: &buf)
         )
 
-        case 7: return .inventoryInterfaceDiscoveryGroups(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf)
+        case 7: return .setInterfaceMode(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), mode: try FfiConverterTypeRemoteControlInterfaceMode.read(from: &buf)
         )
 
-        case 8: return .replaceInterfaceDiscoveryGroups(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), groups: try FfiConverterTypeRemoteControlDiscoveryGroups.read(from: &buf)
+        case 8: return .setInterfaceGroup(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), group: try FfiConverterTypeRemoteControlInterfaceGroup.read(from: &buf)
         )
 
-        case 9: return .inventoryInterfacePeers(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), page: try FfiConverterTypeRemoteControlPeerPage.read(from: &buf)
+        case 9: return .inventoryInterfaceDiscoveryGroups(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf)
         )
 
-        case 10: return .inventoryInterfaceConfig(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf)
+        case 10: return .replaceInterfaceDiscoveryGroups(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), groups: try FfiConverterTypeRemoteControlDiscoveryGroups.read(from: &buf)
         )
 
-        case 11: return .setInterfaceLoRaProfile(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), profile: try FfiConverterTypeRemoteControlLoRaProfile.read(from: &buf)
+        case 11: return .inventoryInterfacePeers(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), page: try FfiConverterTypeRemoteControlPeerPage.read(from: &buf)
         )
 
-        case 12: return .setInterfaceWifiStation(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), station: try FfiConverterTypeRemoteControlWifiStation.read(from: &buf)
+        case 12: return .inventoryInterfaceConfig(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf)
         )
 
-        case 13: return .inventoryControllers(page: try FfiConverterTypeRemoteControlControllerPage.read(from: &buf)
+        case 13: return .inspectRadio(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf)
         )
 
-        case 14: return .authorizeController(controller: try FfiConverterTypeRemoteControlControllerIdentity.read(from: &buf), permittedRequests: try FfiConverterTypeRemoteControlRequestSet.read(from: &buf)
+        case 14: return .configureRadio(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), configuration: try FfiConverterTypeRemoteControlRadioConfiguration.read(from: &buf)
         )
 
-        case 15: return .revokeController(hash: try FfiConverterTypeRemoteControlIdentityHash.read(from: &buf)
+        case 15: return .setInterfaceLoRaProfile(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), profile: try FfiConverterTypeRemoteControlLoRaProfile.read(from: &buf)
         )
 
-        case 16: return .describeBuild
-
-        case 17: return .describePower
-
-        case 18: return .sleepRadios
-
-        case 19: return .wakeRadios
-
-        case 20: return .setSystemPower(power: try FfiConverterTypeRemoteControlSystemPower.read(from: &buf)
+        case 16: return .setInterfaceWifiStation(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), station: try FfiConverterTypeRemoteControlWifiStation.read(from: &buf)
         )
 
-        case 21: return .setGnssPower(power: try FfiConverterTypeRemoteControlGnssPower.read(from: &buf)
+        case 17: return .inventoryControllers(page: try FfiConverterTypeRemoteControlControllerPage.read(from: &buf)
         )
 
-        case 22: return .setDisplayVisibility(visibility: try FfiConverterTypeRemoteControlDisplayVisibility.read(from: &buf)
+        case 18: return .authorizeController(controller: try FfiConverterTypeRemoteControlControllerIdentity.read(from: &buf), permittedRequests: try FfiConverterTypeRemoteControlRequestSet.read(from: &buf)
         )
 
-        case 23: return .setDisplayAutoOff(autoOff: try FfiConverterTypeRemoteControlDisplayAutoOff.read(from: &buf)
+        case 19: return .revokeController(hash: try FfiConverterTypeRemoteControlIdentityHash.read(from: &buf)
         )
 
-        case 24: return .setStationUplink(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), uplink: try FfiConverterTypeRemoteControlStationUplink.read(from: &buf)
+        case 20: return .describeBuild
+
+        case 21: return .describePower
+
+        case 22: return .sleepRadios
+
+        case 23: return .wakeRadios
+
+        case 24: return .setSystemPower(power: try FfiConverterTypeRemoteControlSystemPower.read(from: &buf)
         )
 
-        case 25: return .setEspRadioMode(mode: try FfiConverterTypeRemoteControlEspRadioMode.read(from: &buf)
+        case 25: return .setGnssPower(power: try FfiConverterTypeRemoteControlGnssPower.read(from: &buf)
         )
 
-        case 26: return .stageWifiCredentials(station: try FfiConverterTypeRemoteControlWifiStation.read(from: &buf)
+        case 26: return .setDisplayVisibility(visibility: try FfiConverterTypeRemoteControlDisplayVisibility.read(from: &buf)
         )
 
-        case 27: return .activateWifiCredentials(revision: try FfiConverterTypeRemoteControlWifiCredentialRevision.read(from: &buf)
+        case 27: return .setDisplayAutoOff(autoOff: try FfiConverterTypeRemoteControlDisplayAutoOff.read(from: &buf)
         )
 
-        case 28: return .confirmWifiCredentials(revision: try FfiConverterTypeRemoteControlWifiCredentialRevision.read(from: &buf)
+        case 28: return .setStationUplink(id: try FfiConverterTypeRemoteControlInterfaceId.read(from: &buf), uplink: try FfiConverterTypeRemoteControlStationUplink.read(from: &buf)
         )
 
-        case 29: return .cancelWifiCredentials(revision: try FfiConverterTypeRemoteControlWifiCredentialRevision.read(from: &buf)
+        case 29: return .setEspRadioMode(mode: try FfiConverterTypeRemoteControlEspRadioMode.read(from: &buf)
         )
 
-        case 30: return .inspectWifiTransaction
+        case 30: return .stageWifiCredentials(station: try FfiConverterTypeRemoteControlWifiStation.read(from: &buf)
+        )
+
+        case 31: return .activateWifiCredentials(revision: try FfiConverterTypeRemoteControlWifiCredentialRevision.read(from: &buf)
+        )
+
+        case 32: return .confirmWifiCredentials(revision: try FfiConverterTypeRemoteControlWifiCredentialRevision.read(from: &buf)
+        )
+
+        case 33: return .cancelWifiCredentials(revision: try FfiConverterTypeRemoteControlWifiCredentialRevision.read(from: &buf)
+        )
+
+        case 34: return .inspectWifiTransaction
+
+        case 35: return .setNodeName(name: try FfiConverterTypeRemoteControlNodeName.read(from: &buf)
+        )
+
+        case 36: return .describeNodeName
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -21825,148 +22528,178 @@ public struct FfiConverterTypeRemoteControlRequest: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
 
 
-        case let .inventoryInterfaces(page):
+        case let .appMessage(value):
             writeInt(&buf, Int32(3))
+            FfiConverterTypeRemoteControlAppMessage.write(value, into: &buf)
+
+
+        case let .watchInterfaces(streamId):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeRemoteControlStreamId.write(streamId, into: &buf)
+
+
+        case let .inventoryInterfaces(page):
+            writeInt(&buf, Int32(5))
             FfiConverterTypeRemoteControlInterfacePage.write(page, into: &buf)
 
 
         case let .setInterfacePower(id,power):
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(6))
             FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
             FfiConverterTypeRemoteControlInterfacePower.write(power, into: &buf)
 
 
         case let .setInterfaceMode(id,mode):
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(7))
             FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
             FfiConverterTypeRemoteControlInterfaceMode.write(mode, into: &buf)
 
 
         case let .setInterfaceGroup(id,group):
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(8))
             FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
             FfiConverterTypeRemoteControlInterfaceGroup.write(group, into: &buf)
 
 
         case let .inventoryInterfaceDiscoveryGroups(id):
-            writeInt(&buf, Int32(7))
+            writeInt(&buf, Int32(9))
             FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
 
 
         case let .replaceInterfaceDiscoveryGroups(id,groups):
-            writeInt(&buf, Int32(8))
+            writeInt(&buf, Int32(10))
             FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
             FfiConverterTypeRemoteControlDiscoveryGroups.write(groups, into: &buf)
 
 
         case let .inventoryInterfacePeers(id,page):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(11))
             FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
             FfiConverterTypeRemoteControlPeerPage.write(page, into: &buf)
 
 
         case let .inventoryInterfaceConfig(id):
-            writeInt(&buf, Int32(10))
+            writeInt(&buf, Int32(12))
             FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
 
 
+        case let .inspectRadio(id):
+            writeInt(&buf, Int32(13))
+            FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
+
+
+        case let .configureRadio(id,configuration):
+            writeInt(&buf, Int32(14))
+            FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
+            FfiConverterTypeRemoteControlRadioConfiguration.write(configuration, into: &buf)
+
+
         case let .setInterfaceLoRaProfile(id,profile):
-            writeInt(&buf, Int32(11))
+            writeInt(&buf, Int32(15))
             FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
             FfiConverterTypeRemoteControlLoRaProfile.write(profile, into: &buf)
 
 
         case let .setInterfaceWifiStation(id,station):
-            writeInt(&buf, Int32(12))
+            writeInt(&buf, Int32(16))
             FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
             FfiConverterTypeRemoteControlWifiStation.write(station, into: &buf)
 
 
         case let .inventoryControllers(page):
-            writeInt(&buf, Int32(13))
+            writeInt(&buf, Int32(17))
             FfiConverterTypeRemoteControlControllerPage.write(page, into: &buf)
 
 
         case let .authorizeController(controller,permittedRequests):
-            writeInt(&buf, Int32(14))
+            writeInt(&buf, Int32(18))
             FfiConverterTypeRemoteControlControllerIdentity.write(controller, into: &buf)
             FfiConverterTypeRemoteControlRequestSet.write(permittedRequests, into: &buf)
 
 
         case let .revokeController(hash):
-            writeInt(&buf, Int32(15))
+            writeInt(&buf, Int32(19))
             FfiConverterTypeRemoteControlIdentityHash.write(hash, into: &buf)
 
 
         case .describeBuild:
-            writeInt(&buf, Int32(16))
+            writeInt(&buf, Int32(20))
 
 
         case .describePower:
-            writeInt(&buf, Int32(17))
+            writeInt(&buf, Int32(21))
 
 
         case .sleepRadios:
-            writeInt(&buf, Int32(18))
+            writeInt(&buf, Int32(22))
 
 
         case .wakeRadios:
-            writeInt(&buf, Int32(19))
+            writeInt(&buf, Int32(23))
 
 
         case let .setSystemPower(power):
-            writeInt(&buf, Int32(20))
+            writeInt(&buf, Int32(24))
             FfiConverterTypeRemoteControlSystemPower.write(power, into: &buf)
 
 
         case let .setGnssPower(power):
-            writeInt(&buf, Int32(21))
+            writeInt(&buf, Int32(25))
             FfiConverterTypeRemoteControlGnssPower.write(power, into: &buf)
 
 
         case let .setDisplayVisibility(visibility):
-            writeInt(&buf, Int32(22))
+            writeInt(&buf, Int32(26))
             FfiConverterTypeRemoteControlDisplayVisibility.write(visibility, into: &buf)
 
 
         case let .setDisplayAutoOff(autoOff):
-            writeInt(&buf, Int32(23))
+            writeInt(&buf, Int32(27))
             FfiConverterTypeRemoteControlDisplayAutoOff.write(autoOff, into: &buf)
 
 
         case let .setStationUplink(id,uplink):
-            writeInt(&buf, Int32(24))
+            writeInt(&buf, Int32(28))
             FfiConverterTypeRemoteControlInterfaceId.write(id, into: &buf)
             FfiConverterTypeRemoteControlStationUplink.write(uplink, into: &buf)
 
 
         case let .setEspRadioMode(mode):
-            writeInt(&buf, Int32(25))
+            writeInt(&buf, Int32(29))
             FfiConverterTypeRemoteControlEspRadioMode.write(mode, into: &buf)
 
 
         case let .stageWifiCredentials(station):
-            writeInt(&buf, Int32(26))
+            writeInt(&buf, Int32(30))
             FfiConverterTypeRemoteControlWifiStation.write(station, into: &buf)
 
 
         case let .activateWifiCredentials(revision):
-            writeInt(&buf, Int32(27))
+            writeInt(&buf, Int32(31))
             FfiConverterTypeRemoteControlWifiCredentialRevision.write(revision, into: &buf)
 
 
         case let .confirmWifiCredentials(revision):
-            writeInt(&buf, Int32(28))
+            writeInt(&buf, Int32(32))
             FfiConverterTypeRemoteControlWifiCredentialRevision.write(revision, into: &buf)
 
 
         case let .cancelWifiCredentials(revision):
-            writeInt(&buf, Int32(29))
+            writeInt(&buf, Int32(33))
             FfiConverterTypeRemoteControlWifiCredentialRevision.write(revision, into: &buf)
 
 
         case .inspectWifiTransaction:
-            writeInt(&buf, Int32(30))
+            writeInt(&buf, Int32(34))
+
+
+        case let .setNodeName(name):
+            writeInt(&buf, Int32(35))
+            FfiConverterTypeRemoteControlNodeName.write(name, into: &buf)
+
+
+        case .describeNodeName:
+            writeInt(&buf, Int32(36))
 
         }
     }
@@ -22023,6 +22756,12 @@ public enum RemoteControlRequestKind: Equatable, Hashable {
     case inspectWifiTransaction
     case inventoryInterfaceDiscoveryGroups
     case replaceInterfaceDiscoveryGroups
+    case appMessage
+    case watchInterfaces
+    case setNodeName
+    case describeNodeName
+    case inspectRadio
+    case configureRadio
 
 
 
@@ -22103,6 +22842,18 @@ public struct FfiConverterTypeRemoteControlRequestKind: FfiConverterRustBuffer {
         case 29: return .inventoryInterfaceDiscoveryGroups
 
         case 30: return .replaceInterfaceDiscoveryGroups
+
+        case 31: return .appMessage
+
+        case 32: return .watchInterfaces
+
+        case 33: return .setNodeName
+
+        case 34: return .describeNodeName
+
+        case 35: return .inspectRadio
+
+        case 36: return .configureRadio
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -22230,6 +22981,30 @@ public struct FfiConverterTypeRemoteControlRequestKind: FfiConverterRustBuffer {
 
         case .replaceInterfaceDiscoveryGroups:
             writeInt(&buf, Int32(30))
+
+
+        case .appMessage:
+            writeInt(&buf, Int32(31))
+
+
+        case .watchInterfaces:
+            writeInt(&buf, Int32(32))
+
+
+        case .setNodeName:
+            writeInt(&buf, Int32(33))
+
+
+        case .describeNodeName:
+            writeInt(&buf, Int32(34))
+
+
+        case .inspectRadio:
+            writeInt(&buf, Int32(35))
+
+
+        case .configureRadio:
+            writeInt(&buf, Int32(36))
 
         }
     }
@@ -22547,6 +23322,10 @@ public enum RemoteControlResponse: Equatable, Hashable {
     )
     case announceSelf(value: RemoteControlAnnounceSelfOutcome
     )
+    case appMessage(value: RemoteControlAppMessage
+    )
+    case watchInterfaces(streamId: RemoteControlStreamId
+    )
     case inventoryInterfaces(value: RemoteControlInterfaceInventory
     )
     case setInterfacePower(value: RemoteControlPowerOutcome
@@ -22562,6 +23341,10 @@ public enum RemoteControlResponse: Equatable, Hashable {
     case inventoryInterfacePeers(value: RemoteControlInterfacePeersOutcome
     )
     case inventoryInterfaceConfig(value: RemoteControlInterfaceConfigOutcome
+    )
+    case inspectRadio(value: RemoteControlRadioStatus
+    )
+    case configureRadio(value: RemoteControlRadioOutcome
     )
     case setInterfaceLoRaProfile(value: RemoteControlLoRaOutcome
     )
@@ -22603,6 +23386,10 @@ public enum RemoteControlResponse: Equatable, Hashable {
     )
     case inspectWifiTransaction(value: RemoteControlWifiTransactionStatus
     )
+    case setNodeName(value: RemoteControlApplyOutcome
+    )
+    case describeNodeName(value: RemoteControlNodeName
+    )
     case protocolError(value: RemoteControlProtocolError
     )
 
@@ -22632,91 +23419,109 @@ public struct FfiConverterTypeRemoteControlResponse: FfiConverterRustBuffer {
         case 2: return .announceSelf(value: try FfiConverterTypeRemoteControlAnnounceSelfOutcome.read(from: &buf)
         )
 
-        case 3: return .inventoryInterfaces(value: try FfiConverterTypeRemoteControlInterfaceInventory.read(from: &buf)
+        case 3: return .appMessage(value: try FfiConverterTypeRemoteControlAppMessage.read(from: &buf)
         )
 
-        case 4: return .setInterfacePower(value: try FfiConverterTypeRemoteControlPowerOutcome.read(from: &buf)
+        case 4: return .watchInterfaces(streamId: try FfiConverterTypeRemoteControlStreamId.read(from: &buf)
         )
 
-        case 5: return .setInterfaceMode(value: try FfiConverterTypeRemoteControlModeOutcome.read(from: &buf)
+        case 5: return .inventoryInterfaces(value: try FfiConverterTypeRemoteControlInterfaceInventory.read(from: &buf)
         )
 
-        case 6: return .setInterfaceGroup(value: try FfiConverterTypeRemoteControlGroupOutcome.read(from: &buf)
+        case 6: return .setInterfacePower(value: try FfiConverterTypeRemoteControlPowerOutcome.read(from: &buf)
         )
 
-        case 7: return .inventoryInterfaceDiscoveryGroups(value: try FfiConverterTypeRemoteControlDiscoveryGroupsInventoryOutcome.read(from: &buf)
+        case 7: return .setInterfaceMode(value: try FfiConverterTypeRemoteControlModeOutcome.read(from: &buf)
         )
 
-        case 8: return .replaceInterfaceDiscoveryGroups(value: try FfiConverterTypeRemoteControlDiscoveryGroupsReplaceOutcome.read(from: &buf)
+        case 8: return .setInterfaceGroup(value: try FfiConverterTypeRemoteControlGroupOutcome.read(from: &buf)
         )
 
-        case 9: return .inventoryInterfacePeers(value: try FfiConverterTypeRemoteControlInterfacePeersOutcome.read(from: &buf)
+        case 9: return .inventoryInterfaceDiscoveryGroups(value: try FfiConverterTypeRemoteControlDiscoveryGroupsInventoryOutcome.read(from: &buf)
         )
 
-        case 10: return .inventoryInterfaceConfig(value: try FfiConverterTypeRemoteControlInterfaceConfigOutcome.read(from: &buf)
+        case 10: return .replaceInterfaceDiscoveryGroups(value: try FfiConverterTypeRemoteControlDiscoveryGroupsReplaceOutcome.read(from: &buf)
         )
 
-        case 11: return .setInterfaceLoRaProfile(value: try FfiConverterTypeRemoteControlLoRaOutcome.read(from: &buf)
+        case 11: return .inventoryInterfacePeers(value: try FfiConverterTypeRemoteControlInterfacePeersOutcome.read(from: &buf)
         )
 
-        case 12: return .setInterfaceWifiStation(value: try FfiConverterTypeRemoteControlWifiStationOutcome.read(from: &buf)
+        case 12: return .inventoryInterfaceConfig(value: try FfiConverterTypeRemoteControlInterfaceConfigOutcome.read(from: &buf)
         )
 
-        case 13: return .inventoryControllers(value: try FfiConverterTypeRemoteControlControllerInventory.read(from: &buf)
+        case 13: return .inspectRadio(value: try FfiConverterTypeRemoteControlRadioStatus.read(from: &buf)
         )
 
-        case 14: return .authorizeController(value: try FfiConverterTypeRemoteControlAuthorizeControllerOutcome.read(from: &buf)
+        case 14: return .configureRadio(value: try FfiConverterTypeRemoteControlRadioOutcome.read(from: &buf)
         )
 
-        case 15: return .revokeController(value: try FfiConverterTypeRemoteControlRevokeControllerOutcome.read(from: &buf)
+        case 15: return .setInterfaceLoRaProfile(value: try FfiConverterTypeRemoteControlLoRaOutcome.read(from: &buf)
         )
 
-        case 16: return .describeBuild(value: try FfiConverterTypeRemoteControlBuildVersion.read(from: &buf)
+        case 16: return .setInterfaceWifiStation(value: try FfiConverterTypeRemoteControlWifiStationOutcome.read(from: &buf)
         )
 
-        case 17: return .describePower(value: try FfiConverterTypeRemoteControlPowerSnapshot.read(from: &buf)
+        case 17: return .inventoryControllers(value: try FfiConverterTypeRemoteControlControllerInventory.read(from: &buf)
         )
 
-        case 18: return .sleepRadios(value: try FfiConverterTypeRemoteControlSleepOutcome.read(from: &buf)
+        case 18: return .authorizeController(value: try FfiConverterTypeRemoteControlAuthorizeControllerOutcome.read(from: &buf)
         )
 
-        case 19: return .wakeRadios(value: try FfiConverterTypeRemoteControlSleepOutcome.read(from: &buf)
+        case 19: return .revokeController(value: try FfiConverterTypeRemoteControlRevokeControllerOutcome.read(from: &buf)
         )
 
-        case 20: return .setSystemPower(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        case 20: return .describeBuild(value: try FfiConverterTypeRemoteControlBuildVersion.read(from: &buf)
         )
 
-        case 21: return .setGnssPower(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        case 21: return .describePower(value: try FfiConverterTypeRemoteControlPowerSnapshot.read(from: &buf)
         )
 
-        case 22: return .setDisplayVisibility(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        case 22: return .sleepRadios(value: try FfiConverterTypeRemoteControlSleepOutcome.read(from: &buf)
         )
 
-        case 23: return .setDisplayAutoOff(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        case 23: return .wakeRadios(value: try FfiConverterTypeRemoteControlSleepOutcome.read(from: &buf)
         )
 
-        case 24: return .setStationUplink(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        case 24: return .setSystemPower(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
         )
 
-        case 25: return .setEspRadioMode(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        case 25: return .setGnssPower(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
         )
 
-        case 26: return .stageWifiCredentials(value: try FfiConverterTypeRemoteControlWifiStageOutcome.read(from: &buf)
+        case 26: return .setDisplayVisibility(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
         )
 
-        case 27: return .activateWifiCredentials(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        case 27: return .setDisplayAutoOff(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
         )
 
-        case 28: return .confirmWifiCredentials(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        case 28: return .setStationUplink(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
         )
 
-        case 29: return .cancelWifiCredentials(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        case 29: return .setEspRadioMode(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
         )
 
-        case 30: return .inspectWifiTransaction(value: try FfiConverterTypeRemoteControlWifiTransactionStatus.read(from: &buf)
+        case 30: return .stageWifiCredentials(value: try FfiConverterTypeRemoteControlWifiStageOutcome.read(from: &buf)
         )
 
-        case 31: return .protocolError(value: try FfiConverterTypeRemoteControlProtocolError.read(from: &buf)
+        case 31: return .activateWifiCredentials(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        )
+
+        case 32: return .confirmWifiCredentials(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        )
+
+        case 33: return .cancelWifiCredentials(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        )
+
+        case 34: return .inspectWifiTransaction(value: try FfiConverterTypeRemoteControlWifiTransactionStatus.read(from: &buf)
+        )
+
+        case 35: return .setNodeName(value: try FfiConverterTypeRemoteControlApplyOutcome.read(from: &buf)
+        )
+
+        case 36: return .describeNodeName(value: try FfiConverterTypeRemoteControlNodeName.read(from: &buf)
+        )
+
+        case 37: return .protocolError(value: try FfiConverterTypeRemoteControlProtocolError.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -22737,148 +23542,178 @@ public struct FfiConverterTypeRemoteControlResponse: FfiConverterRustBuffer {
             FfiConverterTypeRemoteControlAnnounceSelfOutcome.write(value, into: &buf)
 
 
-        case let .inventoryInterfaces(value):
+        case let .appMessage(value):
             writeInt(&buf, Int32(3))
+            FfiConverterTypeRemoteControlAppMessage.write(value, into: &buf)
+
+
+        case let .watchInterfaces(streamId):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeRemoteControlStreamId.write(streamId, into: &buf)
+
+
+        case let .inventoryInterfaces(value):
+            writeInt(&buf, Int32(5))
             FfiConverterTypeRemoteControlInterfaceInventory.write(value, into: &buf)
 
 
         case let .setInterfacePower(value):
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(6))
             FfiConverterTypeRemoteControlPowerOutcome.write(value, into: &buf)
 
 
         case let .setInterfaceMode(value):
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(7))
             FfiConverterTypeRemoteControlModeOutcome.write(value, into: &buf)
 
 
         case let .setInterfaceGroup(value):
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(8))
             FfiConverterTypeRemoteControlGroupOutcome.write(value, into: &buf)
 
 
         case let .inventoryInterfaceDiscoveryGroups(value):
-            writeInt(&buf, Int32(7))
+            writeInt(&buf, Int32(9))
             FfiConverterTypeRemoteControlDiscoveryGroupsInventoryOutcome.write(value, into: &buf)
 
 
         case let .replaceInterfaceDiscoveryGroups(value):
-            writeInt(&buf, Int32(8))
+            writeInt(&buf, Int32(10))
             FfiConverterTypeRemoteControlDiscoveryGroupsReplaceOutcome.write(value, into: &buf)
 
 
         case let .inventoryInterfacePeers(value):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(11))
             FfiConverterTypeRemoteControlInterfacePeersOutcome.write(value, into: &buf)
 
 
         case let .inventoryInterfaceConfig(value):
-            writeInt(&buf, Int32(10))
+            writeInt(&buf, Int32(12))
             FfiConverterTypeRemoteControlInterfaceConfigOutcome.write(value, into: &buf)
 
 
+        case let .inspectRadio(value):
+            writeInt(&buf, Int32(13))
+            FfiConverterTypeRemoteControlRadioStatus.write(value, into: &buf)
+
+
+        case let .configureRadio(value):
+            writeInt(&buf, Int32(14))
+            FfiConverterTypeRemoteControlRadioOutcome.write(value, into: &buf)
+
+
         case let .setInterfaceLoRaProfile(value):
-            writeInt(&buf, Int32(11))
+            writeInt(&buf, Int32(15))
             FfiConverterTypeRemoteControlLoRaOutcome.write(value, into: &buf)
 
 
         case let .setInterfaceWifiStation(value):
-            writeInt(&buf, Int32(12))
+            writeInt(&buf, Int32(16))
             FfiConverterTypeRemoteControlWifiStationOutcome.write(value, into: &buf)
 
 
         case let .inventoryControllers(value):
-            writeInt(&buf, Int32(13))
+            writeInt(&buf, Int32(17))
             FfiConverterTypeRemoteControlControllerInventory.write(value, into: &buf)
 
 
         case let .authorizeController(value):
-            writeInt(&buf, Int32(14))
+            writeInt(&buf, Int32(18))
             FfiConverterTypeRemoteControlAuthorizeControllerOutcome.write(value, into: &buf)
 
 
         case let .revokeController(value):
-            writeInt(&buf, Int32(15))
+            writeInt(&buf, Int32(19))
             FfiConverterTypeRemoteControlRevokeControllerOutcome.write(value, into: &buf)
 
 
         case let .describeBuild(value):
-            writeInt(&buf, Int32(16))
+            writeInt(&buf, Int32(20))
             FfiConverterTypeRemoteControlBuildVersion.write(value, into: &buf)
 
 
         case let .describePower(value):
-            writeInt(&buf, Int32(17))
+            writeInt(&buf, Int32(21))
             FfiConverterTypeRemoteControlPowerSnapshot.write(value, into: &buf)
 
 
         case let .sleepRadios(value):
-            writeInt(&buf, Int32(18))
+            writeInt(&buf, Int32(22))
             FfiConverterTypeRemoteControlSleepOutcome.write(value, into: &buf)
 
 
         case let .wakeRadios(value):
-            writeInt(&buf, Int32(19))
+            writeInt(&buf, Int32(23))
             FfiConverterTypeRemoteControlSleepOutcome.write(value, into: &buf)
 
 
         case let .setSystemPower(value):
-            writeInt(&buf, Int32(20))
-            FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
-
-
-        case let .setGnssPower(value):
-            writeInt(&buf, Int32(21))
-            FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
-
-
-        case let .setDisplayVisibility(value):
-            writeInt(&buf, Int32(22))
-            FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
-
-
-        case let .setDisplayAutoOff(value):
-            writeInt(&buf, Int32(23))
-            FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
-
-
-        case let .setStationUplink(value):
             writeInt(&buf, Int32(24))
             FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
 
 
-        case let .setEspRadioMode(value):
+        case let .setGnssPower(value):
             writeInt(&buf, Int32(25))
             FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
 
 
-        case let .stageWifiCredentials(value):
+        case let .setDisplayVisibility(value):
             writeInt(&buf, Int32(26))
-            FfiConverterTypeRemoteControlWifiStageOutcome.write(value, into: &buf)
+            FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
 
 
-        case let .activateWifiCredentials(value):
+        case let .setDisplayAutoOff(value):
             writeInt(&buf, Int32(27))
             FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
 
 
-        case let .confirmWifiCredentials(value):
+        case let .setStationUplink(value):
             writeInt(&buf, Int32(28))
             FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
 
 
-        case let .cancelWifiCredentials(value):
+        case let .setEspRadioMode(value):
             writeInt(&buf, Int32(29))
             FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
 
 
-        case let .inspectWifiTransaction(value):
+        case let .stageWifiCredentials(value):
             writeInt(&buf, Int32(30))
+            FfiConverterTypeRemoteControlWifiStageOutcome.write(value, into: &buf)
+
+
+        case let .activateWifiCredentials(value):
+            writeInt(&buf, Int32(31))
+            FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
+
+
+        case let .confirmWifiCredentials(value):
+            writeInt(&buf, Int32(32))
+            FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
+
+
+        case let .cancelWifiCredentials(value):
+            writeInt(&buf, Int32(33))
+            FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
+
+
+        case let .inspectWifiTransaction(value):
+            writeInt(&buf, Int32(34))
             FfiConverterTypeRemoteControlWifiTransactionStatus.write(value, into: &buf)
 
 
+        case let .setNodeName(value):
+            writeInt(&buf, Int32(35))
+            FfiConverterTypeRemoteControlApplyOutcome.write(value, into: &buf)
+
+
+        case let .describeNodeName(value):
+            writeInt(&buf, Int32(36))
+            FfiConverterTypeRemoteControlNodeName.write(value, into: &buf)
+
+
         case let .protocolError(value):
-            writeInt(&buf, Int32(31))
+            writeInt(&buf, Int32(37))
             FfiConverterTypeRemoteControlProtocolError.write(value, into: &buf)
 
         }
@@ -22936,6 +23771,12 @@ public enum RemoteControlResponseKind: Equatable, Hashable {
     case inspectWifiTransaction
     case inventoryInterfaceDiscoveryGroups
     case replaceInterfaceDiscoveryGroups
+    case appMessage
+    case watchInterfaces
+    case setNodeName
+    case describeNodeName
+    case inspectRadio
+    case configureRadio
     case protocolError
 
 
@@ -23018,7 +23859,19 @@ public struct FfiConverterTypeRemoteControlResponseKind: FfiConverterRustBuffer 
 
         case 30: return .replaceInterfaceDiscoveryGroups
 
-        case 31: return .protocolError
+        case 31: return .appMessage
+
+        case 32: return .watchInterfaces
+
+        case 33: return .setNodeName
+
+        case 34: return .describeNodeName
+
+        case 35: return .inspectRadio
+
+        case 36: return .configureRadio
+
+        case 37: return .protocolError
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -23148,8 +24001,32 @@ public struct FfiConverterTypeRemoteControlResponseKind: FfiConverterRustBuffer 
             writeInt(&buf, Int32(30))
 
 
-        case .protocolError:
+        case .appMessage:
             writeInt(&buf, Int32(31))
+
+
+        case .watchInterfaces:
+            writeInt(&buf, Int32(32))
+
+
+        case .setNodeName:
+            writeInt(&buf, Int32(33))
+
+
+        case .describeNodeName:
+            writeInt(&buf, Int32(34))
+
+
+        case .inspectRadio:
+            writeInt(&buf, Int32(35))
+
+
+        case .configureRadio:
+            writeInt(&buf, Int32(36))
+
+
+        case .protocolError:
+            writeInt(&buf, Int32(37))
 
         }
     }
@@ -26865,6 +27742,30 @@ fileprivate struct FfiConverterOptionUInt16: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterUInt16.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = UInt32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt32.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

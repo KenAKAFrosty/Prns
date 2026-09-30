@@ -1720,7 +1720,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "personal-rns"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -1811,7 +1811,7 @@ dependencies = [
 
 [[package]]
 name = "prns-config"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "home",
  "prns-core",
@@ -1821,7 +1821,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "aes",
  "base64",
@@ -1850,7 +1850,7 @@ dependencies = [
 
 [[package]]
 name = "prns-ffi"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "cfg-if",
  "dispatch2",
@@ -1860,6 +1860,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "objc2-io-kit",
+ "portable-atomic",
  "prns-core",
  "tokio",
  "windows 0.58.0",
@@ -1867,14 +1868,14 @@ dependencies = [
 
 [[package]]
 name = "prns-host"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "prns-runtime",
 ]
 
 [[package]]
 name = "prns-host-native"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "dbus",
  "personal-rns",
@@ -1885,7 +1886,7 @@ dependencies = [
 
 [[package]]
 name = "prns-host-snapshot"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "personal-rns",
  "prns-host",
@@ -1893,7 +1894,7 @@ dependencies = [
 
 [[package]]
 name = "prns-host-uniffi"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "personal-rns",
  "prns-core",
@@ -1906,7 +1907,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -1923,7 +1924,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "bluer",
  "btleplug",
@@ -1948,11 +1949,11 @@ dependencies = [
 
 [[package]]
 name = "prns-macros"
-version = "0.3.7"
+version = "0.3.8"
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -1963,7 +1964,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "critical-section",
  "embassy-futures",
@@ -1979,12 +1980,13 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "heapless 0.8.0",
  "nix 0.31.3",
+ "portable-atomic",
  "prns-core",
  "prns-runtime",
  "rtrb",

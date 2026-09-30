@@ -7,6 +7,8 @@ export function lowerRemoteControlRequest(value: C.RemoteControlRequest): N.Remo
   switch (value.tag) {
     case "Describe": return N.RemoteControlRequest.Describe.new();
     case "AnnounceSelf": return N.RemoteControlRequest.AnnounceSelf.new();
+    case "AppMessage": return N.RemoteControlRequest.AppMessage.new({ value: lowerRemoteControlAppMessage(value.data.value) });
+    case "WatchInterfaces": return N.RemoteControlRequest.WatchInterfaces.new({ streamId: lowerRemoteControlStreamId(value.data.streamId) });
     case "InventoryInterfaces": return N.RemoteControlRequest.InventoryInterfaces.new({ page: lowerRemoteControlInterfacePage(value.data.page) });
     case "SetInterfacePower": return N.RemoteControlRequest.SetInterfacePower.new({ id: lowerRemoteControlInterfaceId(value.data.id), power: lowerRemoteControlInterfacePower(value.data.power) });
     case "SetInterfaceMode": return N.RemoteControlRequest.SetInterfaceMode.new({ id: lowerRemoteControlInterfaceId(value.data.id), mode: lowerRemoteControlInterfaceMode(value.data.mode) });
@@ -15,6 +17,8 @@ export function lowerRemoteControlRequest(value: C.RemoteControlRequest): N.Remo
     case "ReplaceInterfaceDiscoveryGroups": return N.RemoteControlRequest.ReplaceInterfaceDiscoveryGroups.new({ id: lowerRemoteControlInterfaceId(value.data.id), groups: lowerRemoteControlDiscoveryGroups(value.data.groups) });
     case "InventoryInterfacePeers": return N.RemoteControlRequest.InventoryInterfacePeers.new({ id: lowerRemoteControlInterfaceId(value.data.id), page: lowerRemoteControlPeerPage(value.data.page) });
     case "InventoryInterfaceConfig": return N.RemoteControlRequest.InventoryInterfaceConfig.new({ id: lowerRemoteControlInterfaceId(value.data.id) });
+    case "InspectRadio": return N.RemoteControlRequest.InspectRadio.new({ id: lowerRemoteControlInterfaceId(value.data.id) });
+    case "ConfigureRadio": return N.RemoteControlRequest.ConfigureRadio.new({ id: lowerRemoteControlInterfaceId(value.data.id), configuration: lowerRemoteControlRadioConfiguration(value.data.configuration) });
     case "SetInterfaceLoRaProfile": return N.RemoteControlRequest.SetInterfaceLoRaProfile.new({ id: lowerRemoteControlInterfaceId(value.data.id), profile: lowerRemoteControlLoRaProfile(value.data.profile) });
     case "SetInterfaceWifiStation": return N.RemoteControlRequest.SetInterfaceWifiStation.new({ id: lowerRemoteControlInterfaceId(value.data.id), station: lowerRemoteControlWifiStation(value.data.station) });
     case "InventoryControllers": return N.RemoteControlRequest.InventoryControllers.new({ page: lowerRemoteControlControllerPage(value.data.page) });
@@ -35,8 +39,22 @@ export function lowerRemoteControlRequest(value: C.RemoteControlRequest): N.Remo
     case "ConfirmWifiCredentials": return N.RemoteControlRequest.ConfirmWifiCredentials.new({ revision: lowerRemoteControlWifiCredentialRevision(value.data.revision) });
     case "CancelWifiCredentials": return N.RemoteControlRequest.CancelWifiCredentials.new({ revision: lowerRemoteControlWifiCredentialRevision(value.data.revision) });
     case "InspectWifiTransaction": return N.RemoteControlRequest.InspectWifiTransaction.new();
+    case "SetNodeName": return N.RemoteControlRequest.SetNodeName.new({ name: lowerRemoteControlNodeName(value.data.name) });
+    case "DescribeNodeName": return N.RemoteControlRequest.DescribeNodeName.new();
     default: return unexpected(value);
   }
+}
+export function lowerRemoteControlAppMessage(value: C.RemoteControlAppMessage): N.RemoteControlAppMessage {
+  return { value: value.value };
+}
+export function liftRemoteControlAppMessage(value: N.RemoteControlAppMessage): C.RemoteControlAppMessage {
+  return { value: value.value };
+}
+export function lowerRemoteControlStreamId(value: C.RemoteControlStreamId): N.RemoteControlStreamId {
+  return { value: value.value };
+}
+export function liftRemoteControlStreamId(value: N.RemoteControlStreamId): C.RemoteControlStreamId {
+  return { value: value.value };
 }
 export function lowerRemoteControlInterfacePage(value: C.RemoteControlInterfacePage): N.RemoteControlInterfacePage {
   switch (value.tag) {
@@ -110,7 +128,24 @@ export function lowerRemoteControlPeerCursor(value: C.RemoteControlPeerCursor): 
 export function liftRemoteControlPeerCursor(value: N.RemoteControlPeerCursor): C.RemoteControlPeerCursor {
   return { value: liftRemoteControlInterfaceId(value.value) };
 }
+export function lowerRemoteControlRadioConfiguration(value: C.RemoteControlRadioConfiguration): N.RemoteControlRadioConfiguration {
+  switch (value.tag) {
+    case "Unconfigured": return N.RemoteControlRadioConfiguration.Unconfigured.new();
+    case "Profile": return N.RemoteControlRadioConfiguration.Profile.new({ value: lowerRemoteControlLoRaProfile(value.data.value) });
+    default: return unexpected(value);
+  }
+}
+export function liftRemoteControlRadioConfiguration(value: N.RemoteControlRadioConfiguration): C.RemoteControlRadioConfiguration {
+  switch (value.tag) {
+    case N.RemoteControlRadioConfiguration_Tags.Unconfigured: return { tag: "Unconfigured" };
+    case N.RemoteControlRadioConfiguration_Tags.Profile: return { tag: "Profile", data: { value: liftRemoteControlLoRaProfile(value.inner.value) } };
+    default: return unexpected(value);
+  }
+}
 export function lowerRemoteControlLoRaProfile(value: C.RemoteControlLoRaProfile): N.RemoteControlLoRaProfile {
+  return { value: value.value };
+}
+export function liftRemoteControlLoRaProfile(value: N.RemoteControlLoRaProfile): C.RemoteControlLoRaProfile {
   return { value: value.value };
 }
 export function lowerRemoteControlWifiStation(value: C.RemoteControlWifiStation): N.RemoteControlWifiStation {
@@ -179,6 +214,12 @@ export function lowerRemoteControlRequestKind(value: C.RemoteControlRequestKind)
     case "InspectWifiTransaction": return N.RemoteControlRequestKind.InspectWifiTransaction;
     case "InventoryInterfaceDiscoveryGroups": return N.RemoteControlRequestKind.InventoryInterfaceDiscoveryGroups;
     case "ReplaceInterfaceDiscoveryGroups": return N.RemoteControlRequestKind.ReplaceInterfaceDiscoveryGroups;
+    case "AppMessage": return N.RemoteControlRequestKind.AppMessage;
+    case "WatchInterfaces": return N.RemoteControlRequestKind.WatchInterfaces;
+    case "SetNodeName": return N.RemoteControlRequestKind.SetNodeName;
+    case "DescribeNodeName": return N.RemoteControlRequestKind.DescribeNodeName;
+    case "InspectRadio": return N.RemoteControlRequestKind.InspectRadio;
+    case "ConfigureRadio": return N.RemoteControlRequestKind.ConfigureRadio;
     default: return unexpected(value);
   }
 }
@@ -214,6 +255,12 @@ export function liftRemoteControlRequestKind(value: N.RemoteControlRequestKind):
     case N.RemoteControlRequestKind.InspectWifiTransaction: return { tag: "InspectWifiTransaction" };
     case N.RemoteControlRequestKind.InventoryInterfaceDiscoveryGroups: return { tag: "InventoryInterfaceDiscoveryGroups" };
     case N.RemoteControlRequestKind.ReplaceInterfaceDiscoveryGroups: return { tag: "ReplaceInterfaceDiscoveryGroups" };
+    case N.RemoteControlRequestKind.AppMessage: return { tag: "AppMessage" };
+    case N.RemoteControlRequestKind.WatchInterfaces: return { tag: "WatchInterfaces" };
+    case N.RemoteControlRequestKind.SetNodeName: return { tag: "SetNodeName" };
+    case N.RemoteControlRequestKind.DescribeNodeName: return { tag: "DescribeNodeName" };
+    case N.RemoteControlRequestKind.InspectRadio: return { tag: "InspectRadio" };
+    case N.RemoteControlRequestKind.ConfigureRadio: return { tag: "ConfigureRadio" };
     default: return unexpected(value);
   }
 }
@@ -265,10 +312,18 @@ export function lowerRemoteControlWifiCredentialRevision(value: C.RemoteControlW
 export function liftRemoteControlWifiCredentialRevision(value: N.RemoteControlWifiCredentialRevision): C.RemoteControlWifiCredentialRevision {
   return { value: value.value };
 }
+export function lowerRemoteControlNodeName(value: C.RemoteControlNodeName): N.RemoteControlNodeName {
+  return { value: value.value };
+}
+export function liftRemoteControlNodeName(value: N.RemoteControlNodeName): C.RemoteControlNodeName {
+  return { value: value.value };
+}
 export function liftRemoteControlResponse(value: N.RemoteControlResponse): C.RemoteControlResponse {
   switch (value.tag) {
     case N.RemoteControlResponse_Tags.Describe: return { tag: "Describe", data: { value: liftRemoteControlDescription(value.inner.value) } };
     case N.RemoteControlResponse_Tags.AnnounceSelf: return { tag: "AnnounceSelf", data: { value: liftRemoteControlAnnounceSelfOutcome(value.inner.value) } };
+    case N.RemoteControlResponse_Tags.AppMessage: return { tag: "AppMessage", data: { value: liftRemoteControlAppMessage(value.inner.value) } };
+    case N.RemoteControlResponse_Tags.WatchInterfaces: return { tag: "WatchInterfaces", data: { streamId: liftRemoteControlStreamId(value.inner.streamId) } };
     case N.RemoteControlResponse_Tags.InventoryInterfaces: return { tag: "InventoryInterfaces", data: { value: liftRemoteControlInterfaceInventory(value.inner.value) } };
     case N.RemoteControlResponse_Tags.SetInterfacePower: return { tag: "SetInterfacePower", data: { value: liftRemoteControlPowerOutcome(value.inner.value) } };
     case N.RemoteControlResponse_Tags.SetInterfaceMode: return { tag: "SetInterfaceMode", data: { value: liftRemoteControlModeOutcome(value.inner.value) } };
@@ -277,6 +332,8 @@ export function liftRemoteControlResponse(value: N.RemoteControlResponse): C.Rem
     case N.RemoteControlResponse_Tags.ReplaceInterfaceDiscoveryGroups: return { tag: "ReplaceInterfaceDiscoveryGroups", data: { value: liftRemoteControlDiscoveryGroupsReplaceOutcome(value.inner.value) } };
     case N.RemoteControlResponse_Tags.InventoryInterfacePeers: return { tag: "InventoryInterfacePeers", data: { value: liftRemoteControlInterfacePeersOutcome(value.inner.value) } };
     case N.RemoteControlResponse_Tags.InventoryInterfaceConfig: return { tag: "InventoryInterfaceConfig", data: { value: liftRemoteControlInterfaceConfigOutcome(value.inner.value) } };
+    case N.RemoteControlResponse_Tags.InspectRadio: return { tag: "InspectRadio", data: { value: liftRemoteControlRadioStatus(value.inner.value) } };
+    case N.RemoteControlResponse_Tags.ConfigureRadio: return { tag: "ConfigureRadio", data: { value: liftRemoteControlRadioOutcome(value.inner.value) } };
     case N.RemoteControlResponse_Tags.SetInterfaceLoRaProfile: return { tag: "SetInterfaceLoRaProfile", data: { value: liftRemoteControlLoRaOutcome(value.inner.value) } };
     case N.RemoteControlResponse_Tags.SetInterfaceWifiStation: return { tag: "SetInterfaceWifiStation", data: { value: liftRemoteControlWifiStationOutcome(value.inner.value) } };
     case N.RemoteControlResponse_Tags.InventoryControllers: return { tag: "InventoryControllers", data: { value: liftRemoteControlControllerInventory(value.inner.value) } };
@@ -297,6 +354,8 @@ export function liftRemoteControlResponse(value: N.RemoteControlResponse): C.Rem
     case N.RemoteControlResponse_Tags.ConfirmWifiCredentials: return { tag: "ConfirmWifiCredentials", data: { value: liftRemoteControlApplyOutcome(value.inner.value) } };
     case N.RemoteControlResponse_Tags.CancelWifiCredentials: return { tag: "CancelWifiCredentials", data: { value: liftRemoteControlApplyOutcome(value.inner.value) } };
     case N.RemoteControlResponse_Tags.InspectWifiTransaction: return { tag: "InspectWifiTransaction", data: { value: liftRemoteControlWifiTransactionStatus(value.inner.value) } };
+    case N.RemoteControlResponse_Tags.SetNodeName: return { tag: "SetNodeName", data: { value: liftRemoteControlApplyOutcome(value.inner.value) } };
+    case N.RemoteControlResponse_Tags.DescribeNodeName: return { tag: "DescribeNodeName", data: { value: liftRemoteControlNodeName(value.inner.value) } };
     case N.RemoteControlResponse_Tags.ProtocolError: return { tag: "ProtocolError", data: { value: liftRemoteControlProtocolError(value.inner.value) } };
     default: return unexpected(value);
   }
@@ -317,7 +376,7 @@ export function liftRemoteControlInterfaceInventory(value: N.RemoteControlInterf
   return { entries: value.entries.map(item => liftRemoteControlInterfaceEntry(item)), continuation: liftRemoteControlInterfaceContinuation(value.continuation) };
 }
 export function liftRemoteControlInterfaceEntry(value: N.RemoteControlInterfaceEntry): C.RemoteControlInterfaceEntry {
-  return { id: liftRemoteControlInterfaceId(value.id), kind: liftRemoteControlInterfaceKind(value.kind), mode: liftRemoteControlInterfaceMode(value.mode), connection: liftRemoteControlConnectionState(value.connection), enabled: value.enabled, txBytes: value.txBytes, rxBytes: value.rxBytes, links: value.links, rateBytesPerSec: value.rateBytesPerSec };
+  return { id: liftRemoteControlInterfaceId(value.id), kind: liftRemoteControlInterfaceKind(value.kind), mode: liftRemoteControlInterfaceMode(value.mode), connection: liftRemoteControlConnectionState(value.connection), enabled: value.enabled, txBytes: value.txBytes, rxBytes: value.rxBytes, links: value.links, ...(value.rateBytesPerSec === undefined ? {} : { rateBytesPerSec: value.rateBytesPerSec }) };
 }
 export function liftRemoteControlInterfaceKind(value: N.RemoteControlInterfaceKind): C.RemoteControlInterfaceKind {
   switch (value) {
@@ -355,6 +414,9 @@ export function liftRemoteControlInterfaceKind(value: N.RemoteControlInterfaceKi
     case N.RemoteControlInterfaceKind.I2pPeer: return { tag: "I2pPeer" };
     case N.RemoteControlInterfaceKind.Weave: return { tag: "Weave" };
     case N.RemoteControlInterfaceKind.WeavePeer: return { tag: "WeavePeer" };
+    case N.RemoteControlInterfaceKind.WifiHaLow: return { tag: "WifiHaLow" };
+    case N.RemoteControlInterfaceKind.WifiHaLowPeer: return { tag: "WifiHaLowPeer" };
+    case N.RemoteControlInterfaceKind.WifiHaLowBroadcast: return { tag: "WifiHaLowBroadcast" };
     default: return unexpected(value);
   }
 }
@@ -432,13 +494,14 @@ export function liftRemoteControlInterfacePeerPage(value: N.RemoteControlInterfa
   return { id: liftRemoteControlInterfaceId(value.id), peers: value.peers.map(item => liftRemoteControlInterfacePeer(item)), continuation: liftRemoteControlPeerContinuation(value.continuation) };
 }
 export function liftRemoteControlInterfacePeer(value: N.RemoteControlInterfacePeer): C.RemoteControlInterfacePeer {
-  return { id: liftRemoteControlInterfaceId(value.id), connection: liftRemoteControlConnectionState(value.connection), txBytes: value.txBytes, rxBytes: value.rxBytes, links: value.links, destinations: value.destinations, rateBytesPerSec: value.rateBytesPerSec, radio: liftRemoteControlRadioIndication(value.radio), details: liftRemoteControlPeerDetails(value.details) };
+  return { id: liftRemoteControlInterfaceId(value.id), connection: liftRemoteControlConnectionState(value.connection), txBytes: value.txBytes, rxBytes: value.rxBytes, links: value.links, destinations: value.destinations, ...(value.rateBytesPerSec === undefined ? {} : { rateBytesPerSec: value.rateBytesPerSec }), radio: liftRemoteControlRadioIndication(value.radio), details: liftRemoteControlPeerDetails(value.details) };
 }
 export function liftRemoteControlRadioIndication(value: N.RemoteControlRadioIndication): C.RemoteControlRadioIndication {
   switch (value.tag) {
     case N.RemoteControlRadioIndication_Tags.NotRadio: return { tag: "NotRadio" };
     case N.RemoteControlRadioIndication_Tags.Bluetooth: return { tag: "Bluetooth", data: { value: liftRemoteControlBluetoothIndication(value.inner.value) } };
     case N.RemoteControlRadioIndication_Tags.Wifi: return { tag: "Wifi", data: { value: liftRemoteControlWifiIndication(value.inner.value) } };
+    case N.RemoteControlRadioIndication_Tags.HaLow: return { tag: "HaLow", data: { value: liftRemoteControlWifiIndication(value.inner.value) } };
     case N.RemoteControlRadioIndication_Tags.LoRa: return { tag: "LoRa", data: { value: liftRemoteControlLoRaIndication(value.inner.value) } };
     default: return unexpected(value);
   }
@@ -500,6 +563,51 @@ export function liftRemoteControlInterfaceConfigOutcome(value: N.RemoteControlIn
 }
 export function liftRemoteControlInterfaceCard(value: N.RemoteControlInterfaceCard): C.RemoteControlInterfaceCard {
   return { name: value.name, group: value.group, config: value.config, failure: value.failure, destinations: value.destinations, transportedLinks: value.transportedLinks };
+}
+export function liftRemoteControlRadioStatus(value: N.RemoteControlRadioStatus): C.RemoteControlRadioStatus {
+  switch (value.tag) {
+    case N.RemoteControlRadioStatus_Tags.UnknownInterface: return { tag: "UnknownInterface" };
+    case N.RemoteControlRadioStatus_Tags.Status: return { tag: "Status", data: { bands: liftRemoteControlRadioBands(value.inner.bands), operating: liftRemoteControlRadioOperatingState(value.inner.operating), saved: liftRemoteControlRadioSaved(value.inner.saved) } };
+    default: return unexpected(value);
+  }
+}
+export function liftRemoteControlRadioBands(value: N.RemoteControlRadioBands): C.RemoteControlRadioBands {
+  switch (value) {
+    case N.RemoteControlRadioBands.SubG: return { tag: "SubG" };
+    case N.RemoteControlRadioBands.SubGAndGhz24: return { tag: "SubGAndGhz24" };
+    default: return unexpected(value);
+  }
+}
+export function liftRemoteControlRadioOperatingState(value: N.RemoteControlRadioOperatingState): C.RemoteControlRadioOperatingState {
+  switch (value) {
+    case N.RemoteControlRadioOperatingState.Unconfigured: return { tag: "Unconfigured" };
+    case N.RemoteControlRadioOperatingState.Disabled: return { tag: "Disabled" };
+    case N.RemoteControlRadioOperatingState.Operating: return { tag: "Operating" };
+    case N.RemoteControlRadioOperatingState.Failed: return { tag: "Failed" };
+    case N.RemoteControlRadioOperatingState.Changing: return { tag: "Changing" };
+    default: return unexpected(value);
+  }
+}
+export function liftRemoteControlRadioSaved(value: N.RemoteControlRadioSaved): C.RemoteControlRadioSaved {
+  switch (value.tag) {
+    case N.RemoteControlRadioSaved_Tags.Unknown: return { tag: "Unknown" };
+    case N.RemoteControlRadioSaved_Tags.Confirmed: return { tag: "Confirmed", data: { value: liftRemoteControlRadioConfiguration(value.inner.value) } };
+    default: return unexpected(value);
+  }
+}
+export function liftRemoteControlRadioOutcome(value: N.RemoteControlRadioOutcome): C.RemoteControlRadioOutcome {
+  switch (value) {
+    case N.RemoteControlRadioOutcome.Saved: return { tag: "Saved" };
+    case N.RemoteControlRadioOutcome.UnknownInterface: return { tag: "UnknownInterface" };
+    case N.RemoteControlRadioOutcome.HardwareFailed: return { tag: "HardwareFailed" };
+    case N.RemoteControlRadioOutcome.PersistenceFailed: return { tag: "PersistenceFailed" };
+    case N.RemoteControlRadioOutcome.RecoveryRequired: return { tag: "RecoveryRequired" };
+    case N.RemoteControlRadioOutcome.Busy: return { tag: "Busy" };
+    case N.RemoteControlRadioOutcome.IdentityExhausted: return { tag: "IdentityExhausted" };
+    case N.RemoteControlRadioOutcome.PublicationFailed: return { tag: "PublicationFailed" };
+    case N.RemoteControlRadioOutcome.InvalidConfiguration: return { tag: "InvalidConfiguration" };
+    default: return unexpected(value);
+  }
 }
 export function liftRemoteControlLoRaOutcome(value: N.RemoteControlLoRaOutcome): C.RemoteControlLoRaOutcome {
   switch (value) {
@@ -728,6 +836,7 @@ export function liftRemoteControlError(value: N.RemoteControlError): C.RemoteCon
     case N.RemoteControlError_Tags.Response: return { tag: "Response", data: { value: liftRemoteControlResponseParseError(value.inner.value) } };
     case N.RemoteControlError_Tags.Remote: return { tag: "Remote", data: { value: liftRemoteControlProtocolError(value.inner.value) } };
     case N.RemoteControlError_Tags.UnexpectedResponse: return { tag: "UnexpectedResponse", data: { expected: liftRemoteControlResponseKind(value.inner.expected), found: liftRemoteControlResponseKind(value.inner.found) } };
+    case N.RemoteControlError_Tags.UnexpectedStream: return { tag: "UnexpectedStream", data: { expected: liftRemoteControlStreamId(value.inner.expected), found: liftRemoteControlStreamId(value.inner.found) } };
     case N.RemoteControlError_Tags.AnnounceSelf: return { tag: "AnnounceSelf", data: { value: liftRemoteControlAnnounceSelfFailure(value.inner.value) } };
     default: return unexpected(value);
   }
@@ -893,6 +1002,12 @@ export function liftRemoteControlResponseKind(value: N.RemoteControlResponseKind
     case N.RemoteControlResponseKind.InspectWifiTransaction: return { tag: "InspectWifiTransaction" };
     case N.RemoteControlResponseKind.InventoryInterfaceDiscoveryGroups: return { tag: "InventoryInterfaceDiscoveryGroups" };
     case N.RemoteControlResponseKind.ReplaceInterfaceDiscoveryGroups: return { tag: "ReplaceInterfaceDiscoveryGroups" };
+    case N.RemoteControlResponseKind.AppMessage: return { tag: "AppMessage" };
+    case N.RemoteControlResponseKind.WatchInterfaces: return { tag: "WatchInterfaces" };
+    case N.RemoteControlResponseKind.SetNodeName: return { tag: "SetNodeName" };
+    case N.RemoteControlResponseKind.DescribeNodeName: return { tag: "DescribeNodeName" };
+    case N.RemoteControlResponseKind.InspectRadio: return { tag: "InspectRadio" };
+    case N.RemoteControlResponseKind.ConfigureRadio: return { tag: "ConfigureRadio" };
     case N.RemoteControlResponseKind.ProtocolError: return { tag: "ProtocolError" };
     default: return unexpected(value);
   }

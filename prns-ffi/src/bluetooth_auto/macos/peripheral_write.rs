@@ -13,6 +13,7 @@ use super::gatt_link::{
     gatt_inbound_channel, GattInboundReceiver, GattInboundReservation, GattInboundSender,
 };
 use super::peripheral::can_open_inbound;
+use super::peripheral_notify::SessionPhase;
 use super::CoreBluetoothPeerId;
 
 #[derive(Clone, Copy)]
@@ -44,6 +45,14 @@ pub(super) struct WriteSession<C> {
     pub(super) protocol: PeerProtocol,
     pub(super) control_tx: mpsc::Sender<Control>,
     pub(super) data_tx: GattInboundSender,
+}
+
+impl<C> WriteSession<C> {
+    pub(super) fn data_receiver_closed(&self) -> bool {
+        // The exact retained control owner retires this session even if its data
+        // pump is still waiting for a pending L2CAP upgrade to resolve.
+        self.data_tx.is_closed() || self.data_tx.notifications().phase() == SessionPhase::Retired
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -159,15 +168,21 @@ pub(super) fn admit_write_batch<C: Clone, L>(
             _ => return Err(WriteError::WriteNotPermitted),
         };
 
-        // A settled native link drops its handshake receiver while retaining the
-        // data receiver. CoreBluetooth can omit unsubscribe on disconnect, so a
-        // fresh Hello must be able to retire that exact peer's old session. Do not
-        // reap closed control receivers generally: they are normal for live data.
+        // A fresh Hello is not evidence that a settled incumbent is dead. Only
+        // its exact control owner can retire a settled session. A failed handshake
+        // is replaceable after both of its receivers have gone away.
         // A Hello after old-session input in this batch cannot split its ownership.
         let replacement = matches!(control.as_ref(), Some(Control::Hello { .. }))
             && !touched.contains(&request.peer_id)
             && sessions.get(&request.peer_id).is_some_and(|session| {
-                session.protocol == PeerProtocol::Native && session.control_tx.is_closed()
+                session.protocol == PeerProtocol::Native
+                    && match session.data_tx.notifications().phase() {
+                        SessionPhase::Retired => true,
+                        SessionPhase::Handshaking => {
+                            session.control_tx.is_closed() && session.data_tx.is_closed()
+                        }
+                        SessionPhase::Settled => false,
+                    }
             });
         if replacement {
             new_profile = Some(InboundProfile::Native);

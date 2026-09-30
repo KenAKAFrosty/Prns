@@ -22,6 +22,28 @@
           "fields": []
         },
         {
+          "name": "AppMessage",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "RemoteControlAppMessage",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "WatchInterfaces",
+          "style": "named",
+          "fields": [
+            {
+              "name": "stream_id",
+              "type": "StreamId",
+              "public": false
+            }
+          ]
+        },
+        {
           "name": "InventoryInterfaces",
           "style": "named",
           "fields": [
@@ -130,6 +152,33 @@
             {
               "name": "id",
               "type": "InterfaceId",
+              "public": false
+            }
+          ]
+        },
+        {
+          "name": "InspectRadio",
+          "style": "named",
+          "fields": [
+            {
+              "name": "id",
+              "type": "InterfaceId",
+              "public": false
+            }
+          ]
+        },
+        {
+          "name": "ConfigureRadio",
+          "style": "named",
+          "fields": [
+            {
+              "name": "id",
+              "type": "InterfaceId",
+              "public": false
+            },
+            {
+              "name": "configuration",
+              "type": "RemoteControlRadioConfiguration",
               "public": false
             }
           ]
@@ -343,10 +392,64 @@
           "name": "InspectWifiTransaction",
           "style": "unit",
           "fields": []
+        },
+        {
+          "name": "SetNodeName",
+          "style": "named",
+          "fields": [
+            {
+              "name": "name",
+              "type": "RemoteControlNodeName",
+              "public": false
+            }
+          ]
+        },
+        {
+          "name": "DescribeNodeName",
+          "style": "unit",
+          "fields": []
         }
       ],
       "directions": [
         "input"
+      ]
+    },
+    {
+      "name": "RemoteControlAppMessage",
+      "kind": "struct",
+      "namespace": "rc",
+      "source": "prns-core/src/remote_control/message.rs",
+      "style": "named",
+      "fields": [
+        {
+          "name": "value",
+          "type": "Bytes",
+          "public": false
+        }
+      ],
+      "custom": true,
+      "directions": [
+        "input",
+        "output"
+      ]
+    },
+    {
+      "name": "StreamId",
+      "kind": "struct",
+      "namespace": "prns_core::routing::links::channel::byte_stream",
+      "source": "prns-core/src/routing/links/channel/byte_stream.rs",
+      "style": "tuple",
+      "fields": [
+        {
+          "name": "value",
+          "type": "u16",
+          "public": false
+        }
+      ],
+      "custom": true,
+      "directions": [
+        "input",
+        "output"
       ]
     },
     {
@@ -566,6 +669,34 @@
       ]
     },
     {
+      "name": "RemoteControlRadioConfiguration",
+      "kind": "enum",
+      "namespace": "rc",
+      "source": "prns-core/src/remote_control/radio.rs",
+      "variants": [
+        {
+          "name": "Unconfigured",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Profile",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "RemoteControlLoRaProfile",
+              "public": true
+            }
+          ]
+        }
+      ],
+      "directions": [
+        "input",
+        "output"
+      ]
+    },
+    {
       "name": "RemoteControlLoRaProfile",
       "kind": "struct",
       "namespace": "rc",
@@ -580,7 +711,8 @@
       ],
       "custom": true,
       "directions": [
-        "input"
+        "input",
+        "output"
       ]
     },
     {
@@ -864,6 +996,36 @@
           "name": "ReplaceInterfaceDiscoveryGroups",
           "style": "unit",
           "fields": []
+        },
+        {
+          "name": "AppMessage",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "WatchInterfaces",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "SetNodeName",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "DescribeNodeName",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "InspectRadio",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "ConfigureRadio",
+          "style": "unit",
+          "fields": []
         }
       ],
       "directions": [
@@ -1017,6 +1179,25 @@
       ]
     },
     {
+      "name": "RemoteControlNodeName",
+      "kind": "struct",
+      "namespace": "rc",
+      "source": "prns-core/src/remote_control/inventory.rs",
+      "style": "named",
+      "fields": [
+        {
+          "name": "value",
+          "type": "String",
+          "public": false
+        }
+      ],
+      "custom": true,
+      "directions": [
+        "input",
+        "output"
+      ]
+    },
+    {
       "name": "RemoteControlResponse",
       "kind": "enum",
       "namespace": "rc",
@@ -1041,6 +1222,28 @@
               "name": "value",
               "type": "RemoteControlAnnounceSelfOutcome",
               "public": true
+            }
+          ]
+        },
+        {
+          "name": "AppMessage",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "RemoteControlAppMessage",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "WatchInterfaces",
+          "style": "named",
+          "fields": [
+            {
+              "name": "stream_id",
+              "type": "StreamId",
+              "public": false
             }
           ]
         },
@@ -1128,6 +1331,28 @@
             {
               "name": "value",
               "type": "RemoteControlInterfaceConfigOutcome",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "InspectRadio",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "RemoteControlRadioStatus",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "ConfigureRadio",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "RemoteControlRadioOutcome",
               "public": true
             }
           ]
@@ -1353,6 +1578,28 @@
           ]
         },
         {
+          "name": "SetNodeName",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "RemoteControlApplyOutcome",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "DescribeNodeName",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "RemoteControlNodeName",
+              "public": true
+            }
+          ]
+        },
+        {
           "name": "ProtocolError",
           "style": "tuple",
           "fields": [
@@ -1498,7 +1745,7 @@
         },
         {
           "name": "rate_bytes_per_sec",
-          "type": "u32",
+          "type": "Option<NonZeroU32>",
           "public": true,
           "borrowed": false
         }
@@ -1680,6 +1927,21 @@
         },
         {
           "name": "WeavePeer",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "WifiHaLow",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "WifiHaLowPeer",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "WifiHaLowBroadcast",
           "style": "unit",
           "fields": []
         }
@@ -2019,7 +2281,7 @@
         },
         {
           "name": "rate_bytes_per_sec",
-          "type": "u32",
+          "type": "Option<NonZeroU32>",
           "public": true,
           "borrowed": false
         },
@@ -2064,6 +2326,17 @@
         },
         {
           "name": "Wifi",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "WifiIndication",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "HaLow",
           "style": "tuple",
           "fields": [
             {
@@ -2377,6 +2650,183 @@
           "type": "u32",
           "public": true,
           "borrowed": false
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "RemoteControlRadioStatus",
+      "kind": "enum",
+      "namespace": "rc",
+      "source": "prns-core/src/remote_control/radio.rs",
+      "variants": [
+        {
+          "name": "UnknownInterface",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Status",
+          "style": "named",
+          "fields": [
+            {
+              "name": "bands",
+              "type": "RemoteControlRadioBands",
+              "public": false
+            },
+            {
+              "name": "operating",
+              "type": "RemoteControlRadioOperatingState",
+              "public": false
+            },
+            {
+              "name": "saved",
+              "type": "RemoteControlRadioSaved",
+              "public": false
+            }
+          ]
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "RemoteControlRadioBands",
+      "kind": "enum",
+      "namespace": "rc",
+      "source": "prns-core/src/remote_control/radio.rs",
+      "variants": [
+        {
+          "name": "SubG",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "SubGAndGhz24",
+          "style": "unit",
+          "fields": []
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "RemoteControlRadioOperatingState",
+      "kind": "enum",
+      "namespace": "rc",
+      "source": "prns-core/src/remote_control/radio.rs",
+      "variants": [
+        {
+          "name": "Unconfigured",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Disabled",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Operating",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Failed",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Changing",
+          "style": "unit",
+          "fields": []
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "RemoteControlRadioSaved",
+      "kind": "enum",
+      "namespace": "rc",
+      "source": "prns-core/src/remote_control/radio.rs",
+      "variants": [
+        {
+          "name": "Unknown",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Confirmed",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "RemoteControlRadioConfiguration",
+              "public": true
+            }
+          ]
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "RemoteControlRadioOutcome",
+      "kind": "enum",
+      "namespace": "rc",
+      "source": "prns-core/src/remote_control/radio.rs",
+      "variants": [
+        {
+          "name": "Saved",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "UnknownInterface",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "HardwareFailed",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "PersistenceFailed",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "RecoveryRequired",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Busy",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "IdentityExhausted",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "PublicationFailed",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "InvalidConfiguration",
+          "style": "unit",
+          "fields": []
         }
       ],
       "directions": [
@@ -3433,6 +3883,22 @@
           ]
         },
         {
+          "name": "UnexpectedStream",
+          "style": "named",
+          "fields": [
+            {
+              "name": "expected",
+              "type": "StreamId",
+              "public": false
+            },
+            {
+              "name": "found",
+              "type": "StreamId",
+              "public": false
+            }
+          ]
+        },
+        {
           "name": "AnnounceSelf",
           "style": "tuple",
           "fields": [
@@ -4265,6 +4731,36 @@
         },
         {
           "name": "ReplaceInterfaceDiscoveryGroups",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "AppMessage",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "WatchInterfaces",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "SetNodeName",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "DescribeNodeName",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "InspectRadio",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "ConfigureRadio",
           "style": "unit",
           "fields": []
         },

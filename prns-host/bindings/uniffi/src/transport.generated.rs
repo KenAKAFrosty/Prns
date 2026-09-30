@@ -4,7 +4,7 @@
 #![allow(clippy::needless_question_mark)]
 use zeroize::Zeroize;
 pub const HOST_SEMANTIC_FINGERPRINT: &str =
-    "b5ca02be1ea5d61771f3a75eacb4d44447f99754adbeb02b6cd98537ed2fa239";
+    "300d77d158eca0f1b473e4c8d3204d1f2da3031427a64cbd7ee3a8339c3c67ff";
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum BindingError {
     #[error("host admission limit reached")]

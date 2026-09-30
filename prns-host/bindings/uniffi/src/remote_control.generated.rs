@@ -2,7 +2,7 @@
 // Uniform fallible converters retain ? for nested validation and error conversion.
 #![allow(clippy::needless_question_mark)]
 pub const REMOTE_CONTROL_SEMANTIC_FINGERPRINT: &str =
-    "1e391657f2f551490372385e1f85ee724e47111fb1ae26578d49c30be711f73e";
+    "9fd21c5520b106ebc79ed1e947291b77e1e762d31015a8fc743df514f4319957";
 use crate::transport::BindingError;
 pub struct RemoteControlSecretText(zeroize::Zeroizing<String>);
 uniffi::custom_type!(RemoteControlSecretText, String, {
@@ -24,6 +24,12 @@ fn invalid(name: &str) -> BindingError {
 pub enum RemoteControlRequest {
     Describe,
     AnnounceSelf,
+    AppMessage {
+        value: RemoteControlAppMessage,
+    },
+    WatchInterfaces {
+        stream_id: RemoteControlStreamId,
+    },
     InventoryInterfaces {
         page: RemoteControlInterfacePage,
     },
@@ -52,6 +58,13 @@ pub enum RemoteControlRequest {
     },
     InventoryInterfaceConfig {
         id: RemoteControlInterfaceId,
+    },
+    InspectRadio {
+        id: RemoteControlInterfaceId,
+    },
+    ConfigureRadio {
+        id: RemoteControlInterfaceId,
+        configuration: RemoteControlRadioConfiguration,
     },
     SetInterfaceLoRaProfile {
         id: RemoteControlInterfaceId,
@@ -107,6 +120,10 @@ pub enum RemoteControlRequest {
         revision: RemoteControlWifiCredentialRevision,
     },
     InspectWifiTransaction,
+    SetNodeName {
+        name: RemoteControlNodeName,
+    },
+    DescribeNodeName,
 }
 impl TryFrom<RemoteControlRequest> for prns_core::remote_control::RemoteControlRequest {
     type Error = BindingError;
@@ -117,6 +134,14 @@ impl TryFrom<RemoteControlRequest> for prns_core::remote_control::RemoteControlR
             }
             RemoteControlRequest::AnnounceSelf => {
                 prns_core::remote_control::RemoteControlRequest::AnnounceSelf
+            }
+            RemoteControlRequest::AppMessage { value } => {
+                prns_core::remote_control::RemoteControlRequest::AppMessage(value.try_into()?)
+            }
+            RemoteControlRequest::WatchInterfaces { stream_id } => {
+                prns_core::remote_control::RemoteControlRequest::WatchInterfaces {
+                    stream_id: stream_id.try_into()?,
+                }
             }
             RemoteControlRequest::InventoryInterfaces { page } => {
                 prns_core::remote_control::RemoteControlRequest::InventoryInterfaces {
@@ -161,6 +186,15 @@ impl TryFrom<RemoteControlRequest> for prns_core::remote_control::RemoteControlR
             RemoteControlRequest::InventoryInterfaceConfig { id } => {
                 prns_core::remote_control::RemoteControlRequest::InventoryInterfaceConfig {
                     id: id.try_into()?,
+                }
+            }
+            RemoteControlRequest::InspectRadio { id } => {
+                prns_core::remote_control::RemoteControlRequest::InspectRadio { id: id.try_into()? }
+            }
+            RemoteControlRequest::ConfigureRadio { id, configuration } => {
+                prns_core::remote_control::RemoteControlRequest::ConfigureRadio {
+                    id: id.try_into()?,
+                    configuration: configuration.try_into()?,
                 }
             }
             RemoteControlRequest::SetInterfaceLoRaProfile { id, profile } => {
@@ -258,7 +292,53 @@ impl TryFrom<RemoteControlRequest> for prns_core::remote_control::RemoteControlR
             RemoteControlRequest::InspectWifiTransaction => {
                 prns_core::remote_control::RemoteControlRequest::InspectWifiTransaction
             }
+            RemoteControlRequest::SetNodeName { name } => {
+                prns_core::remote_control::RemoteControlRequest::SetNodeName {
+                    name: name.try_into()?,
+                }
+            }
+            RemoteControlRequest::DescribeNodeName => {
+                prns_core::remote_control::RemoteControlRequest::DescribeNodeName
+            }
         })
+    }
+}
+#[derive(uniffi::Record)]
+pub struct RemoteControlAppMessage {
+    pub value: Vec<u8>,
+}
+impl TryFrom<RemoteControlAppMessage> for prns_core::remote_control::RemoteControlAppMessage {
+    type Error = BindingError;
+    fn try_from(value: RemoteControlAppMessage) -> Result<Self, Self::Error> {
+        Ok(
+            prns_core::remote_control::RemoteControlAppMessage::from_slice(value.value.as_slice())
+                .map_err(|_| invalid("RemoteControlAppMessage"))?,
+        )
+    }
+}
+impl From<prns_core::remote_control::RemoteControlAppMessage> for RemoteControlAppMessage {
+    fn from(value: prns_core::remote_control::RemoteControlAppMessage) -> Self {
+        Self {
+            value: value.as_slice().to_vec(),
+        }
+    }
+}
+#[derive(uniffi::Record)]
+pub struct RemoteControlStreamId {
+    pub value: u16,
+}
+impl TryFrom<RemoteControlStreamId> for prns_core::routing::links::channel::byte_stream::StreamId {
+    type Error = BindingError;
+    fn try_from(value: RemoteControlStreamId) -> Result<Self, Self::Error> {
+        Ok(
+            prns_core::routing::links::channel::byte_stream::StreamId::new(value.value)
+                .map_err(|_| invalid("StreamId"))?,
+        )
+    }
+}
+impl From<prns_core::routing::links::channel::byte_stream::StreamId> for RemoteControlStreamId {
+    fn from(value: prns_core::routing::links::channel::byte_stream::StreamId) -> Self {
+        Self { value: value.get() }
     }
 }
 #[derive(uniffi::Enum)]
@@ -472,6 +552,44 @@ impl From<prns_core::remote_control::RemoteControlPeerCursor> for RemoteControlP
         }
     }
 }
+#[derive(uniffi::Enum)]
+pub enum RemoteControlRadioConfiguration {
+    Unconfigured,
+    Profile { value: RemoteControlLoRaProfile },
+}
+impl TryFrom<RemoteControlRadioConfiguration>
+    for prns_core::remote_control::RemoteControlRadioConfiguration
+{
+    type Error = BindingError;
+    fn try_from(value: RemoteControlRadioConfiguration) -> Result<Self, Self::Error> {
+        Ok(match value {
+            RemoteControlRadioConfiguration::Unconfigured => {
+                prns_core::remote_control::RemoteControlRadioConfiguration::Unconfigured
+            }
+            RemoteControlRadioConfiguration::Profile { value } => {
+                prns_core::remote_control::RemoteControlRadioConfiguration::Profile(
+                    value.try_into()?,
+                )
+            }
+        })
+    }
+}
+impl From<prns_core::remote_control::RemoteControlRadioConfiguration>
+    for RemoteControlRadioConfiguration
+{
+    fn from(value: prns_core::remote_control::RemoteControlRadioConfiguration) -> Self {
+        match value {
+            prns_core::remote_control::RemoteControlRadioConfiguration::Unconfigured => {
+                RemoteControlRadioConfiguration::Unconfigured
+            }
+            prns_core::remote_control::RemoteControlRadioConfiguration::Profile(value) => {
+                RemoteControlRadioConfiguration::Profile {
+                    value: value.into(),
+                }
+            }
+        }
+    }
+}
 #[derive(uniffi::Record)]
 pub struct RemoteControlLoRaProfile {
     pub value: String,
@@ -483,6 +601,13 @@ impl TryFrom<RemoteControlLoRaProfile> for prns_core::remote_control::RemoteCont
             prns_core::remote_control::RemoteControlLoRaProfile::parse(&value.value)
                 .ok_or_else(|| invalid("RemoteControlLoRaProfile"))?,
         )
+    }
+}
+impl From<prns_core::remote_control::RemoteControlLoRaProfile> for RemoteControlLoRaProfile {
+    fn from(value: prns_core::remote_control::RemoteControlLoRaProfile) -> Self {
+        Self {
+            value: value.as_str().unwrap_or("").to_owned(),
+        }
     }
 }
 #[derive(uniffi::Record)]
@@ -651,6 +776,12 @@ pub enum RemoteControlRequestKind {
     InspectWifiTransaction,
     InventoryInterfaceDiscoveryGroups,
     ReplaceInterfaceDiscoveryGroups,
+    AppMessage,
+    WatchInterfaces,
+    SetNodeName,
+    DescribeNodeName,
+    InspectRadio,
+    ConfigureRadio,
 }
 impl TryFrom<RemoteControlRequestKind> for prns_core::remote_control::RemoteControlRequestKind {
     type Error = BindingError;
@@ -687,6 +818,12 @@ RemoteControlRequestKind::CancelWifiCredentials => prns_core::remote_control::Re
 RemoteControlRequestKind::InspectWifiTransaction => prns_core::remote_control::RemoteControlRequestKind::InspectWifiTransaction,
 RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups => prns_core::remote_control::RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
 RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups => prns_core::remote_control::RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
+RemoteControlRequestKind::AppMessage => prns_core::remote_control::RemoteControlRequestKind::AppMessage,
+RemoteControlRequestKind::WatchInterfaces => prns_core::remote_control::RemoteControlRequestKind::WatchInterfaces,
+RemoteControlRequestKind::SetNodeName => prns_core::remote_control::RemoteControlRequestKind::SetNodeName,
+RemoteControlRequestKind::DescribeNodeName => prns_core::remote_control::RemoteControlRequestKind::DescribeNodeName,
+RemoteControlRequestKind::InspectRadio => prns_core::remote_control::RemoteControlRequestKind::InspectRadio,
+RemoteControlRequestKind::ConfigureRadio => prns_core::remote_control::RemoteControlRequestKind::ConfigureRadio,
 }
 )
     }
@@ -724,6 +861,12 @@ prns_core::remote_control::RemoteControlRequestKind::CancelWifiCredentials => Re
 prns_core::remote_control::RemoteControlRequestKind::InspectWifiTransaction => RemoteControlRequestKind::InspectWifiTransaction,
 prns_core::remote_control::RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups => RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
 prns_core::remote_control::RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups => RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
+prns_core::remote_control::RemoteControlRequestKind::AppMessage => RemoteControlRequestKind::AppMessage,
+prns_core::remote_control::RemoteControlRequestKind::WatchInterfaces => RemoteControlRequestKind::WatchInterfaces,
+prns_core::remote_control::RemoteControlRequestKind::SetNodeName => RemoteControlRequestKind::SetNodeName,
+prns_core::remote_control::RemoteControlRequestKind::DescribeNodeName => RemoteControlRequestKind::DescribeNodeName,
+prns_core::remote_control::RemoteControlRequestKind::InspectRadio => RemoteControlRequestKind::InspectRadio,
+prns_core::remote_control::RemoteControlRequestKind::ConfigureRadio => RemoteControlRequestKind::ConfigureRadio,
 }
     }
 }
@@ -857,6 +1000,26 @@ impl From<prns_core::remote_control::RemoteControlWifiCredentialRevision>
         Self { value: value.get() }
     }
 }
+#[derive(uniffi::Record)]
+pub struct RemoteControlNodeName {
+    pub value: String,
+}
+impl TryFrom<RemoteControlNodeName> for prns_core::remote_control::RemoteControlNodeName {
+    type Error = BindingError;
+    fn try_from(value: RemoteControlNodeName) -> Result<Self, Self::Error> {
+        Ok(
+            prns_core::remote_control::RemoteControlNodeName::new(&value.value)
+                .ok_or_else(|| invalid("RemoteControlNodeName"))?,
+        )
+    }
+}
+impl From<prns_core::remote_control::RemoteControlNodeName> for RemoteControlNodeName {
+    fn from(value: prns_core::remote_control::RemoteControlNodeName) -> Self {
+        Self {
+            value: value.as_str().to_owned(),
+        }
+    }
+}
 #[derive(uniffi::Enum)]
 pub enum RemoteControlResponse {
     Describe {
@@ -864,6 +1027,12 @@ pub enum RemoteControlResponse {
     },
     AnnounceSelf {
         value: RemoteControlAnnounceSelfOutcome,
+    },
+    AppMessage {
+        value: RemoteControlAppMessage,
+    },
+    WatchInterfaces {
+        stream_id: RemoteControlStreamId,
     },
     InventoryInterfaces {
         value: RemoteControlInterfaceInventory,
@@ -888,6 +1057,12 @@ pub enum RemoteControlResponse {
     },
     InventoryInterfaceConfig {
         value: RemoteControlInterfaceConfigOutcome,
+    },
+    InspectRadio {
+        value: RemoteControlRadioStatus,
+    },
+    ConfigureRadio {
+        value: RemoteControlRadioOutcome,
     },
     SetInterfaceLoRaProfile {
         value: RemoteControlLoRaOutcome,
@@ -949,6 +1124,12 @@ pub enum RemoteControlResponse {
     InspectWifiTransaction {
         value: RemoteControlWifiTransactionStatus,
     },
+    SetNodeName {
+        value: RemoteControlApplyOutcome,
+    },
+    DescribeNodeName {
+        value: RemoteControlNodeName,
+    },
     ProtocolError {
         value: RemoteControlProtocolError,
     },
@@ -964,6 +1145,16 @@ impl From<prns_core::remote_control::RemoteControlResponse> for RemoteControlRes
             prns_core::remote_control::RemoteControlResponse::AnnounceSelf(value) => {
                 RemoteControlResponse::AnnounceSelf {
                     value: value.into(),
+                }
+            }
+            prns_core::remote_control::RemoteControlResponse::AppMessage(value) => {
+                RemoteControlResponse::AppMessage {
+                    value: value.into(),
+                }
+            }
+            prns_core::remote_control::RemoteControlResponse::WatchInterfaces { stream_id } => {
+                RemoteControlResponse::WatchInterfaces {
+                    stream_id: stream_id.into(),
                 }
             }
             prns_core::remote_control::RemoteControlResponse::InventoryInterfaces(value) => {
@@ -1003,6 +1194,16 @@ impl From<prns_core::remote_control::RemoteControlResponse> for RemoteControlRes
             }
             prns_core::remote_control::RemoteControlResponse::InventoryInterfaceConfig(value) => {
                 RemoteControlResponse::InventoryInterfaceConfig {
+                    value: value.into(),
+                }
+            }
+            prns_core::remote_control::RemoteControlResponse::InspectRadio(value) => {
+                RemoteControlResponse::InspectRadio {
+                    value: value.into(),
+                }
+            }
+            prns_core::remote_control::RemoteControlResponse::ConfigureRadio(value) => {
+                RemoteControlResponse::ConfigureRadio {
                     value: value.into(),
                 }
             }
@@ -1106,6 +1307,16 @@ impl From<prns_core::remote_control::RemoteControlResponse> for RemoteControlRes
                     value: value.into(),
                 }
             }
+            prns_core::remote_control::RemoteControlResponse::SetNodeName(value) => {
+                RemoteControlResponse::SetNodeName {
+                    value: value.into(),
+                }
+            }
+            prns_core::remote_control::RemoteControlResponse::DescribeNodeName(value) => {
+                RemoteControlResponse::DescribeNodeName {
+                    value: value.into(),
+                }
+            }
             prns_core::remote_control::RemoteControlResponse::ProtocolError(value) => {
                 RemoteControlResponse::ProtocolError {
                     value: value.into(),
@@ -1182,7 +1393,7 @@ pub struct RemoteControlInterfaceEntry {
     pub tx_bytes: u64,
     pub rx_bytes: u64,
     pub links: u32,
-    pub rate_bytes_per_sec: u32,
+    pub rate_bytes_per_sec: Option<u32>,
 }
 impl From<prns_core::remote_control::RemoteControlInterfaceEntry> for RemoteControlInterfaceEntry {
     fn from(value: prns_core::remote_control::RemoteControlInterfaceEntry) -> Self {
@@ -1195,7 +1406,7 @@ impl From<prns_core::remote_control::RemoteControlInterfaceEntry> for RemoteCont
             tx_bytes: value.tx_bytes,
             rx_bytes: value.rx_bytes,
             links: value.links,
-            rate_bytes_per_sec: value.rate_bytes_per_sec,
+            rate_bytes_per_sec: value.rate_bytes_per_sec.map(|item| item.get()),
         }
     }
 }
@@ -1235,6 +1446,9 @@ pub enum RemoteControlInterfaceKind {
     I2pPeer,
     Weave,
     WeavePeer,
+    WifiHaLow,
+    WifiHaLowPeer,
+    WifiHaLowBroadcast,
 }
 impl From<prns_core::interfaces::InterfaceKind> for RemoteControlInterfaceKind {
     fn from(value: prns_core::interfaces::InterfaceKind) -> Self {
@@ -1312,6 +1526,15 @@ impl From<prns_core::interfaces::InterfaceKind> for RemoteControlInterfaceKind {
             prns_core::interfaces::InterfaceKind::Weave => RemoteControlInterfaceKind::Weave,
             prns_core::interfaces::InterfaceKind::WeavePeer => {
                 RemoteControlInterfaceKind::WeavePeer
+            }
+            prns_core::interfaces::InterfaceKind::WifiHaLow => {
+                RemoteControlInterfaceKind::WifiHaLow
+            }
+            prns_core::interfaces::InterfaceKind::WifiHaLowPeer => {
+                RemoteControlInterfaceKind::WifiHaLowPeer
+            }
+            prns_core::interfaces::InterfaceKind::WifiHaLowBroadcast => {
+                RemoteControlInterfaceKind::WifiHaLowBroadcast
             }
         }
     }
@@ -1538,7 +1761,7 @@ pub struct RemoteControlInterfacePeer {
     pub rx_bytes: u64,
     pub links: u32,
     pub destinations: u32,
-    pub rate_bytes_per_sec: u32,
+    pub rate_bytes_per_sec: Option<u32>,
     pub radio: RemoteControlRadioIndication,
     pub details: RemoteControlPeerDetails,
 }
@@ -1551,7 +1774,7 @@ impl From<prns_core::remote_control::RemoteControlInterfacePeer> for RemoteContr
             rx_bytes: value.rx_bytes,
             links: value.links,
             destinations: value.destinations,
-            rate_bytes_per_sec: value.rate_bytes_per_sec,
+            rate_bytes_per_sec: value.rate_bytes_per_sec.map(|item| item.get()),
             radio: value.radio.into(),
             details: value.details.into(),
         }
@@ -1564,6 +1787,9 @@ pub enum RemoteControlRadioIndication {
         value: RemoteControlBluetoothIndication,
     },
     Wifi {
+        value: RemoteControlWifiIndication,
+    },
+    HaLow {
         value: RemoteControlWifiIndication,
     },
     LoRa {
@@ -1583,6 +1809,11 @@ impl From<prns_core::interfaces::RadioIndication> for RemoteControlRadioIndicati
             }
             prns_core::interfaces::RadioIndication::Wifi(value) => {
                 RemoteControlRadioIndication::Wifi {
+                    value: value.into(),
+                }
+            }
+            prns_core::interfaces::RadioIndication::HaLow(value) => {
+                RemoteControlRadioIndication::HaLow {
                     value: value.into(),
                 }
             }
@@ -1773,6 +2004,147 @@ impl From<prns_core::remote_control::RemoteControlInterfaceCard> for RemoteContr
             failure: value.failure.to_string(),
             destinations: value.destinations,
             transported_links: value.transported_links,
+        }
+    }
+}
+#[derive(uniffi::Enum)]
+pub enum RemoteControlRadioStatus {
+    UnknownInterface,
+    Status {
+        bands: RemoteControlRadioBands,
+        operating: RemoteControlRadioOperatingState,
+        saved: RemoteControlRadioSaved,
+    },
+}
+impl From<prns_core::remote_control::RemoteControlRadioStatus> for RemoteControlRadioStatus {
+    fn from(value: prns_core::remote_control::RemoteControlRadioStatus) -> Self {
+        match value {
+            prns_core::remote_control::RemoteControlRadioStatus::UnknownInterface => {
+                RemoteControlRadioStatus::UnknownInterface
+            }
+            prns_core::remote_control::RemoteControlRadioStatus::Status {
+                bands,
+                operating,
+                saved,
+            } => RemoteControlRadioStatus::Status {
+                bands: bands.into(),
+                operating: operating.into(),
+                saved: saved.into(),
+            },
+        }
+    }
+}
+#[derive(uniffi::Enum)]
+pub enum RemoteControlRadioBands {
+    SubG,
+    SubGAndGhz24,
+}
+impl From<prns_core::remote_control::RemoteControlRadioBands> for RemoteControlRadioBands {
+    fn from(value: prns_core::remote_control::RemoteControlRadioBands) -> Self {
+        match value {
+            prns_core::remote_control::RemoteControlRadioBands::SubG => {
+                RemoteControlRadioBands::SubG
+            }
+            prns_core::remote_control::RemoteControlRadioBands::SubGAndGhz24 => {
+                RemoteControlRadioBands::SubGAndGhz24
+            }
+        }
+    }
+}
+#[derive(uniffi::Enum)]
+pub enum RemoteControlRadioOperatingState {
+    Unconfigured,
+    Disabled,
+    Operating,
+    Failed,
+    Changing,
+}
+impl From<prns_core::remote_control::RemoteControlRadioOperatingState>
+    for RemoteControlRadioOperatingState
+{
+    fn from(value: prns_core::remote_control::RemoteControlRadioOperatingState) -> Self {
+        match value {
+            prns_core::remote_control::RemoteControlRadioOperatingState::Unconfigured => {
+                RemoteControlRadioOperatingState::Unconfigured
+            }
+            prns_core::remote_control::RemoteControlRadioOperatingState::Disabled => {
+                RemoteControlRadioOperatingState::Disabled
+            }
+            prns_core::remote_control::RemoteControlRadioOperatingState::Operating => {
+                RemoteControlRadioOperatingState::Operating
+            }
+            prns_core::remote_control::RemoteControlRadioOperatingState::Failed => {
+                RemoteControlRadioOperatingState::Failed
+            }
+            prns_core::remote_control::RemoteControlRadioOperatingState::Changing => {
+                RemoteControlRadioOperatingState::Changing
+            }
+        }
+    }
+}
+#[derive(uniffi::Enum)]
+pub enum RemoteControlRadioSaved {
+    Unknown,
+    Confirmed {
+        value: RemoteControlRadioConfiguration,
+    },
+}
+impl From<prns_core::remote_control::RemoteControlRadioSaved> for RemoteControlRadioSaved {
+    fn from(value: prns_core::remote_control::RemoteControlRadioSaved) -> Self {
+        match value {
+            prns_core::remote_control::RemoteControlRadioSaved::Unknown => {
+                RemoteControlRadioSaved::Unknown
+            }
+            prns_core::remote_control::RemoteControlRadioSaved::Confirmed(value) => {
+                RemoteControlRadioSaved::Confirmed {
+                    value: value.into(),
+                }
+            }
+        }
+    }
+}
+#[derive(uniffi::Enum)]
+pub enum RemoteControlRadioOutcome {
+    Saved,
+    UnknownInterface,
+    HardwareFailed,
+    PersistenceFailed,
+    RecoveryRequired,
+    Busy,
+    IdentityExhausted,
+    PublicationFailed,
+    InvalidConfiguration,
+}
+impl From<prns_core::remote_control::RemoteControlRadioOutcome> for RemoteControlRadioOutcome {
+    fn from(value: prns_core::remote_control::RemoteControlRadioOutcome) -> Self {
+        match value {
+            prns_core::remote_control::RemoteControlRadioOutcome::Saved => {
+                RemoteControlRadioOutcome::Saved
+            }
+            prns_core::remote_control::RemoteControlRadioOutcome::UnknownInterface => {
+                RemoteControlRadioOutcome::UnknownInterface
+            }
+            prns_core::remote_control::RemoteControlRadioOutcome::HardwareFailed => {
+                RemoteControlRadioOutcome::HardwareFailed
+            }
+            prns_core::remote_control::RemoteControlRadioOutcome::PersistenceFailed => {
+                RemoteControlRadioOutcome::PersistenceFailed
+            }
+            prns_core::remote_control::RemoteControlRadioOutcome::RecoveryRequired => {
+                RemoteControlRadioOutcome::RecoveryRequired
+            }
+            prns_core::remote_control::RemoteControlRadioOutcome::Busy => {
+                RemoteControlRadioOutcome::Busy
+            }
+            prns_core::remote_control::RemoteControlRadioOutcome::IdentityExhausted => {
+                RemoteControlRadioOutcome::IdentityExhausted
+            }
+            prns_core::remote_control::RemoteControlRadioOutcome::PublicationFailed => {
+                RemoteControlRadioOutcome::PublicationFailed
+            }
+            prns_core::remote_control::RemoteControlRadioOutcome::InvalidConfiguration => {
+                RemoteControlRadioOutcome::InvalidConfiguration
+            }
         }
     }
 }
@@ -2487,6 +2859,10 @@ pub enum RemoteControlError {
         expected: RemoteControlResponseKind,
         found: RemoteControlResponseKind,
     },
+    UnexpectedStream {
+        expected: RemoteControlStreamId,
+        found: RemoteControlStreamId,
+    },
     AnnounceSelf {
         value: RemoteControlAnnounceSelfFailure,
     },
@@ -2521,6 +2897,12 @@ impl From<personal_rns::runtime::RemoteControlError> for RemoteControlError {
             }
             personal_rns::runtime::RemoteControlError::UnexpectedResponse { expected, found } => {
                 RemoteControlError::UnexpectedResponse {
+                    expected: expected.into(),
+                    found: found.into(),
+                }
+            }
+            personal_rns::runtime::RemoteControlError::UnexpectedStream { expected, found } => {
+                RemoteControlError::UnexpectedStream {
                     expected: expected.into(),
                     found: found.into(),
                 }
@@ -2931,6 +3313,12 @@ pub enum RemoteControlResponseKind {
     InspectWifiTransaction,
     InventoryInterfaceDiscoveryGroups,
     ReplaceInterfaceDiscoveryGroups,
+    AppMessage,
+    WatchInterfaces,
+    SetNodeName,
+    DescribeNodeName,
+    InspectRadio,
+    ConfigureRadio,
     ProtocolError,
 }
 impl From<prns_core::remote_control::RemoteControlResponseKind> for RemoteControlResponseKind {
@@ -2966,6 +3354,12 @@ prns_core::remote_control::RemoteControlResponseKind::CancelWifiCredentials => R
 prns_core::remote_control::RemoteControlResponseKind::InspectWifiTransaction => RemoteControlResponseKind::InspectWifiTransaction,
 prns_core::remote_control::RemoteControlResponseKind::InventoryInterfaceDiscoveryGroups => RemoteControlResponseKind::InventoryInterfaceDiscoveryGroups,
 prns_core::remote_control::RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups => RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups,
+prns_core::remote_control::RemoteControlResponseKind::AppMessage => RemoteControlResponseKind::AppMessage,
+prns_core::remote_control::RemoteControlResponseKind::WatchInterfaces => RemoteControlResponseKind::WatchInterfaces,
+prns_core::remote_control::RemoteControlResponseKind::SetNodeName => RemoteControlResponseKind::SetNodeName,
+prns_core::remote_control::RemoteControlResponseKind::DescribeNodeName => RemoteControlResponseKind::DescribeNodeName,
+prns_core::remote_control::RemoteControlResponseKind::InspectRadio => RemoteControlResponseKind::InspectRadio,
+prns_core::remote_control::RemoteControlResponseKind::ConfigureRadio => RemoteControlResponseKind::ConfigureRadio,
 prns_core::remote_control::RemoteControlResponseKind::ProtocolError => RemoteControlResponseKind::ProtocolError,
 }
     }

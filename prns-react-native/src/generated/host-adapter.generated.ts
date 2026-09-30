@@ -2,7 +2,7 @@
 import * as C from "personal-rns/contract";
 import * as N from "./prns_host_uniffi";
 export type ResourceFactory = (value: N.ResourceDescriptor) => C.ResourceStream;
-export const HOST_SEMANTIC_FINGERPRINT = "b5ca02be1ea5d61771f3a75eacb4d44447f99754adbeb02b6cd98537ed2fa239";
+export const HOST_SEMANTIC_FINGERPRINT = "300d77d158eca0f1b473e4c8d3204d1f2da3031427a64cbd7ee3a8339c3c67ff";
 export function liftSafeUint(value: bigint): number {
   if (value < 0n || value > 9_007_199_254_740_991n) throw new RangeError("safeUint outside exact JS integer range");
   return Number(value);
