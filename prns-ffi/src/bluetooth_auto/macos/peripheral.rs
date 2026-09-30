@@ -105,6 +105,33 @@ pub(super) fn capability_read_allowed<C>(
         })
 }
 
+/// Use the same closed-owner cleanup as greeting admission before deciding whether a new
+/// connection can negotiate support. Otherwise a stale retired entry can downgrade the read
+/// even though the following Hello will replace it with a capable session.
+pub(super) fn prepare_capability_read<C>(
+    enabled: bool,
+    published: bool,
+    peer_id: CoreBluetoothPeerId,
+    sessions: &mut HashMap<CoreBluetoothPeerId, WriteSession<C>>,
+    pending: &mut HashMap<CoreBluetoothPeerId, PendingL2cap>,
+    notification_ready: &watch::Sender<()>,
+) -> bool {
+    reap_closed_listener_state(sessions, pending, notification_ready);
+    capability_read_allowed(enabled, published, sessions.get(&peer_id))
+}
+
+fn reap_closed_listener_state<C>(
+    sessions: &mut HashMap<CoreBluetoothPeerId, WriteSession<C>>,
+    pending: &mut HashMap<CoreBluetoothPeerId, PendingL2cap>,
+    notification_ready: &watch::Sender<()>,
+) {
+    let retired = reap_closed_sessions(sessions, pending, None, WriteSession::data_receiver_closed);
+    if retired > 0 {
+        notification_ready.send_replace(());
+    }
+    reap_stale_pending_l2cap(pending);
+}
+
 fn write_request(request: &CBATTRequest) -> Result<WriteRequest<Retained<CBCentral>>, WriteError> {
     // SAFETY: CoreBluetooth supplies this live request on the delegate's serial queue. The
     // generated accessors return retained characteristic/central/value objects and a plain
@@ -557,13 +584,13 @@ define_class!(
             let result = if !core::ptr::eq(&*characteristic, &**expected as &CBCharacteristic) {
                 CBATTError::ReadNotPermitted
             } else if !self.ivars().radio_enabled.load(Ordering::Acquire)
-                || !capability_read_allowed(
+                || !prepare_capability_read(
                     self.ivars().liveness_enabled.get(),
                     self.ivars().liveness_published.get(),
-                    self.ivars()
-                        .sessions
-                        .borrow()
-                        .get(&core_bluetooth_peer_id(&central)),
+                    core_bluetooth_peer_id(&central),
+                    &mut self.ivars().sessions.borrow_mut(),
+                    &mut self.ivars().pending_l2cap.borrow_mut(),
+                    &self.ivars().notification_ready,
                 )
             {
                 CBATTError::RequestNotSupported
@@ -1088,18 +1115,11 @@ impl PeripheralDelegate {
 
     /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
     fn reap_closed_state_on_queue(&self) {
-        let mut sessions = self.ivars().sessions.borrow_mut();
-        let mut pending = self.ivars().pending_l2cap.borrow_mut();
-        let retired = reap_closed_sessions(
-            &mut sessions,
-            &mut pending,
-            None,
-            PeripheralPeerSession::data_receiver_closed,
+        reap_closed_listener_state(
+            &mut self.ivars().sessions.borrow_mut(),
+            &mut self.ivars().pending_l2cap.borrow_mut(),
+            &self.ivars().notification_ready,
         );
-        if retired > 0 {
-            self.ivars().notification_ready.send_replace(());
-        }
-        reap_stale_pending_l2cap(&mut pending);
     }
 
     /// Queue-confined: remove only the state owned by this exact CoreBluetooth peer.
