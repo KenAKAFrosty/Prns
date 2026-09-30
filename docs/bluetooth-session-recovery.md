@@ -5,8 +5,9 @@ ownership repairs, retained controls and correlated Android/embedded control-wri
 completion below are implemented. Negotiated liveness is implemented for the
 Tokio runtime with Apple and Android backends. September 30 BLE-only trials on
 rebuilt phones passed isolated app restarts in both directions and subsequent
-verified saved-contact delivery. Silent-peer expiry, long idle and background
-recovery remain unqualified. Embedded and other backends retain legacy behavior.
+verified saved-contact delivery. Later bounded lifecycle trials passed node and
+radio recovery and off-screen receipt. Silent-peer expiry, long idle and natural
+OS suspension remain unqualified. Embedded and other backends retain legacy behavior.
 
 A September 29 two-phone iOS restart check delivered a baseline message, restarted
 only iOS, and then failed recipient resolution while Android retained an
@@ -338,8 +339,55 @@ These are bounded restart observations, not a recovery-time guarantee or proof
 of silent-peer timeout expiry: Close controls were observed during recovery.
 Before the controlled restarts, an unexplained control-write error and connection
 churn also recovered automatically; its cause remains open. Long-idle stability,
-natural suspension, radio/permission loss and app Off/On remain separate cases.
+natural suspension and permission loss remain separate cases.
 The app checkpoint records artifact hashes, timestamps and the earlier failure.
+
+### Lifecycle continuation
+
+The same installed binaries then passed Android whole-node Stop/Start, iOS
+app-level Bluetooth off/on, and Android system Bluetooth off/on. Their first
+attempted saved-contact sends after recovery delivered with matching IDs and
+receiver Verified source. Neither app process changed, although Android radio
+recovery recreated its native runtime. Android's system switch was off while
+the OS retained a BLE-only state for other services; this was user-visible radio
+recovery, not complete hardware power removal.
+
+Both phones also received while off-screen: iOS after more than five minutes,
+and Android after seven minutes with its foreground node service active. The
+sender reported delivery before the receiving app returned to the foreground;
+stored messages and subsequent replies had matching IDs and Verified source.
+USB stayed connected and iOS Mirroring remained available, without an attached
+debugger. Recurring controls and data continued. These observations do not prove
+natural suspension, deep sleep, relaunch or silent-link expiry. Resumed sends
+were attempted about 85 seconds after return, not immediately on resume.
+
+The Android off-screen trial included an unexplained native status 8 disconnect
+after about 16 minutes connected. A replacement negotiated about seven seconds
+later and carried the successful message. An earlier node Stop/Start trial also
+needed a replacement after a status 8 disconnect. Rejected challengers preceded
+both events, but the logs do not establish causation. Separately, nine competing
+candidates were rejected in about a minute while the incumbent continued carrying
+traffic. Recovery passed these trials; uninterrupted or churn-free operation did not.
+
+The seven new logical messages appeared once in the bounded loaded histories.
+Identities, contacts, other displayed conversation counts and the iPhone's paired
+board remained present; both apps completed interval persistence. No data clear,
+manual announce or alternate transport was used. These are individual trials,
+not recovery-time guarantees or whole-database audits.
+
+## Remaining hardening
+
+Investigate the competing-connection churn and native status 8 disconnects before
+claiming long-idle stability. A narrow first candidate is the outbound-handshake
+failure path that currently clears its per-address backoff. A bounded cooldown
+must not pause unrelated addresses or reject inbound peers. Any policy change
+needs focused ownership/retry tests and renewed firmware resource checks.
+
+Do not indefinitely suppress an address because a greeting claims an existing
+peer's identity. That identity is unauthenticated; even a responsive incumbent
+does not authenticate the claimed address association. Address reuse, rotation
+and forged identities must retain bounded recovery opportunities. No alias
+suppression or retry-policy change is implemented in this slice.
 
 ## Shutdown and acceptance
 
@@ -360,8 +408,9 @@ embedded GATT discovery, before advertising support.
 Physical acceptance repeats the controlled baseline/restart/send journey in
 both directions on rebuilt iOS and Android binaries, without manual announce,
 Bluetooth reset, or an alternate transport. Record delivery, duplicate count,
-unchanged persisted records and actual reconnect time. App Off/On, platform
-radio loss, permission denial, long idle and background suspension remain
-separate acceptance cases. Passing queue or codec tests does not qualify them.
+unchanged persisted records and actual reconnect time. Repeat the lifecycle cases
+in both native roles. Current-build Android app-interface off/on, iOS system-radio
+recovery, permission loss, silent-peer expiry, long idle and natural suspension
+remain separate acceptance gaps. Passing queue or codec tests does not qualify them.
 First confirm that both nodes remain Running through an interval save; a stopped
 persistence worker must not be misdiagnosed as Bluetooth recovery failure.
