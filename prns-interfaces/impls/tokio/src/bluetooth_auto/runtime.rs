@@ -39,6 +39,9 @@ use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 use contract::{send_frame_duplex, BleDuplexOutcome, BleFrameForwarder};
 
+mod control;
+use control::observe_control;
+
 struct PeerInbound<'a, Seam> {
     seam: &'a mut Seam,
     status: &'a TokioInterfaceStatus,
@@ -163,26 +166,6 @@ impl<Src: BleSource, Snk: BleSink, Ctl: BleControl> BluetoothPeer<Src, Snk, Ctl>
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
-    }
-}
-
-/// This one future remains alive across data receives, sends and forwarding.
-/// No post-settlement writes or negotiated liveness are introduced here.
-async fn observe_control<Ctl: BleControl>(
-    control: &mut Option<Ctl>,
-) -> Result<CloseReason, Ctl::Error> {
-    let Some(control) = control else {
-        return core::future::pending().await;
-    };
-    loop {
-        match control.recv().await? {
-            contract::Control::Close { reason } => return Ok(reason),
-            contract::Control::Hello { .. } | contract::Control::Welcome { .. } => {
-                // A greeting cannot authorize evicting this keeper. Yield even for
-                // an always-ready adapter so repeated greetings cannot starve data.
-                tokio::task::yield_now().await;
-            }
-        }
     }
 }
 
@@ -1064,6 +1047,9 @@ async fn prepare_radio<B, const MAX_PEERS: usize>(
 ) where
     B: BleBackend<MAX_PEERS>,
 {
+    if let Err(error) = backend.set_session_liveness(true).await {
+        crate::diagnostic_log::warn!("bluetooth: session liveness opt-in failed: {error:?}");
+    }
     let _ = backend.set_radio_mode(RadioMode::On).await;
     if let Ok(capabilities) = backend.local_capabilities(configured_capabilities).await {
         local.capabilities = capabilities;
