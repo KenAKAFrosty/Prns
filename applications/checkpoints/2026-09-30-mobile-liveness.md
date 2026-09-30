@@ -144,12 +144,81 @@ Private build/install logs are retained under
 for this continuation. Changes are committed locally; this continuation did not
 push branches or open/update PRs.
 
+## Lifecycle continuation on the same binaries
+
+The later trials kept the Android diagnostic APK and iOS service-migration build
+above. Neither app was reinstalled or its data cleared. Android process 25845
+and iOS process 4251 remained unchanged. All times below are UTC; deliveries
+used saved contacts over BLE only, with no manual announce or alternate path.
+
+| Trial | State and delivery evidence |
+| --- | --- |
+| Android Stop node, 18:04:52–18:05:03; Start node, 18:05:24–18:05:38 | Stopped state retained the primary identity; the foreground service was absent and iOS showed Bluetooth Ready. Start restored both identities and the service. First saved-contact send at 18:07:39 delivered in 143 ms with matching IDs and receiver Verified source. |
+| iOS app Bluetooth off, 18:09:13; on, 18:10:02 | Diagnostics confirmed Disabled while the node stayed Running. Android closed its link after an owned control-write error, then negotiated a new link at 18:10:05. First iOS send at 18:11:04 delivered in 97 ms with matching IDs and receiver Verified source. |
+| Android system Bluetooth off, 18:16:51; on, 18:18:23 | While the radio was off, the UI showed Running and Bluetooth is off with a Settings shortcut. A new native Bluetooth owner started at 18:18:24 and negotiated by 18:18:26. First send at 18:19:49 delivered in 94 ms with matching IDs and receiver Verified source. |
+| iOS off-screen from 18:20:12 to 18:25:59 | Android sent at 18:25:28, after more than five minutes, and reported Delivered in 96 ms before iOS returned to the foreground. The stored message had the same ID and Verified source. The first resumed iOS reply at 18:27:23 delivered in 97 ms with the same verification. |
+| Android off-screen from 18:28:25 to about 18:36:27 | iOS sent at 18:35:33, after seven minutes, and reported Delivered in 99 ms while Android remained in the launcher. The stored message had the same ID and Verified source. The first resumed Android reply at 18:37:51 delivered in 143 ms with the same verification. |
+
+These are individual trials, not recovery-time guarantees. Android Stop/Start
+initially connected at 18:05:33, but that link later disconnected with native
+status 8 at 18:06:54; a replacement negotiated at 18:07:14 before the first send.
+Rejected challengers preceded the disconnect, but that timing does not establish
+causation. Before Stop, nine competing candidates were rejected in about a minute
+while the original link continued carrying traffic. This is a reproducible
+efficiency concern, separate from proven incumbent disruption.
+
+During Android's off-screen dwell, the incumbent disconnected with status 8 at
+18:34:50.141 after about 16 minutes connected. Three rejected competing sessions
+preceded it. A replacement negotiated automatically at 18:34:57.445, about seven
+seconds later, and carried the successful off-screen message. No control-write
+failure or timeout preceded this disconnect in the scoped Android log. Its cause
+remains unproven; the result establishes automatic recovery, not uninterrupted
+connectivity throughout the dwell.
+
+Android's radio recovery recreated the native runtime in the same app process:
+its uptime was about 321 seconds at 18:23:46, consistent with restart at 18:18:24.
+Its identities and messages remained, and interval persistence completed. The
+OS Settings switch was off, but Android retained a system BLE-only state for
+other services; this is user-visible radio recovery, not complete hardware power
+removal. The developer-tool toggle and some Settings automation attempts failed
+before changing state; those are not app failures.
+
+USB remained connected during both off-screen dwells, with Mirroring available
+on iOS and the foreground node service active on Android; no debugger was attached.
+Recurring controls and data traffic continued, so these were not silent-link
+tests. They establish bounded off-screen receipt, not actual OS suspension, deep
+sleep, relaunch or long-idle reliability. Each resumed send occurred about
+85 seconds after returning because of UI inspection and input; these were the
+first attempted sends, not immediate-on-resume latency measurements.
+
+At 18:38–18:40, each demo conversation displayed 38 messages: the original 31 plus
+the seven new messages above. Other displayed counts remained three on Android
+and 13 on iOS. Both apps retained their primary/controller identities and saved
+contacts, and iOS retained its paired board. Both showed Running, Bluetooth
+Connected, Persistent Yes, Restored Yes and Last flush Interval. No duplicate was
+apparent in this bounded loaded history; this was not a whole-database audit.
+
+Whole-node Stop/Start is exposed only on Android. Both platforms expose the
+app-level Bluetooth interface toggle, which is distinct from system radio
+controls and process restart. Current shutdown does not send a cooperative Close
+before tearing down transport owners. These trials must not be described as
+graceful-close qualification.
+
+The local lifecycle ledger is
+`scratch/prns-app/2026-09-30/phone-lifecycle-observations.json`; its scoped Android
+log is `phone-lifecycle-android-20260930-1803.log` under the log directory above.
+
 ## Remaining acceptance
 
-1. Exercise app Off/On and radio recovery independently, preserving saved records.
+1. Repeat lifecycle cases in both native roles. Current-build Android interface
+   off/on, iOS system-radio recovery and permission loss/recovery remain separate
+   gaps; decide whether to expose whole-node Stop/Start on iOS.
 2. Qualify silent-peer expiry, long idle and natural suspension; capture enough
    native evidence to distinguish policy expiry from received Close or OS errors.
-3. Investigate recurring connection churn if it reproduces during those trials.
+3. Investigate repeated competing connections and the native status 8 disconnects.
+   Start with per-address outbound-handshake failure backoff; do not indefinitely
+   suppress addresses based on unauthenticated claimed identities. Any generic
+   policy change needs focused tests and renewed firmware resource checks.
 
 Record unsuccessful early attempts and elapsed recovery time, not just the final
 retry. Permission recovery also remains a separate case. Cooperative close on
