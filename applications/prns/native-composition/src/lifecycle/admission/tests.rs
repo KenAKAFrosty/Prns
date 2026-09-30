@@ -142,6 +142,21 @@ fn foreign_offline_timeout_needs_no_tokio_runtime() {
 }
 
 #[test]
+fn network_clear_admission_is_foreign_runtime_neutral_and_generation_scoped() {
+    let owner = owner();
+    let call = |generation_id| {
+        foreign_block_on(clear_network_activity_with_supervisor(
+            &owner,
+            ClearNetworkActivityInput { generation_id },
+        ))
+    };
+    assert_eq!(call(1), ClearNetworkActivityOutcome::GenerationChanged);
+    assert_eq!(call(0), ClearNetworkActivityOutcome::LocalNodeStopped);
+    let _transition = owner.lock_state();
+    assert_eq!(call(0), ClearNetworkActivityOutcome::Busy);
+}
+
+#[test]
 fn async_admission_never_waits_for_a_native_transition() {
     let owner = owner();
     let _transition = owner.lock_state();

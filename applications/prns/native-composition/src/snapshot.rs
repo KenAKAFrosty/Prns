@@ -4,8 +4,9 @@ use std::sync::{Mutex, MutexGuard};
 use crate::contract::{
     DevelopmentNodeFailure, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
     DevelopmentNodeRuntime, DevelopmentNodeSnapshot, LocalBluetoothSnapshot, LocalBluetoothState,
-    LocalHostState, LxmfHealth, LxmfHealthState, PrimaryIdentityState, RemoteChangeOperation,
-    RemoteChangeStatus, RemoteControlAnnounceOperation, RemoteControlAnnounceStatus,
+    LocalHostState, LocalNetworkSnapshot, LocalNetworkState, LxmfHealth, LxmfHealthState,
+    PrimaryIdentityState, RemoteChangeOperation, RemoteChangeStatus,
+    RemoteControlAnnounceOperation, RemoteControlAnnounceStatus,
     RemoteControlAnnounceUnknownReason, RemoteWifiOperation, RemoteWifiStatus,
 };
 
@@ -42,7 +43,57 @@ impl SnapshotStore {
     }
 
     pub fn set_runtime(&self, runtime: DevelopmentNodeRuntime) {
-        self.update(|snapshot| snapshot.runtime = runtime);
+        self.update(|snapshot| {
+            snapshot.runtime = runtime;
+            if matches!(
+                runtime,
+                DevelopmentNodeRuntime::Stopping
+                    | DevelopmentNodeRuntime::Stopped
+                    | DevelopmentNodeRuntime::Failed
+            ) {
+                snapshot.network = LocalNetworkSnapshot::stopped();
+            }
+        });
+    }
+
+    /// One coherent host/network capture. The generation and phase fence also
+    /// prevents a late successful inspector from reviving a stopping node.
+    pub(crate) fn publish_host_inspection(
+        &self,
+        generation: u64,
+        host: prns_host::HostSnapshot,
+        network: LocalNetworkSnapshot,
+        bluetooth: impl FnOnce(Option<bool>) -> LocalBluetoothSnapshot,
+    ) -> bool {
+        let mut snapshot = self.lock();
+        if !can_publish_network(&snapshot, generation, network.activity_revision) {
+            return false;
+        }
+        snapshot.bluetooth = bluetooth(snapshot.bluetooth.desired_enabled);
+        snapshot.local_host = LocalHostState::Running {
+            host: Box::new(host),
+        };
+        snapshot.network = network;
+        snapshot.revision = snapshot.revision.saturating_add(1);
+        true
+    }
+
+    /// Actor-only synchronous publication, including the clear revision barrier.
+    /// Ring capture and this call must have no intervening await.
+    pub(crate) fn publish_network_activity(
+        &self,
+        generation: u64,
+        activity: crate::network::ActivityProjection,
+    ) -> bool {
+        let mut snapshot = self.lock();
+        if !can_publish_network(&snapshot, generation, activity.revision) {
+            return false;
+        }
+        snapshot.network.announces = activity.rows;
+        snapshot.network.activity_revision = activity.revision;
+        snapshot.network.dropped_announce_count = activity.evictions;
+        snapshot.revision = snapshot.revision.saturating_add(1);
+        true
     }
 
     pub fn set_primary_identity(&self, primary_identity: PrimaryIdentityState) {
@@ -65,12 +116,15 @@ impl SnapshotStore {
         snapshot.revision = next;
     }
 
+    #[cfg(test)]
     pub fn set_local_host_unavailable_if_running(&self, detail: String) {
         let mut snapshot = self.lock();
         if snapshot.runtime != DevelopmentNodeRuntime::Running {
             return;
         }
-        let local_host = LocalHostState::Unavailable { detail };
+        let local_host = LocalHostState::Unavailable {
+            detail: detail.clone(),
+        };
         if snapshot.local_host == local_host {
             return;
         }
@@ -79,6 +133,10 @@ impl SnapshotStore {
             detail: "Local Bluetooth inspection is unavailable.".into(),
         };
         snapshot.bluetooth.peers.clear();
+        snapshot.network.state = LocalNetworkState::Unavailable {
+            detail: detail.clone(),
+        };
+        snapshot.network.routes.clear();
         snapshot.local_host = local_host;
         snapshot.revision = next;
     }
@@ -92,6 +150,10 @@ impl SnapshotStore {
         {
             return;
         }
+        snapshot.network.state = LocalNetworkState::Unavailable {
+            detail: detail.clone(),
+        };
+        snapshot.network.routes.clear();
         snapshot.local_host = LocalHostState::Unavailable { detail };
         snapshot.bluetooth.state = LocalBluetoothState::Unavailable {
             detail: "Local Bluetooth inspection is unavailable.".into(),
@@ -127,6 +189,7 @@ impl SnapshotStore {
             let explicit_stop_in_progress = self.explicit_stop_in_progress.load(Ordering::Acquire);
             if !explicit_stop_in_progress {
                 snapshot.runtime = DevelopmentNodeRuntime::Failed;
+                snapshot.network = LocalNetworkSnapshot::stopped();
                 snapshot.bluetooth =
                     LocalBluetoothSnapshot::stopped(snapshot.bluetooth.desired_enabled);
                 if !matches!(
@@ -151,6 +214,7 @@ impl SnapshotStore {
             interrupt_change(&mut snapshot.last_remote_change);
             interrupt_wifi(&mut snapshot.last_remote_wifi);
             snapshot.runtime = DevelopmentNodeRuntime::Failed;
+            snapshot.network = LocalNetworkSnapshot::stopped();
             snapshot.bluetooth =
                 LocalBluetoothSnapshot::stopped(snapshot.bluetooth.desired_enabled);
             if !matches!(
@@ -171,6 +235,7 @@ impl SnapshotStore {
             .store(true, Ordering::Release);
         self.update(|snapshot| {
             snapshot.runtime = DevelopmentNodeRuntime::Stopping;
+            snapshot.network = LocalNetworkSnapshot::stopped();
             snapshot.active_operation = Some(DevelopmentNodeOperation {
                 kind: DevelopmentNodeOperationKind::Shutdown,
                 started_at_millis,
@@ -183,6 +248,7 @@ impl SnapshotStore {
             .store(true, Ordering::Release);
         self.update(|snapshot| {
             snapshot.runtime = DevelopmentNodeRuntime::Stopping;
+            snapshot.network = LocalNetworkSnapshot::stopped();
             snapshot.failure = Some(failure);
             snapshot.active_operation = Some(DevelopmentNodeOperation {
                 kind: DevelopmentNodeOperationKind::Shutdown,
@@ -202,6 +268,7 @@ impl SnapshotStore {
             let mut next = DevelopmentNodeSnapshot::stopped();
             next.bluetooth.desired_enabled = snapshot.bluetooth.desired_enabled;
             next.bluetooth.state = LocalBluetoothState::Starting;
+            next.network.state = LocalNetworkState::Starting;
             next.generation_id = snapshot.revision.saturating_add(1);
             next.last_announcement = snapshot.last_announcement.clone();
             interrupt_announcement(&mut next.last_announcement);
@@ -253,6 +320,12 @@ impl SnapshotStore {
     }
 }
 
+fn can_publish_network(snapshot: &DevelopmentNodeSnapshot, generation: u64, revision: u64) -> bool {
+    snapshot.runtime == DevelopmentNodeRuntime::Running
+        && snapshot.generation_id == generation
+        && revision >= snapshot.network.activity_revision
+}
+
 fn interrupt_change(operation: &mut Option<RemoteChangeOperation>) {
     if let Some(operation) = operation {
         if operation.status == RemoteChangeStatus::Pending {
@@ -292,6 +365,117 @@ impl Default for SnapshotStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn activity(revision: u64) -> crate::network::ActivityProjection {
+        crate::network::ActivityProjection {
+            revision,
+            evictions: 4,
+            rows: vec![crate::contract::LocalAnnounceActivity {
+                record_id: 10,
+                destination: [1; 16],
+                announced_identity: [2; 16],
+                source_interface: vec![3; 8],
+                hops: 2,
+                age_millis: 50,
+                is_path_response: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn activity_publication_rejects_pre_clear_and_retired_generation_captures() {
+        let store = SnapshotStore::new();
+        store.begin_generation(PrimaryIdentityState::Missing);
+        let generation = store.read().generation_id;
+        store.set_runtime(DevelopmentNodeRuntime::Running);
+        assert!(store.publish_network_activity(generation, activity(1)));
+        let stale = activity(1);
+        assert!(store.publish_network_activity(
+            generation,
+            crate::network::ActivityProjection {
+                revision: 2,
+                evictions: 0,
+                rows: Vec::new(),
+            }
+        ));
+        assert!(!store.publish_network_activity(generation, stale));
+        assert!(store.read().network.announces.is_empty());
+        store.begin_generation(PrimaryIdentityState::Missing);
+        store.set_runtime(DevelopmentNodeRuntime::Running);
+        assert!(!store.publish_network_activity(generation, activity(100)));
+        assert!(store.read().network.announces.is_empty());
+    }
+
+    #[test]
+    fn network_activity_clears_on_lifecycle_transitions_and_cannot_be_revived() {
+        for phase in [
+            DevelopmentNodeRuntime::Stopping,
+            DevelopmentNodeRuntime::Stopped,
+            DevelopmentNodeRuntime::Failed,
+        ] {
+            let store = SnapshotStore::new();
+            store.begin_generation(PrimaryIdentityState::Missing);
+            let generation = store.read().generation_id;
+            store.set_runtime(DevelopmentNodeRuntime::Running);
+            assert!(store.publish_network_activity(generation, activity(1)));
+            store.set_runtime(phase);
+            assert_eq!(store.read().network, LocalNetworkSnapshot::stopped());
+            assert!(!store.publish_network_activity(generation, activity(2)));
+        }
+        let store = SnapshotStore::new();
+        store.set_runtime(DevelopmentNodeRuntime::Running);
+        assert!(store.publish_network_activity(0, activity(1)));
+        store.begin_stop(1);
+        assert_eq!(store.read().network, LocalNetworkSnapshot::stopped());
+        store.stopped();
+        store.begin_generation(PrimaryIdentityState::Missing);
+        assert_eq!(store.read().network.state, LocalNetworkState::Starting);
+        store.set_runtime(DevelopmentNodeRuntime::Running);
+        assert!(store.publish_network_activity(store.read().generation_id, activity(1)));
+        store.fail(DevelopmentNodeFailure {
+            stage: crate::contract::DevelopmentNodeFailureStage::Node,
+            detail: "failed".into(),
+        });
+        assert_eq!(store.read().network, LocalNetworkSnapshot::stopped());
+        store.reset();
+        assert_eq!(store.read().network, LocalNetworkSnapshot::stopped());
+    }
+
+    #[test]
+    fn inspection_failure_preserves_activity_but_removes_stale_routes() {
+        let store = SnapshotStore::new();
+        store.set_runtime(DevelopmentNodeRuntime::Running);
+        assert!(store.publish_network_activity(0, activity(7)));
+        store.update(|snapshot| {
+            snapshot.network.state = LocalNetworkState::Ready;
+            snapshot
+                .network
+                .routes
+                .push(crate::contract::LocalNetworkRouteSnapshot {
+                    destination: [1; 16],
+                    via_identity: None,
+                    interface_id: vec![3; 8],
+                    hops: 1,
+                    learned_age_millis: 10,
+                    last_activity_age_millis: 0,
+                    expires_in_millis: 100,
+                    expired: false,
+                });
+        });
+        let history = store.read().network.announces;
+        store.set_local_host_unavailable_for_generation(0, "inspection timed out".into());
+        let network = store.read().network;
+        assert_eq!(network.announces, history);
+        assert_eq!(network.activity_revision, 7);
+        assert_eq!(network.dropped_announce_count, 4);
+        assert!(network.routes.is_empty());
+        assert_eq!(
+            network.state,
+            LocalNetworkState::Unavailable {
+                detail: "inspection timed out".into()
+            }
+        );
+    }
 
     #[test]
     fn stopping_never_rewrites_a_settled_remote_change() {

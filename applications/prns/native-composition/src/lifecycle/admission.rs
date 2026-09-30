@@ -298,6 +298,32 @@ pub async fn clear_lxmf_discovery() -> LxmfDiscoveryClearOutcome {
     }
 }
 
+pub async fn clear_network_activity(
+    input: ClearNetworkActivityInput,
+) -> ClearNetworkActivityOutcome {
+    clear_network_activity_with_supervisor(supervisor(), input).await
+}
+
+pub(super) async fn clear_network_activity_with_supervisor(
+    supervisor: &Supervisor,
+    input: ClearNetworkActivityInput,
+) -> ClearNetworkActivityOutcome {
+    if supervisor.snapshots.read().generation_id != input.generation_id {
+        return ClearNetworkActivityOutcome::GenerationChanged;
+    }
+    match admit_running(supervisor, |response| {
+        Command::ClearNetworkActivity(input, response)
+    }) {
+        Ok(receiver) => bounded_reply(receiver, LXMF_QUERY_TIMEOUT)
+            .await
+            .unwrap_or(ClearNetworkActivityOutcome::Busy),
+        Err(LxmfAdmissionFailure::LocalNodeStopped) => {
+            ClearNetworkActivityOutcome::LocalNodeStopped
+        }
+        Err(LxmfAdmissionFailure::Busy) => ClearNetworkActivityOutcome::Busy,
+    }
+}
+
 pub async fn measure_lxmf_text(input: MeasureLxmfTextInput) -> MeasureLxmfTextOutcome {
     match admit_running(supervisor(), |response| {
         Command::MeasureLxmfText(input, response)

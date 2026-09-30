@@ -46,6 +46,7 @@ use crate::development_store::{
     DevelopmentStoreFailure, DevelopmentStoreOwner, MailboxStoreReply, StoreReply,
 };
 use crate::directory::{DirectoryRequest, DirectoryResponse};
+use crate::network::NetworkActivityStore;
 use crate::node::{prepare_storage, reset_storage, NodeStoragePaths};
 use crate::pairing::{
     apply_event, apply_overflow_failure, attempt_id_string, expire_candidates,
@@ -207,6 +208,10 @@ enum Command {
     ),
     ListLxmfPeers(Reply<LxmfPeerListOutcome>),
     ClearLxmfDiscovery(Reply<LxmfDiscoveryClearOutcome>),
+    ClearNetworkActivity(
+        ClearNetworkActivityInput,
+        Reply<ClearNetworkActivityOutcome>,
+    ),
     SetMessagingProfile(profile::ProfileApplyReply),
     ListLxmfMessages(
         prns_lxmf::mailbox::MailboxListRequest,
@@ -2018,6 +2023,7 @@ async fn run_generation(
     let overflowed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let event_overflowed = Arc::clone(&overflowed);
     let lxmf_events = lxmf_callbacks.clone();
+    let network_activity = Arc::new(NetworkActivityStore::new(snapshots.read().generation_id));
     #[cfg(all(feature = "android", target_os = "android"))]
     let android_bluetooth_session = Arc::new(bluetooth_preparation.android);
     #[cfg(all(feature = "android", target_os = "android"))]
@@ -2058,7 +2064,9 @@ async fn run_generation(
             let _lxmf_outcome = lxmf_events.on_prns_event(&event);
             send_event(&event_tx, &event_overflowed, event);
         })),
-        accepted_announces: Some(Box::new(lxmf_callbacks.authenticated_announce_observer())),
+        accepted_announces: Some(
+            network_activity.compose_observer(lxmf_callbacks.authenticated_announce_observer()),
+        ),
         prepare_interfaces: Some(Box::new(move |_client| {
             #[allow(unused_mut)]
             let mut attachments = Vec::new();
@@ -2146,6 +2154,7 @@ async fn run_generation(
             overflowed,
             host_client.clone(),
             bluetooth_control,
+            network_activity,
             clock,
             Arc::clone(&snapshots),
             Arc::clone(&operation_admitted),
@@ -2216,6 +2225,7 @@ fn settle_worker_result(
             }
             if !explicit_stop_in_progress {
                 snapshot.runtime = DevelopmentNodeRuntime::Failed;
+                snapshot.network = LocalNetworkSnapshot::stopped();
                 if !matches!(
                     &snapshot.local_host,
                     LocalHostState::DevelopmentResetRequired { .. }
@@ -2336,6 +2346,7 @@ async fn run_actor(
     overflowed: Arc<std::sync::atomic::AtomicBool>,
     host_client: HostClient,
     bluetooth_control: Arc<OnceLock<BluetoothControl>>,
+    network_activity: Arc<NetworkActivityStore>,
     clock: personal_rns::manifold::tokio::TokioClock,
     snapshots: Arc<SnapshotStore>,
     operation_admitted: Arc<AtomicBool>,
@@ -2353,6 +2364,7 @@ async fn run_actor(
         overflowed,
         &host_client,
         &bluetooth_control,
+        &network_activity,
         clock,
         &snapshots,
         &operation_admitted,
@@ -2383,6 +2395,7 @@ async fn run_actor_loop(
     overflowed: Arc<std::sync::atomic::AtomicBool>,
     host_client: &HostClient,
     bluetooth_control: &OnceLock<BluetoothControl>,
+    network_activity: &NetworkActivityStore,
     clock: personal_rns::manifold::tokio::TokioClock,
     snapshots: &SnapshotStore,
     operation_admitted: &AtomicBool,
@@ -2449,7 +2462,14 @@ async fn run_actor_loop(
         snapshot.runtime = DevelopmentNodeRuntime::Running;
         snapshot.failure = None;
     });
-    refresh_host_snapshot(host_client, bluetooth_control, snapshots).await;
+    refresh_host_snapshot(
+        host_client,
+        bluetooth_control,
+        network_activity,
+        &clock,
+        snapshots,
+    )
+    .await;
     let _ = ready.send(Ok(snapshots.read()));
 
     let mut candidate_expiry = tokio::time::interval(Duration::from_millis(500));
@@ -2539,9 +2559,15 @@ async fn run_actor_loop(
                             biased;
                             () = response.closed() => {},
                             () = refresh_host_snapshot(
-                                host_client, bluetooth_control, snapshots,
+                                host_client, bluetooth_control, network_activity, &clock, snapshots,
                             ) => { let _ = response.send(snapshots.read()); }
                         }
+                    }
+                }
+                Some(Command::ClearNetworkActivity(input, response)) => {
+                    if !response.is_closed() {
+                        let outcome = clear_network_activity(network_activity, snapshots, &clock, input);
+                        let _ = response.send(outcome);
                     }
                 }
                 Some(Command::Initiate(input, response)) => {
@@ -2885,31 +2911,69 @@ async fn stop_lxmf_service_and_drain(
 async fn refresh_host_snapshot(
     host: &HostClient,
     control: &OnceLock<BluetoothControl>,
+    activity: &NetworkActivityStore,
+    clock: &personal_rns::manifold::tokio::TokioClock,
     snapshots: &SnapshotStore,
 ) {
+    let unavailable = |detail: String| {
+        snapshots.publish_network_activity(activity.generation_id, activity.project(clock.now().0));
+        snapshots.set_local_host_unavailable_for_generation(activity.generation_id, detail);
+    };
     match tokio::time::timeout(HOST_INSPECTION_TIMEOUT, host.inspection()).await {
-        Ok(Ok(inspection)) => snapshots.update(|snapshot| {
-            snapshot.bluetooth = control.get().map_or_else(
-                || LocalBluetoothSnapshot {
-                    desired_enabled: snapshot.bluetooth.desired_enabled,
-                    state: LocalBluetoothState::Unavailable {
-                        detail: "This native build has no local Bluetooth interface.".into(),
-                    },
-                    peers: Vec::new(),
-                },
-                |control| {
-                    control.project(&inspection.interfaces, snapshot.bluetooth.desired_enabled)
+        Ok(Ok(inspection)) => {
+            // Use the restored logical clock after the capture completes. The
+            // ring capture and aggregate publication are synchronous on this
+            // actor, so a clear command cannot interleave between them.
+            let network = activity.project_network(&inspection.host, clock.now().0);
+            snapshots.publish_host_inspection(
+                activity.generation_id,
+                inspection.host,
+                network,
+                |desired| {
+                    control.get().map_or_else(
+                        || LocalBluetoothSnapshot {
+                            desired_enabled: desired,
+                            state: LocalBluetoothState::Unavailable {
+                                detail: "This native build has no local Bluetooth interface."
+                                    .into(),
+                            },
+                            peers: Vec::new(),
+                        },
+                        |control| control.project(&inspection.interfaces, desired),
+                    )
                 },
             );
-            snapshot.local_host = LocalHostState::Running {
-                host: Box::new(inspection.host),
-            };
-        }),
-        Ok(Err(error)) => snapshots
-            .set_local_host_unavailable_if_running(format!("Host inspection failed: {error:?}")),
-        Err(_) => snapshots.set_local_host_unavailable_if_running(
-            "The local host inspection lane exceeded its bounded wait.".into(),
-        ),
+        }
+        Ok(Err(error)) => unavailable(format!("Host inspection failed: {error:?}")),
+        Err(_) => unavailable("The local host inspection lane exceeded its bounded wait.".into()),
+    }
+}
+
+fn clear_network_activity(
+    activity: &NetworkActivityStore,
+    snapshots: &SnapshotStore,
+    clock: &personal_rns::manifold::tokio::TokioClock,
+    input: ClearNetworkActivityInput,
+) -> ClearNetworkActivityOutcome {
+    let snapshot = snapshots.read();
+    if snapshot.generation_id != input.generation_id
+        || activity.generation_id != input.generation_id
+    {
+        return ClearNetworkActivityOutcome::GenerationChanged;
+    }
+    if snapshot.runtime != DevelopmentNodeRuntime::Running {
+        return ClearNetworkActivityOutcome::LocalNodeStopped;
+    }
+    let revision = activity.clear();
+    // No await: clear is actor-owned and its barrier precedes subsequent reads.
+    if snapshots.publish_network_activity(activity.generation_id, activity.project(clock.now().0)) {
+        ClearNetworkActivityOutcome::Cleared {
+            activity_revision: revision,
+        }
+    } else if snapshots.read().generation_id != input.generation_id {
+        ClearNetworkActivityOutcome::GenerationChanged
+    } else {
+        ClearNetworkActivityOutcome::LocalNodeStopped
     }
 }
 
