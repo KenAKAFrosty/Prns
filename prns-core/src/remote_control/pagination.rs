@@ -1,6 +1,6 @@
 use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceId, INTERFACE_ID_LEN};
-use crate::wire::TRUNCATED_HASH_BYTE_LEN;
+use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 
 use super::{RemoteControlMessageWriteError, RemoteControlRequestParseError};
 
@@ -351,5 +351,119 @@ fn write_interface_cursor(
     };
     *tag = tag_value;
     id_out.copy_from_slice(id.as_bytes());
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteControlPathCursor(DestinationHash);
+
+impl RemoteControlPathCursor {
+    #[must_use]
+    pub const fn after(destination: DestinationHash) -> Self {
+        Self(destination)
+    }
+
+    #[must_use]
+    pub const fn destination(self) -> DestinationHash {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlPathPage {
+    First,
+    After(RemoteControlPathCursor),
+}
+
+impl RemoteControlPathPage {
+    pub(crate) const MAX_ENCODED_LEN: usize = 1usize.saturating_add(TRUNCATED_HASH_BYTE_LEN);
+
+    pub(crate) const fn encoded_len(self) -> usize {
+        match self {
+            Self::First => 1,
+            Self::After(_) => Self::MAX_ENCODED_LEN,
+        }
+    }
+
+    pub(crate) fn write_into(self, out: &mut [u8]) -> Result<(), RemoteControlMessageWriteError> {
+        match self {
+            Self::First => write_first(out),
+            Self::After(cursor) => {
+                write_destination_cursor(AFTER_CURSOR_TAG, cursor.destination(), out)
+            }
+        }
+    }
+
+    pub(crate) fn parse(bytes: &[u8]) -> Result<Self, RemoteControlRequestParseError> {
+        match bytes {
+            [FIRST_PAGE_TAG] => Ok(Self::First),
+            [AFTER_CURSOR_TAG, rest @ ..] if rest.len() == TRUNCATED_HASH_BYTE_LEN => {
+                let mut destination = [0u8; TRUNCATED_HASH_BYTE_LEN];
+                destination.copy_from_slice(rest);
+                Ok(Self::After(RemoteControlPathCursor::after(
+                    DestinationHash::new(destination),
+                )))
+            }
+            [] => Err(RemoteControlRequestParseError::Truncated),
+            _ => Err(RemoteControlRequestParseError::Malformed),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlPathContinuation {
+    Complete,
+    More(RemoteControlPathCursor),
+}
+
+impl RemoteControlPathContinuation {
+    pub(crate) const MAX_ENCODED_LEN: usize = 1usize.saturating_add(TRUNCATED_HASH_BYTE_LEN);
+
+    pub(crate) const fn encoded_len(self) -> usize {
+        match self {
+            Self::Complete => 1,
+            Self::More(_) => Self::MAX_ENCODED_LEN,
+        }
+    }
+
+    pub(crate) fn write_into(self, out: &mut [u8]) -> Result<(), RemoteControlMessageWriteError> {
+        match self {
+            Self::Complete => write_complete(out),
+            Self::More(cursor) => write_destination_cursor(MORE_TAG, cursor.destination(), out),
+        }
+    }
+
+    pub(crate) fn parse(bytes: &[u8]) -> Option<Self> {
+        match bytes {
+            [COMPLETE_TAG] => Some(Self::Complete),
+            [MORE_TAG, rest @ ..] if rest.len() == TRUNCATED_HASH_BYTE_LEN => {
+                let mut destination = [0u8; TRUNCATED_HASH_BYTE_LEN];
+                destination.copy_from_slice(rest);
+                Some(Self::More(RemoteControlPathCursor::after(
+                    DestinationHash::new(destination),
+                )))
+            }
+            _ => None,
+        }
+    }
+}
+
+fn write_destination_cursor(
+    tag_value: u8,
+    destination: DestinationHash,
+    out: &mut [u8],
+) -> Result<(), RemoteControlMessageWriteError> {
+    let expected = 1usize.saturating_add(TRUNCATED_HASH_BYTE_LEN);
+    if out.len() != expected {
+        return Err(RemoteControlMessageWriteError::BufferTooShort);
+    }
+    let Some(target) = out.get_mut(..expected) else {
+        return Err(RemoteControlMessageWriteError::BufferTooShort);
+    };
+    let Some((tag, destination_out)) = target.split_first_mut() else {
+        return Err(RemoteControlMessageWriteError::BufferTooShort);
+    };
+    *tag = tag_value;
+    destination_out.copy_from_slice(destination.as_bytes());
     Ok(())
 }

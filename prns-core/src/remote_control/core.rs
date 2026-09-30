@@ -250,6 +250,31 @@ pub enum RemoteControlControllerGrantError {
     AdministratorRequestRequiresAuthority { request: RemoteControlRequestKind },
 }
 
+/// Stored grants keep the request set from pairing. Administrators also receive
+/// the current administrator-only kinds. A controller that already manages the
+/// node can read the path table when that kind was added after the grant was
+/// stored.
+fn grant_effective_requests(
+    authority: RemoteControlControllerAuthority,
+    permitted_requests: RemoteControlRequestSet,
+) -> RemoteControlRequestSet {
+    let mut requests = permitted_requests;
+    if authority == RemoteControlControllerAuthority::Administrator {
+        for request in RemoteControlRequestKind::ALL {
+            if request.requires_administrator() {
+                let _inserted = requests.insert(request);
+            }
+        }
+    }
+    if authority == RemoteControlControllerAuthority::Administrator
+        || requests.supports(RemoteControlRequestKind::DescribePower)
+        || requests.supports(RemoteControlRequestKind::InventoryInterfaces)
+    {
+        let _inserted = requests.insert(RemoteControlRequestKind::InventoryPathTable);
+    }
+    requests
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlControllerGrant {
     controller: RemoteControlControllerIdentity,
@@ -311,15 +336,7 @@ impl RemoteControlControllerGrant {
 
     #[must_use]
     pub fn effective_requests(&self) -> RemoteControlRequestSet {
-        let mut requests = self.permitted_requests;
-        if self.authority == RemoteControlControllerAuthority::Administrator {
-            for request in RemoteControlRequestKind::ALL {
-                if request.requires_administrator() {
-                    let _inserted = requests.insert(request);
-                }
-            }
-        }
-        requests
+        grant_effective_requests(self.authority, self.permitted_requests)
     }
 }
 
@@ -437,15 +454,7 @@ impl RemoteControlTargetAccess {
 
     #[must_use]
     pub fn effective_requests(&self) -> RemoteControlRequestSet {
-        let mut requests = self.permitted_requests;
-        if self.authority == RemoteControlControllerAuthority::Administrator {
-            for request in RemoteControlRequestKind::ALL {
-                if request.requires_administrator() {
-                    let _inserted = requests.insert(request);
-                }
-            }
-        }
-        requests
+        grant_effective_requests(self.authority, self.permitted_requests)
     }
 }
 

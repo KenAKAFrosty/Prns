@@ -61,6 +61,7 @@ pub(super) fn capabilities() -> RemoteControlCapabilities {
         RemoteControlRequestKind::InventoryInterfacePeers,
         RemoteControlRequestKind::InventoryInterfaceConfig,
         RemoteControlRequestKind::DescribeBuild,
+        RemoteControlRequestKind::InventoryPathTable,
         RemoteControlRequestKind::SetSystemPower,
         RemoteControlRequestKind::InventoryControllers,
         RemoteControlRequestKind::AuthorizeController,

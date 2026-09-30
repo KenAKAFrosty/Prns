@@ -571,6 +571,7 @@ where
                 notify,
                 commands,
                 resource_responses: handle.resource_response_receiver(),
+                path_page_reply: handle.path_page_reply(),
                 lifecycle,
             },
             |journaled| {
@@ -872,6 +873,7 @@ where
                 notify: *notify,
                 commands: *commands,
                 resource_responses: handle.resource_response_receiver(),
+                path_page_reply: handle.path_page_reply(),
                 lifecycle: *lifecycle,
             },
             |journaled| {

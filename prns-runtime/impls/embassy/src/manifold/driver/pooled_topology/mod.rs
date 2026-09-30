@@ -2,6 +2,7 @@ use embassy_futures::select::{select, select6, Either, Either6};
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
+use embassy_sync::signal::Signal;
 use heapless::Vec as HeaplessVec;
 
 use crate::engine::{
@@ -20,6 +21,10 @@ use crate::manifold::interface_seam::{EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_F
 use crate::manifold::timers::{wait_for_due_reason, wait_for_pacer};
 use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::{AppDeciders, Host};
+use crate::remote_control::{
+    RemoteControlPathEntry, RemoteControlPathInventory, RemoteControlPathPage,
+    RemoteControlPathPageBuilder,
+};
 use crate::routing::links::request::{response_envelope_prefix, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::resources::ResourceOffer;
 use crate::routing::links::resources::{
@@ -129,7 +134,28 @@ fn resource_response_data<S: StorageLayout, const N: usize>(
             data.truncate(RESPONSE_WIRE_OVERHEAD + written);
             Some(MaterializedResourceResponse::RnsPathTable(data))
         }
+        ResourceResponsePayload::RemoteControlPathPage(_) => None,
     }
+}
+
+#[inline(never)]
+fn remote_control_path_inventory<S: StorageLayout>(
+    engine: &EngineState<S>,
+    descriptors: &[InterfaceDescriptor],
+    page: RemoteControlPathPage,
+) -> RemoteControlPathInventory {
+    let mut builder = RemoteControlPathPageBuilder::new(page);
+    engine.visit_route_snapshots(AttachedInterfaces::new(descriptors), |snapshot| {
+        builder.observe(RemoteControlPathEntry::new(
+            snapshot.destination,
+            snapshot.hops,
+            snapshot.via,
+            snapshot.interface,
+            snapshot.learned_at.0,
+            snapshot.expires_at.0,
+        ));
+    });
+    builder.finish()
 }
 
 /// Borrowed lanes and channels for one pooled-topology manifold run.
@@ -152,6 +178,7 @@ pub struct PooledWiring<
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
     pub resource_responses: Receiver<'run, M, ResourceResponse<RESPONSE_BYTES>, 1>,
+    pub path_page_reply: &'run Signal<M, RemoteControlPathInventory>,
     pub lifecycle: Receiver<'run, M, InterfaceLifecycle, LIFECYCLE>,
 }
 
@@ -204,6 +231,7 @@ pub(crate) async fn run_pooled<
         notify,
         commands,
         resource_responses,
+        path_page_reply,
         lifecycle,
     } = wiring;
     let mut pacers: HeaplessVec<InterfacePacer, LANE_COUNT> = HeaplessVec::new();
@@ -370,6 +398,16 @@ pub(crate) async fn run_pooled<
                         },
                     ),
                     Either::Second(response) => {
+                        if let ResourceResponsePayload::RemoteControlPathPage(page) =
+                            response.payload
+                        {
+                            path_page_reply.signal(remote_control_path_inventory(
+                                engine,
+                                descriptors,
+                                page,
+                            ));
+                            continue;
+                        }
                         let Some(data) = resource_response_data(
                             engine,
                             descriptors,

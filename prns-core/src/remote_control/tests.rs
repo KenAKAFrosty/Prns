@@ -432,6 +432,7 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlRequestKind::InspectWifiTransaction,
             RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
             RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
+            RemoteControlRequestKind::InventoryPathTable,
         ],
     );
     assert_eq!(
@@ -467,6 +468,7 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlResponseKind::InspectWifiTransaction,
             RemoteControlResponseKind::InventoryInterfaceDiscoveryGroups,
             RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups,
+            RemoteControlResponseKind::InventoryPathTable,
             RemoteControlResponseKind::ProtocolError,
         ],
     );
@@ -585,6 +587,14 @@ fn protocol_discriminants_are_stable_typed_values() {
         0x10
     );
     assert_eq!(RemoteControlResponseKind::DescribePower.wire_value(), 0x11);
+    assert_eq!(
+        RemoteControlRequestKind::InventoryPathTable.wire_value(),
+        0x1F
+    );
+    assert_eq!(
+        RemoteControlResponseKind::InventoryPathTable.wire_value(),
+        0x1F
+    );
     assert_eq!(RemoteControlResponseKind::ProtocolError.wire_value(), 0xFF,);
     assert_eq!(
         RemoteControlProtocolErrorKind::MalformedRequest.wire_value(),
@@ -808,6 +818,22 @@ fn wifi_station_credentials_reject_empty_ssid_and_omit_password_from_inventory()
         Some("field,lab")
     );
     assert!(crate::remote_control::parse_wifi_station_ssid("LoRa").is_none());
+}
+
+#[test]
+fn managing_grants_include_the_path_table() {
+    let describe_only = grant(0x21, RemoteControlRequestKind::Describe);
+    assert!(!describe_only
+        .effective_requests()
+        .supports(RemoteControlRequestKind::InventoryPathTable));
+
+    let manager = grant(0x22, RemoteControlRequestKind::DescribePower);
+    assert!(manager
+        .effective_requests()
+        .supports(RemoteControlRequestKind::InventoryPathTable));
+    assert!(!manager
+        .permitted_requests()
+        .supports(RemoteControlRequestKind::InventoryPathTable));
 }
 
 #[test]
@@ -1254,6 +1280,9 @@ fn inventory_power_and_sleep_messages_round_trip() {
         },
         RemoteControlRequest::InventoryInterfaceDiscoveryGroups {
             id: InterfaceId::new([0x45; INTERFACE_ID_LEN]),
+        },
+        RemoteControlRequest::InventoryPathTable {
+            page: RemoteControlPathPage::First,
         },
         RemoteControlRequest::ReplaceInterfaceDiscoveryGroups {
             id: InterfaceId::new([0x46; INTERFACE_ID_LEN]),

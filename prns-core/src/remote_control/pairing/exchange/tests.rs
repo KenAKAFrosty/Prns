@@ -137,7 +137,7 @@ fn pairing_exchange_discriminants_and_bounds_are_stable() {
     assert_eq!(RemoteControlPairingMessageKind::Commit.wire_value(), 3);
     assert_eq!(RemoteControlPairingMessageKind::Completed.wire_value(), 4);
     assert_eq!(RemoteControlPairingRequest::MAX_ENCODED_LEN, 98);
-    assert_eq!(RemoteControlPairingResponse::MAX_ENCODED_LEN, 166);
+    assert_eq!(RemoteControlPairingResponse::MAX_ENCODED_LEN, 167);
     const {
         assert!(
             RemoteControlPairingRequest::MAX_ENCODED_LEN

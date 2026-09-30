@@ -17,15 +17,15 @@ use crate::identity::IdentityHash;
 use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::remote_control::{
     ForgetRemoteControlTargetOutcome, RemoteControlControllerGrant,
-    RemoteControlControllerIdentity, RemoteControlTargetAccess,
-    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
-    SetRemoteControlTargetAccessOutcome,
+    RemoteControlControllerIdentity, RemoteControlPathInventory, RemoteControlPathPage,
+    RemoteControlTargetAccess, RevokeRemoteControlControllerOutcome,
+    SetRemoteControlControllerGrantOutcome, SetRemoteControlTargetAccessOutcome,
 };
 use crate::routing::links::request::{response_envelope_prefix, RequestId, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::{ByteLimit, RttMillis};
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
@@ -73,6 +73,7 @@ pub struct CompletionPool<
     remote_control_target_accesses: RemoteControlTargetAccessExchange<M>,
     remote_control_pairing_settlement: RemoteControlPairingSettlementAwaiter<M>,
     resource_responses: Channel<M, ResourceResponse<RESPONSE_BYTES>, 1>,
+    path_page_reply: Signal<M, RemoteControlPathInventory>,
 }
 
 pub struct ResourceResponse<const N: usize> {
@@ -86,6 +87,7 @@ pub struct ResourceResponse<const N: usize> {
 pub(crate) enum ResourceResponsePayload<const N: usize> {
     Ready(heapless::Vec<u8, N>),
     RnsPathTable(RnsRemotePathTableRequest),
+    RemoteControlPathPage(RemoteControlPathPage),
 }
 
 enum RemoteControlPairingSettlementState {
@@ -240,6 +242,7 @@ impl<
             remote_control_target_accesses: RemoteControlTargetAccessExchange::new(),
             remote_control_pairing_settlement: RemoteControlPairingSettlementAwaiter::new(),
             resource_responses: Channel::new(),
+            path_page_reply: Signal::new(),
         }
     }
 
@@ -810,6 +813,10 @@ impl<
         &self,
     ) -> Receiver<'a, M, ResourceResponse<RESPONSE_BYTES>, 1> {
         self.pool.resource_responses.receiver()
+    }
+
+    pub fn path_page_reply(&self) -> &'a Signal<M, RemoteControlPathInventory> {
+        &self.pool.path_page_reply
     }
 
     #[cfg(feature = "large-static-responses")]
@@ -1499,6 +1506,23 @@ impl<
         request: RnsRemotePathTableRequest,
     ) -> bool {
         self.respond_rns_path_table(responder, request).await
+    }
+
+    async fn inventory_path_table(
+        &self,
+        page: RemoteControlPathPage,
+    ) -> RemoteControlPathInventory {
+        self.pool.path_page_reply.reset();
+        self.pool
+            .resource_responses
+            .send(ResourceResponse {
+                id: self.pool.mint(),
+                link_id: LinkId::new([0; TRUNCATED_HASH_BYTE_LEN]),
+                request_id: RequestId::of_request_data(b"remote-control-path-table"),
+                payload: ResourceResponsePayload::RemoteControlPathPage(page),
+            })
+            .await;
+        self.pool.path_page_reply.wait().await
     }
 
     fn close_link(&self, link_id: LinkId) -> bool {
