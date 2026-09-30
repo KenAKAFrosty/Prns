@@ -21,6 +21,7 @@ pub(super) enum SessionPhase {
 struct SessionState {
     reserved: AtomicBool,
     phase: AtomicU8,
+    liveness_listener: AtomicBool,
 }
 
 #[derive(Clone, Default)]
@@ -36,6 +37,16 @@ impl Drop for SettledSessionOwner {
 }
 
 impl NotificationSession {
+    /// Set only while preparing a new, unpublished inbound owner. Runtime gate changes never
+    /// upgrade an existing legacy session; its eligibility is immutable after admission.
+    pub(super) fn enable_liveness_listener(&self) {
+        self.0.liveness_listener.store(true, Ordering::Release);
+    }
+
+    pub(super) fn is_liveness_listener(&self) -> bool {
+        self.0.liveness_listener.load(Ordering::Acquire)
+    }
+
     pub(super) fn same_session(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

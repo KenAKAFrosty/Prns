@@ -260,6 +260,63 @@ fn late_invalid_request_discards_every_staged_new_session_and_answers_first() {
     );
 }
 
+#[test]
+fn capability_eligibility_is_captured_only_by_a_committed_new_owner() {
+    use super::peripheral::{capability_read_allowed, prepare_listener_liveness};
+    let mut harness = Harness::new(2, 2);
+    let _legacy_link = harness.add_session(peer(1), InboundProfile::Native, 2, 8);
+    let prepare = |request: &WriteRequest<u8>, profile: InboundProfile, control, data| {
+        prepare_listener_liveness(&data, true, true, profile.protocol());
+        make_link(request, profile, control, data)
+    };
+    assert_eq!(
+        admit_write_batch(
+            true,
+            [
+                Ok(control_request(peer(2), hello())),
+                Err(WriteError::InvalidOffset)
+            ],
+            &mut harness.sessions,
+            harness.capacity,
+            &harness.inbound,
+            prepare,
+            |_| panic!("rollback must not retire an owner"),
+        ),
+        Err(WriteError::InvalidOffset)
+    );
+    harness.assert_no_new_link();
+    assert_eq!(harness.sessions.len(), 1);
+    assert!(!capability_read_allowed(
+        true,
+        true,
+        harness.sessions.get(&peer(1))
+    ));
+    assert_eq!(
+        admit_write_batch(
+            true,
+            [Ok(control_request(peer(2), hello()))],
+            &mut harness.sessions,
+            harness.capacity,
+            &harness.inbound,
+            prepare,
+            |_| panic!("new owner must not retire legacy peer"),
+        ),
+        Ok(())
+    );
+    let link = harness.links.try_recv().unwrap();
+    let capable = harness.sessions.get(&peer(2)).unwrap();
+    assert!(capability_read_allowed(true, true, Some(capable)));
+    assert!(capable
+        .data_tx
+        .notifications()
+        .same_session(&link.data.notifications()));
+    assert!(!capability_read_allowed(
+        true,
+        true,
+        harness.sessions.get(&peer(1))
+    ));
+}
+
 #[tokio::test]
 async fn late_decode_error_rolls_back_existing_control_and_data_reservations() {
     let mut harness = Harness::new(2, 2);

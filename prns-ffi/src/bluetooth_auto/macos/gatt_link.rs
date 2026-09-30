@@ -6,14 +6,15 @@ use dispatch2::{DispatchQueue, DispatchRetained};
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
 use prns_core::interfaces::bluetooth_auto::{
-    fragments_of, BleAddress, BleIdentity, Control, L2capPlan, PeerProtocol, BLE_HW_MTU,
-    CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
+    fragments_of, BleAddress, BleIdentity, Control, L2capPlan, LivenessMode, PeerProtocol,
+    BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::{
     BleControl, BleLink, BleLinkParts, BleSink, BleSource,
 };
 
 use super::data_plane::DataPlane;
+use super::gatt_arbitration::GattWriteGate;
 use super::gatt_write::{GattWriteMode, GattWriteRequest, GattWriteTarget};
 use super::l2cap_lifecycle::{self, DataPlaneEnd, FailurePolicy, WriteHalf};
 use super::peripheral::ListenerCharacteristic;
@@ -175,6 +176,8 @@ pub(super) enum ControlPlane {
         session: NotificationSession,
         delegate: SendPeripheralDelegate,
         gatt_mtu: usize,
+        liveness: LivenessMode,
+        write_gate: Arc<GattWriteGate>,
     },
     Central {
         peer_id: CoreBluetoothPeerId,
@@ -184,10 +187,18 @@ pub(super) enum ControlPlane {
         central_delegate: SendCentralDelegate,
         queue: DispatchRetained<DispatchQueue>,
         peripheral_manager: SendPeripheralDelegate,
+        liveness: LivenessMode,
+        write_gate: Arc<GattWriteGate>,
     },
 }
 
 impl ControlPlane {
+    fn liveness_mode(&self) -> LivenessMode {
+        match self {
+            Self::Central { liveness, .. } | Self::Listener { liveness, .. } => *liveness,
+        }
+    }
+
     const fn l2cap_failure_policy(&self) -> FailurePolicy {
         match self {
             Self::Central { .. } => FailurePolicy::RetainGattFloor,
@@ -196,6 +207,7 @@ impl ControlPlane {
     }
 
     async fn send(&self, msg: &Control) -> Result<(), MacosBleError> {
+        let deadline = tokio::time::Instant::now() + GATT_WRITE_TIMEOUT;
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = msg.encode(&mut buf).ok_or(MacosBleError::ControlTooLarge)?;
         match self {
@@ -203,15 +215,19 @@ impl ControlPlane {
                 peer_id,
                 session,
                 delegate,
+                write_gate,
                 ..
             } => {
-                delegate
-                    .0
-                    .notify(
-                        *peer_id,
-                        session.clone(),
-                        ListenerCharacteristic::Control,
-                        &buf[..len],
+                write_gate
+                    .run(
+                        deadline,
+                        delegate.0.notify(
+                            *peer_id,
+                            session.clone(),
+                            ListenerCharacteristic::Control,
+                            &buf[..len],
+                        ),
+                        || session.retire(),
                     )
                     .await
             }
@@ -221,18 +237,27 @@ impl ControlPlane {
                 characteristic,
                 central_delegate,
                 queue,
+                write_gate,
                 ..
             } => {
-                central_write(
-                    *peer_id,
-                    peripheral,
-                    characteristic,
-                    central_delegate,
-                    queue,
-                    GattWriteMode::WithResponse,
-                    &buf[..len],
-                )
-                .await
+                write_gate
+                    .run(
+                        deadline,
+                        central_write(
+                            CentralWriteContext {
+                                peer_id: *peer_id,
+                                peripheral,
+                                characteristic,
+                                central_delegate,
+                                queue,
+                                write_gate,
+                            },
+                            GattWriteMode::WithResponse,
+                            &buf[..len],
+                        ),
+                        retire_central_write(*peer_id, central_delegate, queue, write_gate),
+                    )
+                    .await
             }
         }
     }
@@ -246,12 +271,14 @@ enum GattWriter {
         central_delegate: SendCentralDelegate,
         queue: DispatchRetained<DispatchQueue>,
         plan: super::gatt_write::GattWritePlan,
+        write_gate: Arc<GattWriteGate>,
     },
     Listener {
         peer_id: CoreBluetoothPeerId,
         session: NotificationSession,
         delegate: SendPeripheralDelegate,
         fragment_mtu: usize,
+        write_gate: Arc<GattWriteGate>,
     },
 }
 
@@ -263,6 +290,7 @@ impl GattWriter {
         };
         let mut buf = [0u8; FRAGMENT_HEADER_LEN + BLE_HW_MTU];
         for fragment in fragments_of(frame, fragment_mtu) {
+            let deadline = tokio::time::Instant::now() + GATT_WRITE_TIMEOUT;
             let len = fragment
                 .encode(&mut buf)
                 .ok_or(MacosBleError::FrameTooLarge)?;
@@ -274,32 +302,45 @@ impl GattWriter {
                     central_delegate,
                     queue,
                     plan,
+                    write_gate,
                     ..
                 } => {
-                    central_write(
-                        *peer_id,
-                        peripheral,
-                        characteristic,
-                        central_delegate,
-                        queue,
-                        plan.mode(),
-                        &buf[..len],
-                    )
-                    .await?;
+                    write_gate
+                        .run(
+                            deadline,
+                            central_write(
+                                CentralWriteContext {
+                                    peer_id: *peer_id,
+                                    peripheral,
+                                    characteristic,
+                                    central_delegate,
+                                    queue,
+                                    write_gate,
+                                },
+                                plan.mode(),
+                                &buf[..len],
+                            ),
+                            retire_central_write(*peer_id, central_delegate, queue, write_gate),
+                        )
+                        .await?;
                 }
                 GattWriter::Listener {
                     peer_id,
                     session,
                     delegate,
+                    write_gate,
                     ..
                 } => {
-                    delegate
-                        .0
-                        .notify(
-                            *peer_id,
-                            session.clone(),
-                            ListenerCharacteristic::Data,
-                            &buf[..len],
+                    write_gate
+                        .run(
+                            deadline,
+                            delegate.0.notify(
+                                *peer_id,
+                                session.clone(),
+                                ListenerCharacteristic::Data,
+                                &buf[..len],
+                            ),
+                            || session.retire(),
                         )
                         .await?;
                 }
@@ -309,15 +350,45 @@ impl GattWriter {
     }
 }
 
-async fn central_write(
+fn retire_central_write(
     peer_id: CoreBluetoothPeerId,
-    peripheral: &SendPeripheral,
-    characteristic: &SendCharacteristicRef,
-    central_delegate: &SendCentralDelegate,
+    delegate: &SendCentralDelegate,
     queue: &DispatchRetained<DispatchQueue>,
+    write_gate: &Arc<GattWriteGate>,
+) -> impl FnOnce() {
+    let delegate = SendCentralDelegate(delegate.0.clone());
+    let queue = queue.clone();
+    let write_gate = write_gate.clone();
+    move || {
+        queue.exec_async(move || {
+            let delegate = delegate;
+            delegate.0.fail_write_owner(peer_id, &write_gate);
+        })
+    }
+}
+
+struct CentralWriteContext<'a> {
+    peer_id: CoreBluetoothPeerId,
+    peripheral: &'a SendPeripheral,
+    characteristic: &'a SendCharacteristicRef,
+    central_delegate: &'a SendCentralDelegate,
+    queue: &'a DispatchRetained<DispatchQueue>,
+    write_gate: &'a Arc<GattWriteGate>,
+}
+
+async fn central_write(
+    context: CentralWriteContext<'_>,
     mode: GattWriteMode,
     bytes: &[u8],
 ) -> Result<(), MacosBleError> {
+    let CentralWriteContext {
+        peer_id,
+        peripheral,
+        characteristic,
+        central_delegate,
+        queue,
+        write_gate,
+    } = context;
     let (completion_tx, completion_rx) = oneshot::channel();
     let request = GattWriteRequest::new(
         SendCharacteristicRef(characteristic.0.clone()),
@@ -327,22 +398,16 @@ async fn central_write(
     );
     let peripheral = SendPeripheral(peripheral.0.clone());
     let delegate = SendCentralDelegate(central_delegate.0.clone());
+    let write_gate = write_gate.clone();
     queue.exec_async(move || {
         let peripheral = peripheral;
         let delegate = delegate;
-        delegate.0.submit_write(&peripheral.0, peer_id, request);
+        delegate
+            .0
+            .submit_write(&peripheral.0, peer_id, &write_gate, request);
     });
-    match tokio::time::timeout(GATT_WRITE_TIMEOUT, completion_rx).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(_)) => Err(MacosBleError::Closed),
-        Err(_) => {
-            crate::diagnostic_log::warn!(
-                "bluetooth: {:02x?} {mode:?} GATT write timed out",
-                peer_id.address().octets()
-            );
-            Err(MacosBleError::GattWriteTimeout)
-        }
-    }
+    // The shared gate owns the one absolute deadline, including all queueing time.
+    completion_rx.await.map_err(|_| MacosBleError::Closed)?
 }
 
 pub struct GattLink {
@@ -381,21 +446,30 @@ impl BleLink for GattLink {
             characteristic,
             central_delegate,
             queue,
+            write_gate,
             ..
         } = &self.control
         else {
             return Ok(());
         };
-        central_write(
-            *peer_id,
-            peripheral,
-            characteristic,
-            central_delegate,
-            queue,
-            GattWriteMode::WithResponse,
-            identity.as_bytes(),
-        )
-        .await
+        write_gate
+            .run(
+                tokio::time::Instant::now() + GATT_WRITE_TIMEOUT,
+                central_write(
+                    CentralWriteContext {
+                        peer_id: *peer_id,
+                        peripheral,
+                        characteristic,
+                        central_delegate,
+                        queue,
+                        write_gate,
+                    },
+                    GattWriteMode::WithResponse,
+                    identity.as_bytes(),
+                ),
+                retire_central_write(*peer_id, central_delegate, queue, write_gate),
+            )
+            .await
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), MacosBleError> {
@@ -492,7 +566,7 @@ impl BleLink for GattLink {
 }
 
 /// Retains the native GATT control channel after the data-plane split.
-/// Runtimes only receive after settlement until control/data write arbitration is added.
+/// Capability eligibility belongs to this exact connection and survives the data-plane split.
 pub struct GattControl {
     plane: ControlPlane,
     receiver: tokio_mpsc::Receiver<Control>,
@@ -502,6 +576,10 @@ pub struct GattControl {
 
 impl BleControl for GattControl {
     type Error = MacosBleError;
+
+    fn liveness_mode(&self) -> LivenessMode {
+        self.plane.liveness_mode()
+    }
 
     async fn send(&mut self, msg: &Control) -> Result<(), Self::Error> {
         self.plane.send(msg).await
@@ -529,6 +607,7 @@ fn gatt_writer(control: &ControlPlane) -> Option<GattWriter> {
             data_characteristic: Some(data_characteristic),
             central_delegate,
             queue,
+            write_gate,
             ..
         } => {
             crate::diagnostic_log::debug!(
@@ -544,6 +623,7 @@ fn gatt_writer(control: &ControlPlane) -> Option<GattWriter> {
                 central_delegate: SendCentralDelegate(central_delegate.0.clone()),
                 queue: queue.clone(),
                 plan: data_characteristic.plan,
+                write_gate: write_gate.clone(),
             })
         }
         ControlPlane::Central {
@@ -555,12 +635,14 @@ fn gatt_writer(control: &ControlPlane) -> Option<GattWriter> {
             session,
             delegate,
             gatt_mtu,
+            write_gate,
             ..
         } => Some(GattWriter::Listener {
             peer_id: *peer_id,
             session: session.clone(),
             delegate: SendPeripheralDelegate(delegate.0.clone()),
             fragment_mtu: *gatt_mtu,
+            write_gate: write_gate.clone(),
         }),
     }
 }
