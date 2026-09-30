@@ -5,10 +5,11 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 
 use prns_app::contract::{
-    ContactListOutcome, ContactMutationOutcome, CreateManualContactInput, DevelopmentNodeRuntime,
+    ClearNetworkActivityInput, ClearNetworkActivityOutcome, ContactListOutcome,
+    ContactMutationOutcome, CreateManualContactInput, DevelopmentNodeRuntime,
     DevelopmentNodeStartInput, DevelopmentNodeStartOutcome, DevelopmentNodeStopOutcome,
-    IdentityCreationOutcome, ListLxmfMessagesInput, LocalHostState, LxmfMessageListOutcome,
-    NativeStoragePreparationOutcome,
+    IdentityCreationOutcome, ListLxmfMessagesInput, LocalHostState, LocalNetworkState,
+    LxmfMessageListOutcome, NativeStoragePreparationOutcome,
 };
 
 /// Poll like a foreign executor, with no Tokio runtime entered on this thread.
@@ -91,6 +92,29 @@ fn foreign_snapshot_attaches_to_native_started_process_owner() {
         LocalHostState::Running { .. }
     ));
     assert!(from_foreign.revision >= started.revision);
+    assert_eq!(from_foreign.network.state, LocalNetworkState::Ready);
+    assert_eq!(
+        foreign_block_on(prns_app::bindings::clear_network_activity(
+            ClearNetworkActivityInput {
+                generation_id: started.generation_id + 1,
+            }
+        )),
+        ClearNetworkActivityOutcome::GenerationChanged,
+    );
+    let cleared = foreign_block_on(prns_app::bindings::clear_network_activity(
+        ClearNetworkActivityInput {
+            generation_id: started.generation_id,
+        },
+    ));
+    assert!(matches!(
+        cleared,
+        ClearNetworkActivityOutcome::Cleared {
+            activity_revision: 1
+        }
+    ));
+    let refreshed = foreign_block_on(prns_app::bindings::read_snapshot());
+    assert_eq!(refreshed.network.activity_revision, 1);
+    assert!(refreshed.network.announces.is_empty());
     assert!(matches!(
         prns_app::bindings::native_stop(),
         DevelopmentNodeStopOutcome::Stopped
@@ -98,6 +122,17 @@ fn foreign_snapshot_attaches_to_native_started_process_owner() {
     let stopped = foreign_block_on(prns_app::bindings::read_snapshot());
     assert_eq!(stopped.runtime, DevelopmentNodeRuntime::Stopped);
     assert_eq!(stopped.generation_id, started.generation_id);
+    assert_eq!(stopped.network.state, LocalNetworkState::Stopped);
+    assert!(stopped.network.routes.is_empty());
+    assert!(stopped.network.announces.is_empty());
+    assert_eq!(
+        foreign_block_on(prns_app::bindings::clear_network_activity(
+            ClearNetworkActivityInput {
+                generation_id: started.generation_id,
+            }
+        )),
+        ClearNetworkActivityOutcome::LocalNodeStopped,
+    );
     let ContactListOutcome::Listed { contacts } =
         foreign_block_on(prns_app::bindings::list_contacts())
     else {

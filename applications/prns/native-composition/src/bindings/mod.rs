@@ -45,6 +45,14 @@ pub async fn read_snapshot() -> DevelopmentNodeSnapshot {
     crate::lifecycle::snapshot_async().await
 }
 
+/// Clear only this generation's ephemeral accepted-announce activity.
+#[uniffi::export]
+pub async fn clear_network_activity(
+    input: ClearNetworkActivityInput,
+) -> ClearNetworkActivityOutcome {
+    crate::lifecycle::admission::clear_network_activity(input).await
+}
+
 #[uniffi::export]
 pub async fn read_bluetooth_settings() -> LocalBluetoothSettingsOutcome {
     crate::lifecycle::bluetooth_settings(None).await

@@ -11,6 +11,7 @@ mod ios_restoration_probe;
 mod lifecycle;
 mod lxmf;
 mod messaging_profile;
+mod network;
 mod node;
 mod pairing;
 mod remote_control;
