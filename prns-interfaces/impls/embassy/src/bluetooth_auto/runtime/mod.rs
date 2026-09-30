@@ -623,6 +623,11 @@ impl PendingNativeControl {
             Control::Hello { .. } => Self::Hello,
             Control::Welcome { .. } => Self::Welcome,
             Control::Close { reason } => Self::Close(reason),
+            // Settled-session probes are not valid handshake outputs. Embedded
+            // runtimes do not opt in to liveness until they can drive its loop.
+            Control::Probe { .. } | Control::ProbeReply { .. } => {
+                Self::Close(CloseReason::Incompatible)
+            }
         }
     }
 

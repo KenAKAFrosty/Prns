@@ -287,3 +287,65 @@ async fn data_activity_preserves_the_in_flight_control_receive() {
     assert!(task.await.unwrap_err().is_cancelled());
     assert_eq!(dropped.load(Ordering::Relaxed), 1);
 }
+
+struct HeldProbe {
+    inner: LoopbackControl,
+    sends: Arc<std::sync::atomic::AtomicUsize>,
+    dropped: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl BleControl for HeldProbe {
+    type Error = Closed;
+    fn liveness_mode(&self) -> contract::LivenessMode {
+        contract::LivenessMode::Initiator
+    }
+    async fn send(&mut self, message: &Control) -> Result<(), Closed> {
+        self.sends.fetch_add(1, Ordering::Relaxed);
+        let _pending = CountDrop(self.dropped.clone());
+        self.inner.send(message).await?;
+        std::future::pending().await
+    }
+    async fn recv(&mut self) -> Result<Control, Closed> {
+        self.inner.recv().await
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn probe_send_survives_data_activity_and_expiry_drops_exact_member_owners() {
+    let address = BleAddress::new([1; 6]);
+    let (link, mut remote) = link_pair(address, BleAddress::new([2; 6]));
+    let parts = link.into_parts();
+    let sends = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let dropped = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (closed_tx, mut closed_rx) = mpsc::unbounded_channel();
+    let peer = BluetoothPeer::new(BleIdentity::new([2; 16]), parts.source, parts.sink)
+        .with_control(Some(HeldProbe {
+            inner: parts.control.unwrap(),
+            sends: sends.clone(),
+            dropped: dropped.clone(),
+        }))
+        .report_close_to(address, closed_tx);
+    let status = peer.status();
+    let (captured, mut capture) = mpsc::unbounded_channel();
+    let task = tokio::spawn(peer.run(MockSeam {
+        inbound: captured,
+        ..idle_seam()
+    }));
+    assert!(matches!(
+        remote.control_recv().await.unwrap(),
+        Control::Probe { .. }
+    ));
+    for _ in 0..16 {
+        remote.data_tx.send(b"data".to_vec()).await.unwrap();
+        assert_eq!(capture.recv().await.unwrap(), b"data");
+    }
+    assert_eq!(sends.load(Ordering::Relaxed), 1);
+    assert_eq!(dropped.load(Ordering::Relaxed), 0);
+    tokio::time::advance(Duration::from_secs(30)).await;
+    let closed = closed_rx.recv().await.unwrap();
+    assert!(closed.matches(address, &status));
+    assert_eq!(dropped.load(Ordering::Relaxed), 1);
+    assert!(remote.control.control_tx.is_closed());
+    assert!(remote.data_tx.is_closed());
+    task.abort();
+}
