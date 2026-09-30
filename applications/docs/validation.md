@@ -52,7 +52,8 @@ The isolated source checkpoint passes:
 - 430 app tests and 67 app-platform tests, including clear acknowledgement across
   navigation/refresh failure, newer observations, Stop and exact-width integers.
 - Both TypeScript, formatting and lint gates, plus app routes, configuration and
-  version checks. Product binding generation completed successfully.
+  version checks. Product binding generation and its clean-output check pass,
+  as does the app's web export (without a native runtime).
 
 These are source checks, not a new phone installation or physical UI acceptance.
 The native contract changed: a Metro refresh alone cannot test it. Rebuild both
