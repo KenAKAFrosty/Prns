@@ -42,6 +42,14 @@ use super::{
     SendPeripheralManager,
 };
 
+#[path = "peripheral_publication.rs"]
+mod publication;
+use publication::{Attribute, RestoredProfile, RestoredShape, ServicePublication};
+
+#[cfg(test)]
+#[path = "peripheral_publication_tests.rs"]
+mod publication_tests;
+
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ListenerCharacteristic {
     Control,
@@ -132,27 +140,97 @@ fn reap_closed_listener_state<C>(
     reap_stale_pending_l2cap(pending);
 }
 
-fn write_request(request: &CBATTRequest) -> Result<WriteRequest<Retained<CBCentral>>, WriteError> {
+pub(super) fn current_attribute_matches(
+    published: bool,
+    received: &CBCharacteristic,
+    expected: &CBCharacteristic,
+) -> bool {
+    published && core::ptr::eq(received, expected)
+}
+
+type RestoredCharacteristics = HashMap<Attribute, Retained<CBMutableCharacteristic>>;
+
+#[derive(Debug, PartialEq, Eq)]
+enum RestoredServiceError {
+    Multiple,
+    Immutable,
+}
+
+fn restored_prns_service(
+    services: &NSArray<CBService>,
+) -> Result<Option<Retained<CBMutableService>>, RestoredServiceError> {
+    let mut prns_service = None;
+    for service in services.iter() {
+        // SAFETY: the restoration array retains each service during this immutable query.
+        let service_id = unsafe { service.UUID() };
+        if !cbuuid_eq(&service_id, &service_uuid()) {
+            continue;
+        }
+        if prns_service.is_some() {
+            return Err(RestoredServiceError::Multiple);
+        }
+        // Apple documents restored services as mutable. Check rather than relying on another
+        // unchecked cast at the exact service removal boundary.
+        prns_service = Some(
+            service
+                .downcast::<CBMutableService>()
+                .map_err(|_| RestoredServiceError::Immutable)?,
+        );
+    }
+    Ok(prns_service)
+}
+
+fn restored_characteristics(
+    service: &CBMutableService,
+) -> Option<(RestoredProfile, RestoredCharacteristics)> {
+    // SAFETY: restoration retains this live published service and its characteristics.
+    let characteristics = unsafe { service.characteristics() }?;
+    let mut shape = RestoredShape::default();
+    let mut restored = HashMap::new();
+    for characteristic in characteristics.iter() {
+        // SAFETY: these immutable queries use a characteristic retained by the array.
+        let (uuid, properties) = unsafe { (characteristic.UUID(), characteristic.properties()) };
+        let (attribute, required) = if cbuuid_eq(&uuid, &control_uuid()) {
+            (
+                Attribute::Control,
+                CBCharacteristicProperties::Write | CBCharacteristicProperties::Notify,
+            )
+        } else if cbuuid_eq(&uuid, &data_uuid()) {
+            (
+                Attribute::Data,
+                CBCharacteristicProperties::Write | CBCharacteristicProperties::Notify,
+            )
+        } else if cbuuid_eq(&uuid, &columba_rx_uuid()) {
+            (Attribute::ColumbaRx, CBCharacteristicProperties::Write)
+        } else if cbuuid_eq(&uuid, &columba_tx_uuid()) {
+            (
+                Attribute::ColumbaTx,
+                CBCharacteristicProperties::Read | CBCharacteristicProperties::Notify,
+            )
+        } else if cbuuid_eq(&uuid, &columba_identity_uuid()) {
+            (Attribute::ColumbaIdentity, CBCharacteristicProperties::Read)
+        } else if cbuuid_eq(&uuid, &liveness_uuid()) {
+            (Attribute::Liveness, CBCharacteristicProperties::Read)
+        } else {
+            continue;
+        };
+        shape.observe(attribute, properties.contains(required));
+        let mutable = characteristic.downcast::<CBMutableCharacteristic>().ok()?;
+        restored.insert(attribute, mutable);
+    }
+    let profile = shape.profile();
+    (profile != RestoredProfile::Invalid).then_some((profile, restored))
+}
+
+fn write_request(
+    request: &CBATTRequest,
+    target: WriteTarget,
+) -> Result<WriteRequest<Retained<CBCentral>>, WriteError> {
     // SAFETY: CoreBluetooth supplies this live request on the delegate's serial queue. The
-    // generated accessors return retained characteristic/central/value objects and a plain
-    // offset; the characteristic remains live throughout its immutable UUID query.
-    let (uuid, central, offset, value) = unsafe {
-        (
-            request.characteristic().UUID(),
-            request.central(),
-            request.offset(),
-            request.value(),
-        )
-    };
-    let target = if cbuuid_eq(&uuid, &control_uuid()) {
-        WriteTarget::Control
-    } else if cbuuid_eq(&uuid, &data_uuid()) {
-        WriteTarget::Data
-    } else if cbuuid_eq(&uuid, &columba_rx_uuid()) {
-        WriteTarget::ColumbaRx
-    } else {
-        WriteTarget::Unsupported
-    };
+    // generated accessors return retained central/value objects and a plain offset. The caller
+    // has already classified the exact published characteristic, not merely its UUID.
+    let (central, offset, value) =
+        unsafe { (request.central(), request.offset(), request.value()) };
     // No individual write can fit the existing per-peer byte budget above this size. Reject
     // before copying external NSData; reservation checks still account for the whole batch.
     if value
@@ -268,7 +346,7 @@ pub(super) struct PeripheralDelegateIvars {
     manager: RefCell<Option<SendPeripheralManager>>,
     radio_enabled: Arc<AtomicBool>,
     notification_ready: watch::Sender<()>,
-    service_registration_requested: RefCell<bool>,
+    publication: RefCell<ServicePublication<Retained<CBMutableService>>>,
     l2cap_publication_requested: RefCell<bool>,
     session_capacity: usize,
     pending_l2cap_capacity: usize,
@@ -286,6 +364,9 @@ define_class!(
     unsafe impl CBPeripheralManagerDelegate for PeripheralDelegate {
         #[unsafe(method(peripheralManagerDidUpdateState:))]
         fn did_update_state(&self, peripheral: &CBPeripheralManager) {
+            if self.ivars().manager.borrow().is_some() && !self.owns_manager(peripheral) {
+                return;
+            }
             // SAFETY: CoreBluetooth supplied this live manager to its delegate on the configured
             // serial dispatch queue.
             let state = unsafe { peripheral.state() };
@@ -294,7 +375,12 @@ define_class!(
             if state == CBManagerState::PoweredOn {
                 *self.ivars().manager.borrow_mut() =
                     Some(SendPeripheralManager(peripheral.retain()));
-                if !*self.ivars().service_registration_requested.borrow() {
+                if self
+                    .ivars()
+                    .publication
+                    .borrow()
+                    .can_publish(true, self.listener_owners_empty())
+                {
                     let control_ref = self.ivars().characteristic.borrow();
                     let data_ref = self.ivars().data_characteristic.borrow();
                     let liveness_ref = self.ivars().liveness_characteristic.borrow();
@@ -328,10 +414,30 @@ define_class!(
                     // SAFETY: all entries are retained CoreBluetooth characteristics and the array
                     // remains live throughout the synchronous property assignment.
                     unsafe { service.setCharacteristics(Some(&characteristics)) };
+                    // Keep old and new objects retained together: the new object's identity is
+                    // this publication attempt's callback epoch, not merely its reused UUID.
+                    let Ok(legacy) = self.ivars().publication.borrow_mut().begin(
+                        true,
+                        self.listener_owners_empty(),
+                        service.clone(),
+                    ) else {
+                        return;
+                    };
+                    if let Some(legacy) = legacy {
+                        // SAFETY: restoration returned this exact published mutable service.
+                        // Migration happens before listener admission and never removes other
+                        // services or resets an existing application-owned session.
+                        unsafe { peripheral.removeService(&legacy) };
+                        crate::diagnostic_log::debug!(
+                            "bluetooth: peripheral legacy GATT service removed for startup migration"
+                        );
+                    }
+                    crate::diagnostic_log::debug!(
+                        "bluetooth: peripheral GATT service publication started"
+                    );
                     // SAFETY: the newly initialized service remains retained while the live manager
                     // registers it on the serial CoreBluetooth queue.
                     unsafe { peripheral.addService(&service) };
-                    *self.ivars().service_registration_requested.borrow_mut() = true;
                 }
                 if !*self.ivars().l2cap_publication_requested.borrow() {
                     // SAFETY: the live peripheral manager is messaged only from its delegate's
@@ -349,6 +455,14 @@ define_class!(
             peripheral: &CBPeripheralManager,
             dict: &NSDictionary<NSString, AnyObject>,
         ) {
+            // Restoration is a startup-only decision. A delayed callback must not replace an
+            // already registered service or any application-owned listener/upgrade.
+            if !self.ivars().publication.borrow().is_empty() || !self.listener_owners_empty() {
+                crate::diagnostic_log::debug!(
+                    "bluetooth: peripheral ignored restoration after publication or live admission"
+                );
+                return;
+            }
             *self.ivars().manager.borrow_mut() = Some(SendPeripheralManager(peripheral.retain()));
             // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
             let key: &NSString = unsafe { CBPeripheralManagerRestoredStateServicesKey };
@@ -359,80 +473,91 @@ define_class!(
             // `restored` retains the array for the duration of this borrow and iteration.
             let services: &NSArray<CBService> =
                 unsafe { &*(Retained::as_ptr(&restored) as *const NSArray<CBService>) };
-            let control_id = control_uuid();
-            let data_id = data_uuid();
-            let liveness_id = liveness_uuid();
-            let columba_rx_id = columba_rx_uuid();
-            let columba_tx_id = columba_tx_uuid();
-            let columba_identity_id = columba_identity_uuid();
-            for service in services.iter() {
-                // SAFETY: the service is retained by the restoration array during this iteration.
-                let service_id = unsafe { service.UUID() };
-                if !cbuuid_eq(&service_id, &service_uuid()) {
-                    continue;
+            let service = match restored_prns_service(services) {
+                Ok(Some(service)) => service,
+                Ok(None) => return,
+                Err(RestoredServiceError::Multiple) => {
+                    self.fail_restoration(
+                        "bluetooth: peripheral restoration rejected multiple Prns GATT services",
+                    );
+                    return;
                 }
-                // SAFETY: CoreBluetooth owns and retains the restored service's characteristic
-                // collection for the lifetime of the service.
-                let Some(characteristics) = (unsafe { service.characteristics() }) else {
-                    continue;
-                };
-                // A service restored from a legacy binary has no e9. Merely allocating a new
-                // characteristic in this process does not make it available on that service.
-                self.ivars().liveness_published.set(false);
-                for characteristic in characteristics.iter() {
-                    // SAFETY: the characteristic is retained by the collection while it is used.
-                    let uuid = unsafe { characteristic.UUID() };
-                    // SAFETY: restoration returns the mutable characteristics originally published
-                    // by this CBPeripheralManager; the retained object remains live for this cast.
-                    let mutable: &CBMutableCharacteristic = unsafe {
-                        &*(Retained::as_ptr(&characteristic) as *const CBMutableCharacteristic)
-                    };
-                    if cbuuid_eq(&uuid, &control_id) {
-                        *self.ivars().characteristic.borrow_mut() = mutable.retain();
-                    } else if cbuuid_eq(&uuid, &data_id) {
-                        *self.ivars().data_characteristic.borrow_mut() = mutable.retain();
-                    } else if cbuuid_eq(&uuid, &liveness_id) {
-                        *self.ivars().liveness_characteristic.borrow_mut() = mutable.retain();
-                        self.ivars().liveness_published.set(true);
-                    } else if cbuuid_eq(&uuid, &columba_rx_id) {
-                        *self.ivars().columba_rx_characteristic.borrow_mut() = mutable.retain();
-                    } else if cbuuid_eq(&uuid, &columba_tx_id) {
-                        *self.ivars().columba_tx_characteristic.borrow_mut() = mutable.retain();
-                    } else if cbuuid_eq(&uuid, &columba_identity_id) {
-                        *self.ivars().columba_identity_characteristic.borrow_mut() =
-                            mutable.retain();
-                    }
+                Err(RestoredServiceError::Immutable) => {
+                    self.fail_restoration(
+                        "bluetooth: peripheral restoration rejected immutable GATT service",
+                    );
+                    return;
                 }
-                *self.ivars().service_registration_requested.borrow_mut() = true;
-                crate::diagnostic_log::debug!(
-                    "bluetooth: restored the published Prns GATT service from a background relaunch"
+            };
+            let Some((profile, characteristics)) = restored_characteristics(&service) else {
+                self.fail_restoration(
+                    "bluetooth: peripheral restoration rejected malformed GATT service",
                 );
-                self.ivars().manager_signals.gatt_service_published();
+                return;
+            };
+            if !self
+                .ivars()
+                .publication
+                .borrow_mut()
+                .restore(service, profile)
+            {
+                return;
+            }
+            match profile {
+                RestoredProfile::Current => {
+                    // Preserve the current published objects and notification subscriptions.
+                    for (attribute, characteristic) in characteristics {
+                        *self.attribute(attribute).borrow_mut() = characteristic;
+                    }
+                    self.ivars().liveness_published.set(true);
+                    crate::diagnostic_log::debug!(
+                        "bluetooth: peripheral restored current GATT service with liveness"
+                    );
+                    self.ivars().manager_signals.gatt_service_published();
+                }
+                RestoredProfile::Legacy => {
+                    // Keep the fresh objects allocated by new(). Published characteristic sets
+                    // cannot be amended in place. PoweredOn replaces only this exact legacy
+                    // service, before readiness can admit any application-owned listener.
+                    crate::diagnostic_log::debug!(
+                        "bluetooth: peripheral restored legacy GATT service; startup migration pending"
+                    );
+                }
+                RestoredProfile::Invalid => {
+                    unreachable!("restored_characteristics validates shape")
+                }
             }
         }
 
         #[unsafe(method(peripheralManager:didAddService:error:))]
         fn did_add_service(
             &self,
-            _peripheral: &CBPeripheralManager,
+            peripheral: &CBPeripheralManager,
             service: &CBService,
             error: Option<&NSError>,
         ) {
+            let matches_manager = self.owns_manager(peripheral);
+            let accepted = matches_manager
+                && self.ivars().publication.borrow_mut().complete(
+                    |expected| core::ptr::eq(service, &**expected as &CBService),
+                    error.is_none(),
+                );
+            if !accepted {
+                crate::diagnostic_log::debug!(
+                    "bluetooth: peripheral ignored stale GATT service publication callback"
+                );
+                return;
+            }
             if let Some(error) = error {
                 crate::diagnostic_log::error!("bluetooth: GATT service add FAILED: {error:?}");
                 self.ivars().manager_signals.gatt_service_publish_failed();
                 return;
             }
-            // SAFETY: CoreBluetooth retains the service supplied to this successful callback.
-            let published = unsafe { service.characteristics() }.is_some_and(|characteristics| {
-                let expected = self.ivars().liveness_characteristic.borrow();
-                characteristics.iter().any(|characteristic| {
-                    core::ptr::eq(&*characteristic, &**expected as &CBCharacteristic)
-                })
-            });
-            self.ivars().liveness_published.set(published);
+            // This callback belongs to the exact service constructed with our six fresh
+            // characteristics. A same-UUID restored/obsolete service cannot complete it.
+            self.ivars().liveness_published.set(true);
             crate::diagnostic_log::debug!(
-                "bluetooth: GATT service added (control characteristic live)"
+                "bluetooth: peripheral GATT service published with liveness"
             );
             self.ivars().manager_signals.gatt_service_published();
         }
@@ -580,8 +705,9 @@ define_class!(
                     request.offset(),
                 )
             };
-            let expected = self.ivars().liveness_characteristic.borrow();
-            let result = if !core::ptr::eq(&*characteristic, &**expected as &CBCharacteristic) {
+            let result = if !self.owns_manager(peripheral)
+                || !self.owns_attribute(&characteristic, Attribute::Liveness)
+            {
                 CBATTError::ReadNotPermitted
             } else if !self.ivars().radio_enabled.load(Ordering::Acquire)
                 || !prepare_capability_read(
@@ -615,13 +741,19 @@ define_class!(
             respond_to_write_batch(
                 first.as_deref(),
                 || {
-                    let enabled = self.ivars().radio_enabled.load(Ordering::Acquire);
+                    let enabled = self.ivars().radio_enabled.load(Ordering::Acquire)
+                        && self.owns_manager(peripheral)
+                        && self.ivars().publication.borrow().is_published();
                     if enabled {
                         self.reap_closed_state_on_queue();
                     }
                     admit_write_batch(
                         enabled,
-                        requests.iter().map(|request| write_request(&request)),
+                        requests.iter().map(|request| {
+                            // SAFETY: the callback array retains each live ATT request.
+                            let characteristic = unsafe { request.characteristic() };
+                            write_request(&request, self.write_target(&characteristic))
+                        }),
                         &mut self.ivars().sessions.borrow_mut(),
                         self.ivars().session_capacity,
                         &self.ivars().inbound,
@@ -655,22 +787,25 @@ define_class!(
         #[unsafe(method(peripheralManager:central:didSubscribeToCharacteristic:))]
         fn did_subscribe(
             &self,
-            _peripheral: &CBPeripheralManager,
+            peripheral: &CBPeripheralManager,
             central: &CBCentral,
             characteristic: &CBCharacteristic,
         ) {
-            if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+            if !self.ivars().radio_enabled.load(Ordering::Acquire) || !self.owns_manager(peripheral)
+            {
                 return;
             }
+            let protocol = if self.owns_attribute(characteristic, Attribute::ColumbaTx) {
+                PeerProtocol::Columba
+            } else if self.owns_attribute(characteristic, Attribute::Control)
+                || self.owns_attribute(characteristic, Attribute::Data)
+            {
+                PeerProtocol::Native
+            } else {
+                return;
+            };
             let peer_id = core_bluetooth_peer_id(central);
             self.reap_closed_state_on_queue();
-            // SAFETY: the supplied characteristic is live and its UUID is immutable.
-            let uuid = unsafe { characteristic.UUID() };
-            let protocol = if cbuuid_eq(&uuid, &columba_tx_uuid()) {
-                PeerProtocol::Columba
-            } else {
-                PeerProtocol::Native
-            };
             crate::diagnostic_log::debug!(
                 "bluetooth: central {:02x?} subscribed to {protocol:?} notifications",
                 peer_id.address().octets(),
@@ -680,21 +815,25 @@ define_class!(
         #[unsafe(method(peripheralManager:central:didUnsubscribeFromCharacteristic:))]
         fn did_unsubscribe(
             &self,
-            _peripheral: &CBPeripheralManager,
+            peripheral: &CBPeripheralManager,
             central: &CBCentral,
             characteristic: &CBCharacteristic,
         ) {
-            let peer_id = core_bluetooth_peer_id(central);
-            self.reap_closed_state_on_queue();
-            // SAFETY: the supplied characteristic is live and its UUID is immutable.
-            let uuid = unsafe { characteristic.UUID() };
-            let unsubscribed_protocol = if cbuuid_eq(&uuid, &control_uuid()) {
+            if !self.owns_manager(peripheral) {
+                return;
+            }
+            let unsubscribed_protocol = if self.owns_attribute(characteristic, Attribute::Control) {
                 Some(PeerProtocol::Native)
-            } else if cbuuid_eq(&uuid, &columba_tx_uuid()) {
+            } else if self.owns_attribute(characteristic, Attribute::ColumbaTx) {
                 Some(PeerProtocol::Columba)
             } else {
                 None
             };
+            if unsubscribed_protocol.is_none() {
+                return;
+            }
+            let peer_id = core_bluetooth_peer_id(central);
+            self.reap_closed_state_on_queue();
             let remove = self
                 .ivars()
                 .sessions
@@ -717,6 +856,56 @@ define_class!(
 );
 
 impl PeripheralDelegate {
+    fn listener_owners_empty(&self) -> bool {
+        self.ivars().sessions.borrow().is_empty() && self.ivars().pending_l2cap.borrow().is_empty()
+    }
+
+    fn owns_manager(&self, manager: &CBPeripheralManager) -> bool {
+        self.ivars()
+            .manager
+            .borrow()
+            .as_ref()
+            .is_some_and(|expected| core::ptr::eq(manager, &*expected.0))
+    }
+
+    fn attribute(&self, attribute: Attribute) -> &RefCell<Retained<CBMutableCharacteristic>> {
+        match attribute {
+            Attribute::Control => &self.ivars().characteristic,
+            Attribute::Data => &self.ivars().data_characteristic,
+            Attribute::ColumbaRx => &self.ivars().columba_rx_characteristic,
+            Attribute::ColumbaTx => &self.ivars().columba_tx_characteristic,
+            Attribute::ColumbaIdentity => &self.ivars().columba_identity_characteristic,
+            Attribute::Liveness => &self.ivars().liveness_characteristic,
+        }
+    }
+
+    fn owns_attribute(&self, received: &CBCharacteristic, attribute: Attribute) -> bool {
+        current_attribute_matches(
+            self.ivars().publication.borrow().is_published(),
+            received,
+            &self.attribute(attribute).borrow(),
+        )
+    }
+
+    fn write_target(&self, received: &CBCharacteristic) -> WriteTarget {
+        for (attribute, target) in [
+            (Attribute::Control, WriteTarget::Control),
+            (Attribute::Data, WriteTarget::Data),
+            (Attribute::ColumbaRx, WriteTarget::ColumbaRx),
+        ] {
+            if self.owns_attribute(received, attribute) {
+                return target;
+            }
+        }
+        WriteTarget::Unsupported
+    }
+
+    fn fail_restoration(&self, reason: &str) {
+        self.ivars().publication.borrow_mut().fail_unrestored();
+        self.ivars().manager_signals.gatt_service_publish_failed();
+        crate::diagnostic_log::error!("{reason}");
+    }
+
     /// Called on the existing serial queue before the runtime starts radio work. Existing
     /// sessions retain their captured mode; this gate only changes future admission/read policy.
     pub(super) fn set_session_liveness(&self, enabled: bool) {
@@ -828,7 +1017,7 @@ impl PeripheralDelegate {
             manager: RefCell::new(None),
             radio_enabled,
             notification_ready: watch::channel(()).0,
-            service_registration_requested: RefCell::new(false),
+            publication: RefCell::new(ServicePublication::default()),
             l2cap_publication_requested: RefCell::new(false),
             session_capacity: peripheral_session_capacity(max_peers),
             pending_l2cap_capacity: pending_l2cap_capacity(max_peers),
