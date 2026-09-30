@@ -115,6 +115,7 @@ pub trait BleLink {
     type Error: core::fmt::Debug;
     type Source: BleSource<Error = Self::Error>;
     type Sink: BleSink<Error = Self::Error>;
+    type Control: BleControl<Error = Self::Error>;
 
     fn peer_protocol(&self) -> PeerProtocol;
     fn address(&self) -> BleAddress;
@@ -132,7 +133,55 @@ pub trait BleLink {
 
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), Self::Error>;
 
-    fn into_data(self) -> (Self::Source, Self::Sink);
+    /// Settles this exact physical session without discarding its control owner.
+    /// Native links retain controls even with a legacy peer or an L2CAP data plane.
+    /// Columba has no native control channel and returns `None`.
+    fn into_parts(self) -> BleLinkParts<Self::Source, Self::Sink, Self::Control>;
+}
+
+/// Independently owned channels of one settled physical session.
+#[must_use]
+pub struct BleLinkParts<S, T, C> {
+    pub source: S,
+    pub sink: T,
+    pub control: Option<C>,
+}
+
+/// Transport-only access to the existing native control channel.
+///
+/// Retaining this owner does not negotiate a liveness protocol. Send completion has
+/// the backend's existing semantics; queue admission is not proof of remote receipt.
+#[allow(async_fn_in_trait)]
+pub trait BleControl {
+    type Error: core::fmt::Debug;
+
+    /// Keep a started send alive until it completes or the entire session is retired.
+    /// Callers must not cancel and retry a possibly submitted control write.
+    async fn send(&mut self, message: &Control) -> Result<(), Self::Error>;
+
+    /// Cancellation-safe receive: dropping a pending future must not consume a
+    /// message or lose partial parsing state. Embedded supervisors recreate this
+    /// future when unrelated work wins their bounded event selection.
+    async fn recv(&mut self) -> Result<Control, Self::Error>;
+}
+
+/// Uninhabited control type for data-only adapters. Always use `None`, never a
+/// placeholder owner whose drop could close the data session.
+pub struct NoBleControl<E = core::convert::Infallible> {
+    impossible: core::convert::Infallible,
+    error: core::marker::PhantomData<fn() -> E>,
+}
+
+impl<E: core::fmt::Debug> BleControl for NoBleControl<E> {
+    type Error = E;
+
+    async fn send(&mut self, _message: &Control) -> Result<(), E> {
+        match self.impossible {}
+    }
+
+    async fn recv(&mut self) -> Result<Control, E> {
+        match self.impossible {}
+    }
 }
 
 #[allow(async_fn_in_trait)]

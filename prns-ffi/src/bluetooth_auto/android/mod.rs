@@ -8,7 +8,7 @@ mod tests;
 
 pub use backend::AndroidBleBackend;
 pub use bridge::{AndroidBleBridge, AndroidBleIngressAdmission};
-pub use link::{AndroidBleLink, AndroidBleSink, AndroidBleSource};
+pub use link::{AndroidBleControl, AndroidBleLink, AndroidBleSink, AndroidBleSource};
 
 pub const RADIO_ENABLED: u32 = 0x01;
 pub const RADIO_ADVERTISING: u32 = 0x02;

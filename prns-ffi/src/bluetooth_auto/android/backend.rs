@@ -4,7 +4,7 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::bluetooth_auto::{BleAddress, LinkCapabilities, Psm};
 
 use super::bridge::{AndroidBleBridge, Event, PEER_CAPACITY};
-use super::link::{AndroidBleLink, LinkLease};
+use super::link::{AndroidBleControl, AndroidBleLink, LinkLease};
 use super::AndroidBleError;
 
 pub struct AndroidBleBackend {
@@ -68,19 +68,22 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
                     let dialed = pending.dialed;
                     let peer_rssi = pending.rssi;
                     let link = AndroidBleLink {
-                        lease: LinkLease::new(
-                            self.bridge.clone(),
-                            pending.conn_id,
-                            pending.data_out.clone(),
-                        ),
+                        control: AndroidBleControl {
+                            lease: LinkLease::new(
+                                self.bridge.clone(),
+                                pending.conn_id,
+                                pending.data_out.clone(),
+                            ),
+                            inbound: pending.control_in,
+                            outbound: pending.control_out,
+                            work: pending.work.clone(),
+                        },
                         conn_id: pending.conn_id,
                         address: pending.address,
                         peer_protocol: pending.peer_protocol,
                         peer_identity: pending.peer_identity,
-                        control_in: pending.control_in,
                         l2cap_in: Some(pending.l2cap_in),
                         data_in: Some(pending.data_in),
-                        control_out: pending.control_out,
                         l2cap_out: pending.l2cap_out,
                         data_out: pending.data_out,
                         l2cap_up: pending.l2cap_up,

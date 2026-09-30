@@ -9,13 +9,15 @@ use prns_core::interfaces::bluetooth_auto::{
     fragments_of, BleAddress, BleIdentity, Control, L2capPlan, PeerProtocol, BLE_HW_MTU,
     CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
 };
-use prns_core::interfaces::bluetooth_auto::{BleLink, BleSink, BleSource};
+use prns_core::interfaces::bluetooth_auto::{
+    BleControl, BleLink, BleLinkParts, BleSink, BleSource,
+};
 
 use super::data_plane::DataPlane;
 use super::gatt_write::{GattWriteMode, GattWriteRequest, GattWriteTarget};
 use super::l2cap_lifecycle::{self, DataPlaneEnd, FailurePolicy, WriteHalf};
 use super::peripheral::ListenerCharacteristic;
-use super::peripheral_notify::NotificationSession;
+use super::peripheral_notify::{NotificationSession, SettledSessionOwner};
 use super::{
     CoreBluetoothPeerId, MacosBleError, SendCentralDelegate, SendCharacteristicRef, SendPeripheral,
     SendPeripheralDelegate,
@@ -192,6 +194,48 @@ impl ControlPlane {
             Self::Listener { .. } => FailurePolicy::EndInboundLink,
         }
     }
+
+    async fn send(&self, msg: &Control) -> Result<(), MacosBleError> {
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let len = msg.encode(&mut buf).ok_or(MacosBleError::ControlTooLarge)?;
+        match self {
+            Self::Listener {
+                peer_id,
+                session,
+                delegate,
+                ..
+            } => {
+                delegate
+                    .0
+                    .notify(
+                        *peer_id,
+                        session.clone(),
+                        ListenerCharacteristic::Control,
+                        &buf[..len],
+                    )
+                    .await
+            }
+            Self::Central {
+                peer_id,
+                peripheral,
+                characteristic,
+                central_delegate,
+                queue,
+                ..
+            } => {
+                central_write(
+                    *peer_id,
+                    peripheral,
+                    characteristic,
+                    central_delegate,
+                    queue,
+                    GattWriteMode::WithResponse,
+                    &buf[..len],
+                )
+                .await
+            }
+        }
+    }
 }
 
 enum GattWriter {
@@ -315,6 +359,7 @@ impl BleLink for GattLink {
     type Error = MacosBleError;
     type Source = GattSource;
     type Sink = GattSink;
+    type Control = GattControl;
 
     fn peer_protocol(&self) -> PeerProtocol {
         self.peer_protocol
@@ -354,61 +399,13 @@ impl BleLink for GattLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), MacosBleError> {
-        let mut buf = [0u8; CONTROL_MAX_LEN];
-        let len = msg.encode(&mut buf).ok_or(MacosBleError::ControlTooLarge)?;
-        match &self.control {
-            ControlPlane::Listener {
-                peer_id,
-                session,
-                delegate,
-                ..
-            } => {
-                delegate
-                    .0
-                    .notify(
-                        *peer_id,
-                        session.clone(),
-                        ListenerCharacteristic::Control,
-                        &buf[..len],
-                    )
-                    .await?;
-                crate::diagnostic_log::debug!(
-                    "bluetooth: {:02x?} -> {msg:?}",
-                    self.address.octets()
-                );
-                Ok(())
-            }
-            ControlPlane::Central {
-                peer_id,
-                peripheral,
-                characteristic,
-                central_delegate,
-                queue,
-                ..
-            } => {
-                central_write(
-                    *peer_id,
-                    peripheral,
-                    characteristic,
-                    central_delegate,
-                    queue,
-                    GattWriteMode::WithResponse,
-                    &buf[..len],
-                )
-                .await?;
-                crate::diagnostic_log::debug!(
-                    "bluetooth: {:02x?} -> {msg:?}",
-                    self.address.octets()
-                );
-                Ok(())
-            }
-        }
+        self.control.send(msg).await?;
+        crate::diagnostic_log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
+        Ok(())
     }
 
     async fn control_recv(&mut self) -> Result<Control, MacosBleError> {
-        let control = self.control_rx.recv().await.ok_or(MacosBleError::Closed)?;
-        crate::diagnostic_log::debug!("bluetooth: {:02x?} <- {control:?}", self.address.octets());
-        Ok(control)
+        receive_control(&mut self.control_rx, self.address).await
     }
 
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), MacosBleError> {
@@ -448,7 +445,7 @@ impl BleLink for GattLink {
         }
     }
 
-    fn into_data(self) -> (GattSource, GattSink) {
+    fn into_parts(self) -> BleLinkParts<GattSource, GattSink, GattControl> {
         let (merged_tx, merged_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
         let l2cap_failure_policy = self.control.l2cap_failure_policy();
 
@@ -464,18 +461,64 @@ impl BleLink for GattLink {
         };
 
         drop(merged_tx);
-        (
-            GattSource {
+        let gatt = gatt_writer(&self.control);
+        let control = if self.peer_protocol == PeerProtocol::Native {
+            let listener_owner = match &self.control {
+                ControlPlane::Listener { session, .. } => Some(session.settled_owner()),
+                ControlPlane::Central { .. } => None,
+            };
+            Some(GattControl {
+                plane: self.control,
+                receiver: self.control_rx,
+                address: self.address,
+                _listener_owner: listener_owner,
+            })
+        } else {
+            None
+        };
+        BleLinkParts {
+            source: GattSource {
                 inbound: merged_rx,
                 l2cap_end,
             },
-            GattSink {
-                gatt: gatt_writer(&self.control),
+            sink: GattSink {
+                gatt,
                 l2cap: None,
                 l2cap_pending,
             },
-        )
+            control,
+        }
     }
+}
+
+/// Retains the native GATT control channel after the data-plane split.
+/// Runtimes only receive after settlement until control/data write arbitration is added.
+pub struct GattControl {
+    plane: ControlPlane,
+    receiver: tokio_mpsc::Receiver<Control>,
+    address: BleAddress,
+    _listener_owner: Option<SettledSessionOwner>,
+}
+
+impl BleControl for GattControl {
+    type Error = MacosBleError;
+
+    async fn send(&mut self, msg: &Control) -> Result<(), Self::Error> {
+        self.plane.send(msg).await
+    }
+
+    async fn recv(&mut self) -> Result<Control, Self::Error> {
+        receive_control(&mut self.receiver, self.address).await
+    }
+}
+
+async fn receive_control(
+    receiver: &mut tokio_mpsc::Receiver<Control>,
+    address: BleAddress,
+) -> Result<Control, MacosBleError> {
+    let control = receiver.recv().await.ok_or(MacosBleError::Closed)?;
+    crate::diagnostic_log::debug!("bluetooth: {:02x?} <- {control:?}", address.octets());
+    Ok(control)
 }
 
 fn gatt_writer(control: &ControlPlane) -> Option<GattWriter> {

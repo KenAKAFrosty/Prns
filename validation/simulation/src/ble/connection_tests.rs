@@ -1,3 +1,4 @@
+use personal_rns::interfaces::bluetooth_auto::BleLinkParts;
 use std::error::Error;
 use std::future::{poll_fn, Future};
 use std::num::NonZeroUsize;
@@ -127,8 +128,16 @@ async fn partitions_close_queued_and_active_links_and_prevent_redial() -> Result
         .await;
     }
     let (first, second) = pair.connect().await;
-    let (_source, mut sink) = first.into_data();
-    let (mut source, _sink) = second.into_data();
+    let BleLinkParts {
+        source: _source,
+        mut sink,
+        control: _source_control,
+    } = first.into_parts();
+    let BleLinkParts {
+        mut source,
+        sink: _sink,
+        control: _source_control,
+    } = second.into_parts();
     sink.send_frame(b"queued").await?;
     pair.lab
         .set_reachability(FIRST_ADDRESS, SECOND_ADDRESS, Reachability::Isolated)?;
@@ -193,12 +202,20 @@ async fn a_full_inbound_queue_does_not_reserve_an_extra_connection() -> Result<(
 }
 
 #[tokio::test]
-async fn last_data_half_drop_closes_the_peer_and_wakes_a_blocked_send() -> Result<(), Box<dyn Error>>
-{
+async fn last_session_owner_drop_closes_the_peer_and_wakes_a_blocked_send(
+) -> Result<(), Box<dyn Error>> {
     let mut pair = Pair::new(1, 1).await?;
     let (first, second) = pair.connect().await;
-    let (_first_source, mut first_sink) = first.into_data();
-    let (second_source, second_sink) = second.into_data();
+    let BleLinkParts {
+        source: _first_source,
+        sink: mut first_sink,
+        control: _first_source_control,
+    } = first.into_parts();
+    let BleLinkParts {
+        source: second_source,
+        sink: second_sink,
+        control: second_control,
+    } = second.into_parts();
     drop(second_sink);
     assert_eq!(pair.lab.active_connection_count(), 1);
     first_sink.send_frame(b"queued").await?;
@@ -209,6 +226,8 @@ async fn last_data_half_drop_closes_the_peer_and_wakes_a_blocked_send() -> Resul
     })
     .await;
     drop(second_source);
+    assert_eq!(pair.lab.active_connection_count(), 1);
+    drop(second_control);
     assert_eq!(blocked.await, Err(VirtualBleError::LinkClosed));
     assert_eq!(pair.lab.active_connection_count(), 0);
     Ok(())
@@ -266,8 +285,16 @@ async fn radio_shutdown_wakes_control_receive_and_discards_queued_data(
     drop((first, second));
     BleBackend::<MAX_PEERS>::set_radio_mode(&mut pair.second, RadioMode::On).await?;
     let (first, second) = pair.connect().await;
-    let (_source, mut sink) = first.into_data();
-    let (mut source, _sink) = second.into_data();
+    let BleLinkParts {
+        source: _source,
+        mut sink,
+        control: _source_control,
+    } = first.into_parts();
+    let BleLinkParts {
+        mut source,
+        sink: _sink,
+        control: _source_control,
+    } = second.into_parts();
     sink.send_frame(b"stale").await?;
     assert_eq!(
         pair.lab.disconnect_radio(SECOND_ADDRESS),

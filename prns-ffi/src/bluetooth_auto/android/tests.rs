@@ -324,7 +324,9 @@ fn radio_reset_discards_pending_physical_closes() {
 
 #[tokio::test]
 async fn dropping_a_challenger_closes_only_its_physical_connection() {
-    use prns_core::interfaces::bluetooth_auto::{BleBackend, BleEvent, BleLink, BleSink};
+    use prns_core::interfaces::bluetooth_auto::{
+        BleBackend, BleControl, BleEvent, BleLink, BleSink, CloseReason, Control, CONTROL_MAX_LEN,
+    };
     let bridge = AndroidBleBridge::new();
     let mut backend = super::AndroidBleBackend::new(bridge.clone());
     let address = [1, 2, 3, 4, 5, 6];
@@ -332,7 +334,11 @@ async fn dropping_a_challenger_closes_only_its_physical_connection() {
     let BleEvent::Inbound(keeper) = backend.next_event().await else {
         panic!("keeper")
     };
-    let (source, mut sink) = keeper.into_data();
+    let prns_core::interfaces::bluetooth_auto::BleLinkParts {
+        source,
+        mut sink,
+        mut control,
+    } = keeper.into_parts();
     assert_eq!(
         bridge.next_close(),
         None,
@@ -357,6 +363,16 @@ async fn dropping_a_challenger_closes_only_its_physical_connection() {
         bridge.data_out(1, &mut frame) > 0,
         "the keeper is still usable"
     );
+    let message = Control::Close {
+        reason: CloseReason::DuplicateLink,
+    };
+    let mut bytes = [0; CONTROL_MAX_LEN];
+    let len = message.encode(&mut bytes).unwrap();
+    assert_eq!(
+        bridge.control_in(1, &bytes[..len]),
+        AndroidBleIngressAdmission::Accepted
+    );
+    assert_eq!(control.as_mut().unwrap().recv().await.unwrap(), message);
 
     drop(source);
     assert_eq!(
@@ -365,8 +381,97 @@ async fn dropping_a_challenger_closes_only_its_physical_connection() {
         "the other half still owns the connection"
     );
     drop(sink);
+    assert_eq!(
+        bridge.next_close(),
+        None,
+        "control still owns the connection"
+    );
+    drop(control);
     assert_eq!(bridge.next_close(), Some(1));
     assert_eq!(bridge.next_close(), None);
+}
+
+#[tokio::test]
+async fn settled_control_retains_delivery_and_disconnect_observation_on_both_data_planes() {
+    use prns_core::interfaces::bluetooth_auto::{
+        BleBackend, BleControl, BleEvent, BleLink, CloseReason, Control, CONTROL_MAX_LEN,
+    };
+    for l2cap in [false, true] {
+        let bridge = AndroidBleBridge::new();
+        let mut backend = super::AndroidBleBackend::new(bridge.clone());
+        assert!(bridge.link_up(1, [1; 6], None, false));
+        let BleEvent::Inbound(mut link) = backend.next_event().await else {
+            panic!("link")
+        };
+        let message = Control::Close {
+            reason: CloseReason::DuplicateLink,
+        };
+        let mut bytes = [0; CONTROL_MAX_LEN];
+        let len = message.encode(&mut bytes).unwrap();
+        assert_eq!(
+            bridge.control_in(1, &bytes[..len]),
+            AndroidBleIngressAdmission::Accepted
+        );
+        assert_eq!(link.control_recv().await.unwrap(), message);
+        if l2cap {
+            bridge.l2cap_up(1);
+        }
+        let mut parts = link.into_parts();
+        let control = parts.control.as_mut().expect("native control");
+        assert_eq!(
+            bridge.control_in(1, &bytes[..len]),
+            AndroidBleIngressAdmission::Accepted
+        );
+        assert_eq!(control.recv().await.unwrap(), message);
+        control.send(&message).await.unwrap();
+        let mut written = [0; CONTROL_MAX_LEN];
+        assert_eq!(bridge.control_out(1, &mut written), len);
+        assert_eq!(&written[..len], &bytes[..len]);
+        bridge.disconnected(1);
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), control.recv())
+                .await
+                .unwrap(),
+            Err(super::AndroidBleError::Closed)
+        ));
+    }
+}
+
+#[tokio::test]
+async fn a_settled_control_owner_cannot_close_a_reused_connection_id() {
+    use prns_core::interfaces::bluetooth_auto::{BleBackend, BleEvent, BleLink};
+    let bridge = AndroidBleBridge::new();
+    let mut backend = super::AndroidBleBackend::new(bridge.clone());
+    assert!(bridge.link_up(7, [7; 6], None, false));
+    let BleEvent::Inbound(link) = backend.next_event().await else {
+        panic!("link")
+    };
+    let parts = link.into_parts();
+    drop(parts.source);
+    drop(parts.sink);
+    assert_eq!(bridge.next_close(), None);
+    bridge.set_radio_mode(RadioMode::Off);
+    assert!(bridge.link_up(7, [8; 6], None, false));
+    drop(parts.control);
+    assert_eq!(bridge.next_close(), None);
+    assert!(bridge.shared.links.lock().unwrap()[&7].active().is_some());
+}
+
+#[tokio::test]
+async fn columba_settlement_has_no_native_control_owner() {
+    use prns_core::interfaces::bluetooth_auto::{BleBackend, BleEvent, BleLink};
+    let bridge = AndroidBleBridge::new();
+    let mut backend = super::AndroidBleBackend::new(bridge.clone());
+    assert!(bridge.columba_link_up(7, [7; 6], None, false, [9; 16]));
+    let BleEvent::Inbound(link) = backend.next_event().await else {
+        panic!("link")
+    };
+    let parts = link.into_parts();
+    assert!(parts.control.is_none());
+    drop(parts.source);
+    assert_eq!(bridge.next_close(), None);
+    drop(parts.sink);
+    assert_eq!(bridge.next_close(), Some(7));
 }
 
 #[tokio::test]

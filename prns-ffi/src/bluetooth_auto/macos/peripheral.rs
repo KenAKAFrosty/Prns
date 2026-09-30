@@ -184,14 +184,6 @@ pub(super) fn reap_stale_pending_l2cap(
     before.saturating_sub(pending.len())
 }
 
-impl PeripheralPeerSession {
-    fn data_receiver_closed(&self) -> bool {
-        // The control receiver is handshake-only and closes when a link settles. The data
-        // receiver is retained by the attached member for the full lifetime of this role.
-        self.data_tx.is_closed()
-    }
-}
-
 pub(super) struct PeripheralDelegateIvars {
     manager_signals: ManagerSignalSender,
     inbound: tokio_mpsc::Sender<GattLink>,
@@ -808,7 +800,10 @@ impl PeripheralDelegate {
             .sessions
             .borrow()
             .get(&peer_id)
-            .filter(|session| session.data_tx.notifications().same_session(expected))
+            .filter(|session| {
+                session.data_tx.notifications().same_session(expected)
+                    && expected.phase() != super::peripheral_notify::SessionPhase::Retired
+            })
             .map(|session| (session.central.clone(), session.protocol))
         else {
             return NotificationAdmission::Closed;

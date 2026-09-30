@@ -438,11 +438,81 @@ async fn late_data_budget_failure_refunds_prior_data_and_control_reservations() 
 }
 
 #[tokio::test]
-async fn fresh_hello_replaces_a_settled_peer_without_an_unsubscribe_callback() {
+async fn fresh_greeting_cannot_evict_a_healthy_settled_session() {
+    let mut harness = Harness::new(1, 1);
+    let mut old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    let _owner = old.data.notifications().settled_owner();
+    let original = old.data.notifications();
+    assert_eq!(
+        harness.admit([
+            Ok(control_request(peer(1), hello())),
+            Ok(request(peer(1), WriteTarget::Data, &[7])),
+            Ok(control_request(peer(1), welcome())),
+        ]),
+        Ok(())
+    );
+    harness.assert_no_new_link();
+    assert!(harness.retired.is_empty());
+    assert!(original.same_session(
+        harness
+            .sessions
+            .get(&peer(1))
+            .unwrap()
+            .data_tx
+            .notifications()
+    ));
+    assert_eq!(old.control.try_recv(), Ok(hello()));
+    assert_eq!(old.control.try_recv(), Ok(welcome()));
+    assert_eq!(&*receive_data(&mut old.data).await, &[7]);
+}
+
+#[tokio::test]
+async fn closed_control_receiver_is_not_authority_to_evict_a_settled_owner() {
+    let mut harness = Harness::new(1, 1);
+    let mut old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    let _owner = old.data.notifications().settled_owner();
+    old.control.close();
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), hello()))]),
+        Err(WriteError::InsufficientResources)
+    );
+    harness.assert_no_new_link();
+    assert!(harness.retired.is_empty());
+    assert_eq!(
+        harness.admit([Ok(request(peer(1), WriteTarget::Data, &[7]))]),
+        Ok(())
+    );
+    assert_eq!(&*receive_data(&mut old.data).await, &[7]);
+}
+
+#[tokio::test]
+async fn failed_handshake_replacement_requires_both_receivers_to_end() {
     let mut harness = Harness::new(1, 1);
     let old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
-    // into_data drops the handshake receiver but keeps the data receiver alive. A
-    // reconnect may reuse the same CBCentral identity without an unsubscribe callback.
+    drop(old.control);
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), hello()))]),
+        Err(WriteError::InsufficientResources)
+    );
+    harness.assert_no_new_link();
+    drop(old.data);
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), hello()))]),
+        Ok(())
+    );
+    let mut replacement = harness.links.try_recv().unwrap();
+    assert_eq!(replacement.control.try_recv(), Ok(hello()));
+    assert_eq!(harness.retired.len(), 1);
+}
+
+#[tokio::test]
+async fn fresh_hello_replaces_only_an_explicitly_retired_peer() {
+    let mut harness = Harness::new(1, 1);
+    let old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    // The exact settled control owner ended, but an old data pump can still be
+    // awaiting an upgrade. A Hello alone must not create this retirement fact.
+    let owner = old.data.notifications().settled_owner();
+    drop(owner);
     drop(old.control);
     let mut old_data = old.data;
     assert_eq!(
@@ -464,8 +534,11 @@ async fn fresh_hello_replaces_a_settled_peer_without_an_unsubscribe_callback() {
 
 #[tokio::test]
 async fn refused_replacement_preserves_the_old_session_and_pending_upgrade() {
+    // This checks the admission transaction only. Production independently reaps
+    // already-retired sessions before admission, even if the incoming batch is invalid.
     let mut harness = Harness::new(1, 1);
     let old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    drop(old.data.notifications().settled_owner());
     drop(old.control);
     let mut old_data = old.data;
     assert_eq!(
@@ -501,9 +574,10 @@ async fn refused_replacement_preserves_the_old_session_and_pending_upgrade() {
 }
 
 #[tokio::test]
-async fn only_a_fresh_hello_can_replace_a_closed_control_receiver() {
+async fn only_a_fresh_hello_can_replace_an_explicitly_retired_session() {
     let mut harness = Harness::new(2, 1);
     let old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    drop(old.data.notifications().settled_owner());
     drop(old.control);
     let mut old_data = old.data;
     assert_eq!(

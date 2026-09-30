@@ -1,13 +1,13 @@
 # Bluetooth session recovery
 
 This is the implementation sequence for native Bluetooth session recovery. The
-ownership repairs below are implemented; retained controls and negotiated
-liveness remain planned. There is no new control-wire version or liveness claim
-in the current build.
+ownership repairs and retained controls below are implemented. Correlated
+control-write completion and negotiated liveness remain planned. There is no new
+control-wire version or automatic restart-recovery claim in this change.
 
 A controlled two-phone iOS restart check delivered a baseline message, restarted
-only iOS, and then failed recipient
-resolution while Android retained an established member and rejected new
+only iOS, and then failed recipient resolution while Android retained an
+established member and rejected new
 candidates. Resetting only Android's app Bluetooth restored delivery of the same
 unsent draft. This motivates shared transport work, not contact retries or an
 application-owned Bluetooth protocol.
@@ -19,12 +19,13 @@ application-owned Bluetooth protocol.
   A competing Hello alone must not evict a working connection.
 - Tokio member close notifications carry the exact admission's
   `TokioInterfaceStatus` identity, compared using `same_instance`. A delayed
-  notification cannot remove a newer member, even at
-  the same identity and address, or trigger backend cleanup for it.
-- Android Rust links now retain one physical-connection lease through handshake
-  and both data halves. Its final drop retires only the owned connection and
-  checks the queue identity against connection-ID reuse. Address-level policy
-  cleanup no longer closes every physical link at that address.
+  notification cannot remove a newer member, even at the same identity and
+  address, or trigger backend cleanup for it.
+- Android Rust links retain one physical-connection lease through handshake,
+  both data halves and the settled native control owner. Its final drop retires
+  only the owned connection and checks the queue identity against connection-ID
+  reuse. Address-level policy cleanup no longer closes every physical link at
+  that address.
 - Android platform I/O requires its own callback ownership and deadlines; a
   Rust queue admission is not a completed GATT write. These bounds cannot detect
   an idle dead application whose operating-system connection still appears live.
@@ -36,33 +37,52 @@ existing core retention API independently of Bluetooth recovery.
 
 ## Retain controls through settlement
 
-Extend the shared `BleLink` seam with a transport-only control owner and a split
-returning source, sink and optional control. Native connections retain the
-control owner for their entire session, including legacy connections. Columba
+The shared `BleLink::into_parts` seam returns source, sink and an optional
+transport-only `BleControl` owner. Native connections retain the control owner
+for their entire session, including legacy connections. Columba
 has no native control channel and returns none. Handshake operations forward to
 the same control implementation; no second codec or policy belongs in backends.
 
-Change all split callers together: Tokio, Embassy, Apple, Android, BlueZ, WinRT,
-Trouble, nRF and their test adapters. Do not implement a legacy data-only wrapper
-by creating and immediately dropping the control owner. Embedded slot leases
-signal closure on **any** owner drop, while the last owner releases slot reuse.
-The native worker and all control/data owners must retain that slot until exit.
+Tokio, Embassy, Apple, Android, BlueZ, WinRT, Trouble, nRF and their test adapters
+use this split. Columba's data-only path never creates and immediately drops a
+control owner. Embedded slot leases broadcast a latched closure on **any** owner
+drop, while the last owner releases slot reuse. The native worker and all
+control/data owners retain that slot until exit. BlueZ requires the native data
+characteristic rather than assigning its control stream two competing readers.
 
-Apple's peripheral currently recognizes a fresh Hello after settlement through
-the closed handshake receiver. Replace that heuristic with an explicit
-exact-session phase when controls stay open. Preserve atomic batch admission,
-failed-admission rollback and exact ownership of any retired GATT/L2CAP session.
-The phase is only a demultiplexing fact: it must not authorize retiring a healthy
-incumbent on a fresh Hello. Keep the incumbent until exact physical-generation
-loss or the shared bounded liveness decision permits replacement, and bound or
-coalesce pending challengers. An unprobeable legacy incumbent cannot be declared
-dead solely from a competing Hello.
+Apple's peripheral tracks an explicit handshaking, settled or retired phase for
+each exact session. Dropping the retained control owner retires that session;
+a closed handshake receiver alone does not authorize replacing a settled peer.
+Atomic batch admission, rollback and ownership of pending GATT/L2CAP work are
+preserved. A fresh Hello cannot evict a healthy incumbent. A failed handshake
+can be replaced only after both receivers end. An unprobeable legacy incumbent
+cannot be declared dead solely from a competing Hello.
 
 Tokio owns one persistent control-loop future per member alongside its data
-work. Data activity must not repeatedly cancel and resubmit an in-flight control
-write. Embassy retains control and pending-operation state in its live member
-slots and schedules it alongside existing data work without allocating a Tokio
-task or an unbounded per-peer queue.
+work, including a blocked outbound send. Embassy retains the control owner in
+its live member slot and polls cancellation-safe receives alongside idle and
+duplex data work. A control Close or receive error ends only that member. Late
+Hello/Welcome messages are ignored with bounded yielding so they cannot starve
+data or timers. Columba continues without a native control loop.
+
+This slice only receives after settlement. It does not introduce probes,
+shutdown messages or concurrent control writes. Before sending after settlement,
+add persistent pending-operation state and control/data write arbitration;
+unrelated data activity must never cancel and retry a possibly submitted write.
+
+### Retained control validation
+
+Focused validation passes 27 Tokio Bluetooth tests, 63 Embassy/Trouble tests,
+65 simulation BLE unit tests, 102 controlled-time Embassy integration tests and
+135 FFI host tests. One FFI test still requires real radio hardware and is ignored.
+Strict Clippy passes for those host implementations. The checks cover blocked
+sends, cancellation, ignored greetings, closed control channels, exact-session
+cleanup, Apple batch rollback and embedded slot reuse.
+
+iOS, Windows, Linux and t-echo SoftDevice v6 target checks compile. Windows and
+Linux tests were not executed; the Linux cross-check used host D-Bus metadata and
+does not establish target linking. Firmware flash/RAM budgets and rebuilt-phone
+restart behavior are not qualified by these checks.
 
 ## Bound actual control I/O
 

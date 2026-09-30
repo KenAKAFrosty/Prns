@@ -43,7 +43,7 @@ use central::CentralDelegate;
 use peripheral::PeripheralDelegate;
 
 pub use backend::{MacosBleBackend, PreparedMacosBleBackend};
-pub use gatt_link::{GattSink, GattSource};
+pub use gatt_link::{GattControl, GattSink, GattSource};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct CoreBluetoothPeerId([u8; 16]);

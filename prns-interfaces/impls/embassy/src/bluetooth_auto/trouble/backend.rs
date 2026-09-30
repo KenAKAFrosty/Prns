@@ -203,8 +203,11 @@ impl SlotChannels {
     ) -> EmbeddedBleLink {
         EmbeddedBleLink {
             peer_protocol: self.peer_protocol(),
-            control_in: self.control_in.receiver(),
-            control_out: self.control_out.sender(),
+            control: EmbeddedBleControl {
+                control_in: self.control_in.receiver(),
+                control_out: self.control_out.sender(),
+                slot,
+            },
             data_in: self.data_in.receiver(),
             data_out: self.data_out.sender(),
             identity_in: &self.identity_in,
@@ -213,7 +216,6 @@ impl SlotChannels {
             plan: L2capPlan::None,
             address: self.addr(),
             outbound_frames,
-            slot,
         }
     }
 }
@@ -460,8 +462,7 @@ impl BleBackend<PEER_CAPACITY> for EmbeddedBleBackend {
 
 pub struct EmbeddedBleLink {
     peer_protocol: PeerProtocol,
-    control_in: Receiver<'static, BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
-    control_out: Sender<'static, BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
+    control: EmbeddedBleControl,
     data_in: Receiver<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
     data_out: Sender<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
     identity_in: &'static Signal<BridgeMutex, BleIdentity>,
@@ -470,13 +471,37 @@ pub struct EmbeddedBleLink {
     plan: L2capPlan,
     address: [u8; 6],
     outbound_frames: &'static BleFramePool,
+}
+
+pub struct EmbeddedBleControl {
+    control_in: Receiver<'static, BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
+    control_out: Sender<'static, BridgeMutex, Control, CONTROL_QUEUE_DEPTH>,
     slot: BleSlotLink,
+}
+
+impl BleControl for EmbeddedBleControl {
+    type Error = Closed;
+
+    async fn send(&mut self, msg: &Control) -> Result<(), Closed> {
+        match select(self.control_out.send(*msg), self.slot.wait_for_close()).await {
+            Either::First(()) => Ok(()),
+            Either::Second(()) => Err(Closed),
+        }
+    }
+
+    async fn recv(&mut self) -> Result<Control, Closed> {
+        match select(self.control_in.receive(), self.slot.wait_for_close()).await {
+            Either::First(msg) => Ok(msg),
+            Either::Second(()) => Err(Closed),
+        }
+    }
 }
 
 impl BleLink for EmbeddedBleLink {
     type Error = Closed;
     type Source = EmbeddedBleSource;
     type Sink = EmbeddedBleSink;
+    type Control = EmbeddedBleControl;
 
     fn peer_protocol(&self) -> PeerProtocol {
         self.peer_protocol
@@ -487,28 +512,27 @@ impl BleLink for EmbeddedBleLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), Closed> {
-        match select(self.control_out.send(*msg), self.slot.wait_for_close()).await {
-            Either::First(()) => Ok(()),
-            Either::Second(()) => Err(Closed),
-        }
+        self.control.send(msg).await
     }
 
     async fn control_recv(&mut self) -> Result<Control, Closed> {
-        match select(self.control_in.receive(), self.slot.wait_for_close()).await {
-            Either::First(msg) => Ok(msg),
-            Either::Second(()) => Err(Closed),
-        }
+        self.control.recv().await
     }
 
     async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, Closed> {
-        match select(self.identity_in.wait(), self.slot.wait_for_close()).await {
+        match select(self.identity_in.wait(), self.control.slot.wait_for_close()).await {
             Either::First(identity) => Ok(identity),
             Either::Second(()) => Err(Closed),
         }
     }
 
     async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), Closed> {
-        match select(self.identity_out.send(identity), self.slot.wait_for_close()).await {
+        match select(
+            self.identity_out.send(identity),
+            self.control.slot.wait_for_close(),
+        )
+        .await
+        {
             Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
@@ -519,23 +543,47 @@ impl BleLink for EmbeddedBleLink {
         Ok(())
     }
 
-    fn into_data(self) -> (EmbeddedBleSource, EmbeddedBleSink) {
+    fn into_parts(self) -> BleLinkParts<EmbeddedBleSource, EmbeddedBleSink, EmbeddedBleControl> {
         self.data_plane.signal(self.plan);
-        let ConnectionSlotDataOwners {
-            source: source_slot,
-            sink: sink_slot,
-        } = self.slot.into_data();
-        (
-            EmbeddedBleSource {
+        let EmbeddedBleControl {
+            control_in,
+            control_out,
+            slot,
+        } = self.control;
+        let (source_slot, sink_slot, control) = match self.peer_protocol {
+            PeerProtocol::Native => {
+                let ConnectionSlotParts {
+                    source,
+                    sink,
+                    control,
+                } = slot.into_parts();
+                (
+                    source,
+                    sink,
+                    Some(EmbeddedBleControl {
+                        control_in,
+                        control_out,
+                        slot: control,
+                    }),
+                )
+            }
+            PeerProtocol::Columba => {
+                let ConnectionSlotDataOwners { source, sink } = slot.into_data();
+                (source, sink, None)
+            }
+        };
+        BleLinkParts {
+            source: EmbeddedBleSource {
                 data_in: self.data_in,
                 slot: source_slot,
             },
-            EmbeddedBleSink {
+            sink: EmbeddedBleSink {
                 data_out: self.data_out,
                 frames: self.outbound_frames,
                 slot: sink_slot,
             },
-        )
+            control,
+        }
     }
 }
 
@@ -620,7 +668,91 @@ impl EventHandler for ScanFunnel {
 
 #[cfg(test)]
 mod tests {
+    use std::boxed::Box;
+
+    use embassy_futures::block_on;
+    use prns_core::interfaces::bluetooth_auto::CloseReason;
+
     use super::*;
+
+    fn split_fixture(
+        protocol: PeerProtocol,
+    ) -> (
+        EmbeddedBleLink,
+        BleSlotWorker,
+        &'static ConnectionSlotPool<BridgeMutex, 1>,
+        &'static SlotChannels,
+    ) {
+        let pool = Box::leak(Box::new(ConnectionSlotPool::<BridgeMutex, 1>::new()));
+        let channels = Box::leak(Box::new(SlotChannels::new()));
+        channels.set_peer_protocol(protocol);
+        let frames = Box::leak(Box::new(BleFramePool::new()));
+        let ConnectionSlotOwners { worker, link } = pool.try_acquire().unwrap().unwrap().activate();
+        (channels.link(link, frames), worker, pool, channels)
+    }
+
+    #[test]
+    fn native_split_keeps_the_handshake_control_lane_and_its_slot_owner() {
+        let (mut link, worker, pool, channels) = split_fixture(PeerProtocol::Native);
+        let message = Control::Close {
+            reason: CloseReason::DuplicateLink,
+        };
+        assert!(block_on(link.control_send(&message)).is_ok());
+        assert_eq!(channels.control_out.try_receive(), Ok(message));
+        let BleLinkParts {
+            source,
+            sink,
+            control,
+        } = link.into_parts();
+        assert!(control.is_some());
+        assert!(matches!(
+            block_on(select(worker.wait_for_close(), core::future::ready(()))),
+            Either::Second(())
+        ));
+        let Some(mut control) = control else { return };
+        // Cancelling an empty receive must not prevent later traffic on the retained queue.
+        assert!(matches!(
+            block_on(select(control.recv(), core::future::ready(()))),
+            Either::Second(())
+        ));
+        assert_eq!(channels.control_in.try_send(message), Ok(()));
+        assert_eq!(block_on(control.recv()).map_err(|_| ()), Ok(message));
+        drop(control);
+        assert!(matches!(
+            block_on(select(worker.wait_for_close(), core::future::ready(()))),
+            Either::First(())
+        ));
+        assert_eq!(pool.try_acquire().map(|slot| slot.is_none()), Ok(true));
+        drop(source);
+        drop(sink);
+        assert_eq!(pool.try_acquire().map(|slot| slot.is_none()), Ok(true));
+        drop(worker);
+        assert_eq!(pool.try_acquire().map(|slot| slot.is_some()), Ok(true));
+    }
+
+    #[test]
+    fn columba_split_has_no_control_owner_and_does_not_signal_close() {
+        let (link, worker, pool, _) = split_fixture(PeerProtocol::Columba);
+        let BleLinkParts {
+            source,
+            sink,
+            control,
+        } = link.into_parts();
+        assert!(control.is_none());
+        assert!(matches!(
+            block_on(select(worker.wait_for_close(), core::future::ready(()))),
+            Either::Second(())
+        ));
+        drop(source);
+        assert!(matches!(
+            block_on(select(worker.wait_for_close(), core::future::ready(()))),
+            Either::First(())
+        ));
+        drop(sink);
+        assert_eq!(pool.try_acquire().map(|slot| slot.is_none()), Ok(true));
+        drop(worker);
+        assert_eq!(pool.try_acquire().map(|slot| slot.is_some()), Ok(true));
+    }
 
     #[test]
     fn transient_client_disconnect_retry_is_bounded() {
