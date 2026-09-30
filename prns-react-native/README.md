@@ -211,18 +211,19 @@ Build, stage and export the Expo web example from the repository root:
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --locked --version 0.2.126
-env -u CARGO_TARGET_DIR npm --prefix prns-wasm run build:wasm
+npm --prefix prns-wasm run build:wasm
 node prns-js/scripts/stage.mjs browser
 npm --prefix prns-react-native/example ci --ignore-scripts --no-audit --no-fund
 npm --prefix prns-react-native/example run export:web
 ```
 
-The WASM build script expects its local target directory, so that command clears
-any shared `CARGO_TARGET_DIR`. The example's staging helper copies the installed
-core package's WASM assets into the public directory; Expo bundles the existing
-PRNS workers. Serve `prns-react-native/example/dist/` to exercise persistent
-browser startup and shutdown. WASM and JavaScript must come from the same
-contract version.
+The WASM build script resolves Cargo's output directory and honors a shared
+`CARGO_TARGET_DIR`, including an external build cache. Generated package assets
+stay in `prns-wasm/pkg`. The example's staging helper copies the installed core
+package's WASM assets into the public directory; Expo bundles the existing PRNS
+workers. Serve `prns-react-native/example/dist/` to exercise persistent browser
+startup and shutdown. WASM and JavaScript must come from the same contract
+version.
 
 Browser creation retains its existing worker/storage options and explicit
 unsupported-capability outcomes. Native filesystem configuration and TCP are
