@@ -49,7 +49,7 @@ The isolated source checkpoint passes:
 - 212 native unit tests, the generated-snapshot integration test, strict native
   Clippy and formatting. Regressions cover bounded retention, observer delegation,
   concurrent clear/admission, generation changes and failed route inspection.
-- 429 app tests and 67 app-platform tests, including clear acknowledgement across
+- 430 app tests and 67 app-platform tests, including clear acknowledgement across
   navigation/refresh failure, newer observations, Stop and exact-width integers.
 - Both TypeScript, formatting and lint gates, plus app routes, configuration and
   version checks. Product binding generation completed successfully.
