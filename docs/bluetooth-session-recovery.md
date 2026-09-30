@@ -12,6 +12,12 @@ candidates. Resetting only Android's app Bluetooth restored delivery of the same
 unsent draft. This motivates shared transport work, not contact retries or an
 application-owned Bluetooth protocol.
 
+The [September 29 mobile checkpoint](../applications/checkpoints/2026-09-29-mobile-persistence-recovery.md)
+repeats that failure on the reconciled Release builds after separately fixing and
+verifying interval persistence. Reciprocal baseline delivery and an isolated
+Android restart send pass. The iOS restart remains blocked; the diagnostic peer
+reset is not automatic-recovery acceptance.
+
 ## Ownership and current repairs
 
 - The pure connection policy in `prns-core` keeps the healthy incumbent. A BLE
@@ -131,3 +137,5 @@ Bluetooth reset, or an alternate transport. Record delivery, duplicate count,
 unchanged persisted records and actual reconnect time. App Off/On, platform
 radio loss, permission denial, long idle and background suspension remain
 separate acceptance cases. Passing queue or codec tests does not qualify them.
+First confirm that both nodes remain Running through an interval save; a stopped
+persistence worker must not be misdiagnosed as Bluetooth recovery failure.

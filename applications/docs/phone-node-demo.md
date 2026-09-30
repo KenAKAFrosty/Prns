@@ -24,7 +24,12 @@ liveness; the [September 28 checkpoint](../checkpoints/2026-09-28-bluetooth-owne
 records automated validation and the remaining device gap. The LXMF service now
 refreshes bounded authenticated-key retention in source;
 [automated checks](../checkpoints/2026-09-24-messaging-discovery.md#authenticated-key-retention-follow-up)
-passed, with mobile validation still pending. Unknown-sender resolution and
+passed. The [September 29 checkpoint](../checkpoints/2026-09-29-mobile-persistence-recovery.md)
+records current retained-data Release installs, a repaired sandbox persistence
+regression, successful interval saves, reciprocal source-verified BLE delivery
+and an Android restart send. The isolated iOS restart still fails recipient
+resolution; resetting only Android's app Bluetooth restores the unchanged draft.
+Broader retained-key validation remains open. Unknown-sender resolution and
 stored-message re-verification remain separate work; delivery proof does not establish
 the sender's identity. The user accepts losing ASK's extra force-quit relaunch
 support to make the phone usable as its own node,
