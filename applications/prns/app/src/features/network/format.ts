@@ -50,6 +50,5 @@ export function announceIngressName(snapshot: DevelopmentNodeSnapshot, id: Uint8
   );
   if (peer !== undefined) return peer.name ?? "Bluetooth connection";
   const logicalName = logicalInterfaceName(snapshot, id);
-  if (logicalName === "Interface details unavailable") return "Connection details unavailable";
-  return logicalName === "Interface not listed" ? "Connection no longer listed" : logicalName;
+  return logicalName === "Interface not listed" ? "Interface no longer listed" : logicalName;
 }

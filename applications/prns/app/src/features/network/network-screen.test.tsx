@@ -240,9 +240,19 @@ test("resolves recorded announcement ingress, not the present route", () => {
   const data = snapshot({ announces: [announcement({ sourceInterface: id(0xaa, 8) })] });
   mockRuntime.snapshot = data;
   expect(announceIngressName(data, peer.interfaceId)).toBe("Nearby phone");
+  expect(
+    announceIngressName(
+      {
+        ...data,
+        bluetooth: { ...data.bluetooth, peers: [{ ...peer, name: undefined }] },
+      },
+      peer.interfaceId,
+    ),
+  ).toBe("Bluetooth connection");
   const view = render(<NetworkScreen initialTab="announcements" />);
-  expect(view.getByText(/Connection details unavailable/)).toBeTruthy();
+  expect(view.getByText(/Interface details unavailable/)).toBeTruthy();
   fireEvent.press(view.getByRole("button", { name: /Announcement details/ }));
+  expect(view.getByText("Recorded interface ID")).toBeTruthy();
   expect(view.getByText(formatBytes(id(0xaa, 8)))).toBeTruthy();
   expect(view.queryByText(formatBytes(route().interfaceId))).toBeNull();
 });
@@ -292,7 +302,7 @@ test("distinguishes an unlisted ingress from unavailable inspection and logical 
       },
     }),
   };
-  expect(announceIngressName(inspected, id(0x99, 8))).toBe("Connection no longer listed");
+  expect(announceIngressName(inspected, id(0x99, 8))).toBe("Interface no longer listed");
   expect(announceIngressName(inspected, id(0x22, 8))).toBe("Bluetooth");
   expect(logicalInterfaceName(inspected, peer.interfaceId)).toBe("Interface not listed");
   expect(
@@ -300,7 +310,7 @@ test("distinguishes an unlisted ingress from unavailable inspection and logical 
       { ...inspected, localHost: Bindings.LocalHostState.Unavailable.new({ detail: "busy" }) },
       id(0x99, 8),
     ),
-  ).toBe("Connection details unavailable");
+  ).toBe("Interface details unavailable");
 });
 
 test("uses current saved and discovered names without changing recorded announce identities", () => {
@@ -352,6 +362,21 @@ test("pages the bounded ring and identifies retention evictions, not network los
   expect(view.queryByText(/packet loss|dropped packets/i)).toBeNull();
   fireEvent.press(view.getByRole("button", { name: "Show more (180 remaining)" }));
   expect(view.getAllByRole("button", { name: /Announcement details/ })).toHaveLength(40);
+});
+
+test("describes an empty cleared history without claiming no announcements since startup", () => {
+  mockRuntime.snapshot = snapshot({ announces: [], activityRevision: 2n });
+  mockRuntime.networkActivityClear = { generationId: 1n, activityRevision: 2n };
+  const view = render(<NetworkScreen initialTab="announcements" />);
+  expect(
+    view.getByText(
+      /Recent announcements received by this phone\. Keeps up to 200 entries until cleared or the node restarts\./,
+    ),
+  ).toBeTruthy();
+  expect(
+    view.getByText("No announcements in this history. Ask a nearby node to announce."),
+  ).toBeTruthy();
+  expect(view.queryByText(/since the node started|No announcements heard yet/)).toBeNull();
 });
 
 test("waits for clear acknowledgement, suppresses only older snapshots, and preserves new entries", async () => {
