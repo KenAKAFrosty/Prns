@@ -551,12 +551,13 @@ async fn settled_control_closed<C: BleControl>(control: &mut Option<C>) {
         return ::core::future::pending().await;
     };
     loop {
-        match control.recv().await {
-            Ok(Control::Close { .. }) | Err(_) => return,
-            Ok(Control::Hello { .. } | Control::Welcome { .. }) => {
-                embassy_futures::yield_now().await;
-            }
+        // Drop the decoded greeting before yielding; retaining it would enlarge every
+        // settled-member future by a full control message on memory-constrained boards.
+        let closed = matches!(control.recv().await, Ok(Control::Close { .. }) | Err(_));
+        if closed {
+            return;
         }
+        embassy_futures::yield_now().await;
     }
 }
 

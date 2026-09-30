@@ -1,4 +1,5 @@
 pub mod connection_slots;
+pub mod control_io;
 #[cfg(feature = "bluetooth-auto-trouble")]
 mod cooperative_transport;
 mod frame_pool;

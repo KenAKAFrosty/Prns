@@ -16,7 +16,7 @@ use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_sync::semaphore::{FairSemaphore, Semaphore, SemaphoreReleaser};
 use embassy_sync::signal::Signal;
 use embassy_sync_07::blocking_mutex::raw::NoopRawMutex;
-use embassy_time::{with_timeout, Duration, Instant, Timer};
+use embassy_time::{with_deadline, with_timeout, Duration, Instant, Timer};
 use heapless_09::Vec as GattVec;
 use portable_atomic::{AtomicBool, Ordering};
 use trouble_host::att::{AttClient, AttReq};
@@ -38,6 +38,7 @@ use super::connection_slots::{
     ConnectionSlotParts, ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
     ConnectionSlotWorkerLease, ReadyConnectionSlot, ReadyConnectionSlotParts,
 };
+use super::control_io::{ControlCompletion, ControlIoError, ControlTicket, GattWriteArbiter};
 use super::frame_pool::{FrameLease, FramePoolError, SharedFramePool};
 use super::runtime::BluetoothAutoStatus;
 
