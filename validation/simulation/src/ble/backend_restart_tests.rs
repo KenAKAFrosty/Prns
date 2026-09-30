@@ -1,3 +1,4 @@
+use personal_rns::interfaces::bluetooth_auto::BleLinkParts;
 use std::error::Error;
 use std::future::{poll_fn, Future};
 use std::num::NonZeroUsize;
@@ -249,8 +250,16 @@ async fn backend_restart_requires_a_fresh_sighting_even_when_an_old_one_is_queue
         let (first, second) = pair.connect().await;
         drop(old_links);
         assert_eq!(pair.lab.active_connection_count(), 1);
-        let (_first_source, mut sink) = first.into_data();
-        let (mut source, _second_sink) = second.into_data();
+        let BleLinkParts {
+            source: _first_source,
+            mut sink,
+            control: _first_source_control,
+        } = first.into_parts();
+        let BleLinkParts {
+            mut source,
+            sink: _second_sink,
+            control: _source_control,
+        } = second.into_parts();
         exchange(&mut sink, &mut source).await;
         pair.finish();
         Ok::<_, Box<dyn Error>>(())
@@ -286,8 +295,16 @@ async fn backend_restart_rejects_queued_control_and_wakes_its_blocked_sender(
             assert_eq!(second.control_recv().await, Ok(control));
             drop((old_first, old_second));
             assert_eq!(pair.lab.active_connection_count(), 1);
-            let (_first_source, mut sink) = first.into_data();
-            let (mut source, _second_sink) = second.into_data();
+            let BleLinkParts {
+                source: _first_source,
+                mut sink,
+                control: _first_source_control,
+            } = first.into_parts();
+            let BleLinkParts {
+                mut source,
+                sink: _second_sink,
+                control: _source_control,
+            } = second.into_parts();
             exchange(&mut sink, &mut source).await;
             pair.finish();
         }
@@ -303,8 +320,16 @@ async fn backend_restart_discards_a_queued_whole_frame_without_retargeting_it(
         for rebuilt in [Rebuilt::Dialer, Rebuilt::Listener] {
             let mut pair = Pair::new().await?;
             let (first, second) = pair.connect().await;
-            let (old_first_source, mut old_sink) = first.into_data();
-            let (mut old_source, old_second_sink) = second.into_data();
+            let BleLinkParts {
+                source: old_first_source,
+                sink: mut old_sink,
+                control: old_first_control,
+            } = first.into_parts();
+            let BleLinkParts {
+                source: mut old_source,
+                sink: old_second_sink,
+                control: old_second_control,
+            } = second.into_parts();
             old_sink.send_frame(b"queued").await?;
             pair.rebuild(rebuilt).await?;
             let mut untouched = [CANARY; FRAME_BYTES];
@@ -318,10 +343,25 @@ async fn backend_restart_discards_a_queued_whole_frame_without_retargeting_it(
                 Err(VirtualBleError::LinkClosed)
             );
             let (first, second) = pair.connect().await;
-            let (_first_source, mut sink) = first.into_data();
-            let (mut source, _second_sink) = second.into_data();
+            let BleLinkParts {
+                source: _first_source,
+                mut sink,
+                control: _first_source_control,
+            } = first.into_parts();
+            let BleLinkParts {
+                mut source,
+                sink: _second_sink,
+                control: _source_control,
+            } = second.into_parts();
             exchange(&mut sink, &mut source).await;
-            drop((old_first_source, old_sink, old_source, old_second_sink));
+            drop((
+                old_first_source,
+                old_sink,
+                old_first_control,
+                old_source,
+                old_second_sink,
+                old_second_control,
+            ));
             assert_eq!(pair.lab.active_connection_count(), 1);
             exchange(&mut sink, &mut source).await;
             pair.finish();
@@ -338,8 +378,16 @@ async fn backend_restart_abandons_partial_reassembly_without_poisoning_the_new_c
         for rebuilt in [Rebuilt::Dialer, Rebuilt::Listener] {
             let mut pair = Pair::new().await?;
             let (first, second) = pair.connect().await;
-            let (old_first_source, mut old_sink) = first.into_data();
-            let (mut old_source, old_second_sink) = second.into_data();
+            let BleLinkParts {
+                source: old_first_source,
+                sink: mut old_sink,
+                control: old_first_control,
+            } = first.into_parts();
+            let BleLinkParts {
+                source: mut old_source,
+                sink: old_second_sink,
+                control: old_second_control,
+            } = second.into_parts();
             let mut output = [CANARY; FRAME_BYTES];
             let mut send = Box::pin(old_sink.send_frame(&OLD_BYTES));
             let mut receive = Box::pin(old_source.recv_frame(&mut output));
@@ -358,10 +406,25 @@ async fn backend_restart_abandons_partial_reassembly_without_poisoning_the_new_c
             assert_eq!(receive.await, Err(VirtualBleError::LinkClosed));
             assert_eq!(output, [CANARY; FRAME_BYTES]);
             let (first, second) = pair.connect().await;
-            let (mut first_source, mut first_sink) = first.into_data();
-            let (mut second_source, mut second_sink) = second.into_data();
+            let BleLinkParts {
+                source: mut first_source,
+                sink: mut first_sink,
+                control: _first_source_control,
+            } = first.into_parts();
+            let BleLinkParts {
+                source: mut second_source,
+                sink: mut second_sink,
+                control: _second_source_control,
+            } = second.into_parts();
             exchange(&mut first_sink, &mut second_source).await;
-            drop((old_first_source, old_sink, old_source, old_second_sink));
+            drop((
+                old_first_source,
+                old_sink,
+                old_first_control,
+                old_source,
+                old_second_sink,
+                old_second_control,
+            ));
             assert_eq!(pair.lab.active_connection_count(), 1);
             exchange(&mut second_sink, &mut first_source).await;
             pair.finish();

@@ -19,8 +19,8 @@ use prns_core::interfaces::bluetooth_auto::{
     role_for, ConnectionPolicy, PolicyAction, PolicyInput,
 };
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin, RadioMode,
-    ScanningMode,
+    AdvertisingMode, BleBackend, BleControl, BleEvent, BleLink, BleLinkParts, BleSink, BleSource,
+    BluetoothRadioState, NoBleControl, Origin, RadioMode, ScanningMode,
 };
 use prns_core::interfaces::bluetooth_auto::{Endpoint, L2capPlan};
 
@@ -38,6 +38,9 @@ use prns_runtime::manifold::interface_seam::{
 use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 use contract::{send_frame_duplex, BleDuplexOutcome, BleFrameForwarder};
+
+mod control;
+use control::observe_control;
 
 struct PeerInbound<'a, Seam> {
     seam: &'a mut Seam,
@@ -72,11 +75,12 @@ impl PeerClosed {
     }
 }
 
-pub struct BluetoothPeer<Src, Snk> {
+pub struct BluetoothPeer<Src, Snk, Ctl = NoBleControl> {
     id: InterfaceId,
     identity: BleIdentity,
     source: Src,
     sink: Snk,
+    control: Option<Ctl>,
     channel_tag: [u8; 16],
     policy: EffectiveInterfacePolicy,
     status: TokioInterfaceStatus,
@@ -107,6 +111,7 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
             identity,
             source,
             sink,
+            control: None,
             channel_tag,
             policy,
             status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected),
@@ -114,6 +119,27 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
         }
     }
 
+    /// Retain the existing native control owner alongside both data halves.
+    /// `None` preserves the data-only behavior used by Columba and adapters.
+    pub fn with_control<Ctl: BleControl>(
+        self,
+        control: Option<Ctl>,
+    ) -> BluetoothPeer<Src, Snk, Ctl> {
+        BluetoothPeer {
+            id: self.id,
+            identity: self.identity,
+            source: self.source,
+            sink: self.sink,
+            control,
+            channel_tag: self.channel_tag,
+            policy: self.policy,
+            status: self.status,
+            closed: self.closed,
+        }
+    }
+}
+
+impl<Src: BleSource, Snk: BleSink, Ctl: BleControl> BluetoothPeer<Src, Snk, Ctl> {
     fn report_close_to(
         mut self,
         address: BleAddress,
@@ -143,7 +169,7 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
     }
 }
 
-impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
+impl<Src: BleSource, Snk: BleSink, Ctl: BleControl> Interface for BluetoothPeer<Src, Snk, Ctl> {
     const HW_MTU: usize = contract::BLE_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::BluetoothPeer;
 
@@ -156,75 +182,101 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
-        let mut buf = [0u8; contract::BLE_WIRE_FRAME_LEN];
-        let mut pending_outbound = [0u8; contract::BLE_WIRE_FRAME_LEN];
-        loop {
+        let mut control = self.control.take();
+        let mut outbound_in_flight = false;
+        {
+            let data = async {
+                let mut buf = [0u8; contract::BLE_WIRE_FRAME_LEN];
+                let mut pending_outbound = [0u8; contract::BLE_WIRE_FRAME_LEN];
+                loop {
+                    tokio::select! {
+                        received = contract::receive_frame(&mut self.source, &mut buf) => {
+                            let frame = match received {
+                                Ok(frame) => frame,
+                                Err(error) => {
+                                    crate::diagnostic_log::warn!(
+                                        "bluetooth: peer {:?} receive closed: {error:?}",
+                                        self.identity
+                                    );
+                                    break;
+                                }
+                            };
+                            if frame.is_empty() {
+                                continue;
+                            }
+                            self.status.add_rx(frame.len() as u64);
+                            seam.next_inbound(frame).await;
+                        }
+                        outbound = seam.next_outbound() => {
+                            if outbound.is_empty() {
+                                continue;
+                            }
+                            let outbound_len = outbound.len();
+                            if outbound_len > pending_outbound.len() {
+                                seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::Rejected));
+                                break;
+                            }
+                            pending_outbound[..outbound_len].copy_from_slice(outbound);
+                            seam.accept_outbound_custody();
+                            outbound_in_flight = true;
+                            let result = match send_frame_duplex(
+                                &mut self.source, &mut self.sink,
+                                &pending_outbound[..outbound_len], &mut buf,
+                                PeerInbound { seam: &mut seam, status: &self.status },
+                            ).await {
+                                BleDuplexOutcome::Finished(result) => result,
+                                BleDuplexOutcome::ForwardFailed(never) => match never {},
+                                BleDuplexOutcome::ReceiveFailed(error) => {
+                                    outbound_in_flight = false;
+                                    seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
+                                    crate::diagnostic_log::warn!(
+                                        "bluetooth: peer {:?} receive closed during send: {error:?}",
+                                        self.identity
+                                    );
+                                    break;
+                                }
+                                BleDuplexOutcome::InvalidReceiveLength(length) => {
+                                    outbound_in_flight = false;
+                                    seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
+                                    crate::diagnostic_log::warn!(
+                                        "bluetooth: peer {:?} reported invalid receive length {length} during send",
+                                        self.identity
+                                    );
+                                    break;
+                                }
+                            };
+                            if let Err(error) = result {
+                                outbound_in_flight = false;
+                                seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
+                                crate::diagnostic_log::warn!(
+                                    "bluetooth: peer {:?} send closed: {error:?}",
+                                    self.identity
+                                );
+                                break;
+                            }
+                            self.status.add_tx(outbound_len as u64);
+                            outbound_in_flight = false;
+                            seam.complete_outbound(OutboundDisposition::Sent);
+                        }
+                    }
+                }
+            };
+            let control_loop = observe_control(&mut control);
+            tokio::pin!(data, control_loop);
             tokio::select! {
-                received = contract::receive_frame(&mut self.source, &mut buf) => {
-                    let frame = match received {
-                        Ok(frame) => frame,
-                        Err(error) => {
-                            crate::diagnostic_log::warn!(
-                                "bluetooth: peer {:?} receive closed: {error:?}",
-                                self.identity
-                            );
-                            break;
-                        }
-                    };
-                    if frame.is_empty() {
-                        continue;
-                    }
-                    self.status.add_rx(frame.len() as u64);
-                    seam.next_inbound(frame).await;
-                }
-                outbound = seam.next_outbound() => {
-                    if outbound.is_empty() {
-                        continue;
-                    }
-                    let outbound_len = outbound.len();
-                    if outbound_len > pending_outbound.len() {
-                        seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::Rejected));
-                        break;
-                    }
-                    pending_outbound[..outbound_len].copy_from_slice(outbound);
-                    seam.accept_outbound_custody();
-                    let result = match send_frame_duplex(
-                        &mut self.source, &mut self.sink,
-                        &pending_outbound[..outbound_len], &mut buf,
-                        PeerInbound { seam: &mut seam, status: &self.status },
-                    ).await {
-                        BleDuplexOutcome::Finished(result) => result,
-                        BleDuplexOutcome::ForwardFailed(never) => match never {},
-                        BleDuplexOutcome::ReceiveFailed(error) => {
-                            seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
-                            crate::diagnostic_log::warn!(
-                                "bluetooth: peer {:?} receive closed during send: {error:?}",
-                                self.identity
-                            );
-                            break;
-                        }
-                        BleDuplexOutcome::InvalidReceiveLength(length) => {
-                            seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
-                            crate::diagnostic_log::warn!(
-                                "bluetooth: peer {:?} reported invalid receive length {length} during send",
-                                self.identity
-                            );
-                            break;
-                        }
-                    };
-                    if let Err(error) = result {
-                        seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::TransportFailure));
-                        crate::diagnostic_log::warn!(
-                            "bluetooth: peer {:?} send closed: {error:?}",
-                            self.identity
-                        );
-                        break;
-                    }
-                    self.status.add_tx(outbound_len as u64);
-                    seam.complete_outbound(OutboundDisposition::Sent);
-                }
+                () = &mut data => {},
+                outcome = &mut control_loop => {
+                    crate::diagnostic_log::debug!("bluetooth: settled control closed: {outcome:?}");
+                },
             }
         }
+        if outbound_in_flight {
+            seam.complete_outbound(OutboundDisposition::Dropped(
+                OutboundDropReason::TransportFailure,
+            ));
+        }
+        // Drop all three owners before publishing the exact member's close.
+        drop(control);
         let closed = self
             .closed
             .take()
@@ -249,8 +301,8 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
     }
 }
 
-impl<Src: BleSource, Snk: BleSink> prns_core::interfaces::ReportsStatus
-    for BluetoothPeer<Src, Snk>
+impl<Src: BleSource, Snk: BleSink, Ctl: BleControl> prns_core::interfaces::ReportsStatus
+    for BluetoothPeer<Src, Snk, Ctl>
 {
     fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status.clone();
@@ -384,15 +436,35 @@ pub struct BluetoothAutoStatus {
     shared: Arc<BluetoothAutoShared>,
 }
 
+#[derive(Clone, Copy)]
+struct BluetoothEnableState {
+    enabled: bool,
+    generation: u64,
+    disabled: bool,
+}
+
+impl BluetoothEnableState {
+    fn replace(&mut self, enabled: bool) -> bool {
+        if self.enabled == enabled {
+            return false;
+        }
+        self.enabled = enabled;
+        self.generation = self.generation.wrapping_add(1);
+        self.disabled = false;
+        true
+    }
+}
+
 struct BluetoothAutoShared {
     id: InterfaceId,
-    enabled: watch::Sender<bool>,
+    enabled: watch::Sender<BluetoothEnableState>,
     discovery_groups: watch::Sender<DiscoveryGroupSet>,
     applied_discovery_groups: watch::Sender<DiscoveryGroupSet>,
     discovery_group_replacement: AsyncMutex<()>,
     up: AtomicBool,
     failed: AtomicBool,
     failure_reason: Mutex<Option<&'static str>>,
+    radio_state_source: Mutex<Option<Arc<dyn Fn() -> BluetoothRadioState + Send + Sync>>>,
     members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
     last_member_at: Mutex<Option<Instant>>,
 }
@@ -403,7 +475,11 @@ impl BluetoothAutoStatus {
     }
 
     pub(crate) fn new_with_discovery_groups(discovery_groups: DiscoveryGroupSet) -> Self {
-        let (enabled, _) = watch::channel(true);
+        let (enabled, _) = watch::channel(BluetoothEnableState {
+            enabled: true,
+            generation: 0,
+            disabled: false,
+        });
         let (groups, _) = watch::channel(discovery_groups);
         let (applied_groups, _) = watch::channel(discovery_groups);
         Self {
@@ -416,6 +492,7 @@ impl BluetoothAutoStatus {
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
                 failure_reason: Mutex::new(None),
+                radio_state_source: Mutex::new(None),
                 members: Mutex::new(std::vec::Vec::new()),
                 last_member_at: Mutex::new(None),
             }),
@@ -424,6 +501,35 @@ impl BluetoothAutoStatus {
 
     fn mark_up(&self) {
         self.shared.up.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns the platform's current observation, independently of the requested enabled state.
+    /// A backend without a live radio observation reports `Unknown`; an idle interface alone is
+    /// not evidence that the radio is powered on.
+    #[must_use]
+    pub fn radio_state(&self) -> BluetoothRadioState {
+        self.shared
+            .radio_state_source
+            .lock()
+            .ok()
+            .and_then(|source| source.as_ref().map(|read| read()))
+            .unwrap_or_default()
+    }
+
+    #[cfg(any(
+        test,
+        all(
+            feature = "bluetooth-auto",
+            any(target_os = "macos", target_os = "ios")
+        )
+    ))]
+    pub(crate) fn observe_radio_state(
+        &self,
+        source: impl Fn() -> BluetoothRadioState + Send + Sync + 'static,
+    ) {
+        if let Ok(mut slot) = self.shared.radio_state_source.lock() {
+            *slot = Some(Arc::new(source));
+        }
     }
 
     pub(crate) fn mark_failed(&self, reason: Option<&'static str>) {
@@ -456,10 +562,9 @@ impl BluetoothAutoStatus {
     }
 
     pub fn toggle_enabled(&self) {
-        self.shared.enabled.send_if_modified(|current| {
-            *current = !*current;
-            true
-        });
+        self.shared
+            .enabled
+            .send_if_modified(|current| current.replace(!current.enabled));
     }
 
     #[must_use]
@@ -512,29 +617,52 @@ impl BluetoothAutoStatus {
     }
 
     fn update_enabled(&self, enabled: bool) {
-        self.shared.enabled.send_if_modified(|current| {
-            let changed = *current != enabled;
-            *current = enabled;
-            changed
-        });
+        self.shared
+            .enabled
+            .send_if_modified(|current| current.replace(enabled));
     }
 
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        *self.shared.enabled.borrow()
+        self.shared.enabled.borrow().enabled
     }
 
-    async fn wait_until_enabled(&self) {
-        self.wait_for_enabled_state(true).await;
+    /// Whether the supervisor completed shutdown for the current disabled request. This does not
+    /// imply that the operating system's Bluetooth radio is powered off.
+    #[must_use]
+    pub fn is_disabled(&self) -> bool {
+        self.shared.enabled.borrow().disabled
     }
 
-    async fn wait_until_disabled(&self) {
+    pub(super) fn disabled_request(&self) -> Option<u64> {
+        let current = self.shared.enabled.borrow();
+        (!current.enabled).then_some(current.generation)
+    }
+
+    pub(super) fn acknowledge_disabled(&self, generation: u64) {
+        self.shared.enabled.send_if_modified(|current| {
+            if current.enabled || current.generation != generation || current.disabled {
+                return false;
+            }
+            current.disabled = true;
+            true
+        });
+    }
+
+    pub(super) async fn wait_for_enabled_change(&self, generation: u64) {
+        let mut changed = self.shared.enabled.subscribe();
+        let _ = changed
+            .wait_for(|current| current.generation != generation)
+            .await;
+    }
+
+    pub(super) async fn wait_until_disabled(&self) {
         self.wait_for_enabled_state(false).await;
     }
 
     async fn wait_for_enabled_state(&self, enabled: bool) {
         let mut changed = self.shared.enabled.subscribe();
-        let _ = changed.wait_for(|current| *current == enabled).await;
+        let _ = changed.wait_for(|current| current.enabled == enabled).await;
     }
 
     fn set_members(&self, members: std::vec::Vec<TokioInterfaceStatus>) {
@@ -625,6 +753,7 @@ where
     B::Link: 'static,
     <B::Link as BleLink>::Source: Send + 'static,
     <B::Link as BleLink>::Sink: Send + 'static,
+    <B::Link as BleLink>::Control: Send + 'static,
 {
     const KIND: InterfaceKind = InterfaceKind::BluetoothAuto;
 
@@ -651,6 +780,18 @@ where
         let configured_capabilities = local.capabilities;
         let mut local = local;
         let mut discovery_groups = status.discovery_groups();
+        while let Some(generation) = status.disabled_request() {
+            let advertising_stopped = backend.set_advertising(AdvertisingMode::Off).await.is_ok();
+            let scanning_stopped = backend.set_scanning(ScanningMode::Off).await.is_ok();
+            let radio_stopped = backend.set_radio_mode(RadioMode::Off).await.is_ok();
+            status.mark_up();
+            if advertising_stopped && scanning_stopped && radio_stopped {
+                status.acknowledge_disabled(generation);
+            }
+            status.wait_for_enabled_change(generation).await;
+            discovery_groups = status.discovery_groups();
+            local.discovery_groups = discovery_groups.hashes();
+        }
         prepare_radio::<B, MAX_PEERS>(&mut backend, &mut local, configured_capabilities).await;
         let started = Instant::now();
         let mut manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
@@ -662,9 +803,10 @@ where
         manager.start(&mut |action| pending.push(action));
         apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
         loop {
-            if !status.is_enabled() {
-                let _ = backend.set_advertising(AdvertisingMode::Off).await;
-                let _ = backend.set_scanning(ScanningMode::Off).await;
+            if let Some(generation) = status.disabled_request() {
+                let advertising_stopped =
+                    backend.set_advertising(AdvertisingMode::Off).await.is_ok();
+                let scanning_stopped = backend.set_scanning(ScanningMode::Off).await.is_ok();
                 for (_, member) in members.drain() {
                     member.attached.teardown();
                     backend.on_link_closed(member.address).await;
@@ -672,8 +814,14 @@ where
                 handshakes = FuturesUnordered::new();
                 pending.clear();
                 status.set_members(std::vec::Vec::new());
-                let _ = backend.set_radio_mode(RadioMode::Off).await;
-                status.wait_until_enabled().await;
+                let radio_stopped = backend.set_radio_mode(RadioMode::Off).await.is_ok();
+                if advertising_stopped && scanning_stopped && radio_stopped {
+                    status.acknowledge_disabled(generation);
+                }
+                status.wait_for_enabled_change(generation).await;
+                if !status.is_enabled() {
+                    continue;
+                }
                 prepare_radio::<B, MAX_PEERS>(&mut backend, &mut local, configured_capabilities)
                     .await;
                 manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
@@ -836,21 +984,9 @@ where
                     }
                 }
                 Step::Closed(closed) => {
-                    let Some(member) = members.get(&closed.identity) else {
-                        continue;
-                    };
-                    if !closed.matches(member.address, &member.status) {
+                    if !close_member(closed, &mut members, &mut manager, &mut pending) {
                         continue;
                     }
-                    let PeerClosed {
-                        identity, address, ..
-                    } = closed;
-                    if let Some(member) = members.remove(&identity) {
-                        member.attached.teardown();
-                    }
-                    manager.handle(PolicyInput::Closed { identity, address }, &mut |action| {
-                        pending.push(action)
-                    });
                     apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
                 }
             }
@@ -877,6 +1013,30 @@ where
     }
 }
 
+fn close_member<const MAX_PEERS: usize>(
+    closed: PeerClosed,
+    members: &mut HashMap<BleIdentity, TokioMember>,
+    manager: &mut ConnectionPolicy<MAX_PEERS, DIAL_TRACK>,
+    pending: &mut Vec<PolicyAction>,
+) -> bool {
+    let Some(member) = members.get(&closed.identity) else {
+        return false;
+    };
+    if !closed.matches(member.address, &member.status) {
+        return false;
+    }
+    let PeerClosed {
+        identity, address, ..
+    } = closed;
+    if let Some(member) = members.remove(&identity) {
+        member.attached.teardown();
+    }
+    manager.handle(PolicyInput::Closed { identity, address }, &mut |action| {
+        pending.push(action)
+    });
+    true
+}
+
 pub(super) const HANDSHAKE_TIMEOUT: Duration =
     Duration::from_millis(contract::HANDSHAKE_TIMEOUT_MS);
 
@@ -887,6 +1047,9 @@ async fn prepare_radio<B, const MAX_PEERS: usize>(
 ) where
     B: BleBackend<MAX_PEERS>,
 {
+    if let Err(error) = backend.set_session_liveness(true).await {
+        crate::diagnostic_log::warn!("bluetooth: session liveness opt-in failed: {error:?}");
+    }
     let _ = backend.set_radio_mode(RadioMode::On).await;
     if let Ok(capabilities) = backend.local_capabilities(configured_capabilities).await {
         local.capabilities = capabilities;
@@ -946,6 +1109,7 @@ async fn apply_settle<B, const MAX_PEERS: usize>(
     B::Link: 'static,
     <B::Link as BleLink>::Source: Send + 'static,
     <B::Link as BleLink>::Sink: Send + 'static,
+    <B::Link as BleLink>::Control: Send + 'static,
 {
     let actions = std::mem::take(pending);
     let mut link = Some(link);
@@ -959,8 +1123,13 @@ async fn apply_settle<B, const MAX_PEERS: usize>(
             } => {
                 if let Some(mut held) = link.take() {
                     arm_fast_lane(&mut held, &lane).await;
-                    let (source, sink) = held.into_data();
+                    let BleLinkParts {
+                        source,
+                        sink,
+                        control,
+                    } = held.into_parts();
                     let member = BluetoothPeer::with_policy(identity, source, sink, policy)
+                        .with_control(control)
                         .report_close_to(address, closed.clone());
                     let status = member.status();
                     let attached = fleet.add(member);
@@ -1150,6 +1319,47 @@ mod tests {
         assert_eq!(status.failure_reason(), None);
     }
 
+    #[test]
+    fn radio_observation_is_live_and_independent_of_preference_or_peer_count() {
+        let status = BluetoothAutoStatus::new();
+        status.mark_up();
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        assert_eq!(status.radio_state(), BluetoothRadioState::Unknown);
+
+        let (observed, current) = watch::channel(BluetoothRadioState::PoweredOn);
+        status.observe_radio_state(move || *current.borrow());
+        let cloned = status.clone();
+        status.disable();
+        assert_eq!(cloned.radio_state(), BluetoothRadioState::PoweredOn);
+        assert_eq!(cloned.connection(), ConnectionState::Disabled);
+
+        observed.send_replace(BluetoothRadioState::PoweredOff);
+        status.enable();
+        assert_eq!(cloned.radio_state(), BluetoothRadioState::PoweredOff);
+        assert_eq!(cloned.connection(), ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn disabled_acknowledgment_cannot_settle_a_newer_enable_request() {
+        let status = BluetoothAutoStatus::new();
+        assert!(!status.is_disabled());
+        status.disable();
+        let old_request = status.disabled_request().unwrap();
+        assert!(!status.is_disabled());
+        status.enable();
+        status.acknowledge_disabled(old_request);
+        assert!(!status.is_disabled());
+        status.disable();
+        status.acknowledge_disabled(old_request);
+        assert!(!status.is_disabled());
+        status.acknowledge_disabled(status.disabled_request().unwrap());
+        assert!(status.is_disabled());
+        status.enable();
+        assert!(!status.is_disabled());
+        status.toggle_enabled();
+        assert!(!status.is_disabled());
+    }
+
     struct MockSeam {
         inbound: mpsc::UnboundedSender<std::vec::Vec<u8>>,
         sink: std::vec::Vec<u8>,
@@ -1184,10 +1394,26 @@ mod tests {
 
     struct LoopbackLink {
         address: BleAddress,
-        control_tx: mpsc::Sender<Control>,
-        control_rx: mpsc::Receiver<Control>,
+        control: LoopbackControl,
         data_tx: mpsc::Sender<std::vec::Vec<u8>>,
         data_rx: mpsc::Receiver<std::vec::Vec<u8>>,
+    }
+
+    struct LoopbackControl {
+        control_tx: mpsc::Sender<Control>,
+        control_rx: mpsc::Receiver<Control>,
+    }
+
+    impl BleControl for LoopbackControl {
+        type Error = Closed;
+
+        async fn send(&mut self, msg: &Control) -> Result<(), Closed> {
+            self.control_tx.send(*msg).await.map_err(|_| Closed)
+        }
+
+        async fn recv(&mut self) -> Result<Control, Closed> {
+            self.control_rx.recv().await.ok_or(Closed)
+        }
     }
 
     struct LoopbackSource {
@@ -1212,6 +1438,7 @@ mod tests {
         type Error = Closed;
         type Source = LoopbackSource;
         type Sink = LoopbackSink;
+        type Control = NoBleControl<Closed>;
 
         fn peer_protocol(&self) -> PeerProtocol {
             PeerProtocol::Columba
@@ -1242,9 +1469,13 @@ mod tests {
             Ok(())
         }
 
-        fn into_data(self) -> (LoopbackSource, LoopbackSink) {
+        fn into_parts(self) -> BleLinkParts<LoopbackSource, LoopbackSink, Self::Control> {
             let (data_tx, data_rx) = mpsc::channel(1);
-            (LoopbackSource { data_rx }, LoopbackSink { data_tx })
+            BleLinkParts {
+                source: LoopbackSource { data_rx },
+                sink: LoopbackSink { data_tx },
+                control: None,
+            }
         }
     }
 
@@ -1252,6 +1483,7 @@ mod tests {
         type Error = Closed;
         type Source = LoopbackSource;
         type Sink = LoopbackSink;
+        type Control = LoopbackControl;
 
         fn peer_protocol(&self) -> PeerProtocol {
             PeerProtocol::Native
@@ -1262,26 +1494,27 @@ mod tests {
         }
 
         async fn control_send(&mut self, msg: &Control) -> Result<(), Closed> {
-            self.control_tx.send(*msg).await.map_err(|_| Closed)
+            self.control.send(msg).await
         }
 
         async fn control_recv(&mut self) -> Result<Control, Closed> {
-            self.control_rx.recv().await.ok_or(Closed)
+            self.control.recv().await
         }
 
         async fn upgrade(&mut self, _plan: &L2capPlan) -> Result<(), Closed> {
             Ok(())
         }
 
-        fn into_data(self) -> (LoopbackSource, LoopbackSink) {
-            (
-                LoopbackSource {
+        fn into_parts(self) -> BleLinkParts<LoopbackSource, LoopbackSink, LoopbackControl> {
+            BleLinkParts {
+                source: LoopbackSource {
                     data_rx: self.data_rx,
                 },
-                LoopbackSink {
+                sink: LoopbackSink {
                     data_tx: self.data_tx,
                 },
-            )
+                control: Some(self.control),
+            }
         }
     }
 
@@ -1322,6 +1555,12 @@ mod tests {
             }
         );
         assert_eq!(link.sent_identity, Some(local.identity));
+        let mut parts = link.into_parts();
+        assert!(parts.control.is_none());
+        parts.sink.send_frame(b"columba").await.unwrap();
+        let mut frame = [0; 16];
+        let len = parts.source.recv_frame(&mut frame).await.unwrap();
+        assert_eq!(&frame[..len], b"columba");
     }
 
     #[tokio::test]
@@ -1374,15 +1613,19 @@ mod tests {
         let (dat_b_tx, dat_b_rx) = mpsc::channel(8);
         let a = LoopbackLink {
             address: addr_b,
-            control_tx: ctl_a_tx,
-            control_rx: ctl_b_rx,
+            control: LoopbackControl {
+                control_tx: ctl_a_tx,
+                control_rx: ctl_b_rx,
+            },
             data_tx: dat_a_tx,
             data_rx: dat_b_rx,
         };
         let b = LoopbackLink {
             address: addr_a,
-            control_tx: ctl_b_tx,
-            control_rx: ctl_a_rx,
+            control: LoopbackControl {
+                control_tx: ctl_b_tx,
+                control_rx: ctl_a_rx,
+            },
             data_tx: dat_b_tx,
             data_rx: dat_a_rx,
         };
@@ -1473,6 +1716,7 @@ mod tests {
 
     #[derive(Debug, PartialEq, Eq)]
     enum StartupCall {
+        SessionLiveness(bool),
         Radio(RadioMode),
         Capabilities(LinkCapabilities),
         Advertising(AdvertisingMode),
@@ -1483,14 +1727,29 @@ mod tests {
     struct RecordingStartupBackend {
         calls: Vec<StartupCall>,
         first_event: Option<oneshot::Sender<Vec<StartupCall>>>,
+        radio_off: Option<oneshot::Sender<()>>,
+        finish_radio_off: Option<oneshot::Receiver<Result<(), Closed>>>,
     }
 
     impl BleBackend<7> for RecordingStartupBackend {
         type Error = Closed;
         type Link = LoopbackLink;
 
+        async fn set_session_liveness(&mut self, enabled: bool) -> Result<(), Closed> {
+            self.calls.push(StartupCall::SessionLiveness(enabled));
+            Ok(())
+        }
+
         async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), Closed> {
             self.calls.push(StartupCall::Radio(mode));
+            if mode == RadioMode::Off {
+                if let Some(radio_off) = self.radio_off.take() {
+                    let _ = radio_off.send(());
+                }
+                if let Some(finish) = self.finish_radio_off.take() {
+                    return finish.await.map_err(|_| Closed)?;
+                }
+            }
             Ok(())
         }
 
@@ -1539,6 +1798,8 @@ mod tests {
             RecordingStartupBackend {
                 calls: Vec::new(),
                 first_event: Some(first_event_tx),
+                radio_off: None,
+                finish_radio_off: None,
             },
             BleIdentity::new([1; 16]),
             Endpoint::CoreBluetooth(AppleHost::Ios),
@@ -1556,6 +1817,7 @@ mod tests {
         assert_eq!(
             calls,
             vec![
+                StartupCall::SessionLiveness(true),
                 StartupCall::Radio(RadioMode::On),
                 StartupCall::Capabilities(capabilities),
                 StartupCall::Advertising(AdvertisingMode::On),
@@ -1563,6 +1825,98 @@ mod tests {
                 StartupCall::NextEvent,
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn initially_disabled_bluetooth_never_starts_scanning_before_enable() {
+        let (first_event_tx, first_event_rx) = oneshot::channel();
+        let (radio_off_tx, radio_off_rx) = oneshot::channel();
+        let capabilities = LinkCapabilities {
+            l2cap: None,
+            link_mtu: contract::BLE_HW_MTU as u16,
+        };
+        let bluetooth = BluetoothAuto::<_, 7>::new(
+            RecordingStartupBackend {
+                calls: Vec::new(),
+                first_event: Some(first_event_tx),
+                radio_off: Some(radio_off_tx),
+                finish_radio_off: None,
+            },
+            BleIdentity::new([1; 16]),
+            Endpoint::CoreBluetooth(AppleHost::Ios),
+            capabilities,
+        );
+        let status = bluetooth.status();
+        status.disable();
+        assert!(!status.is_disabled());
+        let (fleet, _detached_fleet) = Fleet::detached(status.id());
+        let observe = async {
+            radio_off_rx.await.unwrap();
+            assert_eq!(status.connection(), ConnectionState::Disabled);
+            assert!(status.is_disabled());
+            status.enable();
+            first_event_rx.await.unwrap()
+        };
+        let calls = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(1), observe) => result.unwrap(),
+            () = bluetooth.run(fleet) => unreachable!("the BLE supervisor runs until cancelled"),
+        };
+        assert_eq!(
+            calls,
+            vec![
+                StartupCall::Advertising(AdvertisingMode::Off),
+                StartupCall::Scanning(ScanningMode::Off),
+                StartupCall::Radio(RadioMode::Off),
+                StartupCall::SessionLiveness(true),
+                StartupCall::Radio(RadioMode::On),
+                StartupCall::Capabilities(capabilities),
+                StartupCall::Advertising(AdvertisingMode::On),
+                StartupCall::Scanning(ScanningMode::On),
+                StartupCall::NextEvent,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_peer_shutdown_waits_for_backend_completion_before_acknowledging() {
+        for initially_enabled in [true, false] {
+            let (first_event_tx, first_event_rx) = oneshot::channel();
+            let (radio_off_tx, radio_off_rx) = oneshot::channel();
+            let (finish_off_tx, finish_off_rx) = oneshot::channel();
+            let bluetooth = BluetoothAuto::<_, 7>::new(
+                RecordingStartupBackend {
+                    calls: Vec::new(),
+                    first_event: Some(first_event_tx),
+                    radio_off: Some(radio_off_tx),
+                    finish_radio_off: Some(finish_off_rx),
+                },
+                BleIdentity::new([1; 16]),
+                Endpoint::CoreBluetooth(AppleHost::Ios),
+                caps(0x0081),
+            );
+            let status = bluetooth.status();
+            if !initially_enabled {
+                status.disable();
+            }
+            let (fleet, _detached_fleet) = Fleet::detached(status.id());
+            let observe = async {
+                if initially_enabled {
+                    first_event_rx.await.unwrap();
+                    status.disable();
+                }
+                radio_off_rx.await.unwrap();
+                assert!(!status.is_disabled());
+                assert!(status.shared.members.lock().unwrap().is_empty());
+                finish_off_tx.send(Ok(())).unwrap();
+                let mut changed = status.shared.enabled.subscribe();
+                changed.wait_for(|current| current.disabled).await.unwrap();
+                assert!(status.is_disabled());
+            };
+            tokio::select! {
+                result = tokio::time::timeout(Duration::from_secs(1), observe) => result.unwrap(),
+                () = bluetooth.run(fleet) => unreachable!("the BLE supervisor runs until cancelled"),
+            }
+        }
     }
 
     #[tokio::test]
@@ -1615,10 +1969,12 @@ mod tests {
         assert_eq!(established_b.identity, local_a.identity);
         assert_eq!(endpoint_b, local_a.endpoint);
 
-        let (source_a, sink_a) = link_a.into_data();
-        let (source_b, sink_b) = link_b.into_data();
-        let member_a = BluetoothPeer::new(established_a.identity, source_a, sink_a);
-        let member_b = BluetoothPeer::new(established_b.identity, source_b, sink_b);
+        let parts_a = link_a.into_parts();
+        let parts_b = link_b.into_parts();
+        let member_a = BluetoothPeer::new(established_a.identity, parts_a.source, parts_a.sink)
+            .with_control(parts_a.control);
+        let member_b = BluetoothPeer::new(established_b.identity, parts_b.source, parts_b.sink)
+            .with_control(parts_b.control);
 
         let (discard_a, _discard_a_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (mut out_a_producer, out_a_consumer) = tokio_grant_lane(TEST_FRAME_CAP, 2);
@@ -1718,7 +2074,11 @@ mod tests {
     fn configured_policy_reaches_a_bluetooth_auto_peer_descriptor() {
         let identity = BleIdentity::new([0x44; 16]);
         let (link, _peer) = link_pair(BleAddress::new([0x11; 6]), BleAddress::new([0x22; 6]));
-        let (source, sink) = link.into_data();
+        let BleLinkParts {
+            source,
+            sink,
+            control,
+        } = link.into_parts();
         let policy = contract::defaults_for_bitrate(contract::BLE_BITRATE_GUESS_BPS).configured(
             ConfiguredInterfacePolicy {
                 mode: Some(prns_core::interfaces::InterfaceMode::AccessPoint),
@@ -1726,7 +2086,8 @@ mod tests {
                 ..ConfiguredInterfacePolicy::default()
             },
         );
-        let member = BluetoothPeer::with_policy(identity, source, sink, policy);
+        let member =
+            BluetoothPeer::with_policy(identity, source, sink, policy).with_control(control);
 
         assert_eq!(member.descriptor(), policy.descriptor(member.id()));
     }
@@ -1934,17 +2295,25 @@ mod tests {
         }
     }
 
+    mod control_completion;
+    mod settled_control;
+
     #[tokio::test]
     async fn a_dying_member_fires_its_close_signal() {
         let addr = BleAddress::new([0x11; 6]);
         let (link_a, link_b) = link_pair(addr, BleAddress::new([0x22; 6]));
-        let (source, sink) = link_a.into_data();
+        let BleLinkParts {
+            source,
+            sink,
+            control,
+        } = link_a.into_parts();
         drop(link_b);
 
         let identity = BleIdentity::new([1u8; 16]);
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<PeerClosed>();
-        let member =
-            BluetoothPeer::new(identity, source, sink).report_close_to(addr, closed_tx.clone());
+        let member = BluetoothPeer::new(identity, source, sink)
+            .with_control(control)
+            .report_close_to(addr, closed_tx.clone());
         let status = member.status();
         tokio::spawn(member.run(idle_seam()));
 
@@ -1988,11 +2357,16 @@ mod tests {
     async fn a_torn_down_member_does_not_fire_its_close_signal() {
         let addr = BleAddress::new([0x11; 6]);
         let (link_a, link_b) = link_pair(addr, BleAddress::new([0x22; 6]));
-        let (source, sink) = link_a.into_data();
+        let BleLinkParts {
+            source,
+            sink,
+            control,
+        } = link_a.into_parts();
         let _keep_peer_alive = link_b;
 
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<PeerClosed>();
         let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), source, sink)
+            .with_control(control)
             .report_close_to(addr, closed_tx.clone());
         let handle = tokio::spawn(member.run(idle_seam()));
 
@@ -2001,5 +2375,149 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         assert!(closed_rx.try_recv().is_err());
+    }
+    async fn assert_delayed_close_preserves_replacement(replacement_address: BleAddress) {
+        let old_address = BleAddress::new([0x11; 6]);
+        let identity = BleIdentity::new([2; 16]);
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel();
+        let (old_link, old_remote) = link_pair(BleAddress::new([0xAA; 6]), old_address);
+        let BleLinkParts {
+            source,
+            sink,
+            control,
+        } = old_link.into_parts();
+        let old_peer = BluetoothPeer::new(identity, source, sink)
+            .with_control(control)
+            .report_close_to(old_address, closed_tx.clone());
+        let old_status = old_peer.status();
+        let old_task = tokio::spawn(old_peer.run(idle_seam()));
+        drop(old_remote);
+        // Hold the real peer's notification until after a fresh admission, as can happen
+        // when replacement or a supervisor reset wins the race with the close queue.
+        let delayed_close = tokio::time::timeout(Duration::from_secs(1), closed_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        old_task.abort();
+
+        let capabilities = LinkCapabilities {
+            l2cap: None,
+            link_mtu: 247,
+        };
+        let local = LocalPeer {
+            identity: BleIdentity::new([1; 16]),
+            endpoint: linux(),
+            capabilities,
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
+        };
+        let established = EstablishedPeer {
+            identity,
+            transport: EstablishedTransport::Native {
+                endpoint: linux(),
+                capabilities,
+            },
+            peer_rssi: None,
+        };
+        let mut manager = ConnectionPolicy::<8, DIAL_TRACK>::new(local);
+        manager.start(&mut |_| {});
+        let mut pending = Vec::new();
+        manager.handle(
+            PolicyInput::Settled {
+                address: replacement_address,
+                origin: Origin::Dialed,
+                established,
+                now_ms: 0,
+            },
+            &mut |action| pending.push(action),
+        );
+        assert!(matches!(pending[0], PolicyAction::Admit { .. }));
+        let (replacement_link, _replacement_remote) =
+            link_pair(BleAddress::new([0xAA; 6]), replacement_address);
+        let (fleet, _detached_fleet) = Fleet::detached(BluetoothAutoStatus::new().id());
+        let (mut backend, _remote_backend) = LoopbackBleBackend::pair();
+        let mut members = HashMap::new();
+        apply_settle(
+            &mut pending,
+            replacement_link,
+            &fleet,
+            &closed_tx,
+            &mut members,
+            &mut backend,
+            contract::defaults_for_bitrate(contract::BLE_BITRATE_GUESS_BPS)
+                .configured(ConfiguredInterfacePolicy::default()),
+        )
+        .await;
+        let replacement_status = members[&identity].status.clone();
+        assert!(!replacement_status.same_instance(&old_status));
+
+        close_member(delayed_close, &mut members, &mut manager, &mut pending);
+        assert_eq!(members.len(), 1);
+        assert!(members[&identity].status.same_instance(&replacement_status));
+        assert_eq!(manager.settled_count(), 1);
+        assert!(
+            pending.is_empty(),
+            "stale close must not emit backend cleanup"
+        );
+
+        // The keeper still owns the policy slot, so an ordinary duplicate loses.
+        let challenger_address = BleAddress::new([0x33; 6]);
+        manager.handle(
+            PolicyInput::Settled {
+                address: challenger_address,
+                origin: Origin::Accepted,
+                established,
+                now_ms: 1,
+            },
+            &mut |action| pending.push(action),
+        );
+        assert_eq!(
+            pending,
+            vec![PolicyAction::Reject {
+                address: challenger_address,
+                dialed: false,
+            }]
+        );
+        pending.clear();
+
+        close_member(
+            PeerClosed {
+                identity,
+                address: replacement_address,
+                status: replacement_status.clone(),
+            },
+            &mut members,
+            &mut manager,
+            &mut pending,
+        );
+        assert!(members.is_empty());
+        assert_eq!(manager.settled_count(), 0);
+        assert_eq!(
+            pending,
+            vec![PolicyAction::NotifyClosed(replacement_address)]
+        );
+        pending.clear();
+
+        // Repeated notifications after retirement cannot trigger duplicate cleanup.
+        close_member(
+            PeerClosed {
+                identity,
+                address: replacement_address,
+                status: replacement_status,
+            },
+            &mut members,
+            &mut manager,
+            &mut pending,
+        );
+        assert!(pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delayed_close_does_not_retire_same_identity_at_same_address() {
+        assert_delayed_close_preserves_replacement(BleAddress::new([0x11; 6])).await;
+    }
+
+    #[tokio::test]
+    async fn delayed_close_does_not_retire_same_identity_at_new_address() {
+        assert_delayed_close_preserves_replacement(BleAddress::new([0x22; 6])).await;
     }
 }

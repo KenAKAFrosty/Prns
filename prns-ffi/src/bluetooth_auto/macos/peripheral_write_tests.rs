@@ -30,6 +30,7 @@ struct Harness {
     inbound: mpsc::Sender<TestLink>,
     links: mpsc::Receiver<TestLink>,
     capacity: usize,
+    retired: Vec<CoreBluetoothPeerId>,
 }
 
 impl Harness {
@@ -40,6 +41,7 @@ impl Harness {
             inbound,
             links,
             capacity,
+            retired: Vec::new(),
         }
     }
 
@@ -54,6 +56,7 @@ impl Harness {
             self.capacity,
             &self.inbound,
             make_link,
+            |peer_id| self.retired.push(peer_id),
         )
     }
 
@@ -220,6 +223,7 @@ fn disabled_callback_rejects_once_without_evaluating_or_publishing_requests() {
                 harness.capacity,
                 &harness.inbound,
                 make_link,
+                |_| panic!("disabled input must not retire a session"),
             )
         },
         |first, result| replies.push((*first, result)),
@@ -256,6 +260,63 @@ fn late_invalid_request_discards_every_staged_new_session_and_answers_first() {
     );
 }
 
+#[test]
+fn capability_eligibility_is_captured_only_by_a_committed_new_owner() {
+    use super::peripheral::{capability_read_allowed, prepare_listener_liveness};
+    let mut harness = Harness::new(2, 2);
+    let _legacy_link = harness.add_session(peer(1), InboundProfile::Native, 2, 8);
+    let prepare = |request: &WriteRequest<u8>, profile: InboundProfile, control, data| {
+        prepare_listener_liveness(&data, true, true, profile.protocol());
+        make_link(request, profile, control, data)
+    };
+    assert_eq!(
+        admit_write_batch(
+            true,
+            [
+                Ok(control_request(peer(2), hello())),
+                Err(WriteError::InvalidOffset)
+            ],
+            &mut harness.sessions,
+            harness.capacity,
+            &harness.inbound,
+            prepare,
+            |_| panic!("rollback must not retire an owner"),
+        ),
+        Err(WriteError::InvalidOffset)
+    );
+    harness.assert_no_new_link();
+    assert_eq!(harness.sessions.len(), 1);
+    assert!(!capability_read_allowed(
+        true,
+        true,
+        harness.sessions.get(&peer(1))
+    ));
+    assert_eq!(
+        admit_write_batch(
+            true,
+            [Ok(control_request(peer(2), hello()))],
+            &mut harness.sessions,
+            harness.capacity,
+            &harness.inbound,
+            prepare,
+            |_| panic!("new owner must not retire legacy peer"),
+        ),
+        Ok(())
+    );
+    let link = harness.links.try_recv().unwrap();
+    let capable = harness.sessions.get(&peer(2)).unwrap();
+    assert!(capability_read_allowed(true, true, Some(capable)));
+    assert!(capable
+        .data_tx
+        .notifications()
+        .same_session(&link.data.notifications()));
+    assert!(!capability_read_allowed(
+        true,
+        true,
+        harness.sessions.get(&peer(1))
+    ));
+}
+
 #[tokio::test]
 async fn late_decode_error_rolls_back_existing_control_and_data_reservations() {
     let mut harness = Harness::new(2, 2);
@@ -286,6 +347,29 @@ async fn late_decode_error_rolls_back_existing_control_and_data_reservations() {
     assert_eq!(session.control_tx.capacity(), 2);
     assert!(session.data_tx.try_reserve(Box::from([0; 5])).is_ok());
     assert_eq!(harness.inbound.capacity(), 2);
+}
+
+#[tokio::test]
+async fn obsolete_attribute_in_a_mixed_batch_cannot_publish_a_current_prefix() {
+    let mut harness = Harness::new(1, 1);
+    let mut existing = harness.add_session(peer(1), InboundProfile::Native, 2, 8);
+    // The publication fence maps an old same-UUID characteristic to Unsupported before this
+    // shared all-or-none admission seam. No earlier current-service input may escape the batch.
+    assert_eq!(
+        harness.admit([
+            Ok(request(peer(1), WriteTarget::Data, &[1, 2])),
+            Ok(request(peer(1), WriteTarget::Unsupported, &[3])),
+        ]),
+        Err(WriteError::WriteNotPermitted),
+    );
+    assert_no_data(&mut existing.data).await;
+    assert_eq!(harness.sessions.len(), 1);
+    harness.assert_no_new_link();
+    assert_eq!(
+        harness.admit([Ok(request(peer(1), WriteTarget::Data, &[4]))]),
+        Ok(()),
+    );
+    assert_eq!(receive_data(&mut existing.data).await.as_ref(), &[4]);
 }
 
 #[test]
@@ -328,6 +412,7 @@ fn closed_inbound_receiver_does_not_insert_a_session() {
             1,
             &inbound,
             make_link,
+            |_| panic!("closed input must not retire a session"),
         ),
         Err(WriteError::InsufficientResources)
     );
@@ -430,6 +515,170 @@ async fn late_data_budget_failure_refunds_prior_data_and_control_reservations() 
     let session = harness.sessions.get(&peer(1)).unwrap();
     assert_eq!(session.control_tx.capacity(), 1);
     assert!(session.data_tx.try_reserve(Box::from([0; 2])).is_ok());
+}
+
+#[tokio::test]
+async fn fresh_greeting_cannot_evict_a_healthy_settled_session() {
+    let mut harness = Harness::new(1, 1);
+    let mut old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    let _owner = old.data.notifications().settled_owner();
+    let original = old.data.notifications();
+    assert_eq!(
+        harness.admit([
+            Ok(control_request(peer(1), hello())),
+            Ok(request(peer(1), WriteTarget::Data, &[7])),
+            Ok(control_request(peer(1), welcome())),
+        ]),
+        Ok(())
+    );
+    harness.assert_no_new_link();
+    assert!(harness.retired.is_empty());
+    assert!(original.same_session(
+        harness
+            .sessions
+            .get(&peer(1))
+            .unwrap()
+            .data_tx
+            .notifications()
+    ));
+    assert_eq!(old.control.try_recv(), Ok(hello()));
+    assert_eq!(old.control.try_recv(), Ok(welcome()));
+    assert_eq!(&*receive_data(&mut old.data).await, &[7]);
+}
+
+#[tokio::test]
+async fn closed_control_receiver_is_not_authority_to_evict_a_settled_owner() {
+    let mut harness = Harness::new(1, 1);
+    let mut old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    let _owner = old.data.notifications().settled_owner();
+    old.control.close();
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), hello()))]),
+        Err(WriteError::InsufficientResources)
+    );
+    harness.assert_no_new_link();
+    assert!(harness.retired.is_empty());
+    assert_eq!(
+        harness.admit([Ok(request(peer(1), WriteTarget::Data, &[7]))]),
+        Ok(())
+    );
+    assert_eq!(&*receive_data(&mut old.data).await, &[7]);
+}
+
+#[tokio::test]
+async fn failed_handshake_replacement_requires_both_receivers_to_end() {
+    let mut harness = Harness::new(1, 1);
+    let old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    drop(old.control);
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), hello()))]),
+        Err(WriteError::InsufficientResources)
+    );
+    harness.assert_no_new_link();
+    drop(old.data);
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), hello()))]),
+        Ok(())
+    );
+    let mut replacement = harness.links.try_recv().unwrap();
+    assert_eq!(replacement.control.try_recv(), Ok(hello()));
+    assert_eq!(harness.retired.len(), 1);
+}
+
+#[tokio::test]
+async fn fresh_hello_replaces_only_an_explicitly_retired_peer() {
+    let mut harness = Harness::new(1, 1);
+    let old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    // The exact settled control owner ended, but an old data pump can still be
+    // awaiting an upgrade. A Hello alone must not create this retirement fact.
+    let owner = old.data.notifications().settled_owner();
+    drop(owner);
+    drop(old.control);
+    let mut old_data = old.data;
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), hello()))]),
+        Ok(())
+    );
+    let mut replacement = harness.links.try_recv().unwrap();
+    assert_eq!(replacement.control.try_recv(), Ok(hello()));
+    assert_eq!(harness.sessions.len(), 1);
+    assert_eq!(harness.retired.len(), 1);
+    assert!(harness.retired[0] == peer(1));
+    assert!(old_data.recv().await.is_none());
+    assert_eq!(
+        harness.admit([Ok(request(peer(1), WriteTarget::Data, &[7]))]),
+        Ok(())
+    );
+    assert_eq!(&*receive_data(&mut replacement.data).await, &[7]);
+}
+
+#[tokio::test]
+async fn refused_replacement_preserves_the_old_session_and_pending_upgrade() {
+    // This checks the admission transaction only. Production independently reaps
+    // already-retired sessions before admission, even if the incoming batch is invalid.
+    let mut harness = Harness::new(1, 1);
+    let old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    drop(old.data.notifications().settled_owner());
+    drop(old.control);
+    let mut old_data = old.data;
+    assert_eq!(
+        harness.admit([
+            Ok(control_request(peer(1), hello())),
+            Ok(request(peer(1), WriteTarget::Data, &[7])),
+            Ok(request(peer(1), WriteTarget::Control, &[0xff])),
+        ]),
+        Err(WriteError::InvalidValueLength)
+    );
+    assert!(harness.retired.is_empty());
+    harness.assert_no_new_link();
+    assert_eq!(harness.inbound.capacity(), 1);
+    assert!(harness
+        .sessions
+        .get(&peer(1))
+        .unwrap()
+        .control_tx
+        .is_closed());
+    assert_no_data(&mut old_data).await;
+
+    // A foreign peer cannot use the replacement to exceed the session bound.
+    assert_eq!(
+        harness.admit([
+            Ok(control_request(peer(1), hello())),
+            Ok(control_request(peer(2), hello())),
+        ]),
+        Err(WriteError::InsufficientResources)
+    );
+    assert!(harness.retired.is_empty());
+    harness.assert_no_new_link();
+    assert_no_data(&mut old_data).await;
+}
+
+#[tokio::test]
+async fn only_a_fresh_hello_can_replace_an_explicitly_retired_session() {
+    let mut harness = Harness::new(2, 1);
+    let old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    drop(old.data.notifications().settled_owner());
+    drop(old.control);
+    let mut old_data = old.data;
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), welcome()))]),
+        Err(WriteError::InsufficientResources)
+    );
+    assert!(harness.retired.is_empty());
+    assert_no_data(&mut old_data).await;
+
+    // The inbound slot is still mandatory even though replacement reuses the
+    // existing session's capacity. No old owner is retired while it is full.
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(2), hello()))]),
+        Ok(())
+    );
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), hello()))]),
+        Err(WriteError::InsufficientResources)
+    );
+    assert!(harness.retired.is_empty());
+    assert_no_data(&mut old_data).await;
 }
 
 #[tokio::test]

@@ -11,7 +11,7 @@ use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender, TrySendError};
 use embassy_sync::semaphore::{FairSemaphore, Semaphore, SemaphoreReleaser};
 use embassy_sync::signal::Signal;
-use embassy_time::{with_timeout, Duration, Timer};
+use embassy_time::{with_deadline, with_timeout, Duration, Instant, Timer};
 
 use nrf_softdevice::ble::{
     central, gatt_client, gatt_server, l2cap, peripheral, Address, Connection, GattError, TxPower,
@@ -20,8 +20,12 @@ use nrf_softdevice::{raw, RawError, SocEvent, Softdevice};
 
 use personal_rns::bluetooth_auto::connection_slots::{
     ConnectionSlotDataOwners, ConnectionSlotLease, ConnectionSlotLinkLease, ConnectionSlotOwners,
-    ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
+    ConnectionSlotParts, ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
     ConnectionSlotWorkerLease, ReadyConnectionSlot, ReadyConnectionSlotParts,
+};
+use personal_rns::bluetooth_auto::control_io::{
+    availability::AvailabilityWaiters, slot_claims::SlotClaims, ControlCompletion, ControlIoError,
+    GattWriteArbiter, NotificationCompletion, CONTROL_OPERATION_TIMEOUT,
 };
 use personal_rns::bluetooth_auto::{
     BluetoothAutoShared, BluetoothAutoStatus, FrameLease, FramePoolError, SharedFramePool,
@@ -33,16 +37,17 @@ use personal_rns::interfaces::bluetooth_auto::{
     CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
-    RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleControl, BleEvent, BleLink, BleLinkParts, BleSink, BleSource,
+    DialOutcome, Origin, RadioMode, ScanningMode,
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 
 pub(super) use super::bluetooth_gatt_server::Server;
-use super::bluetooth_gatt_server::{ServerWrite, WriteDelivery, WriteTarget};
+use super::bluetooth_gatt_server::{ServerEvent, ServerWrite, WriteDelivery, WriteTarget};
 
 type Mtx = CriticalSectionRawMutex;
-type GattValue = heapless09::Vec<u8, 244>;
+const GATT_VALUE_CAPACITY: usize = 244;
+type GattValue = heapless09::Vec<u8, GATT_VALUE_CAPACITY>;
 
 pub(super) const MEMBERS: usize = NrfBleBackend::MAX_PEERS;
 pub(super) const BLE_SUPERVISOR_ID: InterfaceId =
@@ -102,27 +107,23 @@ const L2CAP_SETUP_RETRY: Duration = Duration::from_millis(150);
 
 struct L2capPool {
     buffers: [UnsafeCell<[u8; L2CAP_MTU]>; L2CAP_POOL],
-    free: [AtomicBool; L2CAP_POOL],
+    claims: SlotClaims<L2CAP_POOL>,
 }
 
-// SAFETY: A slot is handed out only after its AtomicBool changes true -> false with AcqRel, and it
+// SAFETY: A slot is handed out only after its claim flag changes false -> true with AcqRel, and it
 // returns to the pool only when its unique L2capPacket is dropped. No two threads can access the
 // same UnsafeCell while it is claimed.
 unsafe impl Sync for L2capPool {}
 
 static L2CAP_POOL_STORE: L2capPool = L2capPool {
     buffers: [const { UnsafeCell::new([0u8; L2CAP_MTU]) }; L2CAP_POOL],
-    free: [const { AtomicBool::new(true) }; L2CAP_POOL],
+    claims: SlotClaims::new(),
 };
 
 impl L2capPool {
     fn claim(&self) -> Option<NonNull<u8>> {
-        for slot in 0..L2CAP_POOL {
-            if self.free[slot].swap(false, Ordering::AcqRel) {
-                return NonNull::new(self.buffers[slot].get().cast());
-            }
-        }
-        None
+        let slot = self.claims.claim()?;
+        NonNull::new(self.buffers[slot].get().cast())
     }
 
     fn release(&self, ptr: NonNull<u8>) {
@@ -130,7 +131,7 @@ impl L2capPool {
         let slot =
             (ptr.as_ptr() as usize - base) / core::mem::size_of::<UnsafeCell<[u8; L2CAP_MTU]>>();
         if slot < L2CAP_POOL {
-            self.free[slot].store(true, Ordering::Release);
+            self.claims.release(slot);
         }
     }
 }
@@ -237,6 +238,20 @@ struct NativeReticulumClient {
     data: GattValue,
 }
 
+impl NativeReticulumClient {
+    // The generated value-taking wrappers copy bytes into a 244-byte GattValue held across the
+    // write response. Use their discovered handles and the identical acknowledged-write API
+    // directly: the existing wire/frame owner already keeps these bounded slices alive.
+    async fn write_native_bytes(&self, handle: u16, bytes: &[u8]) -> Result<(), ControlIoError> {
+        if bytes.len() > GATT_VALUE_CAPACITY {
+            return Err(ControlIoError);
+        }
+        gatt_client::write(&self.conn, handle, bytes)
+            .await
+            .map_err(|_| ControlIoError)
+    }
+}
+
 #[nrf_softdevice::gatt_client(uuid = "37145b00-442d-4a94-917f-8f42c5da28e3")]
 struct ColumbaReticulumClient {
     #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e4", read, notify)]
@@ -245,6 +260,19 @@ struct ColumbaReticulumClient {
     rx: GattValue,
     #[characteristic(uuid = "37145b00-442d-4a94-917f-8f42c5da28e6", read)]
     identity: GattValue,
+}
+
+impl ColumbaReticulumClient {
+    // Use the generated wrapper's discovered handle and native call, borrowing the encoded
+    // fragment instead of retaining a second GATT-sized payload while backpressure is pending.
+    async fn write_fragment_bytes(&self, bytes: &[u8]) -> Result<(), ControlIoError> {
+        if bytes.len() > GATT_VALUE_CAPACITY {
+            return Err(ControlIoError);
+        }
+        gatt_client::write_without_response(&self.conn, self.rx_value_handle, bytes)
+            .await
+            .map_err(|_| ControlIoError)
+    }
 }
 
 pub(super) fn set_columba_identity(sd: &Softdevice, server: &Server, identity: BleIdentity) {
@@ -323,8 +351,8 @@ const _: () = assert!(CONTROL_MAX_LEN <= u8::MAX as usize);
 
 struct ControlWirePool {
     bytes: [UnsafeCell<[u8; CONTROL_MAX_LEN]>; CONTROL_WIRE_SLOTS],
-    free: [AtomicBool; CONTROL_WIRE_SLOTS],
-    available: Signal<Mtx, ()>,
+    claims: SlotClaims<CONTROL_WIRE_SLOTS>,
+    available: AvailabilityWaiters<Mtx, { POOL * 2 }>,
 }
 
 // SAFETY: `claim` changes exactly one slot from free to owned before exposing its UnsafeCell. The
@@ -336,23 +364,13 @@ impl ControlWirePool {
     const fn new() -> Self {
         Self {
             bytes: [const { UnsafeCell::new([0; CONTROL_MAX_LEN]) }; CONTROL_WIRE_SLOTS],
-            free: [const { AtomicBool::new(true) }; CONTROL_WIRE_SLOTS],
-            available: Signal::new(),
+            claims: SlotClaims::new(),
+            available: AvailabilityWaiters::new(),
         }
     }
 
     fn claim(&self) -> Option<u8> {
-        let mut index = 0;
-        while index < CONTROL_WIRE_SLOTS {
-            if self.free[index]
-                .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                return Some(index as u8);
-            }
-            index += 1;
-        }
-        None
+        self.claims.claim().map(|index| index as u8)
     }
 
     fn encode(&self, index: u8, control: &Control) -> Option<u8> {
@@ -377,8 +395,12 @@ impl ControlWirePool {
     }
 
     fn release(&self, index: u8) {
-        self.free[usize::from(index)].store(true, Ordering::Release);
-        self.available.signal(());
+        self.claims.release(usize::from(index));
+        self.available.notify_all();
+    }
+
+    async fn wait_available(&self) {
+        self.available.wait(|| self.claims.any_available()).await
     }
 }
 
@@ -522,6 +544,7 @@ impl ControlOutbox {
 struct LinkChannels {
     control_in: ControlOutbox,
     control_out: ControlOutbox,
+    control_completion: ControlCompletion<Mtx>,
     data_in: Channel<Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     data_out: Channel<Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     acknowledged_writes: Channel<Mtx, ServerWrite, 1>,
@@ -543,6 +566,7 @@ impl LinkChannels {
         Self {
             control_in: ControlOutbox::new(),
             control_out: ControlOutbox::new(),
+            control_completion: ControlCompletion::new(),
             data_in: Channel::new(),
             data_out: Channel::new(),
             acknowledged_writes: Channel::new(),
@@ -579,6 +603,7 @@ impl LinkChannels {
         self.peer_protocol.lock(|current| current.set(None));
         self.control_in.reset();
         self.control_out.reset();
+        self.control_completion.reset();
         self.data_in.clear();
         self.data_out.clear();
         self.acknowledged_writes.clear();
@@ -589,8 +614,12 @@ impl LinkChannels {
     fn link(&'static self, slot: BleSlotLink) -> NrfBleLink {
         NrfBleLink {
             peer_protocol: self.peer_protocol().unwrap_or(PeerProtocol::Native),
-            control_in: &self.control_in,
-            control_out: &self.control_out,
+            control: NrfBleControl {
+                control_in: &self.control_in,
+                control_out: &self.control_out,
+                completion: &self.control_completion,
+                slot,
+            },
             data_in: self.data_in.receiver(),
             data_out: self.data_out.sender(),
             identity_in: &self.identity_in,
@@ -598,7 +627,6 @@ impl LinkChannels {
             data_plane: &self.data_plane,
             plan: L2capPlan::None,
             address: self.address(),
-            slot,
         }
     }
 }
@@ -790,8 +818,7 @@ impl BleBackend<{ NrfBleBackend::MAX_PEERS }> for NrfBleBackend {
 
 pub(super) struct NrfBleLink {
     peer_protocol: PeerProtocol,
-    control_in: &'static ControlOutbox,
-    control_out: &'static ControlOutbox,
+    control: NrfBleControl,
     data_in: Receiver<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     data_out: Sender<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     identity_in: &'static Signal<Mtx, BleIdentity>,
@@ -799,13 +826,96 @@ pub(super) struct NrfBleLink {
     data_plane: &'static Signal<Mtx, L2capPlan>,
     plan: L2capPlan,
     address: [u8; 6],
+}
+
+pub(super) struct NrfBleControl {
+    control_in: &'static ControlOutbox,
+    control_out: &'static ControlOutbox,
+    completion: &'static ControlCompletion<Mtx>,
     slot: BleSlotLink,
+}
+
+// Keep canonical decoding outside the receive future's poll state machine. The wire lease stays
+// owned by the caller until this synchronous decode returns, including malformed controls.
+#[inline(never)]
+fn decode_control(bytes: &[u8]) -> Option<Control> {
+    Control::decode(bytes)
+}
+
+impl BleControl for NrfBleControl {
+    type Error = Closed;
+
+    async fn send(&mut self, msg: &Control) -> Result<(), Closed> {
+        let result = async {
+            let ticket = self
+                .completion
+                .start(msg, Instant::now())
+                .map_err(|_| Closed)?;
+            let operation = async {
+                if !self.completion.submitted(ticket) {
+                    loop {
+                        let mut admission = ControlOutboxAdmission::PoolExhausted;
+                        let admitted = self
+                            .completion
+                            .admit_with(ticket, Instant::now(), || {
+                                admission = self.control_out.try_enqueue(msg);
+                                matches!(admission, ControlOutboxAdmission::Enqueued)
+                            })
+                            .map_err(|_| Closed)?;
+                        if admitted {
+                            break;
+                        }
+                        match admission {
+                            ControlOutboxAdmission::InvalidControl => return Err(Closed),
+                            ControlOutboxAdmission::Occupied => {
+                                self.control_out.consumed.wait().await
+                            }
+                            _ => CONTROL_WIRES.wait_available().await,
+                        }
+                    }
+                }
+                self.completion.wait(ticket).await.map_err(|_| Closed)?;
+                self.completion.acknowledge(ticket).map_err(|_| Closed)
+            };
+            match select(
+                with_deadline(ticket.deadline(), operation),
+                self.slot.wait_for_close(),
+            )
+            .await
+            {
+                Either::First(Ok(result)) => result,
+                _ => Err(Closed),
+            }
+        }
+        .await;
+        if result.is_err() {
+            self.completion.retire();
+            self.slot.request_close();
+        }
+        result
+    }
+
+    async fn recv(&mut self) -> Result<Control, Closed> {
+        loop {
+            match select(self.control_in.wait(), self.slot.wait_for_close()).await {
+                Either::First(wire) => {
+                    let control = decode_control(wire.as_bytes());
+                    drop(wire);
+                    if let Some(control) = control {
+                        return Ok(control);
+                    }
+                }
+                Either::Second(()) => return Err(Closed),
+            }
+        }
+    }
 }
 
 impl BleLink for NrfBleLink {
     type Error = Closed;
     type Source = NrfBleSource;
     type Sink = NrfBleSink;
+    type Control = NrfBleControl;
 
     fn peer_protocol(&self) -> PeerProtocol {
         self.peer_protocol
@@ -816,44 +926,27 @@ impl BleLink for NrfBleLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), Closed> {
-        loop {
-            let available = match self.control_out.try_enqueue(msg) {
-                ControlOutboxAdmission::Enqueued => return Ok(()),
-                ControlOutboxAdmission::InvalidControl => return Err(Closed),
-                ControlOutboxAdmission::Occupied => &self.control_out.consumed,
-                ControlOutboxAdmission::PoolExhausted => &CONTROL_WIRES.available,
-            };
-            match select(available.wait(), self.slot.wait_for_close()).await {
-                Either::First(()) => {}
-                Either::Second(()) => return Err(Closed),
-            }
-        }
+        self.control.send(msg).await
     }
 
     async fn control_recv(&mut self) -> Result<Control, Closed> {
-        loop {
-            match select(self.control_in.wait(), self.slot.wait_for_close()).await {
-                Either::First(wire) => {
-                    let control = Control::decode(wire.as_bytes());
-                    drop(wire);
-                    if let Some(control) = control {
-                        return Ok(control);
-                    }
-                }
-                Either::Second(()) => return Err(Closed),
-            }
-        }
+        self.control.recv().await
     }
 
     async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, Closed> {
-        match select(self.identity_in.wait(), self.slot.wait_for_close()).await {
+        match select(self.identity_in.wait(), self.control.slot.wait_for_close()).await {
             Either::First(identity) => Ok(identity),
             Either::Second(()) => Err(Closed),
         }
     }
 
     async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), Closed> {
-        match select(self.identity_out.send(identity), self.slot.wait_for_close()).await {
+        match select(
+            self.identity_out.send(identity),
+            self.control.slot.wait_for_close(),
+        )
+        .await
+        {
             Either::First(()) => Ok(()),
             Either::Second(()) => Err(Closed),
         }
@@ -864,22 +957,48 @@ impl BleLink for NrfBleLink {
         Ok(())
     }
 
-    fn into_data(self) -> (NrfBleSource, NrfBleSink) {
+    fn into_parts(self) -> BleLinkParts<NrfBleSource, NrfBleSink, NrfBleControl> {
         self.data_plane.signal(self.plan);
-        let ConnectionSlotDataOwners {
-            source: source_slot,
-            sink: sink_slot,
-        } = self.slot.into_data();
-        (
-            NrfBleSource {
+        let NrfBleControl {
+            control_in,
+            control_out,
+            completion,
+            slot,
+        } = self.control;
+        let (source_slot, sink_slot, control) = match self.peer_protocol {
+            PeerProtocol::Native => {
+                let ConnectionSlotParts {
+                    source,
+                    sink,
+                    control,
+                } = slot.into_parts();
+                (
+                    source,
+                    sink,
+                    Some(NrfBleControl {
+                        control_in,
+                        control_out,
+                        completion,
+                        slot: control,
+                    }),
+                )
+            }
+            PeerProtocol::Columba => {
+                let ConnectionSlotDataOwners { source, sink } = slot.into_data();
+                (source, sink, None)
+            }
+        };
+        BleLinkParts {
+            source: NrfBleSource {
                 data_in: self.data_in,
                 slot: source_slot,
             },
-            NrfBleSink {
+            sink: NrfBleSink {
                 data_out: self.data_out,
                 slot: sink_slot,
             },
-        )
+            control,
+        }
     }
 }
 
@@ -1003,33 +1122,60 @@ enum ServerNotification {
     ColumbaData,
 }
 
-async fn notify_with_backpressure(
-    server: &Server,
-    conn: &Connection,
-    target: ServerNotification,
-    bytes: &[u8],
-) -> Result<(), Closed> {
-    loop {
-        // Keep the 244-byte GATT value inside this synchronous scope. Retaining it across the
-        // retry await would inflate every one of the seven pooled slot futures by that amount.
-        let result = {
-            let value = GattValue::from_slice(bytes).map_err(|_| Closed)?;
-            match target {
-                ServerNotification::Control => server.notify_control(conn, &value),
-                ServerNotification::NativeData => server.notify_native_data(conn, &value),
-                ServerNotification::ColumbaData => server.notify_columba_data(conn, &value),
+struct NotificationWriter<'a> {
+    server: &'a Server,
+    connection: &'a Connection,
+    writes: &'a GattWriteArbiter<'a, Mtx>,
+    completion: &'a NotificationCompletion<Mtx>,
+}
+
+impl NotificationWriter<'_> {
+    async fn write(
+        &self,
+        target: ServerNotification,
+        bytes: &[u8],
+        deadline: Instant,
+    ) -> Result<(), Closed> {
+        // Pin at the owning worker instead of passing an owned future through another async
+        // wrapper; otherwise Rust retains two copies in every statically pooled slot task.
+        // Move the borrowed inputs into it so separate captured argument slots need not survive.
+        let writes = self.writes;
+        let operation = core::pin::pin!(async move {
+            // Register before submission so an immediate connection-local completion is retained.
+            self.completion.begin()?;
+            if bytes.len() > GATT_VALUE_CAPACITY {
+                return Err(ControlIoError);
             }
-        };
-        match result {
-            Ok(()) => return Ok(()),
-            Err(gatt_server::NotifyValueError::Raw(RawError::Resources)) => {
-                // S140's default notification queue is intentionally one entry: increasing it for
-                // all seven reserved connections would exceed this target's RAM budget. Yield
-                // until the next link event drains that entry, then submit this same fragment.
+            loop {
+                // Keep retry state in this operation, not another async wrapper. The owning
+                // wire/frame retains the bytes through retries and native completion.
+                let result = match target {
+                    ServerNotification::Control => {
+                        self.server.notify_control(self.connection, bytes)
+                    }
+                    ServerNotification::NativeData => {
+                        self.server.notify_native_data(self.connection, bytes)
+                    }
+                    ServerNotification::ColumbaData => {
+                        self.server.notify_columba_data(self.connection, bytes)
+                    }
+                };
+                match result {
+                    Ok(()) => break,
+                    Err(gatt_server::NotifyValueError::Raw(RawError::Resources)) => {}
+                    Err(_) => return Err(ControlIoError),
+                }
+                // Preserve the single-entry S140 notification queue. Wait for it to drain,
+                // then retry the same fragment within the original operation deadline.
                 Timer::after(NOTIFY_BACKPRESSURE_RETRY).await;
             }
-            Err(_) => return Err(Closed),
-        }
+            self.completion.wait().await;
+            Ok(())
+        });
+        writes
+            .run_pinned(deadline, operation)
+            .await
+            .map_err(|_| Closed)
     }
 }
 
@@ -1146,31 +1292,32 @@ async fn process_acknowledged_writes(slot: &'static LinkChannels) {
         let admitted = match write.target() {
             WriteTarget::Control => {
                 loop {
-                    let available = match slot.control_in.try_enqueue_wire(write.value()) {
+                    match slot.control_in.try_enqueue_wire(write.value()) {
                         ControlOutboxAdmission::Enqueued => {
                             if slot.peer_protocol().is_none() {
                                 slot.set_peer_protocol(PeerProtocol::Native);
                             }
                             break;
                         }
-                        ControlOutboxAdmission::Occupied => &slot.control_in.consumed,
-                        ControlOutboxAdmission::PoolExhausted => &CONTROL_WIRES.available,
+                        ControlOutboxAdmission::Occupied => slot.control_in.consumed.wait().await,
+                        ControlOutboxAdmission::PoolExhausted => {
+                            CONTROL_WIRES.wait_available().await
+                        }
                         ControlOutboxAdmission::InvalidControl => break,
-                    };
-                    available.wait().await;
+                    }
                 }
                 true
             }
             WriteTarget::Data => {
-                if let Some(fragment) = Fragment::decode(write.value()) {
-                    match reassembler.absorb(&fragment) {
-                        Some(frame) => admit_inbound_frame_with_backpressure(&data_in_tx, frame)
-                            .await
-                            .is_ok(),
-                        None => true,
-                    }
-                } else {
-                    true
+                // Absorption copies the fragment into the reassembler. End the decoded view's
+                // lifetime before waiting for frame capacity; the acknowledged write stays owned.
+                let frame = Fragment::decode(write.value())
+                    .and_then(|fragment| reassembler.absorb(&fragment));
+                match frame {
+                    Some(frame) => admit_inbound_frame_with_backpressure(&data_in_tx, frame)
+                        .await
+                        .is_ok(),
+                    None => true,
                 }
             }
             WriteTarget::ColumbaRx => {
@@ -1181,17 +1328,13 @@ async fn process_acknowledged_writes(slot: &'static LinkChannels) {
                     slot.set_peer_protocol(PeerProtocol::Columba);
                     true
                 } else if slot.peer_protocol() == Some(PeerProtocol::Columba) {
-                    if let Some(fragment) = Fragment::decode(write.value()) {
-                        match reassembler.absorb(&fragment) {
-                            Some(frame) => {
-                                admit_inbound_frame_with_backpressure(&data_in_tx, frame)
-                                    .await
-                                    .is_ok()
-                            }
-                            None => true,
-                        }
-                    } else {
-                        true
+                    let frame = Fragment::decode(write.value())
+                        .and_then(|fragment| reassembler.absorb(&fragment));
+                    match frame {
+                        Some(frame) => admit_inbound_frame_with_backpressure(&data_in_tx, frame)
+                            .await
+                            .is_ok(),
+                        None => true,
                     }
                 } else {
                     true
@@ -1262,21 +1405,39 @@ async fn serve_peripheral(
     let data_in_tx = slot.data_in.sender();
     let mut unacknowledged_reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
 
-    let inbound = gatt_server::run(conn, server, |write| match write.delivery() {
-        WriteDelivery::Acknowledged => {
-            if let Err(TrySendError::Full(write)) = slot.acknowledged_writes.try_send(write) {
-                BluetoothAutoStatus::new(&BLE_SHARED).note_ingress_pressure();
-                write.reject(GattError::ATTERR_INSUF_RESOURCES);
+    let writes = GattWriteArbiter::new(worker);
+    let notifications = NotificationCompletion::new();
+    let notifier = NotificationWriter {
+        server,
+        connection: conn,
+        writes: &writes,
+        completion: &notifications,
+    };
+
+    let inbound = gatt_server::run(conn, server, |event| {
+        let write = match event {
+            ServerEvent::NotificationComplete(count) => {
+                notifications.completed(count);
+                return;
             }
-        }
-        WriteDelivery::Unacknowledged => {
-            let _ = process_unacknowledged_write(
-                &write,
-                slot,
-                &data_in_tx,
-                &mut unacknowledged_reassembler,
-            );
-            write.accept();
+            ServerEvent::Write(write) => write,
+        };
+        match write.delivery() {
+            WriteDelivery::Acknowledged => {
+                if let Err(TrySendError::Full(write)) = slot.acknowledged_writes.try_send(write) {
+                    BluetoothAutoStatus::new(&BLE_SHARED).note_ingress_pressure();
+                    write.reject(GattError::ATTERR_INSUF_RESOURCES);
+                }
+            }
+            WriteDelivery::Unacknowledged => {
+                let _ = process_unacknowledged_write(
+                    &write,
+                    slot,
+                    &data_in_tx,
+                    &mut unacknowledged_reassembler,
+                );
+                write.accept();
+            }
         }
     });
     let acknowledged = process_acknowledged_writes(slot);
@@ -1290,15 +1451,20 @@ async fn serve_peripheral(
     let control_outbound = async {
         loop {
             let wire = slot.control_out.wait().await;
-            let sent = notify_with_backpressure(
-                server,
-                conn,
-                ServerNotification::Control,
-                wire.as_bytes(),
-            )
-            .await
-            .is_ok();
+            let Some(ticket) = slot.control_completion.pending_ticket() else {
+                worker.request_close();
+                return;
+            };
+            let sent = notifier
+                .write(
+                    ServerNotification::Control,
+                    wire.as_bytes(),
+                    ticket.deadline(),
+                )
+                .await
+                .is_ok();
             drop(wire);
+            slot.control_completion.complete(ticket, sent);
             if !sent {
                 return;
             }
@@ -1324,14 +1490,26 @@ async fn serve_peripheral(
             None => loop {
                 let frame = data_out_rx.receive().await;
                 let frame = frame.lock().await;
-                for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
+                let mut fragments = fragments_of(&frame, GATT_FRAGMENT_PAYLOAD);
+                loop {
                     let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
-                    if let Some(n) = fragment.encode(&mut buf) {
+                    let encoded = {
+                        let Some(fragment) = fragments.next() else {
+                            break;
+                        };
+                        fragment.encode(&mut buf)
+                    };
+                    if let Some(n) = encoded {
                         let target = match protocol {
                             PeerProtocol::Native => ServerNotification::NativeData,
                             PeerProtocol::Columba => ServerNotification::ColumbaData,
                         };
-                        if notify_with_backpressure(server, conn, target, &buf[..n])
+                        if notifier
+                            .write(
+                                target,
+                                &buf[..n],
+                                Instant::now() + CONTROL_OPERATION_TIMEOUT,
+                            )
                             .await
                             .is_err()
                         {
@@ -1468,15 +1646,27 @@ async fn serve_native_central(
         }
     });
 
+    let writes = GattWriteArbiter::new(worker);
     let control_outbound = async {
         loop {
             let wire = slot.control_out.wait().await;
-            let sent = match GattValue::from_slice(wire.as_bytes()) {
-                Ok(value) => client.control_write(&value).await.is_ok(),
-                Err(_) => false,
+            let Some(ticket) = slot.control_completion.pending_ticket() else {
+                worker.request_close();
+                return;
+            };
+            let sent = {
+                let operation = core::pin::pin!(
+                    client.write_native_bytes(client.control_value_handle, wire.as_bytes())
+                );
+                writes
+                    .run_pinned(ticket.deadline(), operation)
+                    .await
+                    .is_ok()
             };
             drop(wire);
+            slot.control_completion.complete(ticket, sent);
             if !sent {
+                worker.request_close();
                 return;
             }
         }
@@ -1504,10 +1694,15 @@ async fn serve_native_central(
                 for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
                     let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                     if let Some(n) = fragment.encode(&mut buf) {
-                        if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                            if client.data_write(&value).await.is_err() {
-                                return;
-                            }
+                        let operation = core::pin::pin!(
+                            client.write_native_bytes(client.data_value_handle, &buf[..n])
+                        );
+                        if writes
+                            .run_pinned(Instant::now() + CONTROL_OPERATION_TIMEOUT, operation)
+                            .await
+                            .is_err()
+                        {
+                            return;
                         }
                     }
                 }
@@ -1577,10 +1772,8 @@ async fn serve_columba_central(
             for fragment in fragments_of(&frame, GATT_FRAGMENT_PAYLOAD) {
                 let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
                 if let Some(n) = fragment.encode(&mut buf) {
-                    if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                        if client.rx_write_without_response(&value).await.is_err() {
-                            return;
-                        }
+                    if client.write_fragment_bytes(&buf[..n]).await.is_err() {
+                        return;
                     }
                 }
             }

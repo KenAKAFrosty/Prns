@@ -6,8 +6,9 @@ declare const brand: unique symbol;
 type Brand<Name extends string> = { readonly [brand]: Name };
 type BrandedBytes<Name extends string> = Uint8Array & Brand<Name>;
 
+export const HOST_SEMANTIC_FINGERPRINT = "b5ca02be1ea5d61771f3a75eacb4d44447f99754adbeb02b6cd98537ed2fa239";
 export const HOST_CONTRACT_ABI = 1;
-export const HOST_SCHEMA_VERSION = 1;
+export const HOST_SCHEMA_VERSION = 2;
 export const PRODUCT_VERSION = "0.3.7";
 export const DESTINATION_HASH_LENGTH = 16;
 export const IDENTITY_HASH_LENGTH = 16;
@@ -165,6 +166,7 @@ export type PrnsLimits = {
   readonly retainedEventBytes: number;
   readonly diagnostics: number;
 };
+
 
 export function balancedLimits(): PrnsLimits {
   return {
@@ -379,6 +381,19 @@ export function isSerialStopBits(value: unknown): value is SerialStopBits {
   return typeof value === "string" && (SERIAL_STOP_BITS_VALUES as readonly string[]).includes(value);
 }
 
+export type StopReason =
+  | "Requested"
+  | "BackendExited";
+
+export const STOP_REASON_VALUES: readonly StopReason[] = Object.freeze([
+  "Requested",
+  "BackendExited",
+]);
+
+export function isStopReason(value: unknown): value is StopReason {
+  return typeof value === "string" && (STOP_REASON_VALUES as readonly string[]).includes(value);
+}
+
 export const APPLICATION_EVENT_KIND_CODES = Object.freeze({
   SingleDelivery: 100,
   Request: 101,
@@ -459,6 +474,8 @@ export const EVENT_FIELD_CODES = Object.freeze({
   PersistenceCause: 38,
   PersistenceTarget: 39,
   AppData: 40,
+  LocalDestination: 41,
+  ArrivedAtMillis: 42,
 } as const);
 
 export type EventFieldCode = (typeof EVENT_FIELD_CODES)[keyof typeof EVENT_FIELD_CODES];
@@ -1265,6 +1282,8 @@ export type ApplicationEvent =
         readonly linkId: LinkId;
         readonly sourceInterface: InterfaceId;
         readonly plaintext: Uint8Array;
+        readonly localDestination?: DestinationHash;
+        readonly arrivedAtMillis: number;
       }
     >;
 
@@ -1416,6 +1435,87 @@ export type DiagnosticEvent =
         readonly target: PersistenceFlushTarget;
       }
     >;
+
+export type HostConfig = {
+  readonly identity: IdentityConfig;
+  readonly persistence: PersistenceConfig;
+  readonly role: HostRoleName;
+  readonly destinations: readonly DestinationConfig[];
+  readonly requiredCapabilities: readonly CapabilityName[];
+  readonly limits: PrnsLimits;
+};
+
+export type LifecycleSnapshot = {
+  readonly revision: bigint;
+  readonly state: HostLifecycleState;
+};
+
+export type HostFailure =
+  | Tag<
+      "EventBackpressureExceeded",
+      {
+        readonly limits: PrnsLimits;
+        readonly rejectedEventBytes: number;
+      }
+    >
+  | Tag<
+      "BackendFailed",
+      {
+        readonly component: string;
+        readonly detail: string;
+      }
+    >
+  | Tag<
+      "ContractViolated",
+      {
+        readonly detail: string;
+      }
+    >;
+
+export type HostLifecycleState =
+  | Tag<"Starting">
+  | Tag<"Running">
+  | Tag<"Stopping">
+  | Tag<
+      "Stopped",
+      {
+        readonly reason: StopReason;
+      }
+    >
+  | Tag<
+      "Failed",
+      {
+        readonly failure: HostFailure;
+      }
+    >;
+
+export type CommandSettlement =
+  | Tag<"Succeeded", CommandOutcome>
+  | Tag<"Failed", CommandFailure>;
+
+export const COMMAND_OUTCOMES = Object.freeze({
+  Announce: "Announced",
+  SendSinglePacket: "PacketDelivered",
+  CloseLink: "LinkCloseQueued",
+  AttachTcpServer: "InterfaceAttached",
+  AttachTcpClient: "InterfaceAttached",
+  AttachUdp: "InterfaceAttached",
+  DetachInterface: "InterfaceDetached",
+  EstablishLink: "LinkEstablished",
+  RequestPath: "PathDiscovered",
+  Identify: "Identified",
+  SendLinkPacket: "PacketDelivered",
+  Request: "ResponseReceived",
+  Respond: "ResponseSent",
+  SendResource: "ResourceSent",
+  SetLinkResourceStrategy: "ResourceStrategySet",
+  SetDestinationResourceStrategy: "ResourceStrategySet",
+  SendChannelMessage: "PacketDelivered",
+  AllowRequester: "RequesterAllowed",
+  AttachInterface: "InterfaceAttached",
+} as const);
+export type CommandOutcomeFor<Command extends HostCommand> =
+  Command extends HostCommand ? Extract<CommandOutcome, { readonly tag: (typeof COMMAND_OUTCOMES)[Command["tag"]] }> : never;
 
 const HOST_OPERATION_NAMES = [
   "contractInfo",

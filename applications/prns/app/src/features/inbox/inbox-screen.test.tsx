@@ -1,0 +1,1170 @@
+import * as Bindings from "@prns-internal/expo";
+import type {
+  Contact,
+  DevelopmentNodeSnapshot,
+  LxmfMessage,
+  LxmfMessageListOutcome,
+  ListLxmfMessagesInput,
+  LxmfPeerSummary,
+  MeasureLxmfTextOutcome,
+  SendDirectTextOutcome,
+} from "@prns-internal/expo";
+import { act, fireEvent, render, renderHook, waitFor } from "@testing-library/react-native";
+import { destinationHash } from "personal-rns/contract";
+import type { ReactNode } from "react";
+import type { RuntimeCommandResult } from "@/native/development-runtime-context";
+import { ComposeScreen, ConversationScreen, InboxScreen } from "./inbox-screen.native";
+import { useLxmfData } from "./use-lxmf-data";
+const mockReplace = jest.fn();
+const mockDestination = destinationHash(Uint8Array.from({ length: 16 }, (_, index) => index));
+const mockPeer: LxmfPeerSummary = {
+  destination: mockDestination,
+  identity: new Uint8Array(16).fill(0x11),
+  sourceInterface: new Uint8Array(8).fill(0x22),
+  hops: 1,
+  isPathResponse: false,
+  displayName: "Announced peer",
+  requiredStampCost: undefined,
+  lastObservedAgeMillis: 25n,
+};
+const mockMessage: LxmfMessage = {
+  localRecordId: 1n,
+  messageId: Uint8Array.from({ length: 32 }, () => 0x44),
+  source: mockDestination,
+  destination: destinationHash(Uint8Array.from({ length: 16 }, () => 0x55)),
+  timestamp: 1700000000000n,
+  title: Bindings.LxmfText.Utf8.new({
+    value: "Questionable message",
+  }),
+  content: Bindings.LxmfText.InvalidUtf8.new({
+    bytes: Uint8Array.of(0xff, 0xfe),
+  }),
+  direction: Bindings.LxmfDirection.Inbound,
+  verification: Bindings.LxmfVerification.InvalidSignature,
+  deliveryState: Bindings.LxmfDeliveryState.Received.new(),
+};
+const mockFailedMessage: LxmfMessage = {
+  ...mockMessage,
+  localRecordId: 7n,
+  messageId: Uint8Array.from({ length: 32 }, () => 0x77),
+  source: destinationHash(Uint8Array.from({ length: 16 }, () => 0x55)),
+  destination: mockDestination,
+  title: Bindings.LxmfText.Utf8.new({
+    value: "Retry me",
+  }),
+  content: Bindings.LxmfText.Utf8.new({
+    value: "The signed wire must stay identical",
+  }),
+  direction: Bindings.LxmfDirection.Outbound,
+  verification: Bindings.LxmfVerification.Verified,
+  deliveryState: Bindings.LxmfDeliveryState.Failed.new({
+    failedAttempts: 1n,
+    lastFailure: Bindings.LxmfDeliveryFailure.DeliveryTimedOut,
+  }),
+};
+const mockQueuedMessage: LxmfMessage = {
+  ...mockFailedMessage,
+  localRecordId: 8n,
+  messageId: Uint8Array.from({ length: 32 }, () => 0x88),
+  title: Bindings.LxmfText.Utf8.new({
+    value: "Cancel me",
+  }),
+  deliveryState: Bindings.LxmfDeliveryState.Queued.new({
+    failedAttempts: 0n,
+  }),
+};
+const mockContact: Contact = {
+  destination: mockDestination,
+  identity: undefined,
+  alias: "Saved alias",
+  announcedName: "Remembered peer",
+  isMessaging: true,
+  pinned: false,
+};
+const waitingBluetoothAuthorization: Bindings.BluetoothAuthorizationStatus = {
+  authorization: "denied",
+  nativeStart: "notRequested",
+  restorationAttemptRequested: false,
+  revision: 1,
+};
+const mockSnapshot: DevelopmentNodeSnapshot = {
+  contractFingerprint: "test-contract",
+  network: {
+    state: Bindings.LocalNetworkState.Stopped.new(),
+    routes: [],
+    announces: [],
+    activityRevision: 0n,
+    droppedAnnounceCount: 0n,
+  },
+  revision: 3n,
+  runtime: Bindings.DevelopmentNodeRuntime.Running,
+  primaryIdentity: Bindings.PrimaryIdentityState.Missing.new(),
+  localHost: Bindings.LocalHostState.Stopped.new({
+    lastStartFailure: undefined,
+  }),
+  bluetooth: {
+    desiredEnabled: undefined,
+    state: Bindings.LocalBluetoothState.Stopped.new(),
+    peers: [],
+  },
+  lxmf: {
+    state: Bindings.LxmfHealthState.Ready,
+    inboundOverflowCount: 0n,
+    mailboxRevision: 0n,
+    projectionRevision: 0n,
+  },
+  controllerIdentityFingerprint: undefined,
+  pairing: Bindings.RemoteControlPairingState.Searching.new(),
+  pairingCandidates: [],
+  pairedTargets: [],
+  lastAnnouncement: undefined,
+  lastRemoteChange: undefined,
+  generationId: 0n,
+  activeOperation: undefined,
+  failure: undefined,
+};
+const mockListLxmfPeers = jest.fn(async () => ({
+  type: "outcome" as const,
+  outcome: Bindings.LxmfPeerListOutcome.Listed.new({
+    peers: [mockPeer],
+  }),
+}));
+const mockListLxmfMessages = jest.fn(
+  async (
+    _input?: ListLxmfMessagesInput,
+  ): Promise<RuntimeCommandResult<LxmfMessageListOutcome>> => ({
+    type: "outcome",
+    outcome: Bindings.LxmfMessageListOutcome.Listed.new({
+      messages: [mockMessage],
+    }),
+  }),
+);
+const mockListLxmfConversations = jest.fn(
+  async (_input?: {
+    before?: bigint;
+    limit: number;
+  }): Promise<RuntimeCommandResult<LxmfMessageListOutcome>> => ({
+    type: "outcome",
+    outcome: Bindings.LxmfMessageListOutcome.Listed.new({ messages: [mockMessage] }),
+  }),
+);
+const mockMeasureLxmfText = jest.fn(
+  async (): Promise<RuntimeCommandResult<MeasureLxmfTextOutcome>> => ({
+    type: "outcome",
+    outcome: Bindings.MeasureLxmfTextOutcome.Measured.new({
+      wireBytes: 140,
+      remainingBytes: 291,
+    }),
+  }),
+);
+const mockSendDirectText = jest.fn(
+  async (): Promise<RuntimeCommandResult<SendDirectTextOutcome>> => ({
+    type: "outcome",
+    outcome: Bindings.SendDirectTextOutcome.Accepted.new({
+      localRecordId: 2n,
+    }),
+  }),
+);
+const mockRetryLxmfMessage = jest.fn(async () => ({
+  type: "outcome" as const,
+  outcome: Bindings.RetryLxmfMessageOutcome.Accepted.new({
+    localRecordId: 7n,
+  }),
+}));
+const mockCancelLxmfMessage = jest.fn(async () => ({
+  type: "outcome" as const,
+  outcome: Bindings.CancelLxmfMessageOutcome.Cancelled.new({
+    localRecordId: 8n,
+  }),
+}));
+const mockRefreshSnapshot = jest.fn(async () => ({
+  type: "outcome" as const,
+  outcome: mockSnapshot,
+}));
+const mockAnnounceLxmf = jest.fn(async () => ({
+  type: "outcome" as const,
+  outcome: Bindings.AnnounceLxmfOutcome.Requested,
+}));
+const mockListContacts = jest.fn(async () =>
+  Bindings.ContactListOutcome.Listed.new({
+    contacts: [mockContact],
+  }),
+);
+const mockContactRuntime = { listContacts: mockListContacts };
+let mockPhase: "unavailable" | "starting" | "ready" | "failed" = "ready";
+let mockActiveSnapshot: DevelopmentNodeSnapshot | null = mockSnapshot;
+let mockBluetoothAuthorization: Bindings.BluetoothAuthorizationStatus | null = null;
+let mockLifecycleFailure: string | null = null;
+let mockAvailable = true;
+jest.mock("expo-router", () => ({
+  Link: ({ children }: { readonly children: ReactNode }) => children,
+  useRouter: () => ({ replace: mockReplace }),
+}));
+jest.mock("@/native/development-runtime-context", () => ({
+  useDevelopmentRuntime: () => ({
+    availability: { type: mockAvailable ? "available" : "unavailable", platform: "ios" },
+    phase: mockPhase,
+    snapshot: mockActiveSnapshot,
+    bluetoothAuthorization: mockBluetoothAuthorization,
+    lifecycleFailure: mockLifecycleFailure,
+    backgroundFailure: null,
+    refreshSnapshot: mockRefreshSnapshot,
+    listLxmfPeers: mockListLxmfPeers,
+    listLxmfMessages: mockListLxmfMessages,
+    listLxmfConversations: mockListLxmfConversations,
+    retryLxmfMessage: mockRetryLxmfMessage,
+    cancelLxmfMessage: mockCancelLxmfMessage,
+    announceLxmf: mockAnnounceLxmf,
+    measureLxmfText: mockMeasureLxmfText,
+    sendDirectText: mockSendDirectText,
+  }),
+}));
+jest.mock("@/native/contact-runtime-context", () => ({
+  useContactRuntime: () => ({
+    availability: { type: "available", platform: "ios" },
+    runtime: mockContactRuntime,
+  }),
+}));
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockPhase = "ready";
+  mockActiveSnapshot = mockSnapshot;
+  mockBluetoothAuthorization = null;
+  mockLifecycleFailure = null;
+  mockAvailable = true;
+  mockListContacts.mockResolvedValue(
+    Bindings.ContactListOutcome.Listed.new({ contacts: [mockContact] }),
+  );
+  mockListLxmfPeers.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.LxmfPeerListOutcome.Listed.new({
+      peers: [mockPeer],
+    }),
+  });
+  mockListLxmfMessages.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.LxmfMessageListOutcome.Listed.new({
+      messages: [mockMessage],
+    }),
+  });
+  mockListLxmfConversations.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.LxmfMessageListOutcome.Listed.new({ messages: [mockMessage] }),
+  });
+  mockRetryLxmfMessage.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.RetryLxmfMessageOutcome.Accepted.new({
+      localRecordId: 7n,
+    }),
+  });
+  mockCancelLxmfMessage.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.CancelLxmfMessageOutcome.Cancelled.new({
+      localRecordId: 8n,
+    }),
+  });
+  mockSendDirectText.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.SendDirectTextOutcome.Accepted.new({
+      localRecordId: 2n,
+    }),
+  });
+  mockMeasureLxmfText.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.MeasureLxmfTextOutcome.Measured.new({
+      wireBytes: 140,
+      remainingBytes: 291,
+    }),
+  });
+});
+describe("durable LXMF screens", () => {
+  test("keeps the Inbox focused on conversations with no network announce action", async () => {
+    const screen = render(<InboxScreen />);
+    expect(await screen.findByText("Claims to be Saved alias")).toBeTruthy();
+    expect(screen.getByText("Keep prns open for reliable message delivery.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Messaging options" })).toBeNull();
+    expect(screen.queryByText("Share messaging address")).toBeNull();
+    expect(mockAnnounceLxmf).not.toHaveBeenCalled();
+  });
+  test("describes degraded messaging health without implementation details", async () => {
+    mockActiveSnapshot = {
+      ...mockSnapshot,
+      lxmf: {
+        ...mockSnapshot.lxmf,
+        state: Bindings.LxmfHealthState.Degraded,
+        inboundOverflowCount: 0n,
+      },
+    };
+    const screen = render(<InboxScreen />);
+    expect(
+      await screen.findByText("Messages may be delayed until the connection recovers."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/callback overflow|mailbox access/iu)).toBeNull();
+  });
+  test("does not expose native mailbox-list failure details", async () => {
+    mockListLxmfConversations.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.LxmfMessageListOutcome.DevelopmentUnavailable.new({
+        detail: "E290 upstream RemoteControl signed availability mailbox generation mismatch",
+      }),
+    });
+    const screen = render(<InboxScreen />);
+    expect(await screen.findByText("Messages are not available right now.")).toBeTruthy();
+    expect(
+      screen.queryAllByText(/E290|signed availability|upstream RemoteControl|mailbox generation/iu),
+    ).toHaveLength(0);
+  });
+  test("uses saved alias before announced name and shows aggregate health", async () => {
+    const screen = render(<InboxScreen />);
+    await waitFor(() => {
+      expect(screen.getByText("Claims to be Saved alias")).toBeTruthy();
+    });
+    expect(screen.queryByText("Announced peer")).toBeNull();
+    expect(screen.getByText("Messaging ready")).toBeTruthy();
+    expect(screen.queryByText("Destination")).toBeNull();
+    expect(screen.queryByText("000102030405060708090a0b0c0d0e0f")).toBeNull();
+    expect(screen.queryByText("Messages")).toBeNull();
+    expect(mockListLxmfMessages).not.toHaveBeenCalled();
+    expect(mockListLxmfConversations).toHaveBeenCalledWith({
+      before: undefined,
+      limit: 51,
+    });
+  });
+  test("keeps connection warnings expanded when messaging is degraded", async () => {
+    mockActiveSnapshot = {
+      ...mockSnapshot,
+      lxmf: {
+        ...mockSnapshot.lxmf,
+        state: Bindings.LxmfHealthState.Degraded,
+        inboundOverflowCount: 1n,
+      },
+    };
+    const screen = render(<InboxScreen />);
+    expect(await screen.findByText("Limited")).toBeTruthy();
+    expect(screen.getByText("Messages may be delayed until the connection recovers.")).toBeTruthy();
+    expect(screen.queryByText("Messaging ready")).toBeNull();
+  });
+  test("renders invalid UTF-8 and signature state and sends only through native measure", async () => {
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+    await waitFor(() => {
+      expect(screen.getByText("Unreadable text")).toBeTruthy();
+    });
+    expect(screen.getByText("Unverified — invalid signature")).toBeTruthy();
+    expect(screen.getByText("Destination")).toBeTruthy();
+    expect(screen.getByText("000102030405060708090a0b0c0d0e0f")).toBeTruthy();
+    expect(screen.getAllByText("Received")).toHaveLength(2);
+    expect(screen.getByText(/ · Received$/u)).toBeTruthy();
+    expect(screen.queryByText("Message ID")).toBeNull();
+    fireEvent.press(
+      screen.getByRole("button", { name: "Show details for message Questionable message" }),
+    );
+    expect(screen.getByText("Message ID")).toBeTruthy();
+    expect(screen.getByText("Unverified — invalid signature")).toBeTruthy();
+    fireEvent.press(
+      screen.getByRole("button", { name: "Hide details for message Questionable message" }),
+    );
+    expect(screen.queryByText("Message ID")).toBeNull();
+    expect(screen.getByText("Unverified — invalid signature")).toBeTruthy();
+    fireEvent.changeText(screen.getByLabelText("Title (optional)"), "Hello");
+    fireEvent.changeText(screen.getByLabelText("Message"), "Proof please");
+    await waitFor(() => {
+      expect(screen.getByText("140 bytes used · 291 bytes available")).toBeTruthy();
+    });
+    fireEvent.press(screen.getByText("Send message"));
+    await waitFor(() => {
+      expect(mockSendDirectText).toHaveBeenCalledWith({
+        destination: mockDestination,
+        title: "Hello",
+        content: "Proof please",
+      });
+    });
+    expect(await screen.findByText("Message queued.")).toBeTruthy();
+    expect(screen.queryByText(/^Delivered$/u)).toBeNull();
+  });
+  test("shows the measured byte budget and blocks an oversized direct message", async () => {
+    mockMeasureLxmfText.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.MeasureLxmfTextOutcome.NeedsResource.new({
+        wireBytes: 432,
+      }),
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+    fireEvent.changeText(screen.getByLabelText("Message"), "Too large");
+    expect(
+      await screen.findByText("432 bytes used. This message is too large for direct delivery."),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Send message" }).props.accessibilityState).toEqual(
+      expect.objectContaining({ disabled: true }),
+    );
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+  });
+  test("keeps untitled verified messages compact with details available on demand", async () => {
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.LxmfMessageListOutcome.Listed.new({
+        messages: [
+          {
+            ...mockMessage,
+            title: Bindings.LxmfText.Utf8.new({ value: "" }),
+            content: Bindings.LxmfText.Utf8.new({ value: "A short note" }),
+            verification: Bindings.LxmfVerification.Verified,
+          },
+        ],
+      }),
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+    expect(await screen.findByText("A short note")).toBeTruthy();
+    expect(screen.queryByText("Untitled")).toBeNull();
+    expect(screen.queryByText("Verified source")).toBeNull();
+    expect(screen.queryByText("Message ID")).toBeNull();
+    fireEvent.press(screen.getByRole("button", { name: /^Show details for message /u }));
+    expect(screen.getByText("Verified source")).toBeTruthy();
+    expect(screen.getByText("Message ID")).toBeTruthy();
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+    expect(mockRetryLxmfMessage).not.toHaveBeenCalled();
+    expect(mockCancelLxmfMessage).not.toHaveBeenCalled();
+  });
+  test("navigates from compose only after native durably accepts a visible record", async () => {
+    const destination = Array.from(mockDestination, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const screen = render(<ComposeScreen initialDestination={destination} />);
+    fireEvent.changeText(screen.getByLabelText("Title (optional)"), "Hello");
+    fireEvent.changeText(screen.getByLabelText("Message"), "Proof please");
+    await waitFor(() => {
+      expect(screen.getByText("140 bytes used · 291 bytes available")).toBeTruthy();
+    });
+    fireEvent.press(screen.getByText("Send message"));
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith({
+        pathname: "/inbox/conversation/[destination]",
+        params: { destination },
+      });
+    });
+  });
+  test("keeps compose visible with an honest non-record send outcome", async () => {
+    mockSendDirectText.mockResolvedValueOnce({
+      type: "outcome",
+      outcome: Bindings.SendDirectTextOutcome.PeerIdentityUnavailable.new(),
+    });
+    const destination = Array.from(mockDestination, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const screen = render(<ComposeScreen initialDestination={destination} />);
+    fireEvent.changeText(screen.getByLabelText("Message"), "No observed peer");
+    await waitFor(() => {
+      expect(screen.getByText("140 bytes used · 291 bytes available")).toBeTruthy();
+    });
+    fireEvent.press(screen.getByText("Send message"));
+    expect(
+      await screen.findByText(
+        "This contact could not be found. Check your connection and try again. Your message has not been queued.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Compose")).toBeTruthy();
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+  test("retries a failed record by id without recomposing or calling send", async () => {
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.LxmfMessageListOutcome.Listed.new({
+        messages: [mockFailedMessage],
+      }),
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+    expect(await screen.findByText(/Failed after 1 failed attempt/u)).toBeTruthy();
+    fireEvent.press(screen.getByText("Retry message"));
+    await waitFor(() => expect(mockRetryLxmfMessage).toHaveBeenCalledWith(7n));
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+    expect(await screen.findByText("Message queued to retry.")).toBeTruthy();
+  });
+  test("cancels a queued durable record by id", async () => {
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.LxmfMessageListOutcome.Listed.new({
+        messages: [mockQueuedMessage],
+      }),
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+    expect(await screen.findByText("Queued")).toBeTruthy();
+    fireEvent.press(screen.getByText("Cancel queued message"));
+    await waitFor(() => expect(mockCancelLxmfMessage).toHaveBeenCalledWith(8n));
+    expect(await screen.findByText("Message cancelled.")).toBeTruthy();
+  });
+  test("lists durable rows and exposes exact retry while node startup has failed", async () => {
+    mockPhase = "failed";
+    mockActiveSnapshot = { ...mockSnapshot, runtime: Bindings.DevelopmentNodeRuntime.Failed };
+    mockLifecycleFailure = "The local node could not restore persistence.";
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.LxmfMessageListOutcome.Listed.new({
+        messages: [mockFailedMessage],
+      }),
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+    expect(await screen.findByText("Retry me")).toBeTruthy();
+    expect(screen.getByText("Messaging offline")).toBeTruthy();
+    expect(screen.getByText("Retry message")).toBeTruthy();
+    expect(screen.queryByText("New message")).toBeNull();
+    expect(mockListLxmfPeers).not.toHaveBeenCalled();
+    expect(mockListLxmfMessages).toHaveBeenCalledWith({
+      peer: mockDestination,
+      before: undefined,
+      limit: 51,
+    });
+  });
+  test("loads saved conversations and contact names during cold Bluetooth authorization wait", async () => {
+    mockPhase = "starting";
+    mockActiveSnapshot = null;
+    mockBluetoothAuthorization = waitingBluetoothAuthorization;
+    const screen = render(<InboxScreen />);
+    expect(await screen.findByText("Claims to be Saved alias")).toBeTruthy();
+    expect(screen.getByText("Open conversation")).toBeTruthy();
+    expect(screen.getByText("Check Bluetooth access")).toBeTruthy();
+    expect(screen.getAllByText("Bluetooth access needed")).toHaveLength(1);
+    expect(screen.queryByText("Messaging status")).toBeNull();
+    expect(screen.queryByText("Getting ready")).toBeNull();
+    expect(screen.queryByText("No conversations")).toBeNull();
+    expect(screen.queryByText("No messages are saved on this device.")).toBeNull();
+    expect(screen.queryByText("New message")).toBeNull();
+    expect(screen.queryByText("Share messaging address")).toBeNull();
+    expect(mockListContacts).toHaveBeenCalled();
+    expect(mockListLxmfPeers).not.toHaveBeenCalled();
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+    expect(mockAnnounceLxmf).not.toHaveBeenCalled();
+  });
+  test("retains actual messaging health while Bluetooth access is needed", async () => {
+    mockPhase = "starting";
+    mockBluetoothAuthorization = waitingBluetoothAuthorization;
+    mockActiveSnapshot = {
+      ...mockSnapshot,
+      lxmf: {
+        ...mockSnapshot.lxmf,
+        state: Bindings.LxmfHealthState.Degraded,
+        inboundOverflowCount: 0n,
+      },
+    };
+    const screen = render(<InboxScreen />);
+    expect(await screen.findByText("Claims to be Saved alias")).toBeTruthy();
+    expect(screen.getByText("Messaging status")).toBeTruthy();
+    expect(screen.getByText("Limited")).toBeTruthy();
+    expect(screen.getByText("Messages may be delayed until the connection recovers.")).toBeTruthy();
+    expect(screen.getAllByText("Bluetooth access needed")).toHaveLength(1);
+  });
+  test("offers exact durable Retry and Cancel while waiting for Bluetooth without a native session", async () => {
+    mockPhase = "starting";
+    mockActiveSnapshot = null;
+    mockBluetoothAuthorization = waitingBluetoothAuthorization;
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.LxmfMessageListOutcome.Listed.new({
+        messages: [mockFailedMessage, mockQueuedMessage],
+      }),
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+    expect(await screen.findByText("Retry me")).toBeTruthy();
+    fireEvent.press(screen.getByText("Retry message"));
+    expect(await screen.findByText("Message queued to retry.")).toBeTruthy();
+    expect(mockRetryLxmfMessage).toHaveBeenCalledTimes(1);
+    expect(mockRetryLxmfMessage).toHaveBeenCalledWith(7n);
+    fireEvent.press(screen.getByText("Cancel queued message"));
+    expect(await screen.findByText("Message cancelled.")).toBeTruthy();
+    expect(mockCancelLxmfMessage).toHaveBeenCalledTimes(1);
+    expect(mockCancelLxmfMessage).toHaveBeenCalledWith(8n);
+    expect(screen.queryByLabelText("Message")).toBeNull();
+    expect(mockListLxmfPeers).not.toHaveBeenCalled();
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+  });
+  test.each(["inbox", "conversation"] as const)(
+    "does not claim the %s is empty before the saved-message read completes",
+    async (surface) => {
+      mockPhase = "starting";
+      mockActiveSnapshot = null;
+      let complete: ((result: RuntimeCommandResult<LxmfMessageListOutcome>) => void) | undefined;
+      const list = surface === "inbox" ? mockListLxmfConversations : mockListLxmfMessages;
+      list.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            complete = resolve;
+          }),
+      );
+      const screen = render(
+        surface === "inbox" ? (
+          <InboxScreen />
+        ) : (
+          <ConversationScreen destination={mockDestination} />
+        ),
+      );
+      expect(screen.getByText("Loading saved messages…")).toBeTruthy();
+      expect(screen.queryByText("No conversations")).toBeNull();
+      expect(screen.queryByText("No messages are saved on this device.")).toBeNull();
+      expect(screen.queryByText("No messages with this contact yet.")).toBeNull();
+      await act(async () =>
+        complete?.({
+          type: "outcome",
+          outcome: Bindings.LxmfMessageListOutcome.Listed.new({ messages: [] }),
+        }),
+      );
+      expect(
+        await screen.findByText(
+          surface === "inbox"
+            ? "No messages are saved on this device."
+            : "No messages with this contact yet.",
+        ),
+      ).toBeTruthy();
+    },
+  );
+});
+
+test("retains the native storage reset outcome through an offline mailbox read", async () => {
+  mockListLxmfConversations.mockResolvedValue({
+    type: "operationFailure",
+    detail: "storage bootstrap failed",
+    storagePreparation: Bindings.NativeStoragePreparationOutcome.DevelopmentResetRequired.new({
+      reason: "private storage detail",
+    }),
+  });
+  const screen = render(<InboxScreen />);
+  expect(await screen.findByText("App reset required")).toBeTruthy();
+  expect(screen.getByText("Open recovery")).toBeTruthy();
+  expect(screen.queryByText(/private storage detail|storage bootstrap failed/)).toBeNull();
+  expect(screen.queryByText("No conversations")).toBeNull();
+  expect(screen.queryByText("No messages are saved on this device.")).toBeNull();
+});
+
+describe("messaging recipient journey", () => {
+  test("does not create a conversation for an announce-only peer", async () => {
+    mockListLxmfConversations.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.LxmfMessageListOutcome.Listed.new({ messages: [] }),
+    });
+    const view = render(<InboxScreen />);
+    expect(await view.findByText("No conversations")).toBeTruthy();
+    expect(view.queryByRole("link", { name: "Open conversation" })).toBeNull();
+    expect(view.queryByText("Saved alias")).toBeNull();
+  });
+  test("selects saved messaging recipients by name and excludes nonmessaging contacts", async () => {
+    mockListContacts.mockResolvedValue(
+      Bindings.ContactListOutcome.Listed.new({
+        contacts: [
+          mockContact,
+          {
+            ...mockContact,
+            destination: new Uint8Array(16).fill(0xcc),
+            alias: "Managed board",
+            isMessaging: false,
+          },
+        ],
+      }),
+    );
+    const view = render(<ComposeScreen initialDestination={null} />);
+    expect(await view.findByRole("button", { name: "Choose Saved alias" })).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Choose Managed board" })).toBeNull();
+    expect(view.queryByLabelText("Recipient")).toBeNull();
+    fireEvent.press(view.getByRole("button", { name: "Choose Saved alias" }));
+    expect(view.getByLabelText("Message")).toBeTruthy();
+    await view.findByText("140 bytes used · 291 bytes available");
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+  });
+  test("selects a discovered recipient without saving or announcing", async () => {
+    mockListContacts.mockResolvedValue(Bindings.ContactListOutcome.Listed.new({ contacts: [] }));
+    const view = render(<ComposeScreen initialDestination={null} />);
+    fireEvent.press(view.getByRole("button", { name: "Discovered" }));
+    fireEvent.press(await view.findByRole("button", { name: "Choose Announced peer" }));
+    expect(view.getByLabelText("Message")).toBeTruthy();
+    await view.findByText("140 bytes used · 291 bytes available");
+    expect(mockAnnounceLxmf).not.toHaveBeenCalled();
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+  });
+  test("retains manual address entry as a secondary path", async () => {
+    const view = render(<ComposeScreen initialDestination={null} />);
+    fireEvent.press(view.getByRole("button", { name: "Enter address" }));
+    fireEvent.changeText(view.getByLabelText("Recipient"), "bad");
+    expect(view.getByText("Enter exactly 32 hexadecimal characters.")).toBeTruthy();
+    expect(view.queryByLabelText("Message")).toBeNull();
+    fireEvent.changeText(view.getByLabelText("Recipient"), "00".repeat(16));
+    expect(view.getByLabelText("Message")).toBeTruthy();
+    await waitFor(() => expect(mockMeasureLxmfText).toHaveBeenCalled());
+  });
+  test("shows Finding contact and holds the recipient and draft until durable acceptance", async () => {
+    let finish: ((result: RuntimeCommandResult<SendDirectTextOutcome>) => void) | undefined;
+    mockSendDirectText.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const view = render(<ComposeScreen initialDestination={"000102030405060708090a0b0c0d0e0f"} />);
+    fireEvent.changeText(view.getByLabelText("Message"), "Keep my draft");
+    await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+    fireEvent.press(view.getByRole("button", { name: "Send message" }));
+    expect(view.getByRole("button", { name: "Finding contact…" })).toBeDisabled();
+    expect(view.getByRole("button", { name: "Change recipient" })).toBeDisabled();
+    expect(view.getByLabelText("Message").props.editable).toBe(false);
+    expect(mockReplace).not.toHaveBeenCalled();
+    await act(async () =>
+      finish?.({
+        type: "outcome",
+        outcome: Bindings.SendDirectTextOutcome.RecipientUnavailable.new({
+          detail: "private routing detail",
+        }),
+      }),
+    );
+    expect(view.getByLabelText("Message").props.value).toBe("Keep my draft");
+    expect(view.getByRole("button", { name: "Send message" })).toBeEnabled();
+    expect(view.queryByText("private routing detail")).toBeNull();
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+  test("shows identity conflict without losing the unsent draft", async () => {
+    mockSendDirectText.mockResolvedValueOnce({
+      type: "outcome",
+      outcome: Bindings.SendDirectTextOutcome.IdentityConflict.new({
+        expected: new Uint8Array(16).fill(1),
+        observed: new Uint8Array(16).fill(2),
+      }),
+    });
+    const view = render(<ComposeScreen initialDestination={"000102030405060708090a0b0c0d0e0f"} />);
+    fireEvent.changeText(view.getByLabelText("Message"), "Check identity first");
+    await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+    fireEvent.press(view.getByRole("button", { name: "Send message" }));
+    expect(
+      await view.findByText(/This contact's identity differs from the one you saved/),
+    ).toBeTruthy();
+    expect(view.getByLabelText("Message").props.value).toBe("Check identity first");
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+  test("does not navigate a departed composer when native work finishes", async () => {
+    let finish: ((result: RuntimeCommandResult<SendDirectTextOutcome>) => void) | undefined;
+    mockSendDirectText.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const view = render(<ComposeScreen initialDestination={"000102030405060708090a0b0c0d0e0f"} />);
+    fireEvent.changeText(view.getByLabelText("Message"), "Native owns the accepted write");
+    await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+    fireEvent.press(view.getByRole("button", { name: "Send message" }));
+    view.unmount();
+    await act(async () =>
+      finish?.({
+        type: "outcome",
+        outcome: Bindings.SendDirectTextOutcome.Accepted.new({ localRecordId: 99n }),
+      }),
+    );
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+});
+
+function listed(messages: readonly LxmfMessage[]): RuntimeCommandResult<LxmfMessageListOutcome> {
+  return {
+    type: "outcome",
+    outcome: Bindings.LxmfMessageListOutcome.Listed.new({ messages: [...messages] }),
+  };
+}
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((finish) => {
+    resolve = finish;
+  });
+  return { promise, resolve };
+}
+
+describe("mailbox read ownership and history", () => {
+  test.each(["success", "failure"] as const)(
+    "ignores an older refresh %s completion",
+    async (outcome) => {
+      const old = deferred<RuntimeCommandResult<LxmfMessageListOutcome>>();
+      mockListLxmfConversations.mockReturnValueOnce(old.promise);
+      const view = renderHook(() => useLxmfData(null));
+      await waitFor(() => expect(mockListLxmfConversations).toHaveBeenCalledTimes(1));
+      await act(async () => view.result.current.refresh());
+      expect(view.result.current.messages).toEqual([mockMessage]);
+      expect(view.result.current.pending).toBe(false);
+      await act(async () =>
+        old.resolve(
+          outcome === "success"
+            ? listed([{ ...mockMessage, localRecordId: 99n }])
+            : { type: "operationFailure", detail: "old failure" },
+        ),
+      );
+      expect(view.result.current.messages).toEqual([mockMessage]);
+      expect(view.result.current.failure).toBeNull();
+      expect(view.result.current.pending).toBe(false);
+    },
+  );
+
+  test("an old request cannot clear the newer request's pending indicator", async () => {
+    const old = deferred<RuntimeCommandResult<LxmfMessageListOutcome>>();
+    const next = deferred<RuntimeCommandResult<LxmfMessageListOutcome>>();
+    mockListLxmfConversations.mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise);
+    const view = renderHook(() => useLxmfData(null));
+    let refresh: Promise<void> | undefined;
+    act(() => {
+      refresh = view.result.current.refresh();
+    });
+    await act(async () => old.resolve(listed([mockMessage])));
+    expect(view.result.current.messagesLoaded).toBe(false);
+    expect(view.result.current.pending).toBe(true);
+    await act(async () => {
+      next.resolve(listed([]));
+      await refresh;
+    });
+    expect(view.result.current.messages).toEqual([]);
+    expect(view.result.current.messagesLoaded).toBe(true);
+    expect(view.result.current.pending).toBe(false);
+  });
+
+  test.each([true, false])(
+    "a captured refresh from an earlier owner cannot cancel its replacement (available=%s)",
+    async (available) => {
+      mockAvailable = available;
+      const view = renderHook(() => useLxmfData(null));
+      await waitFor(() => expect(view.result.current.pending).toBe(false));
+      const oldRefresh = view.result.current.refresh;
+      const next = deferred<RuntimeCommandResult<LxmfMessageListOutcome>>();
+      mockListLxmfConversations.mockReturnValueOnce(next.promise);
+      mockAvailable = true;
+      mockActiveSnapshot = { ...mockSnapshot, generationId: 99n };
+      view.rerender({});
+      expect(view.result.current.pending).toBe(true);
+      const mailboxReads = mockListLxmfConversations.mock.calls.length;
+      const contactReads = mockListContacts.mock.calls.length;
+      const peerReads = mockListLxmfPeers.mock.calls.length;
+      await act(async () => oldRefresh());
+      expect(mockListLxmfConversations).toHaveBeenCalledTimes(mailboxReads);
+      expect(mockListContacts).toHaveBeenCalledTimes(contactReads);
+      expect(mockListLxmfPeers).toHaveBeenCalledTimes(peerReads);
+      expect(view.result.current.pending).toBe(true);
+      const replacement = { ...mockMessage, localRecordId: 99n };
+      await act(async () => next.resolve(listed([replacement])));
+      expect(view.result.current.messages).toEqual([replacement]);
+      expect(view.result.current.messagesLoaded).toBe(true);
+      expect(view.result.current.pending).toBe(false);
+      expect(view.result.current.failure).toBeNull();
+    },
+  );
+
+  test("a captured refresh does not start mailbox or directory reads after unmount", async () => {
+    const view = renderHook(() => useLxmfData(null));
+    await waitFor(() => expect(view.result.current.messagesLoaded).toBe(true));
+    const oldRefresh = view.result.current.refresh;
+    const mailboxReads = mockListLxmfConversations.mock.calls.length;
+    const contactReads = mockListContacts.mock.calls.length;
+    const peerReads = mockListLxmfPeers.mock.calls.length;
+    view.unmount();
+    await act(async () => oldRefresh());
+    expect(mockListLxmfConversations).toHaveBeenCalledTimes(mailboxReads);
+    expect(mockListContacts).toHaveBeenCalledTimes(contactReads);
+    expect(mockListLxmfPeers).toHaveBeenCalledTimes(peerReads);
+  });
+
+  test("fences peer changes and hides the previous conversation while the next loads", async () => {
+    const old = deferred<RuntimeCommandResult<LxmfMessageListOutcome>>();
+    const next = deferred<RuntimeCommandResult<LxmfMessageListOutcome>>();
+    mockListLxmfMessages.mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise);
+    const other = new Uint8Array(16).fill(0xab);
+    const view = renderHook(
+      (props: { destination: Uint8Array }) => useLxmfData(props.destination),
+      {
+        initialProps: { destination: mockDestination as Uint8Array },
+      },
+    );
+    view.rerender({ destination: other });
+    expect(view.result.current.messages).toEqual([]);
+    expect(view.result.current.messagesLoaded).toBe(false);
+    await act(async () => next.resolve(listed([{ ...mockMessage, source: other }])));
+    await act(async () => old.resolve(listed([mockMessage])));
+    expect(view.result.current.messages[0]?.source).toEqual(other);
+    expect(view.result.current.pending).toBe(false);
+  });
+
+  test("does not continue pagination after leaving the screen", async () => {
+    const old = deferred<RuntimeCommandResult<LxmfMessageListOutcome>>();
+    mockListLxmfMessages.mockReturnValueOnce(old.promise);
+    const view = renderHook(() => useLxmfData(mockDestination));
+    await waitFor(() => expect(mockListLxmfMessages).toHaveBeenCalledTimes(1));
+    view.unmount();
+    await act(async () => old.resolve(listed([mockMessage])));
+    expect(mockListLxmfMessages).toHaveBeenCalledTimes(1);
+  });
+
+  test("clears request UI ownership when availability changes during a read", async () => {
+    const old = deferred<RuntimeCommandResult<LxmfMessageListOutcome>>();
+    const view = renderHook(() => useLxmfData(null));
+    await waitFor(() => expect(view.result.current.messagesLoaded).toBe(true));
+    mockListLxmfConversations.mockReturnValueOnce(old.promise);
+    let refresh: Promise<void> | undefined;
+    act(() => {
+      refresh = view.result.current.refresh();
+    });
+    expect(view.result.current.pending).toBe(true);
+    mockAvailable = false;
+    view.rerender({});
+    expect(view.result.current.pending).toBe(false);
+    expect(view.result.current.messages).toEqual([]);
+    expect(view.result.current.messagesLoaded).toBe(false);
+    await act(async () => {
+      old.resolve(listed([mockMessage]));
+      await refresh;
+    });
+    expect(view.result.current.messages).toEqual([]);
+    mockAvailable = true;
+    mockListLxmfConversations.mockResolvedValueOnce(listed([]));
+    view.rerender({});
+    await waitFor(() => expect(view.result.current.messagesLoaded).toBe(true));
+    expect(view.result.current.messages).toEqual([]);
+  });
+
+  test("hides a previous generation's rows when its replacement cannot load", async () => {
+    const view = renderHook(() => useLxmfData(null));
+    await waitFor(() => expect(view.result.current.messagesLoaded).toBe(true));
+    mockListLxmfConversations.mockResolvedValueOnce({
+      type: "operationFailure",
+      detail: "replacement unavailable",
+    });
+    mockActiveSnapshot = { ...mockSnapshot, generationId: 99n };
+    view.rerender({});
+    expect(view.result.current.messages).toEqual([]);
+    await waitFor(() =>
+      expect(view.result.current.failure).toBe("Messages could not be loaded. Try again."),
+    );
+    expect(view.result.current.messages).toEqual([]);
+    expect(view.result.current.messagesLoaded).toBe(false);
+  });
+
+  test("does not read saved messages or contacts for an unrelated snapshot poll", async () => {
+    const view = renderHook(() => useLxmfData(null));
+    await waitFor(() => expect(view.result.current.messagesLoaded).toBe(true));
+    const reads = mockListLxmfConversations.mock.calls.length;
+    const contacts = mockListContacts.mock.calls.length;
+    mockActiveSnapshot = { ...mockSnapshot, revision: 100n };
+    view.rerender({});
+    await act(async () => undefined);
+    expect(mockListLxmfConversations).toHaveBeenCalledTimes(reads);
+    expect(mockListContacts).toHaveBeenCalledTimes(contacts);
+    mockActiveSnapshot = {
+      ...mockSnapshot,
+      revision: 101n,
+      lxmf: { ...mockSnapshot.lxmf, mailboxRevision: 1n },
+    };
+    view.rerender({});
+    await waitFor(() => expect(mockListLxmfConversations).toHaveBeenCalledTimes(reads + 1));
+    mockActiveSnapshot = {
+      ...mockActiveSnapshot,
+      lxmf: { ...mockActiveSnapshot.lxmf, projectionRevision: 1n },
+    };
+    view.rerender({});
+    await waitFor(() => expect(mockListLxmfConversations).toHaveBeenCalledTimes(reads + 2));
+  });
+
+  test("pages beyond 100 messages and refreshes delivery states in every loaded page", async () => {
+    let messages = Array.from({ length: 125 }, (_, index) => ({
+      ...mockFailedMessage,
+      localRecordId: BigInt(125 - index),
+    }));
+    mockListLxmfMessages.mockImplementation(async (input) =>
+      listed(
+        messages
+          .filter((message) => input?.before === undefined || message.localRecordId < input.before)
+          .slice(0, input?.limit),
+      ),
+    );
+    const view = renderHook(() => useLxmfData(mockDestination));
+    await waitFor(() => expect(view.result.current.messages).toHaveLength(50));
+    await act(async () => view.result.current.loadOlder());
+    expect(view.result.current.messages).toHaveLength(100);
+    await act(async () => view.result.current.loadOlder());
+    expect(view.result.current.messages).toHaveLength(125);
+    expect(view.result.current.hasMore).toBe(false);
+    expect(mockListLxmfMessages).toHaveBeenNthCalledWith(2, {
+      peer: mockDestination,
+      before: 76n,
+      limit: 51,
+    });
+    messages = messages.map((message) => ({
+      ...message,
+      deliveryState: Bindings.LxmfDeliveryState.Delivered.new({
+        deliveredAt: 1700000000200n,
+        rtt: 200n,
+      }),
+    }));
+    await act(async () => view.result.current.refresh());
+    expect(view.result.current.messages).toHaveLength(125);
+    expect(view.result.current.messages.at(-1)?.deliveryState.tag).toBe(
+      Bindings.LxmfDeliveryState_Tags.Delivered,
+    );
+    expect(mockListLxmfMessages.mock.calls.every(([input]) => (input?.limit ?? 0) <= 100)).toBe(
+      true,
+    );
+  });
+
+  test("pages conversation summaries independently of a busy contact's global messages", async () => {
+    const summaries = Array.from({ length: 105 }, (_, index) => ({
+      ...mockMessage,
+      localRecordId: BigInt(1000 - index),
+      source: new Uint8Array(16).fill(index),
+    }));
+    mockListLxmfConversations.mockImplementation(async (input) =>
+      listed(
+        summaries
+          .filter((message) => input?.before === undefined || message.localRecordId < input.before)
+          .slice(0, input?.limit),
+      ),
+    );
+    const view = renderHook(() => useLxmfData(null));
+    await waitFor(() => expect(view.result.current.messages).toHaveLength(50));
+    await act(async () => view.result.current.loadOlder());
+    await act(async () => view.result.current.loadOlder());
+    expect(view.result.current.messages).toHaveLength(105);
+    expect(view.result.current.messages.at(-1)?.source).toEqual(new Uint8Array(16).fill(104));
+    expect(view.result.current.hasMore).toBe(false);
+    expect(mockListLxmfMessages).not.toHaveBeenCalled();
+  });
+
+  test("offers an older-history action only when lookahead proves there is another page", async () => {
+    mockListLxmfMessages
+      .mockResolvedValueOnce(
+        listed(
+          Array.from({ length: 51 }, (_, index) => ({
+            ...mockMessage,
+            localRecordId: BigInt(60 - index),
+          })),
+        ),
+      )
+      .mockResolvedValueOnce(listed([{ ...mockMessage, localRecordId: 10n }]));
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+    fireEvent.press(await screen.findByRole("button", { name: "Load older messages" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Load older messages" })).toBeNull(),
+    );
+    expect(mockListLxmfMessages).toHaveBeenLastCalledWith({
+      peer: mockDestination,
+      before: 11n,
+      limit: 51,
+    });
+  });
+});
+
+describe("Inbox sender attribution", () => {
+  test("updates a claimed sender only after a refreshed verified receipt", async () => {
+    const screen = render(<InboxScreen />);
+    expect(await screen.findByText("Claims to be Saved alias")).toBeTruthy();
+    mockListLxmfConversations.mockResolvedValueOnce(
+      listed([{ ...mockMessage, verification: Bindings.LxmfVerification.Verified }]),
+    );
+    mockActiveSnapshot = {
+      ...mockSnapshot,
+      lxmf: { ...mockSnapshot.lxmf, mailboxRevision: 1n },
+    };
+    screen.rerender(<InboxScreen />);
+    expect(await screen.findByText("Saved alias")).toBeTruthy();
+    expect(screen.queryByText(/Claims to be|Unverified/)).toBeNull();
+  });
+
+  test.each([
+    [Bindings.LxmfVerification.InvalidSignature, "Unverified — invalid signature"],
+    [Bindings.LxmfVerification.SourceUnknown, "Unverified — source identity unavailable"],
+  ])(
+    "warns before attributing an unverified incoming preview %#",
+    async (verification, warning) => {
+      mockListLxmfConversations.mockResolvedValue(listed([{ ...mockMessage, verification }]));
+      const screen = render(<InboxScreen />);
+      expect(await screen.findByText(warning)).toBeTruthy();
+      expect(screen.getByText("Claims to be Saved alias")).toBeTruthy();
+      expect(screen.queryByText("Saved alias")).toBeNull();
+      expect(screen.getByText(/Unreadable text · Received/)).toBeTruthy();
+    },
+  );
+
+  test("does not imply an outgoing delivered message verifies the remote sender", async () => {
+    mockListLxmfConversations.mockResolvedValue(
+      listed([
+        {
+          ...mockFailedMessage,
+          deliveryState: Bindings.LxmfDeliveryState.Delivered.new({
+            deliveredAt: 1700000000200n,
+            rtt: 200n,
+          }),
+        },
+      ]),
+    );
+    const screen = render(<InboxScreen />);
+    expect(await screen.findByText("Saved alias")).toBeTruthy();
+    expect(screen.queryByText(/Claims to be|Verified source/)).toBeNull();
+    expect(screen.getByText(/Delivered in 200 ms/)).toBeTruthy();
+  });
+});
+
+test("a reused compose route selects its new recipient and ignores the old send completion", async () => {
+  let finish: ((result: RuntimeCommandResult<SendDirectTextOutcome>) => void) | undefined;
+  mockSendDirectText.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const view = render(<ComposeScreen initialDestination={"000102030405060708090a0b0c0d0e0f"} />);
+  fireEvent.changeText(view.getByLabelText("Message"), "First recipient");
+  await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+  fireEvent.press(view.getByRole("button", { name: "Send message" }));
+  view.rerender(<ComposeScreen initialDestination={"cc".repeat(16)} />);
+  expect(view.getByText("cc".repeat(16))).toBeTruthy();
+  expect(view.getByRole("button", { name: "Change recipient" })).toBeEnabled();
+  fireEvent.changeText(view.getByLabelText("Message"), "Second recipient");
+  await act(async () =>
+    finish?.({
+      type: "outcome",
+      outcome: Bindings.SendDirectTextOutcome.Accepted.new({ localRecordId: 91n }),
+    }),
+  );
+  expect(mockReplace).not.toHaveBeenCalled();
+  expect(view.getByLabelText("Message").props.value).toBe("Second recipient");
+  await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+  fireEvent.press(view.getByRole("button", { name: "Send message" }));
+  await waitFor(() =>
+    expect(mockSendDirectText).toHaveBeenLastCalledWith({
+      destination: new Uint8Array(16).fill(0xcc),
+      title: "",
+      content: "Second recipient",
+    }),
+  );
+  await waitFor(() =>
+    expect(mockReplace).toHaveBeenCalledWith({
+      pathname: "/inbox/conversation/[destination]",
+      params: { destination: "cc".repeat(16) },
+    }),
+  );
+});
+
+test("stopping during a lookup releases recipient controls on restart without reusing old completion", async () => {
+  let finish: ((result: RuntimeCommandResult<SendDirectTextOutcome>) => void) | undefined;
+  mockSendDirectText.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const initialDestination = "000102030405060708090a0b0c0d0e0f";
+  const view = render(<ComposeScreen initialDestination={initialDestination} />);
+  fireEvent.changeText(view.getByLabelText("Message"), "Old generation");
+  await waitFor(() => expect(view.getByRole("button", { name: "Send message" })).toBeEnabled());
+  fireEvent.press(view.getByRole("button", { name: "Send message" }));
+  mockActiveSnapshot = { ...mockSnapshot, runtime: Bindings.DevelopmentNodeRuntime.Stopped };
+  view.rerender(<ComposeScreen initialDestination={initialDestination} />);
+  expect(view.queryByLabelText("Message")).toBeNull();
+  mockActiveSnapshot = { ...mockSnapshot, generationId: 2n };
+  view.rerender(<ComposeScreen initialDestination={initialDestination} />);
+  expect(view.getByRole("button", { name: "Change recipient" })).toBeEnabled();
+  fireEvent.changeText(view.getByLabelText("Message"), "New generation draft");
+  await act(async () =>
+    finish?.({
+      type: "outcome",
+      outcome: Bindings.SendDirectTextOutcome.RecipientUnavailable.new({ detail: "stopped" }),
+    }),
+  );
+  expect(view.getByLabelText("Message").props.value).toBe("New generation draft");
+  expect(mockReplace).not.toHaveBeenCalled();
+  expect(view.queryByText(/This contact could not be found/)).toBeNull();
+});

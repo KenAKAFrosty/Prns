@@ -424,15 +424,19 @@ export function parseEvent(raw: unknown): ParsedPrnsEvent {
           sourceInterface: interfaceId(bytesField(data, "sourceInterface")),
         }),
       ),
-    linkDelivery: (data) =>
-      Tag(
+    linkDelivery: (data) => {
+      const localDestination = optionalBytesField(data, "localDestination");
+      return Tag(
         "Application",
         Tag("LinkDelivery", {
           linkId: linkId(bytesField(data, "linkId")),
           plaintext: copyBytes(bytesField(data, "plaintext")),
           sourceInterface: interfaceId(bytesField(data, "sourceInterface")),
+          ...(localDestination === undefined ? {} : { localDestination: destinationHash(localDestination) }),
+          arrivedAtMillis: nonNegativeInteger(numberField(data, "arrivedAtMillis"), "arrivedAtMillis"),
         }),
-      ),
+      );
+    },
     delivered: (data) =>
       Tag(
         "Diagnostic",
@@ -717,6 +721,10 @@ function projectedFieldName(id: number): string {
       return "cause";
     case EVENT_FIELD_CODES.PersistenceTarget:
       return "target";
+    case EVENT_FIELD_CODES.LocalDestination:
+      return "localDestination";
+    case EVENT_FIELD_CODES.ArrivedAtMillis:
+      return "arrivedAtMillis";
     case EVENT_FIELD_CODES.AppData:
       return "appData";
     case COMMAND_ID_PROJECTION_FIELD:

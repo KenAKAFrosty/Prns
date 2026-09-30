@@ -4,7 +4,7 @@ import java.math.BigInteger
 
 object HostContract {
     const val ABI: Int = 1
-    const val SCHEMA_VERSION: Int = 1
+    const val SCHEMA_VERSION: Int = 2
     const val PRODUCT_VERSION = "0.3.7"
     const val DESTINATION_HASH_LENGTH = 16
     const val IDENTITY_HASH_LENGTH = 16
@@ -515,7 +515,9 @@ enum class EventField(val rawValue: Int) {
     DROPPED(37),
     PERSISTENCE_CAUSE(38),
     PERSISTENCE_TARGET(39),
-    APP_DATA(40);
+    APP_DATA(40),
+    LOCAL_DESTINATION(41),
+    ARRIVED_AT_MILLIS(42);
 
     companion object {
         fun fromRawValue(value: Int): EventField? = entries.firstOrNull { it.rawValue == value }
@@ -1299,7 +1301,9 @@ data class ApplicationEventChannelMessage(
 data class ApplicationEventLinkDelivery(
     val linkId: LinkId,
     val sourceInterface: InterfaceId,
-    val plaintext: Bytes
+    val plaintext: Bytes,
+    val localDestination: DestinationHash?,
+    val arrivedAtMillis: Long
 ) : ApplicationEvent
 
 sealed interface DiagnosticEvent

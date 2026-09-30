@@ -148,13 +148,22 @@ impl RemoteControlPairingTranscriptDigest {
 pub struct RemoteControlPairingAttemptId(RemoteControlPairingTranscriptDigest);
 
 impl RemoteControlPairingAttemptId {
+    /// Restore an observed attempt identifier at a platform boundary. The pairing
+    /// engine still requires it to match an active authenticated transcript.
+    #[must_use]
+    pub const fn from_transcript_digest_bytes(
+        bytes: [u8; PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN],
+    ) -> Self {
+        Self(RemoteControlPairingTranscriptDigest(bytes))
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
     #[must_use]
     pub const fn from_test_transcript_digest_bytes(
         bytes: [u8; PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN],
     ) -> Self {
-        Self(RemoteControlPairingTranscriptDigest(bytes))
+        Self::from_transcript_digest_bytes(bytes)
     }
 
     #[must_use]

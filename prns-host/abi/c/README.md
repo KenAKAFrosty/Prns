@@ -45,7 +45,7 @@ Host, command, stream, and supplied-Pipe controller operations are safe from mul
 
 ## Versioning
 
-Product version, schema version, and C ABI are three explicit creation gates. The first public baseline is product `0.3.1`, schema 1, ABI 1. The capsule has one `PrnsHostOptions` layout and no compatibility shim for unpublished earlier layouts. `struct_size` remains on public structures so every call can prove the memory prefix it may read or write; undersized structures are rejected and larger structures are accepted at their known prefix. That safety mechanism is not a promise to preserve pre-baseline layouts.
+Product version, schema version, and C ABI are three explicit creation gates. The first public baseline was product `0.3.1`, schema 1, ABI 1. The current contract is schema 2, ABI 1: link-delivery events include the optional local responder destination and arrival timestamp. Schema-1 clients must rebuild with matching generated adapters and native libraries. The capsule has one `PrnsHostOptions` layout and no compatibility shim for unpublished earlier layouts. `struct_size` remains on public structures so every call can prove the memory prefix it may read or write; undersized structures are rejected and larger structures are accepted at their known prefix. That safety mechanism is not a promise to preserve pre-baseline layouts.
 
 The schema's operation IDL generates every exported declaration. Each `HostCommand` case becomes its own `prns_host_*` function, matching ordinary C calling conventions and debugger/tooling expectations. Ownership, borrowed lifetimes, readiness, interruption, and release relationships are validated before the header is rendered.
 

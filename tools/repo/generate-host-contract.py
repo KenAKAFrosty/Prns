@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
 
 try:
     from host_contract import validate_contract
+    from host_contract.formatting import format_rust
+    from host_contract.extensions import load as native_extensions, documentation as native_extensions_documentation, DOCUMENT_PATH as NATIVE_EXTENSIONS_DOCUMENT_PATH
+    from host_contract.remote_control import outputs as remote_control_outputs
+    from host_contract.uniffi import generate_rust as uniffi_output, coverage as uniffi_coverage
+    from host_contract.uniffi import generate_typescript as uniffi_typescript, uniffi_config
 except ModuleNotFoundError:
     from tools.repo.host_contract import validate_contract
+    from tools.repo.host_contract.formatting import format_rust
+    from tools.repo.host_contract.extensions import load as native_extensions, documentation as native_extensions_documentation, DOCUMENT_PATH as NATIVE_EXTENSIONS_DOCUMENT_PATH
+    from tools.repo.host_contract.remote_control import outputs as remote_control_outputs
+    from tools.repo.host_contract.uniffi import generate_rust as uniffi_output, coverage as uniffi_coverage
+    from tools.repo.host_contract.uniffi import generate_typescript as uniffi_typescript, uniffi_config
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -393,8 +404,13 @@ def validate(schema):
     return model
 
 
+def semantic_fingerprint(schema):
+    return hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def rust_output(schema):
     lines = [
+        f'pub const HOST_SEMANTIC_FINGERPRINT: &str = "{semantic_fingerprint(schema)}";',
         f"pub const HOST_SCHEMA_VERSION: u32 = {schema['schemaVersion']};",
         f"pub const HOST_SCHEMA_ABI: u32 = {schema['abi']};",
         f'pub const HOST_SCHEMA_PRODUCT_VERSION: &str = "{schema["productVersion"]}";',
@@ -494,7 +510,7 @@ def rust_output(schema):
             )
         lines.extend(["        ]);", "    }"])
     lines.append("}")
-    return "\n".join(lines) + "\n"
+    return format_rust("\n".join(lines) + "\n")
 
 
 def ts_type(value):
@@ -601,6 +617,7 @@ def ts_output(schema):
         "type Brand<Name extends string> = { readonly [brand]: Name };",
         "type BrandedBytes<Name extends string> = Uint8Array & Brand<Name>;",
         "",
+        f'export const HOST_SEMANTIC_FINGERPRINT = "{semantic_fingerprint(schema)}";',
         f"export const HOST_CONTRACT_ABI = {schema['abi']};",
         f"export const HOST_SCHEMA_VERSION = {schema['schemaVersion']};",
         f'export const PRODUCT_VERSION = "{schema["productVersion"]}";',
@@ -656,6 +673,7 @@ def ts_output(schema):
             "SerialDataBits",
             "SerialParity",
             "SerialStopBits",
+            "StopReason",
         )
     ]
     lines.extend(
@@ -679,12 +697,7 @@ def ts_output(schema):
                 "PersistenceFlushTarget", persistence_flush_target["values"]
             ),
             "",
-            "export type PrnsLimits = {",
-            "  readonly pendingCommands: number;",
-            "  readonly applicationEvents: number;",
-            "  readonly retainedEventBytes: number;",
-            "  readonly diagnostics: number;",
-            "};",
+            *ts_record(next(record for record in schema["session"]["records"] if record["name"] == "PrnsLimits")),
             "",
             "export function balancedLimits(): PrnsLimits {",
             "  return {",
@@ -722,6 +735,28 @@ def ts_output(schema):
     )
     for union in schema["unions"]:
         lines.append(ts_union(union))
+    for record in schema["session"]["records"]:
+        if record["name"] != "PrnsLimits":
+            lines.extend(ts_record(record))
+    for union in schema["session"]["unions"]:
+        if union["name"] == "CommandSettlement":
+            lines.extend([
+                "export type CommandSettlement =",
+                '  | Tag<"Succeeded", CommandOutcome>',
+                '  | Tag<"Failed", CommandFailure>;',
+                "",
+            ])
+        else:
+            lines.append(ts_union(union))
+    lines.append("export const COMMAND_OUTCOMES = Object.freeze({")
+    for command, outcome in schema["commandProjection"]["outcomes"].items():
+        lines.append(f'  {command}: "{outcome}",')
+    lines.extend([
+        "} as const);",
+        "export type CommandOutcomeFor<Command extends HostCommand> =",
+        '  Command extends HostCommand ? Extract<CommandOutcome, { readonly tag: (typeof COMMAND_OUTCOMES)[Command["tag"]] }> : never;',
+        "",
+    ])
     lines.extend(ts_raw_protocol(schema))
     return "\n".join(lines)
 
@@ -2137,6 +2172,7 @@ def vectors_output(schema):
                 "handles": schema["handles"],
                 "commandProjection": schema["commandProjection"],
                 "operations": schema["operations"],
+                "session": schema["session"],
                 "contractChecks": [
                     {
                         "requiredAbi": schema["abi"],
@@ -2289,7 +2325,9 @@ def main():
     args = parser.parse_args()
     schema = json.loads(SCHEMA_PATH.read_text())
     validate(schema)
+    extensions = native_extensions(ROOT)
     outputs = {
+        **remote_control_outputs(ROOT),
         RUST_PATH: rust_output(schema),
         TS_PATH: ts_output(schema),
         C_PATH: c_output(schema),
@@ -2301,6 +2339,11 @@ def main():
         KOTLIN_PATH: kotlin_output(schema),
         JULIA_PATH: julia_output(schema),
         VECTORS_PATH: vectors_output(schema),
+        ROOT / "prns-host/bindings/uniffi/src/transport.generated.rs": uniffi_output(schema),
+        ROOT / "prns-host/bindings/uniffi/coverage.generated.json": uniffi_coverage(schema, extensions),
+        ROOT / NATIVE_EXTENSIONS_DOCUMENT_PATH: native_extensions_documentation(extensions),
+        ROOT / "prns-host/bindings/uniffi/typescript/host-adapter.generated.ts": uniffi_typescript(schema),
+        ROOT / "prns-host/bindings/uniffi/uniffi.toml": uniffi_config(),
     }
     for path, content in outputs.items():
         write_or_check(path, content, args.check)

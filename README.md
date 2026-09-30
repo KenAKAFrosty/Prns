@@ -20,7 +20,7 @@ Prns is built on a unified core engine that is `no_std` (no `alloc` required eit
 Its application SDKs come in two stages today:
 
 - **Paved:** [Rust](personal-rns/README.md) · [TypeScript / JavaScript](prns-js/README.md) (browsers, Node.js, and Bun)
-- **Previews:** [Python](prns-host/bindings/python/README.md) · [.NET & C#](prns-host/bindings/dotnet/README.md) · [Go](prns-host/bindings/go/README.md) · [Swift](prns-host/bindings/swift/README.md) · [Kotlin / Java / Android](prns-host/bindings/jvm/README.md) · [Julia](prns-host/bindings/julia/README.md) · [C & C++](prns-host/abi/c/README.md)
+- **Previews:** [Expo / React Native](prns-react-native/README.md) · [Python](prns-host/bindings/python/README.md) · [.NET & C#](prns-host/bindings/dotnet/README.md) · [Go](prns-host/bindings/go/README.md) · [Swift](prns-host/bindings/swift/README.md) · [Kotlin / Java / Android](prns-host/bindings/jvm/README.md) · [Julia](prns-host/bindings/julia/README.md) · [C & C++](prns-host/abi/c/README.md)
 
 **Previews** are not stubs. Each drives the same native Rust engine, with generated types and a live conformance suite.
 

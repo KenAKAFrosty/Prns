@@ -8,6 +8,7 @@ The implementations are at two different stages of their user journey:
 | --- | --- | --- |
 | Rust | Paved | `personal-rns` crate and the complete Rust example ladder |
 | TypeScript and JavaScript | Paved | One `personal-rns` package design for Node.js, Bun, and browsers |
+| Expo / React Native | SDK preview | `personal-rns-expo` source package and standalone Expo example |
 | Python | SDK preview | Source adapter and registered live conformance suite |
 | .NET and C# | SDK preview | Source adapter and registered live conformance suite |
 | Go | SDK preview | Source module and registered live conformance suite |
@@ -16,7 +17,7 @@ The implementations are at two different stages of their user journey:
 | Julia | SDK preview | Source project and registered live conformance suite |
 | C and C++ | SDK preview | Generated C ABI and registered live C and C++ conformance suite |
 
-Here, **paved** means the API, examples, and package structure form the route we expect application developers to take. **SDK preview** does not mean a mock or an unfinished protocol port. These adapters already call the same native Rust host, project the same schema-1 contract, and exercise the same persistent two-node journey in the repository. What remains young is their ecosystem fit and public delivery: idiomatic package structure, registry publication, native artifact installation, and more feedback from experienced developers in each language.
+Here, **paved** means the API, examples, and package structure form the route we expect application developers to take. **SDK preview** does not mean a mock or an unfinished protocol port. These adapters already call the same native Rust host, project the same versioned host contract, and exercise the same persistent two-node journey in the repository. What remains young is their ecosystem fit and public delivery: idiomatic package structure, registry publication, native artifact installation, and more feedback from experienced developers in each language.
 
 Prns 0.3.4 was the first publicly announced prerelease. The current 0.3.7 immutable GitHub release artifacts and exact source commit are authoritative for its candidate bytes. Registry packages become authoritative only after their independent publication qualification completes.
 
@@ -70,9 +71,24 @@ npm --prefix prns-js run test:browser:full
 
 Read the [TypeScript and JavaScript guide](../prns-js/README.md) for host creation, tagged outcomes, event streams, persistence, and bounded browser resource transfer.
 
+## Expo / React Native
+
+[`personal-rns-expo`](../prns-react-native/README.md) exposes the general host
+contract through generated UniFFI/JSI bindings and a thin session wrapper. Expo
+is required. The standalone example uses the default `prns_host_mobile` image;
+native compositions may select one aggregate image containing the same host
+facade and their own services. Core host mechanics remain in shared Rust.
+
+This is a source preview, with pinned runtime archives, generated-contract
+checks, detached package checks, and native build validation. It is not yet a
+published npm package. Build instructions and current qualification limits are
+in the [SDK guide](../prns-react-native/README.md). Expo Go cannot load the native
+image; use a custom development build. The browser entry reuses the existing
+`personal-rns/browser` backend.
+
 ## Native SDK previews
 
-The native previews all sit above the generated [`prns_host.h`](../prns-host/abi/c/include/prns_host.h) contract. The adapters and native capsule are version-gated together; mixing arbitrary library and adapter versions is intentionally rejected.
+The following C-backed previews sit above the generated [`prns_host.h`](../prns-host/abi/c/include/prns_host.h) contract. The adapters and native capsule are version-gated together; mixing arbitrary library and adapter versions is intentionally rejected.
 
 On Linux, each registered suite builds the current native capsule and runs the language adapter through lifecycle, exclusive stream ownership, interface configuration, a real loopback connection, announce discovery, link establishment, request and response, bounded resource transfer, shutdown, restart, and persistence restoration.
 
