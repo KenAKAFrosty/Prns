@@ -65,12 +65,12 @@ The existing foundation is useful; this is not a messaging-engine rewrite.
 | Area | What exists | Gap for the demo |
 | --- | --- | --- |
 | Local node | One process-owned Rust runtime and stable primary identity; ordinary iOS Bluetooth admission; This phone appears before managed boards; retained-data cold launches passed on both platforms | Permission recovery and full physical lifecycle qualification remain |
-| Announcing | Contacts exposes a persisted messaging name, explicit Announce yourself and separate My address sharing; reciprocal messaging-build discovery passed | Network announcement history is implemented; rebuilt-phone acceptance remains |
+| Announcing | Contacts exposes a persisted messaging name, explicit Announce yourself and separate My address sharing; reciprocal discovery and Network clear/reannounce passed on rebuilt phones | Wider background discovery remains unqualified |
 | Discovery | Discovered contacts shows accepted LXMF names, age, ingress and hops; 256-entry capacity, 24-hour expiry and explicit clear | General accepted-announcement history is implemented separately; it is not another contacts list |
 | Contacts | Save / Message from discovery; saved recipients, private aliases and announced names remain distinct; discovery-clear sends and isolated restart sends passed on both platforms | Wider retained-key and lifecycle qualification remain |
 | Bluetooth | Connections shows local status, stored enable/disable and physical peers; negotiated liveness and the Apple service-upgrade repair passed bounded isolated restart trials | Competing-connection churn, silent-peer expiry, iOS OS-radio recovery, permission denial and background/long-idle qualification remain |
 | TCP (deferred) | Optional developer TCP client fixture | Not part of this milestone |
-| Inspection | Network separates physical Bluetooth connections, readable current routes and bounded accepted-announcement history, with IDs on demand | Rebuilt-phone UI acceptance and conversation delivery details remain; current routes are not historical message evidence |
+| Inspection | Network separates physical Bluetooth connections, readable current routes and bounded accepted-announcement history, with IDs on demand; focused standalone checks passed on both phones | Conversation delivery details remain; current routes are not historical message evidence |
 
 Source anchors: [Inbox](../prns/app/src/features/inbox/inbox-screen.native.tsx),
 [local-node views](../prns/app/src/features/nodes/nodes-screen.tsx),
@@ -347,10 +347,12 @@ routes or counters.
    connections as reliability follow-ups. Cooperative shutdown notification
    remains implementation work, not a property of the current Stop behavior.
    These do not block network inspection unless a new failure prevents normal use.
-4. **Network explainability (first slice implemented).** Physical Bluetooth connections,
+4. **Network explainability (first slice passed focused phone checks).** Physical Bluetooth connections,
    readable route age/expiry and bounded accepted-announcement inspection are in
-   source. Rebuild both phones for a focused UI check, then add conversation
-   delivery details using independently recorded evidence.
+   the rebuilt standalone apps. Readable tabs, clear/reannounce, retained routes
+   and contacts, and two-way messaging passed on both phones; see the
+   [build and validation record](validation.md#standalone-phone-builds-and-focused-acceptance).
+   Next add conversation delivery details using independently recorded evidence.
    Add a narrow upstream seam only where existing public evidence cannot answer
    the UI's question. Clearly separate current routes from actual message paths.
 5. **Repeatable device acceptance and recovery.** Test out-of-range, reconnect,

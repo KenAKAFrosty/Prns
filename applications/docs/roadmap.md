@@ -43,9 +43,11 @@ contacts, exchange LXMF messages over automatic, pair-free BLE, and inspect how
 the network is communicating. The
 [ordinary CoreBluetooth checkpoint](../checkpoints/2026-09-23-ordinary-corebluetooth.md)
 records direct discovery, two-way messages and one bounded off-screen receipt.
-The Network inspection slice is implemented in source; its new native contract
-still needs rebuilt-phone UI acceptance. Conversation delivery details remain
-the next inspection increment.
+The Network inspection slice has passed a focused journey on rebuilt standalone
+apps on both phones: readable tabs, announcements, routes, clear/reannounce and
+two-way messaging. The [validation record](validation.md#standalone-phone-builds-and-focused-acceptance)
+identifies the exact builds and limits. Conversation delivery details are the
+next inspection increment.
 
 Connection states and the announcing/discovery/contact journey are implemented
 with the bounded evidence in the [messaging checkpoint](../checkpoints/2026-09-24-messaging-discovery.md).
