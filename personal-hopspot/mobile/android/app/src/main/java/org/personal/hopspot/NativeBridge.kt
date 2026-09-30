@@ -281,9 +281,12 @@ object NativeBridge {
 
     external fun nativeBleControlIn(connId: Int, buffer: ByteBuffer, len: Int): Int
 
-    external fun nativeBleControlOut(connId: Int, buffer: ByteBuffer): Int
+    external fun nativeBleControlCapacity(): Int
 
-    external fun nativeBleCommitControlOut(connId: Int): Boolean
+    /** 0 empty; -1 closed; -2 insufficient payload capacity; -3 invalid JNI buffers. */
+    external fun nativeBleControlOut(connId: Int, buffer: ByteBuffer, receipt: LongArray): Int
+
+    external fun nativeBleCompleteControlOut(connId: Int, session: Long, operation: Long, success: Boolean): Boolean
 
     external fun nativeBleL2capIn(connId: Int, buffer: ByteBuffer, len: Int): Boolean
 

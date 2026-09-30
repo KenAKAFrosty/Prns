@@ -12,13 +12,17 @@ internal enum class OutboundAdmission { Accepted, Busy, Terminal }
 
 internal data class GattWriteSubmission(val admission: OutboundAdmission, val status: Int? = null)
 
+/** Local Rust operation identity, unrelated to Bluetooth wire contents. */
+internal data class ControlWriteTicket(val session: Long, val operation: Long)
+
 /** Every client write occupies Android's operation lane, including writes without ATT response. */
 internal fun submitGattClientWrite(
     state: GattState,
     characteristic: UUID,
+    control: ControlWriteTicket? = null,
     write: () -> Int,
 ): GattWriteSubmission {
-    val operation = PendingGattOperation(GattOperationKind.ClientWrite, characteristic)
+    val operation = PendingGattOperation(GattOperationKind.ClientWrite, characteristic, control)
     if (!state.begin(operation)) return GattWriteSubmission(OutboundAdmission.Busy)
     val status = try {
         write()
@@ -36,19 +40,30 @@ internal fun submitGattClientWrite(
     )
 }
 
-internal data class GattWriteCompletion(val releasedPending: Boolean, val shouldClose: Boolean)
+internal data class GattWriteCompletion(
+    val releasedPending: Boolean,
+    val shouldClose: Boolean,
+    val control: ControlWriteTicket? = null,
+)
 
 internal fun completeGattClientWrite(
     state: GattState,
     characteristic: UUID,
     status: Int,
 ): GattWriteCompletion = synchronized(state) {
-    val released = state.complete(GattOperationKind.ClientWrite, characteristic)
+    val operation = state.takeCompleted(GattOperationKind.ClientWrite, characteristic)
     // An error is still terminal when no matching operation was tracked.
     // A mismatched successful callback must not release another operation.
     val failed = status != BluetoothGatt.GATT_SUCCESS
     if (failed) state.close()
-    GattWriteCompletion(released, failed)
+    GattWriteCompletion(operation != null, failed, operation?.control)
+}
+
+internal fun completeGattServerNotify(state: GattState, status: Int): GattWriteCompletion = synchronized(state) {
+    val operation = state.takeCompleted(GattOperationKind.ServerNotify)
+    val failed = status != BluetoothGatt.GATT_SUCCESS
+    if (failed) state.close()
+    GattWriteCompletion(operation != null, failed, operation?.control)
 }
 
 /** Resolve an OS callback only to the object that owns that physical client. */
@@ -79,11 +94,14 @@ internal enum class GattOperationKind {
 internal data class PendingGattOperation(
     val kind: GattOperationKind,
     val characteristic: UUID?,
+    val control: ControlWriteTicket? = null,
 )
 
 /** One link's operation ownership, bounded startup, and bounded outbound progress. */
 internal class GattState(private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 }) {
     private var pending: PendingGattOperation? = null
+    private var lastControl: ControlWriteTicket? = null
+    private var previousControl: ControlWriteTicket? = null
     private var outboundAtMillis: Long? = null
     private var servicesRequested = false
     private var startupAtMillis: Long? = null
@@ -93,6 +111,17 @@ internal class GattState(private val nowMillis: () -> Long = { System.nanoTime()
     @Synchronized
     fun begin(operation: PendingGattOperation): Boolean {
         if (closed || pending != null) return false
+        operation.control?.let { ticket ->
+            lastControl?.let { previous ->
+                // A pump snapshot can outlive the callback that acknowledged it.
+                // Once submitted, never submit that ticket again on this owner.
+                if (ticket.session != previous.session ||
+                    java.lang.Long.compareUnsigned(ticket.operation, previous.operation) <= 0
+                ) return false
+            }
+        }
+        previousControl = lastControl
+        operation.control?.let { lastControl = it }
         pending = operation
         if (operation.kind == GattOperationKind.ClientWrite || operation.kind == GattOperationKind.ServerNotify) {
             // Admission retries do not constitute progress or restart the deadline.
@@ -102,16 +131,22 @@ internal class GattState(private val nowMillis: () -> Long = { System.nanoTime()
     }
 
     @Synchronized
-    fun complete(kind: GattOperationKind, characteristic: UUID? = null): Boolean {
-        val operation = pending ?: return false
+    fun complete(kind: GattOperationKind, characteristic: UUID? = null): Boolean =
+        takeCompleted(kind, characteristic) != null
+
+    /** Capture the original receipt before releasing the lane. */
+    @Synchronized
+    fun takeCompleted(kind: GattOperationKind, characteristic: UUID? = null): PendingGattOperation? {
+        val operation = pending ?: return null
         if (closed || operation.kind != kind ||
             characteristic != null && operation.characteristic != characteristic
-        ) return false
+        ) return null
         pending = null
+        previousControl = null
         if (kind == GattOperationKind.ClientWrite || kind == GattOperationKind.ServerNotify) {
             outboundAtMillis = null
         }
-        return true
+        return operation
     }
 
     // Only for a platform request rejected synchronously. This cannot cancel an
@@ -120,6 +155,10 @@ internal class GattState(private val nowMillis: () -> Long = { System.nanoTime()
     fun cancel(operation: PendingGattOperation): Boolean {
         if (closed || pending != operation) return false
         pending = null
+        // Synchronous rejection means Android did not own this attempt. Busy
+        // can retry its original ticket without losing the prior high-water mark.
+        lastControl = previousControl
+        previousControl = null
         return true
     }
 
@@ -160,6 +199,17 @@ internal class GattState(private val nowMillis: () -> Long = { System.nanoTime()
         if (closed || nowMillis - started < timeoutMillis) return false
         close()
         return true
+    }
+
+    @Synchronized
+    fun closeForRetirement(uncertain: Boolean): Boolean {
+        // A Rust-side deadline/close request has no native callback status.
+        // Preserve the same quarantine as a local timeout if Android still owns
+        // an operation; closing its lane cannot prove the callback was canceled.
+        val pendingOutbound = pending?.kind == GattOperationKind.ClientWrite ||
+            pending?.kind == GattOperationKind.ServerNotify
+        close()
+        return uncertain || pendingOutbound
     }
 
     @Synchronized

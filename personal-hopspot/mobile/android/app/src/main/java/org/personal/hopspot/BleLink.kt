@@ -1,12 +1,16 @@
 package org.personal.hopspot
 
 import rs.reticulum.prns.bluetooth.ERROR_GATT_WRITE_REQUEST_BUSY
+import rs.reticulum.prns.bluetooth.ControlWriteTicket
+import rs.reticulum.prns.bluetooth.ControlOutReader
+import rs.reticulum.prns.bluetooth.ControlOutput
 import rs.reticulum.prns.bluetooth.GattOperationKind
 import rs.reticulum.prns.bluetooth.GattServerOwners
 import rs.reticulum.prns.bluetooth.GattState
 import rs.reticulum.prns.bluetooth.OutboundAdmission
 import rs.reticulum.prns.bluetooth.PendingGattOperation
 import rs.reticulum.prns.bluetooth.completeGattClientWrite
+import rs.reticulum.prns.bluetooth.completeGattServerNotify
 import rs.reticulum.prns.bluetooth.expireGattOperation
 import rs.reticulum.prns.bluetooth.gattCallbackOwner
 import rs.reticulum.prns.bluetooth.submitGattClientWrite
@@ -399,7 +403,11 @@ class BleLink(private val context: Context) {
                 val link = serverOwners.completeNotification(serverEpoch, device.address) ?: return
                 if (links[link.connId] !== link) return
                 val connId = link.connId
-                if (link.completeGattOperation(GattOperationKind.ServerNotify)) {
+                val completion = completeGattServerNotify(link.gattState, status)
+                completion.control?.let { receipt ->
+                    NativeBridge.nativeBleCompleteControlOut(connId, receipt.session, receipt.operation, !completion.shouldClose)
+                }
+                if (completion.releasedPending) {
                     NativeBridge.nativeBleWakePumps()
                     if (status != BluetoothGatt.GATT_SUCCESS) {
                         Log.w(TAG, "notification failed[$connId] status=$status")
@@ -730,8 +738,7 @@ class BleLink(private val context: Context) {
 
     private fun startControlOutPump() {
         startWorker("control-out") {
-            val direct = ByteBuffer.allocateDirect(CONTROL_CHUNK)
-            val scratch = ByteArray(CONTROL_CHUNK)
+            val reader = ControlOutReader(NativeBridge.nativeBleControlCapacity())
             var generation = NativeBridge.nativeBleWorkGeneration()
             while (running) {
                 if (!radioActive) {
@@ -741,19 +748,17 @@ class BleLink(private val context: Context) {
                 var pending = false
                 var progressed = false
                 for (link in links.values) {
-                    direct.clear()
-                    val n = NativeBridge.nativeBleControlOut(link.connId, direct)
-                    if (n > 0) {
+                    val output = reader.read(link.connId, NativeBridge::nativeBleControlOut)
+                    if (output is ControlOutput.Fault) {
+                        Log.w(TAG, "invalid control output[${link.connId}] result=${output.code}")
+                        closeLink(link.connId)
+                    } else if (output is ControlOutput.Ready) {
                         pending = true
-                        direct.position(0)
-                        direct.get(scratch, 0, n)
-                        when (deliverControl(link, scratch.copyOf(n))) {
+                        when (deliverControl(link, output.payload, output.ticket)) {
                             OutboundAdmission.Accepted -> {
-                                progressed = NativeBridge.nativeBleCommitControlOut(link.connId)
-                                if (!progressed) {
-                                    Log.w(TAG, "control ownership commit failed[${link.connId}]")
-                                    closeLink(link.connId)
-                                }
+                                // The matching callback owns completion. It may
+                                // already have run before platform submission returns.
+                                progressed = true
                             }
                             OutboundAdmission.Busy -> {}
                             OutboundAdmission.Terminal -> closeLink(link.connId)
@@ -770,7 +775,7 @@ class BleLink(private val context: Context) {
         }
     }
 
-    private fun deliverControl(link: LinkState, payload: ByteArray): OutboundAdmission {
+    private fun deliverControl(link: LinkState, payload: ByteArray, receipt: ControlWriteTicket): OutboundAdmission {
         if (link.peerProtocol == BlePeerProtocol.Columba) {
             Log.w(TAG, "control queued for Columba link[${link.connId}]")
             return OutboundAdmission.Terminal
@@ -783,10 +788,11 @@ class BleLink(private val context: Context) {
                 payload,
                 BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
                 "control",
+                receipt,
             )
         }
         val char = controlChar ?: return OutboundAdmission.Terminal
-        return serverNotifyAdmission(link, char, payload, "control")
+        return serverNotifyAdmission(link, char, payload, "control", receipt)
     }
 
     @Synchronized
@@ -796,11 +802,12 @@ class BleLink(private val context: Context) {
         payload: ByteArray,
         type: Int,
         lane: String,
+        receipt: ControlWriteTicket? = null,
     ): OutboundAdmission {
         if (!running || !radioActive || links[link.connId] !== link) return OutboundAdmission.Terminal
         val gatt = link.clientGatt ?: return OutboundAdmission.Terminal
         val result = try {
-            submitGattClientWrite(link.gattState, char.uuid) {
+            submitGattClientWrite(link.gattState, char.uuid, receipt) {
                 writeGattCharacteristic(gatt, char, payload, type)
             }
         } catch (e: Exception) {
@@ -819,11 +826,12 @@ class BleLink(private val context: Context) {
         char: BluetoothGattCharacteristic,
         payload: ByteArray,
         lane: String,
+        receipt: ControlWriteTicket? = null,
     ): OutboundAdmission {
         if (!running || !radioActive || links[link.connId] !== link) return OutboundAdmission.Terminal
         val central = link.central ?: return OutboundAdmission.Terminal
         val server = gattServer ?: return OutboundAdmission.Terminal
-        val operation = PendingGattOperation(GattOperationKind.ServerNotify, char.uuid)
+        val operation = PendingGattOperation(GattOperationKind.ServerNotify, char.uuid, receipt)
         if (!link.beginGattOperation(operation)) {
             return OutboundAdmission.Busy
         }
@@ -1374,6 +1382,9 @@ class BleLink(private val context: Context) {
                     }
                     val link = links[connId] ?: return
                     val completion = completeGattClientWrite(link.gattState, characteristic.uuid, status)
+                    completion.control?.let { receipt ->
+                        NativeBridge.nativeBleCompleteControlOut(connId, receipt.session, receipt.operation, !completion.shouldClose)
+                    }
                     if (completion.shouldClose) {
                         Log.w(TAG, "write completion failed[$connId] status=$status")
                         closeLink(connId)
@@ -1487,9 +1498,9 @@ class BleLink(private val context: Context) {
             NativeBridge.nativeBleDisconnected(connId)
             return
         }
-        link.gattState.close()
+        val retirementUncertain = link.gattState.closeForRetirement(uncertain)
         linkedConnIds.remove(connId)
-        if (!link.dialed) serverOwners.retire(link.address, link, serverDisconnected, uncertain)
+        if (!link.dialed) serverOwners.retire(link.address, link, serverDisconnected, retirementUncertain)
         if (inboundByAddr.remove(link.address, connId)) columbaSubscribedCentrals.remove(link.address)
         dialingAddrs.remove(link.address, connId)
         connectedAddrs.remove(link.address, connId)
@@ -1787,7 +1798,6 @@ class BleLink(private val context: Context) {
     private companion object {
         private const val TAG = "HopspotBle"
         private const val L2CAP_CHUNK = 2048
-        private const val CONTROL_CHUNK = 64
         private const val DATA_CHUNK = 512
         private const val RADIO_STATE_RETRY_MS = 1_000L
         private const val RSSI_NONE = 127
