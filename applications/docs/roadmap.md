@@ -54,9 +54,11 @@ records an Apple restored-service upgrade repair and successful isolated app
 restarts in both directions, followed by verified saved-contact delivery. Later
 checks passed Android node Stop/Start and radio recovery, iOS interface off/on,
 and bounded off-screen receipt on both phones.
-Continue lifecycle qualification and investigate competing-connection churn;
-silent-peer expiry and background reliability are not established by those
-restart passes. Bounded network inspection remains the next product slice.
+Proceed with bounded network inspection as the next product slice. Retry backoff,
+cooperative shutdown and wider lifecycle qualification remain reliability
+follow-ups, not prerequisites for these features. Silent-peer expiry and dependable
+background delivery are not established by the current trials; revisit them
+before making those claims or if a new failure blocks normal use.
 TCP remains outside this product milestone. Preserve
 native background ownership and qualify foreground, locked/background and
 recovery behavior separately. The app uses ordinary Bluetooth permission and
