@@ -128,6 +128,9 @@ pub trait BleLink {
         Ok(())
     }
 
+    /// Uses the same completion and cancellation contract as [`BleControl::send`].
+    /// A backend used by a supervisor that recreates this future must explicitly
+    /// support resuming the original operation rather than submitting another write.
     async fn control_send(&mut self, msg: &Control) -> Result<(), Self::Error>;
     async fn control_recv(&mut self) -> Result<Control, Self::Error>;
 
@@ -155,8 +158,12 @@ pub struct BleLinkParts<S, T, C> {
 pub trait BleControl {
     type Error: core::fmt::Debug;
 
-    /// Keep a started send alive until it completes or the entire session is retired.
-    /// Callers must not cancel and retry a possibly submitted control write.
+    /// Unless the backend explicitly supports resumable sends, keep a started
+    /// send alive until completion or retirement of the entire session.
+    /// Cancellation is not rollback: re-entering this method is not generally safe.
+    /// A resumable backend must rejoin the same message's original operation and
+    /// deadline, never duplicate a possibly submitted write or transfer its result
+    /// to another message. Local completion does not establish remote receipt.
     async fn send(&mut self, message: &Control) -> Result<(), Self::Error>;
 
     /// Cancellation-safe receive: dropping a pending future must not consume a
