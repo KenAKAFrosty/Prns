@@ -87,6 +87,13 @@ const waitingBluetoothAuthorization: Bindings.BluetoothAuthorizationStatus = {
 };
 const mockSnapshot: DevelopmentNodeSnapshot = {
   contractFingerprint: "test-contract",
+  network: {
+    state: Bindings.LocalNetworkState.Stopped.new(),
+    routes: [],
+    announces: [],
+    activityRevision: 0n,
+    droppedAnnounceCount: 0n,
+  },
   revision: 3n,
   runtime: Bindings.DevelopmentNodeRuntime.Running,
   primaryIdentity: Bindings.PrimaryIdentityState.Missing.new(),
