@@ -4,10 +4,11 @@
 //! its database submits [`MailboxRequest`] values to its one blocking owner and
 //! calls [`execute_mailbox_request`] there.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::future::Future;
 use std::mem;
+use std::ops::Bound;
 use std::pin::Pin;
 use std::string::String;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -27,7 +28,7 @@ use crate::direct::{
 use crate::{LxmfDirection, LxmfVerification};
 use prns_lxmf_wire::{
     compose_basic_direct_lxmf, BasicLxmfComposeError, CarrierIngress, MessageView, WireLimits,
-    MAX_BASIC_LXMF_WIRE_BYTES,
+    MAX_BASIC_LXMF_WIRE_BYTES, WIRE_HEADER_LENGTH,
 };
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
@@ -199,6 +200,19 @@ pub struct MailboxListRequest {
     pub limit: usize,
 }
 
+/// Latest record per peer, ordered by descending local record ID.
+///
+/// `before` is exclusive and refers to a conversation's latest record, not its
+/// timestamp. The scan can visit the whole mailbox, but only materializes the
+/// requested page and retains peer IDs for deduplication; it copies no full
+/// mailbox. A newer message can move a conversation ahead of an existing cursor,
+/// so consumers should refresh the first page after mailbox mutations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MailboxConversationListRequest {
+    pub before: Option<u64>,
+    pub limit: usize,
+}
+
 /// Closed mailbox request language executed on the application's owner thread.
 #[derive(Debug)]
 pub enum MailboxRequest {
@@ -216,6 +230,7 @@ pub enum MailboxRequest {
         cancelled_at_millis: u64,
     },
     List(MailboxListRequest),
+    ListConversations(MailboxConversationListRequest),
     ListQueued,
 }
 
@@ -234,11 +249,19 @@ pub enum MailboxReply {
         messages: Vec<DurableLxmfMessage>,
         revision: u64,
     },
+    ConversationsListed {
+        messages: Vec<DurableLxmfMessage>,
+        revision: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InboundInsertOutcome {
     Inserted {
+        message: DurableLxmfMessage,
+        revision: u64,
+    },
+    VerificationUpgraded {
         message: DurableLxmfMessage,
         revision: u64,
     },
@@ -307,12 +330,20 @@ struct StoredRecord {
 enum StoredRecordKind {
     Inbound {
         verification: StoredVerification,
+        // Existing records have one mutation. Preserve that interpretation on
+        // reopen while accounting for the sole permitted verification upgrade.
+        #[serde(default, skip_serializing_if = "is_false")]
+        verification_upgraded: bool,
     },
     Outbound {
         generation: u64,
         failed_attempts: u64,
         state: StoredOutboundState,
     },
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -528,6 +559,7 @@ pub fn execute_mailbox_request(
             cancelled_at_millis,
         } => cancel(database, local_record_id, cancelled_at_millis),
         MailboxRequest::List(request) => list(database, request, false),
+        MailboxRequest::ListConversations(request) => list_conversations(database, request),
         MailboxRequest::ListQueued => list(
             database,
             MailboxListRequest {
@@ -587,6 +619,58 @@ fn insert_inbound(
         found
     };
     if let Some(local_record_id) = duplicate {
+        let Some(mut record) = read_record(&write, local_record_id)? else {
+            return Err(MailboxFailure::reset_required(
+                "an LXMF inbound index entry refers to a missing record",
+            ));
+        };
+        let StoredRecordKind::Inbound { verification, .. } = record.record_kind else {
+            return Err(MailboxFailure::reset_required(
+                "an LXMF inbound index entry refers to an outbound record",
+            ));
+        };
+        if record.message_id != message.message_id {
+            return Err(MailboxFailure::reset_required(
+                "an LXMF inbound index entry does not match its record",
+            ));
+        }
+        if verification != StoredVerification::Verified
+            && message.verification == LxmfVerification::Verified
+        {
+            // The message ID excludes the signature. An unverified first copy
+            // must not permanently suppress a later source-verified receipt.
+            // Retain the original local ID and require the exact signed body,
+            // including fields not projected into title/content, to agree.
+            let mut upgraded = record.clone();
+            upgraded.exact_wire = message.exact_wire;
+            upgraded.record_kind = StoredRecordKind::Inbound {
+                verification: StoredVerification::Verified,
+                verification_upgraded: true,
+            };
+            validate_record(local_record_id, &upgraded)?;
+            if record.source != message.source
+                || record.destination != message.destination
+                || record.timestamp_unix_ms != message.timestamp_unix_ms
+                || record.title != message.title
+                || record.content != message.content
+                || record.exact_wire[WIRE_HEADER_LENGTH..]
+                    != upgraded.exact_wire[WIRE_HEADER_LENGTH..]
+            {
+                return Err(MailboxFailure::unavailable(
+                    "the verified LXMF duplicate does not match the stored message",
+                ));
+            }
+            record = upgraded;
+            write_record(&write, local_record_id, &record)?;
+            let revision = increment_revision(&write)?;
+            commit(write, "upgrade inbound LXMF verification")?;
+            return Ok(MailboxReply::Inbound(
+                InboundInsertOutcome::VerificationUpgraded {
+                    message: public_message(local_record_id, record),
+                    revision,
+                },
+            ));
+        }
         return Ok(MailboxReply::Inbound(InboundInsertOutcome::Duplicate {
             local_record_id,
         }));
@@ -604,6 +688,7 @@ fn insert_inbound(
         exact_wire: message.exact_wire,
         record_kind: StoredRecordKind::Inbound {
             verification: stored_verification(message.verification),
+            verification_upgraded: false,
         },
     };
     validate_record(local_record_id, &record)?;
@@ -770,24 +855,24 @@ fn list(
     let table = read
         .open_table(LXMF_MESSAGES)
         .map_err(|error| classify_redb_error(error.into(), "open LXMF message table"))?;
-    let mut records = Vec::new();
+    let mut messages = Vec::new();
+    if request.limit == 0 {
+        return Ok(MailboxReply::Listed { messages, revision });
+    }
+    // Redb owns the cursor's page storage. Deserialize only records actually
+    // visited before reaching the requested number of matching messages.
     for entry in table
-        .iter()
+        .range((
+            Bound::Unbounded,
+            request.before.map_or(Bound::Unbounded, Bound::Excluded),
+        ))
         .map_err(|error| classify_redb_error(error.into(), "scan LXMF message table"))?
+        .rev()
     {
         let (key, value) =
             entry.map_err(|error| classify_redb_error(error.into(), "scan LXMF message record"))?;
-        records.push((key.value(), value.value().to_vec()));
-    }
-    let mut messages = Vec::new();
-    for (local_record_id, encoded) in records.into_iter().rev() {
-        if request
-            .before
-            .is_some_and(|before| local_record_id >= before)
-        {
-            continue;
-        }
-        let record = decode_record(local_record_id, &encoded)?;
+        let local_record_id = key.value();
+        let record = decode_record(local_record_id, value.value())?;
         let message = public_message(local_record_id, record);
         if queued_only
             && !matches!(
@@ -812,12 +897,61 @@ fn list(
                 continue;
             }
         }
-        if messages.len() >= request.limit {
+        messages.push(message);
+        if messages.len() == request.limit {
             break;
         }
-        messages.push(message);
     }
     Ok(MailboxReply::Listed { messages, revision })
+}
+
+fn list_conversations(
+    database: &Database,
+    request: MailboxConversationListRequest,
+) -> Result<MailboxReply, MailboxFailure> {
+    let read = database
+        .begin_read()
+        .map_err(|error| classify_redb_error(error.into(), "list LXMF conversations"))?;
+    let meta = read
+        .open_table(DEVELOPMENT_META)
+        .map_err(|error| classify_redb_error(error.into(), "open development metadata"))?;
+    let revision = required_meta(&meta, LXMF_REVISION_KEY)?;
+    let mut messages = Vec::new();
+    if request.limit == 0 {
+        return Ok(MailboxReply::ConversationsListed { messages, revision });
+    }
+    let table = read
+        .open_table(LXMF_MESSAGES)
+        .map_err(|error| classify_redb_error(error.into(), "open LXMF message table"))?;
+    let mut seen = BTreeSet::new();
+    for entry in table
+        .iter()
+        .map_err(|error| classify_redb_error(error.into(), "scan LXMF conversations"))?
+        .rev()
+    {
+        let (key, value) =
+            entry.map_err(|error| classify_redb_error(error.into(), "scan LXMF conversation"))?;
+        let local_record_id = key.value();
+        let record = decode_record(local_record_id, value.value())?;
+        let peer = match record.record_kind {
+            StoredRecordKind::Inbound { .. } => record.source,
+            StoredRecordKind::Outbound { .. } => record.destination,
+        };
+        // Remember the newest record even when it is ahead of the cursor. An
+        // older message must never make that conversation appear a second time.
+        if !seen.insert(peer)
+            || request
+                .before
+                .is_some_and(|before| local_record_id >= before)
+        {
+            continue;
+        }
+        messages.push(public_message(local_record_id, record));
+        if messages.len() == request.limit {
+            break;
+        }
+    }
+    Ok(MailboxReply::ConversationsListed { messages, revision })
 }
 
 fn begin_write(
@@ -958,6 +1092,18 @@ fn record_mutation_count(
     local_record_id: u64,
     kind: &StoredRecordKind,
 ) -> Result<u64, MailboxFailure> {
+    if let StoredRecordKind::Inbound {
+        verification,
+        verification_upgraded,
+    } = kind
+    {
+        if *verification_upgraded && *verification != StoredVerification::Verified {
+            return Err(MailboxFailure::reset_required(format!(
+                "LXMF record {local_record_id} has an unverified verification upgrade"
+            )));
+        }
+        return Ok(1 + u64::from(*verification_upgraded));
+    }
     let StoredRecordKind::Outbound {
         generation,
         failed_attempts,
@@ -1028,7 +1174,7 @@ fn timestamp_millis(seconds: f64) -> Option<u64> {
 
 fn public_message(local_record_id: u64, record: StoredRecord) -> DurableLxmfMessage {
     let (direction, verification, delivery_state, generation) = match record.record_kind {
-        StoredRecordKind::Inbound { verification } => (
+        StoredRecordKind::Inbound { verification, .. } => (
             LxmfDirection::Inbound,
             public_verification(verification),
             DurableLxmfDeliveryState::Received,
@@ -1698,12 +1844,26 @@ impl DurableDirectLxmfService {
         &self,
         request: MailboxListRequest,
     ) -> Result<DurableLxmfSnapshot, MailboxFailure> {
+        self.query_snapshot(MailboxRequest::List(request)).await
+    }
+
+    /// Query each peer's latest record without a mailbox-wide recent-row cutoff.
+    /// Uses the same health and active-attempt projection as [`Self::snapshot`].
+    pub async fn conversation_snapshot(
+        &self,
+        request: MailboxConversationListRequest,
+    ) -> Result<DurableLxmfSnapshot, MailboxFailure> {
+        self.query_snapshot(MailboxRequest::ListConversations(request))
+            .await
+    }
+
+    async fn query_snapshot(
+        &self,
+        request: MailboxRequest,
+    ) -> Result<DurableLxmfSnapshot, MailboxFailure> {
         let _transition = self.lifecycle.transition.lock().await;
-        let reply = self
-            .shared
-            .mailbox
-            .submit(MailboxRequest::List(request))
-            .await;
+        let conversations = matches!(&request, MailboxRequest::ListConversations(_));
+        let reply = self.shared.mailbox.submit(request).await;
         let reply = match reply {
             Ok(reply) => {
                 self.shared.set_mailbox_read_ready();
@@ -1714,17 +1874,19 @@ impl DurableDirectLxmfService {
                 return Err(failure);
             }
         };
-        let MailboxReply::Listed {
-            mut messages,
-            revision,
-        } = reply
-        else {
-            self.shared.set_unexpected_mailbox_read_failure(
-                "the mailbox owner returned an unexpected list reply",
-            );
-            return Err(MailboxFailure::unavailable(
-                "the mailbox owner returned an unexpected list reply",
-            ));
+        let (mut messages, revision) = match reply {
+            MailboxReply::Listed { messages, revision } if !conversations => (messages, revision),
+            MailboxReply::ConversationsListed { messages, revision } if conversations => {
+                (messages, revision)
+            }
+            _ => {
+                self.shared.set_unexpected_mailbox_read_failure(
+                    "the mailbox owner returned an unexpected list reply",
+                );
+                return Err(MailboxFailure::unavailable(
+                    "the mailbox owner returned an unexpected list reply",
+                ));
+            }
         };
         let active: Vec<AttemptKey> = self.lifecycle.attempts().keys().copied().collect();
         for message in &mut messages {
@@ -2284,7 +2446,10 @@ async fn process_durable_inbound(
         .submit(MailboxRequest::InsertInbound(inbound))
         .await
     {
-        Ok(MailboxReply::Inbound(InboundInsertOutcome::Inserted { .. })) => {
+        Ok(MailboxReply::Inbound(
+            InboundInsertOutcome::Inserted { .. }
+            | InboundInsertOutcome::VerificationUpgraded { .. },
+        )) => {
             shared.set_mailbox_write_ready();
             shared.notify();
         }
@@ -2739,8 +2904,14 @@ mod tests {
     }
 
     fn outbound(timestamp: u64) -> NewOutboundMessage {
-        let source = [0x11; 16];
-        let destination = [0x22; 16];
+        outbound_between(timestamp, [0x11; 16], [0x22; 16])
+    }
+
+    fn outbound_between(
+        timestamp: u64,
+        source: [u8; 16],
+        destination: [u8; 16],
+    ) -> NewOutboundMessage {
         let title = b"title".to_vec();
         let content = b"content".to_vec();
         let mut output = [0_u8; MAX_BASIC_LXMF_WIRE_BYTES];
@@ -2764,6 +2935,43 @@ mod tests {
             content,
             exact_wire: output[..usize::from(prepared.wire_len())].to_vec(),
         }
+    }
+
+    fn inbound(message: NewOutboundMessage, verification: LxmfVerification) -> NewInboundMessage {
+        NewInboundMessage {
+            message_id: message.message_id,
+            source: message.source,
+            destination: message.destination,
+            timestamp_unix_ms: message.timestamp_unix_ms,
+            title: message.title,
+            content: message.content,
+            exact_wire: message.exact_wire,
+            verification,
+        }
+    }
+
+    fn listed(database: &Database, request: MailboxListRequest) -> (Vec<DurableLxmfMessage>, u64) {
+        let MailboxReply::Listed { messages, revision } =
+            execute_mailbox_request(database, MailboxRequest::List(request)).unwrap()
+        else {
+            panic!("unexpected list reply");
+        };
+        (messages, revision)
+    }
+
+    fn conversations(
+        database: &Database,
+        before: Option<u64>,
+        limit: usize,
+    ) -> (Vec<DurableLxmfMessage>, u64) {
+        let MailboxReply::ConversationsListed { messages, revision } = execute_mailbox_request(
+            database,
+            MailboxRequest::ListConversations(MailboxConversationListRequest { before, limit }),
+        )
+        .unwrap() else {
+            panic!("unexpected conversation reply");
+        };
+        (messages, revision)
     }
 
     fn inserted_outbound(database: &Database, timestamp: u64) -> DurableLxmfMessage {
@@ -2809,6 +3017,189 @@ mod tests {
         assert_eq!(revision, 1);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].exact_wire, exact_wire);
+    }
+
+    #[test]
+    fn list_cursor_filters_and_limits_are_exact() {
+        let (_root, database) = open_database();
+        for index in 0..6 {
+            let message = outbound_between(1_700_000_001_000 + index, [0x11; 16], [0x22; 16]);
+            let request = if index % 2 == 0 {
+                MailboxRequest::InsertOutbound(message)
+            } else {
+                MailboxRequest::InsertInbound(inbound(message, LxmfVerification::Verified))
+            };
+            execute_mailbox_request(&database, request).unwrap();
+        }
+        let ids = |request| {
+            listed(&database, request)
+                .0
+                .into_iter()
+                .map(|message| message.local_record_id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(MailboxListRequest {
+                before: Some(6),
+                limit: 2,
+                ..all_messages()
+            }),
+            vec![5, 4]
+        );
+        assert_eq!(
+            ids(MailboxListRequest {
+                before: Some(6),
+                direction: Some(MailboxDirectionFilter::Inbox),
+                peer: Some([0x22; 16]),
+                limit: 2,
+            }),
+            vec![4, 2]
+        );
+        assert_eq!(
+            ids(MailboxListRequest {
+                direction: Some(MailboxDirectionFilter::Outbox),
+                peer: Some([0x11; 16]),
+                limit: 2,
+                ..all_messages()
+            }),
+            vec![5, 3]
+        );
+        for request in [
+            MailboxListRequest {
+                limit: 0,
+                ..all_messages()
+            },
+            MailboxListRequest {
+                before: Some(0),
+                ..all_messages()
+            },
+            MailboxListRequest {
+                before: Some(1),
+                ..all_messages()
+            },
+            MailboxListRequest {
+                peer: Some([0x33; 16]),
+                ..all_messages()
+            },
+        ] {
+            assert!(ids(request).is_empty());
+        }
+        let MailboxReply::Listed { messages, revision } =
+            execute_mailbox_request(&database, MailboxRequest::ListQueued).unwrap()
+        else {
+            panic!("unexpected list reply");
+        };
+        assert_eq!(revision, 6);
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.local_record_id)
+                .collect::<Vec<_>>(),
+            vec![5, 3, 1]
+        );
+    }
+
+    #[test]
+    fn bounded_list_does_not_decode_records_outside_its_page() {
+        let (_root, database) = open_database();
+        inserted_outbound(&database, 1_700_000_001_000);
+        inserted_outbound(&database, 1_700_000_001_001);
+        let write = database.begin_write().unwrap();
+        write
+            .open_table(LXMF_MESSAGES)
+            .unwrap()
+            .insert(1, b"malformed".as_slice())
+            .unwrap();
+        write.commit().unwrap();
+        assert!(listed(
+            &database,
+            MailboxListRequest {
+                limit: 0,
+                ..all_messages()
+            }
+        )
+        .0
+        .is_empty());
+        assert_eq!(
+            listed(
+                &database,
+                MailboxListRequest {
+                    limit: 1,
+                    ..all_messages()
+                }
+            )
+            .0[0]
+                .local_record_id,
+            2
+        );
+        assert!(listed(
+            &database,
+            MailboxListRequest {
+                before: Some(1),
+                ..all_messages()
+            }
+        )
+        .0
+        .is_empty());
+        assert!(execute_mailbox_request(
+            &database,
+            MailboxRequest::List(MailboxListRequest {
+                before: Some(2),
+                limit: 1,
+                ..all_messages()
+            })
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn conversation_pages_include_old_peers_without_repeating_newer_conversations() {
+        let (_root, database) = open_database();
+        let local = [0x11; 16];
+        let older_peer = [0x33; 16];
+        let active_peer = [0x22; 16];
+        let newest_peer = [0x44; 16];
+        let insert = |timestamp, source, destination, incoming| {
+            let message = outbound_between(timestamp, source, destination);
+            let request = if incoming {
+                MailboxRequest::InsertInbound(inbound(message, LxmfVerification::Verified))
+            } else {
+                MailboxRequest::InsertOutbound(message)
+            };
+            execute_mailbox_request(&database, request).unwrap();
+        };
+        insert(1_700_000_001_000, local, newest_peer, false);
+        insert(1_700_000_001_001, local, older_peer, false);
+        for index in 2..108 {
+            insert(1_700_000_001_000 + index, local, active_peer, false);
+        }
+        // The latest active peer row is inbound; its peer is source, not local.
+        insert(1_700_000_001_108, active_peer, local, true);
+        insert(1_700_000_001_109, local, newest_peer, false);
+        let (first, revision) = conversations(&database, None, 1);
+        assert_eq!(revision, 110);
+        assert_eq!(first[0].local_record_id, 110);
+        let (second, _) = conversations(&database, Some(110), 1);
+        assert_eq!(second[0].local_record_id, 109);
+        let (third, _) = conversations(&database, Some(109), 1);
+        assert_eq!(third[0].local_record_id, 2);
+        assert!(conversations(&database, Some(2), 1).0.is_empty());
+        assert!(conversations(&database, None, 0).0.is_empty());
+        assert!(conversations(&database, Some(0), 10).0.is_empty());
+        assert_eq!(
+            conversations(&database, None, 10)
+                .0
+                .iter()
+                .map(|message| message.local_record_id)
+                .collect::<Vec<_>>(),
+            vec![110, 109, 2]
+        );
+        // A new row moves the old peer ahead of the existing cursor; it must not
+        // reappear below it. A fresh first-page query finds the new ordering.
+        insert(1_700_000_001_110, older_peer, local, true);
+        assert!(conversations(&database, Some(109), 10).0.is_empty());
+        assert_eq!(conversations(&database, None, 1).0[0].local_record_id, 111);
+        validate_mailbox_database(&database).unwrap();
     }
 
     #[test]
@@ -2945,6 +3336,116 @@ mod tests {
                 })
             })
         ));
+    }
+
+    #[test]
+    fn inbound_verification_upgrade_is_monotonic_transactional_and_survives_reopen() {
+        for initial_verification in [
+            LxmfVerification::SourceUnknown,
+            LxmfVerification::InvalidSignature,
+        ] {
+            let (root, database) = open_database();
+            let verified = inbound(outbound(1_700_000_003_001), LxmfVerification::Verified);
+            let mut unverified = verified.clone();
+            unverified.verification = initial_verification;
+            if initial_verification == LxmfVerification::InvalidSignature {
+                unverified.exact_wire[32] ^= 1;
+            }
+            execute_mailbox_request(&database, MailboxRequest::InsertInbound(unverified.clone()))
+                .unwrap();
+            let upgraded =
+                execute_mailbox_request(&database, MailboxRequest::InsertInbound(verified.clone()))
+                    .unwrap();
+            assert!(matches!(
+                upgraded,
+                MailboxReply::Inbound(InboundInsertOutcome::VerificationUpgraded {
+                    message: DurableLxmfMessage {
+                        local_record_id: 1,
+                        verification: LxmfVerification::Verified,
+                        ..
+                    },
+                    revision: 2,
+                })
+            ));
+            for duplicate in [verified.clone(), unverified] {
+                assert_eq!(
+                    execute_mailbox_request(&database, MailboxRequest::InsertInbound(duplicate))
+                        .unwrap(),
+                    MailboxReply::Inbound(InboundInsertOutcome::Duplicate { local_record_id: 1 })
+                );
+            }
+            validate_mailbox_database(&database).unwrap();
+            drop(database);
+            let reopened = Database::open(root.path().join("application.redb")).unwrap();
+            validate_mailbox_database(&reopened).unwrap();
+            let (messages, revision) = listed(&reopened, all_messages());
+            assert_eq!(revision, 2);
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].local_record_id, 1);
+            assert_eq!(messages[0].exact_wire, verified.exact_wire);
+            assert_eq!(messages[0].verification, LxmfVerification::Verified);
+            assert_eq!(
+                inserted_outbound(&reopened, 1_700_000_003_002).local_record_id,
+                2
+            );
+            validate_mailbox_database(&reopened).unwrap();
+        }
+    }
+
+    #[test]
+    fn upgrade_rejects_mismatched_incoming_fields_without_mutating_the_record() {
+        let (_root, database) = open_database();
+        let original = inbound(outbound(1_700_000_003_001), LxmfVerification::SourceUnknown);
+        execute_mailbox_request(&database, MailboxRequest::InsertInbound(original.clone()))
+            .unwrap();
+        let mut candidates = Vec::new();
+        for field in 0..6 {
+            let mut candidate = original.clone();
+            candidate.verification = LxmfVerification::Verified;
+            match field {
+                0 => candidate.source[0] ^= 1,
+                1 => candidate.destination[0] ^= 1,
+                2 => candidate.timestamp_unix_ms += 1,
+                3 => candidate.title.push(0),
+                4 => candidate.content.push(0),
+                _ => candidate.exact_wire = outbound(1_700_000_003_002).exact_wire,
+            }
+            candidates.push(candidate);
+        }
+        for candidate in candidates {
+            assert!(
+                execute_mailbox_request(&database, MailboxRequest::InsertInbound(candidate))
+                    .is_err()
+            );
+            let (messages, revision) = listed(&database, all_messages());
+            assert_eq!(revision, 1);
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].verification, LxmfVerification::SourceUnknown);
+            assert_eq!(messages[0].exact_wire, original.exact_wire);
+        }
+        validate_mailbox_database(&database).unwrap();
+    }
+
+    #[test]
+    fn nonverified_duplicates_do_not_change_verification_or_wire() {
+        let (_root, database) = open_database();
+        let original = inbound(
+            outbound(1_700_000_003_001),
+            LxmfVerification::InvalidSignature,
+        );
+        execute_mailbox_request(&database, MailboxRequest::InsertInbound(original.clone()))
+            .unwrap();
+        let mut unknown = original.clone();
+        unknown.verification = LxmfVerification::SourceUnknown;
+        unknown.exact_wire[32] ^= 1;
+        assert_eq!(
+            execute_mailbox_request(&database, MailboxRequest::InsertInbound(unknown)).unwrap(),
+            MailboxReply::Inbound(InboundInsertOutcome::Duplicate { local_record_id: 1 })
+        );
+        let (messages, revision) = listed(&database, all_messages());
+        assert_eq!(revision, 1);
+        assert_eq!(messages[0].verification, LxmfVerification::InvalidSignature);
+        assert_eq!(messages[0].exact_wire, original.exact_wire);
     }
 
     #[test]
@@ -4367,6 +4868,88 @@ mod tests {
             "only the established recipient and verified source refresh key retention"
         );
         service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn verified_second_receipt_upgrades_the_first_receipt_and_notifies() {
+        for initial_verification in [
+            LxmfVerification::InvalidSignature,
+            LxmfVerification::SourceUnknown,
+        ] {
+            let (_root, database, submitter) = shared_database();
+            let network = Arc::new(DurableFakeNetwork::default());
+            let (peer, peer_destination) = peer_facts();
+            if initial_verification == LxmfVerification::InvalidSignature {
+                network.add_public_key(peer_destination, &peer);
+            }
+            let service = start_durable(network.clone(), submitter.clone()).await;
+            let signer = LocalLxmfIdentity::from_secret_bytes(&PEER_SECRET).unwrap();
+            let mut output = [0_u8; MAX_BASIC_LXMF_WIRE_BYTES];
+            let prepared = compose_basic_direct_lxmf(
+                service.local_destination(),
+                peer_destination,
+                1_700_000_009_000,
+                b"same message",
+                b"authentic contents",
+                None,
+                &signer,
+                &mut output,
+            )
+            .unwrap();
+            let verified_wire = output[..usize::from(prepared.wire_len())].to_vec();
+            let mut initial_wire = verified_wire.clone();
+            if initial_verification == LxmfVerification::InvalidSignature {
+                initial_wire[32] ^= 1;
+            }
+            assert_eq!(
+                service
+                    .callbacks()
+                    .on_prns_event(&link_event(&initial_wire)),
+                CallbackOutcome::Enqueued
+            );
+            let first =
+                wait_for_durable_snapshot(&service, |snapshot| snapshot.messages.len() == 1).await;
+            assert_eq!(first.messages[0].verification, initial_verification);
+            assert_eq!(first.durable_revision, 1);
+            network.add_public_key(peer_destination, &peer);
+            assert_eq!(
+                service
+                    .callbacks()
+                    .on_prns_event(&link_event(&verified_wire)),
+                CallbackOutcome::Enqueued
+            );
+            let upgraded =
+                wait_for_durable_snapshot(&service, |snapshot| snapshot.durable_revision == 2)
+                    .await;
+            assert_eq!(upgraded.messages.len(), 1);
+            assert_eq!(
+                upgraded.messages[0].local_record_id,
+                first.messages[0].local_record_id
+            );
+            assert_eq!(
+                upgraded.messages[0].verification,
+                LxmfVerification::Verified
+            );
+            assert_eq!(upgraded.messages[0].exact_wire, verified_wire);
+            assert!(upgraded.projection_revision > first.projection_revision);
+            let conversations = service
+                .conversation_snapshot(MailboxConversationListRequest {
+                    before: None,
+                    limit: 1,
+                })
+                .await
+                .unwrap();
+            assert_eq!(conversations.messages, upgraded.messages);
+            assert_eq!(conversations.durable_revision, 2);
+            service.stop().await.unwrap();
+            validate_mailbox_database(&database).unwrap();
+            let restarted = start_durable(Arc::new(DurableFakeNetwork::default()), submitter).await;
+            assert_eq!(
+                restarted.snapshot(all_messages()).await.unwrap().messages,
+                upgraded.messages
+            );
+            restarted.stop().await.unwrap();
+        }
     }
 
     #[tokio::test]
