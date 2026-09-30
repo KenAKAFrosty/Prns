@@ -4,6 +4,7 @@ mod duplex;
 mod framing;
 mod handshake;
 mod identity;
+mod liveness;
 mod policy;
 mod receive;
 
@@ -18,7 +19,7 @@ pub use advertisement::{
     columba_role_capabilities_from_manufacturer, contains_service, encode_advertisement,
     BleRoleCapabilities, BleUuid, ColumbaConnectionRole, BLE_SERVICE_UUID, BLE_SERVICE_UUID_BYTES,
     COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID, MAX_ADVERTISEMENT_LEN,
-    NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
+    NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, NATIVE_LIVENESS_UUID,
 };
 pub use backend::{
     AdvertisingMode, BleBackend, BleControl, BleEvent, BleLink, BleLinkParts, BleSink, BleSource,
@@ -39,6 +40,11 @@ pub use handshake::{
 pub use identity::{
     decode_persisted_ble_identity, encode_persisted_ble_identity, BleAddress, BleIdentity,
     PersistedBleIdentityError, BLE_IDENTITY_LEN, GROUP_ID, PERSISTED_BLE_IDENTITY_LEN,
+};
+pub use liveness::{
+    supports_liveness_capability, LivenessAction, LivenessMode, LivenessPolicy, LivenessWrite,
+    LivenessWriteKind, LIVENESS_CAPABILITY_BYTES, LIVENESS_IDLE_MS, LIVENESS_OPERATION_MS,
+    LIVENESS_REPLY_INTERVAL_MS,
 };
 pub use receive::{copy_received_frame, receive_frame, BleFrameReceiveError, BleReceiveError};
 /// Canonical name for a Bluetooth LE device address.
