@@ -706,6 +706,94 @@ async fn stop_cancels_and_joins_inflight_send_and_worker() {
 }
 
 #[tokio::test]
+async fn verified_replay_upgrades_unverified_in_memory_receipt_without_downgrade() {
+    for initial_verification in [
+        LxmfVerification::SourceUnknown,
+        LxmfVerification::InvalidSignature,
+    ] {
+        let fake = Arc::new(FakeNetwork::default());
+        let local = identity(&LOCAL_SECRET);
+        let local_destination = local.destination();
+        let signer = identity(&PEER_SECRET);
+        let material = PrivateIdentityMaterial::from_bytes(PEER_SECRET);
+        if initial_verification == LxmfVerification::InvalidSignature {
+            fake.add_public_key(signer.destination(), &material);
+        }
+        let wire = compose_wire(&signer, local_destination, 1_700_000_000_001, b"replay");
+        let mut initial_wire = wire.clone();
+        if initial_verification == LxmfVerification::InvalidSignature {
+            initial_wire[32] ^= 1;
+        }
+        let service = DirectLxmfService::start(local, fake.clone()).unwrap();
+        let callbacks = service.callbacks();
+        assert_eq!(
+            callbacks.on_prns_event(&link_event(&initial_wire)),
+            CallbackOutcome::Enqueued
+        );
+        let first = wait_for_snapshot(&service, |snapshot| snapshot.messages.len() == 1).await;
+        assert_eq!(first.messages[0].verification, initial_verification);
+        fake.add_public_key(signer.destination(), &material);
+        assert_eq!(
+            callbacks.on_prns_event(&link_event(&wire)),
+            CallbackOutcome::Enqueued
+        );
+        let upgraded = wait_for_snapshot(&service, |snapshot| {
+            snapshot.messages[0].verification == LxmfVerification::Verified
+        })
+        .await;
+        assert_eq!(upgraded.messages.len(), 1);
+        assert_eq!(
+            upgraded.messages[0].local_record_id,
+            first.messages[0].local_record_id
+        );
+        assert_eq!(
+            upgraded.messages[0].arrived_at_millis,
+            first.messages[0].arrived_at_millis
+        );
+        assert_eq!(
+            upgraded.messages[0].source_interface,
+            first.messages[0].source_interface
+        );
+        assert_eq!(upgraded.messages[0].exact_wire, wire);
+
+        let mut invalid_wire = wire.clone();
+        invalid_wire[32] ^= 1;
+        for duplicate in [&wire, &invalid_wire] {
+            assert_eq!(
+                callbacks.on_prns_event(&link_event(duplicate)),
+                CallbackOutcome::Enqueued
+            );
+        }
+        // The single worker processes this new row after both duplicate jobs.
+        let barrier = compose_wire(&signer, local_destination, 1_700_000_000_002, b"barrier");
+        assert_eq!(
+            callbacks.on_prns_event(&link_event(&barrier)),
+            CallbackOutcome::Enqueued
+        );
+        let settled = wait_for_snapshot(&service, |snapshot| snapshot.messages.len() == 2).await;
+        assert_eq!(settled.messages[0], upgraded.messages[0]);
+        fake.public_keys.lock().unwrap().clear();
+        assert_eq!(
+            callbacks.on_prns_event(&link_event(&wire)),
+            CallbackOutcome::Enqueued
+        );
+        let unknown_barrier =
+            compose_wire(&signer, local_destination, 1_700_000_000_003, b"unknown");
+        assert_eq!(
+            callbacks.on_prns_event(&link_event(&unknown_barrier)),
+            CallbackOutcome::Enqueued
+        );
+        let settled = wait_for_snapshot(&service, |snapshot| snapshot.messages.len() == 3).await;
+        assert_eq!(settled.messages[0], upgraded.messages[0]);
+        assert_eq!(
+            settled.messages[2].verification,
+            LxmfVerification::SourceUnknown
+        );
+        service.stop().await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn inbound_messages_retain_verification_exact_wire_and_logical_dedup() {
     let fake = Arc::new(FakeNetwork::default());
     let local = identity(&LOCAL_SECRET);

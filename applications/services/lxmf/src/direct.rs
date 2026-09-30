@@ -18,7 +18,7 @@ use prns_host::{CommandFailure, CommandOutcome, HostCommand};
 use prns_host_native::owner::{HostClient, SessionError};
 use prns_lxmf_wire::{
     compose_basic_direct_lxmf, BasicLxmfComposeError, BasicLxmfSigner, CarrierIngress, MessageView,
-    WireLimits, MAX_BASIC_LXMF_WIRE_BYTES,
+    WireLimits, MAX_BASIC_LXMF_WIRE_BYTES, WIRE_HEADER_LENGTH,
 };
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
@@ -1170,6 +1170,25 @@ async fn process_inbound(shared: &Arc<Shared>, job: InboundJob) {
     };
     let mut state = shared.state.lock().await;
     if !state.seen_message_ids.insert(message_id) {
+        let Some(existing) = state.messages.iter_mut().find(|record| {
+            record.direction == LxmfDirection::Inbound && record.message_id == message_id
+        }) else {
+            return;
+        };
+        // A message ID excludes its signature. Keep the first receipt's local
+        // identity and arrival metadata, but allow a source-verified replay to
+        // replace an unverified signature for the exact same signed body.
+        if existing.verification != LxmfVerification::Verified
+            && verification == LxmfVerification::Verified
+            && existing.source == source
+            && &existing.destination == message.destination_hash()
+            && existing.exact_wire[WIRE_HEADER_LENGTH..] == job.wire[WIRE_HEADER_LENGTH..]
+        {
+            existing.verification = verification;
+            existing.exact_wire = job.wire;
+            drop(state);
+            shared.notify();
+        }
         return;
     }
     let local_record_id = state.allocate_record_id();
