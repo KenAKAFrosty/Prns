@@ -122,6 +122,10 @@ jobs:
       - uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9
         with:
           version: "1.12.6"
+      # Swiftly verifies its archive before importing toolchain signing keys.
+      # https://www.swift.org/install/linux/swiftly/
+      - name: Import Swift release signing keys
+        run: curl --compressed --proto '=https' --tlsv1.2 --retry 3 --fail --silent --show-error --location https://www.swift.org/keys/all-keys.asc | gpg --batch --import
       - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
         with:
           swift-version: "6.3.3"
