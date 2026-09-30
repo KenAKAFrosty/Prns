@@ -293,8 +293,8 @@ function NetworkSession({
             <Badge>{announcements.length}</Badge>
           </CardHeader>
           <BodyText muted>
-            The latest 200 verified announcements since the node started. A past announcement does
-            not mean a device is still connected.
+            Recent announcements received by this phone. Keeps up to 200 entries until cleared or
+            the node restarts. A past announcement does not mean a device is still connected.
           </BodyText>
           <BodyText muted>Names come from your contacts and latest discovery.</BodyText>
           {network?.state.tag === "Unavailable" && announcements.length > 0 ? (
@@ -306,7 +306,7 @@ function NetworkSession({
             <BodyText>History cleared. Refresh to load announcements received since then.</BodyText>
           ) : announcements.length === 0 ? (
             network?.state.tag === "Ready" || network?.state.tag === "Unavailable" ? (
-              <BodyText>No announcements heard yet. Ask a nearby node to announce.</BodyText>
+              <BodyText>No announcements in this history. Ask a nearby node to announce.</BodyText>
             ) : (
               <NetworkInspectionState
                 snapshot={snapshot}
@@ -343,7 +343,7 @@ function NetworkSession({
                     value={announceIngressName(snapshot, announce.sourceInterface)}
                   />
                   <KeyValue
-                    label="Recorded connection ID"
+                    label="Recorded interface ID"
                     value={formatBytes(announce.sourceInterface)}
                   />
                 </NetworkRow>
