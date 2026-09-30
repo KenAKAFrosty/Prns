@@ -2,8 +2,10 @@
 
 This is the implementation sequence for native Bluetooth session recovery. The
 ownership repairs, retained controls and correlated Android/embedded control-write
-completion below are implemented. Negotiated liveness remains planned. There is
-no new control-wire version or automatic restart-recovery claim in this change.
+completion below are implemented. Negotiated liveness is implemented for the
+Tokio runtime with Apple and Android backends. Rebuilt-phone restart acceptance
+is still required; implementation and host tests are not an automatic-recovery
+claim. Embedded and other backends retain legacy behavior.
 
 A controlled two-phone iOS restart check delivered a baseline message, restarted
 only iOS, and then failed recipient resolution while Android retained an
@@ -65,11 +67,10 @@ duplex data work. A control Close or receive error ends only that member. Late
 Hello/Welcome messages are ignored with bounded yielding so they cannot starve
 data or timers. Columba continues without a native control loop.
 
-The supervisor still only receives after settlement. It does not introduce
-probes, shutdown messages or concurrent control writes. The completion work
-below supplies persistent pending-operation state and control/data write
-arbitration for the queued Android and embedded backends; the future liveness
-loop must keep each possibly submitted write alive across unrelated data work.
+Embassy still only receives after settlement. Tokio additionally drives the
+negotiated probe policy described below. It retains each started send across
+unrelated data work; controls and GATT data share a physical write lane in the
+mobile backends. Neither runtime introduces a new shutdown message in this slice.
 
 ### Retained control validation
 
@@ -179,38 +180,79 @@ do not measure peak runtime memory use or qualify physical Android callbacks,
 nRF notification completion, or rebuilt-phone restart recovery. No phone or
 board has been installed with this slice.
 
-## Negotiate liveness without breaking legacy greetings
+## Negotiated mobile liveness
 
-Keep Hello/Welcome and their discovery-group encoding unchanged. There are no
-unused capability bits in their PSM/MTU fields. Do not encode features in RSSI,
-fake discovery groups, or an unrecognized greeting suffix.
+Hello/Welcome, their discovery groups and the 153-byte control limit are unchanged.
+The native service's optional read-only `NATIVE_LIVENESS_UUID` characteristic
+uses suffix `e9` and exactly six capability bytes, `50 52 4e 53 01 01`. Unknown values,
+missing characteristics and completed read errors preserve legacy behavior.
+The read happens before notification subscriptions, within the original native
+startup deadline. An accepted read that never completes ends that physical
+attempt; it cannot release its lane for a subsequent operation.
 
-Use a new optional read-only characteristic in the native GATT service, with a
-strict versioned capability value. A central discovers and reads it on the
-current physical connection. Absence or an unsupported value retains legacy
-behavior; no cached fact from a previous connection enables enforcement. An
-accepted optional read that never completes must terminate its attempt rather
-than letting a subsequent GATT operation overlap it. Embedded generated clients
-must not make the new characteristic mandatory when discovering old services.
+Tokio opts in before starting the radio. Backends default to disabled, so a
+consumer that does not drive the protocol cannot advertise working support.
+Android snapshots capability publication per server registration. Apple's
+prepared service can exist before the runtime is ready; its dynamic read rejects
+requests until opt-in and rejects requests from an already admitted legacy
+session. A restored service without the characteristic remains legacy until
+normal publication. Restoration never reuses prior central capability evidence.
 
-Only a central that read a supported value may initiate a session probe. The
-listener learns that its client supports the extension from a valid probe on
-that session, not from advertising or merely serving the characteristic read.
-A correlated reply establishes responsiveness; unrelated messages and local
-send completion do not. Legacy peers and Columba never acquire a new timeout
-because they cannot answer a probe.
+Only a central that read supported bytes on this exact connection initiates
+probes. Its first probe is immediate after settlement. A listener answers and
+starts its own checks only after receiving a valid probe on that session, not
+after merely publishing the characteristic. The fixed session mode is never
+reconstructed from an address. Columba has no native control channel and remains
+outside this protocol. Embedded, BlueZ and WinRT do not opt in in this slice.
 
-Put bounded probe state, nonce matching and deadline decisions in a small
-`no_std` core policy with caller-provided monotonic time. Tokio and Embassy
-provide timers and retire the exact session. Handle duplicate challengers with
-bounded/coalesced ownership while checking an incumbent; do not turn repeated
-untrusted greetings into unbounded work or automatic eviction. Define and test
-the probe cadence, response deadline and suspension behavior before enabling
-the capability on any backend.
+The allocation-free core policy owns at most one outstanding probe, one pending
+reply and one active write. Probe and reply wire tags are `04` and `05`, each
+followed by an eight-byte big-endian nonce. Nonces start from fresh session
+entropy and increment without wrapping; they correlate responses but do not
+authenticate a peer. The timings are:
+
+- Initiators probe immediately; listeners first probe 30 seconds after activation.
+- A matched reply schedules the next probe 30 seconds later.
+- Each probe has 30 seconds from its original due time for both native write
+  completion and the matching reply. Queue waits and retries do not renew it.
+- A reply has one 30-second write budget, capped by any earlier outstanding
+  expiration. Excess incoming probes are ignored, with at most one reply
+  admitted per second and no replacement of the retained nonce.
+
+Wrong, late or duplicate replies, greetings, data activity and competing
+connections cannot postpone these deadlines. Tokio checks expiration before
+queued input and retains one write future until it settles or the session ends.
+Long local suspension may therefore expire a connection on resume; that means
+responsiveness was not established within the budget, not that the remote app
+died. A listener whose peer disappears before sending its first valid probe is
+still unprobeable and retains legacy behavior.
+
+Healthy incumbents remain protected. Challengers are rejected through the
+existing bounded connection policy; they neither trigger eviction nor create a
+pending challenger queue. After an incumbent expires, normal discovery and retry
+can admit a replacement. No app retry or periodic Bluetooth reset is added.
+
+The core Bluetooth suite passes 107 tests, including strict decoding, unchanged
+greetings, nonce/deadline rules and bounded policy storage. All 42 Tokio Bluetooth
+tests pass, including two negotiated peers, passive legacy listeners, blocked
+writes, data activity and dropping exact member owners before reporting expiry.
+Core/Tokio strict Clippy and the core no-default-features check pass. The full core
+library passes 2,105 tests with three existing ignores. The 90 Embassy/Trouble,
+65 simulation BLE and 102 controlled-time integration tests still pass without
+enabling embedded probes.
+
+FFI passes 164 tests with one existing hardware-only ignore, strict Clippy and
+the iOS target check. Android's shared helpers pass 75 SDK and 45 Hopspot Kotlin
+tests; both private JNI consumers pass host tests, strict Clippy and Android
+ARM64 target checks. Both Android consumers preserve their existing eight-second
+startup limit; Apple retains its original 15-second limit. Late callbacks cannot
+extend startup by beating a delayed watchdog. Firmware resource and physical
+phone checks remain separate gates.
 
 ## Shutdown and acceptance
 
-For cooperative app Off, stop admitting work, request a bounded supported close
+Cooperative shutdown notification remains follow-up work: stop admitting work,
+request a bounded supported close
 while native pumps still run, then drop the session owners and stop the radio.
 Radio loss or permission loss still requires immediate local teardown. Do not
 send a new shutdown reason to legacy peers or label normal shutdown as a
