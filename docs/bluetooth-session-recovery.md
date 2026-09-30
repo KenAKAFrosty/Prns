@@ -3,11 +3,12 @@
 This is the implementation sequence for native Bluetooth session recovery. The
 ownership repairs, retained controls and correlated Android/embedded control-write
 completion below are implemented. Negotiated liveness is implemented for the
-Tokio runtime with Apple and Android backends. Rebuilt-phone restart acceptance
-is still required; implementation and host tests are not an automatic-recovery
-claim. Embedded and other backends retain legacy behavior.
+Tokio runtime with Apple and Android backends. September 30 BLE-only trials on
+rebuilt phones passed isolated app restarts in both directions and subsequent
+verified saved-contact delivery. Silent-peer expiry, long idle and background
+recovery remain unqualified. Embedded and other backends retain legacy behavior.
 
-A controlled two-phone iOS restart check delivered a baseline message, restarted
+A September 29 two-phone iOS restart check delivered a baseline message, restarted
 only iOS, and then failed recipient resolution while Android retained an
 established member and rejected new
 candidates. Resetting only Android's app Bluetooth restored delivery of the same
@@ -197,8 +198,16 @@ consumer that does not drive the protocol cannot advertise working support.
 Android snapshots capability publication per server registration. Apple's
 prepared service can exist before the runtime is ready; its dynamic read rejects
 requests until opt-in and rejects requests from an already admitted legacy
-session. A restored service without the characteristic remains legacy until
-normal publication. Restoration never reuses prior central capability evidence.
+session. Restoration never reuses prior central capability evidence.
+
+Apple replaces a known legacy restored service at startup, after PoweredOn and
+before listener admission. It removes only that exact service and publishes a
+fresh one; a complete current service retains its existing objects. Live owners
+defer replacement, and malformed or duplicate restored Prns services fail startup
+without removal. Readiness accepts only the matching publication callback.
+Reads, writes and subscription callbacks also match current characteristic
+objects, so delayed same-UUID callbacks cannot affect the replacement. Mixed
+old/new write batches still fail atomically.
 
 Only a central that read supported bytes on this exact connection initiates
 probes. Its first probe is immediate after settlement. A listener answers and
@@ -243,11 +252,13 @@ library passes 2,105 tests with three existing ignores. The 90 Embassy/Trouble,
 65 simulation BLE and 102 controlled-time integration tests still pass without
 enabling embedded probes.
 
-FFI passes 165 tests with one existing hardware-only ignore, strict Clippy and
-the iOS target check. Android's shared helpers pass 75 SDK and 45 Hopspot Kotlin
-tests; both private JNI consumers pass host tests, strict Clippy and Android
-ARM64 target checks. Both Android consumers preserve their existing eight-second
-startup limit; Apple retains its original 15-second limit. Late callbacks cannot
+FFI passes 174 tests with one existing hardware-only ignore, strict Clippy and
+the iOS target check, including the restored-service upgrade regressions. Tests
+and iOS checks also pass with logging enabled. Android's shared helpers pass
+75 SDK and 45 Hopspot Kotlin tests; both private JNI consumers pass host tests,
+strict Clippy and Android ARM64 target checks. Both Android consumers preserve
+their existing eight-second startup limit; Apple retains its original 15-second
+limit. Late callbacks cannot
 extend startup by beating a delayed watchdog. Linked resource checks and physical
 phone acceptance remain separate gates.
 
@@ -293,8 +304,36 @@ That source was subsequently committed as
 clean-commit receipts for that commit or later revisions. The later Apple-only
 capability-read ownership fix, `87c7350d6`, is outside the firmware targets and
 is not part of these receipts. They establish linked fit under the recorded
-configuration, not peak runtime memory use or physical recovery. Rebuilt-phone
-restart acceptance remains required.
+configuration, not peak runtime memory use or physical recovery. The later
+Android diagnostic and Apple restored-service changes are also outside these
+firmware targets and receipts.
+
+### September 30 phone acceptance
+
+Both phones were updated in place, without clearing identities, contacts or
+messages. Initial BLE-only delivery passed both ways, but restarting only Android
+left a subscribed connection without a working route. Diagnostics then showed
+the optional liveness characteristic absent from Android's service view. Legacy
+delivery subsequently worked; the missing capability alone does not establish
+the full cause of that failed trial.
+
+After the startup-only Apple restored-service upgrade repair, Android observed
+the capability without a radio reset or Android restart. Each app was then
+restarted separately while the other phone's process remained unchanged.
+Replacement links negotiated liveness and exchanged recurring controls. Android
+reconnected about 22 seconds after its restart command; iOS reconnected about
+18 seconds after its command. The first attempted saved-contact sends, tested
+about 100 seconds after each restart, delivered with matching message IDs and
+receiver Verified source. No manual announce, Bluetooth reset or alternate
+transport was used. Both phones retained their records and completed interval
+saves; loaded conversation counts matched the eight new logical messages.
+
+These are bounded restart observations, not a recovery-time guarantee or proof
+of silent-peer timeout expiry: Close controls were observed during recovery.
+Before the controlled restarts, an unexplained control-write error and connection
+churn also recovered automatically; its cause remains open. Long-idle stability,
+natural suspension, radio/permission loss and app Off/On remain separate cases.
+The app checkpoint records artifact hashes, timestamps and the earlier failure.
 
 ## Shutdown and acceptance
 
