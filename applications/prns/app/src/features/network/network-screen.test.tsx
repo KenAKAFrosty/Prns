@@ -516,13 +516,40 @@ test("clear failure leaves history unchanged and presents a user-facing error", 
   expect(view.getByRole("button", { name: /Announcement details/ })).toBeTruthy();
 });
 
-test("large-text tabs wrap and retain accessible touch targets", () => {
-  mockFontScale = 1.6;
+test.each([1, 1.3])("tabs fit complete labels before wrapping at font scale %s", (fontScale) => {
+  mockFontScale = fontScale;
   const view = render(<NetworkScreen />);
   for (const tab of view.getAllByRole("tab")) {
-    expect(StyleSheet.flatten(tab.props.style)).toMatchObject({ minHeight: 48, flexBasis: "100%" });
+    expect(StyleSheet.flatten(tab.props.style)).toMatchObject({
+      minHeight: 48,
+      flexBasis: "auto",
+      flexShrink: 0,
+      maxWidth: "100%",
+    });
   }
-  expect(view.getByRole("tab", { name: "Connections 1" }).props.accessibilityState).toEqual({
-    selected: true,
-  });
+  const label = view.getByText("Announcements 1");
+  expect(label.props.numberOfLines).toBeUndefined();
+  expect(label.props.allowFontScaling).not.toBe(false);
+  expect(label.props.adjustsFontSizeToFit).not.toBe(true);
 });
+
+test.each([1.4, 1.6, 2.4])(
+  "large-text tabs stack at font scale %s without clipping",
+  (fontScale) => {
+    mockFontScale = fontScale;
+    const view = render(<NetworkScreen />);
+    for (const tab of view.getAllByRole("tab")) {
+      expect(StyleSheet.flatten(tab.props.style)).toMatchObject({
+        minHeight: 48,
+        flexBasis: "100%",
+        maxWidth: "100%",
+      });
+    }
+    const label = view.getByText("Announcements 1");
+    expect(label.props.numberOfLines).toBeUndefined();
+    expect(label.props.allowFontScaling).not.toBe(false);
+    expect(view.getByRole("tab", { name: "Connections 1" }).props.accessibilityState).toEqual({
+      selected: true,
+    });
+  },
+);
