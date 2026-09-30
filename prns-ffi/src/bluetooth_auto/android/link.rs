@@ -14,13 +14,14 @@ use prns_core::interfaces::bluetooth_auto::{
 };
 
 use super::bridge::{AndroidBleBridge, LinkSignal, WorkSignal};
-use super::outbound::{BoundedByteQueue, BoundedMessageQueue, OutboundQueueError};
+use super::outbound::{BoundedByteQueue, BoundedMessageQueue, ControlOutbox, OutboundQueueError};
 use super::AndroidBleError;
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const GATT_REASSEMBLY_CAP: usize = 600;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const MERGED_IN_DEPTH: usize = 16;
+const CONTROL_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Owns one physical connection through handshake and all settled link parts.
 /// The queue identity fences a delayed drop even if Kotlin later reuses a conn_id.
@@ -195,7 +196,7 @@ impl BleLink for AndroidBleLink {
 pub struct AndroidBleControl {
     pub(super) lease: Arc<LinkLease>,
     pub(super) inbound: Receiver<Vec<u8>>,
-    pub(super) outbound: Arc<BoundedMessageQueue>,
+    pub(super) outbound: Arc<ControlOutbox>,
     pub(super) work: Arc<WorkSignal>,
 }
 
@@ -203,16 +204,29 @@ impl BleControl for AndroidBleControl {
     type Error = AndroidBleError;
 
     async fn send(&mut self, msg: &Control) -> Result<(), AndroidBleError> {
+        let deadline = tokio::time::Instant::now() + CONTROL_WRITE_TIMEOUT;
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = msg
             .encode(&mut buf)
             .ok_or(AndroidBleError::ControlTooLarge)?;
-        self.outbound
-            .push(vec![buf[..len].to_vec()])
-            .await
-            .map_err(queue_error)?;
+        // No queue-capacity suspension: the exclusive sender has one reserved
+        // slot. Cancellation retains that slot; only the same bytes can rejoin.
+        let (ticket, _, start_watchdog) = self.outbound.begin(&buf[..len], deadline)?;
+        if start_watchdog {
+            let outbound = Arc::clone(&self.outbound);
+            let bridge = self.lease.bridge.clone();
+            let conn_id = self.lease.conn_id;
+            let owner = Arc::clone(&self.lease.owner);
+            // Do not hold LinkLease here: dropping the control/data owners must
+            // still close the physical connection and wake this watchdog.
+            tokio::spawn(async move {
+                if outbound.expired().await {
+                    bridge.close_owned_connection(conn_id, &owner);
+                }
+            });
+        }
         self.work.wake();
-        Ok(())
+        self.outbound.result(ticket).await
     }
 
     async fn recv(&mut self) -> Result<Control, AndroidBleError> {
@@ -298,7 +312,7 @@ mod receive_tests {
         let owner = bridge.shared.links.lock().unwrap()[&7]
             .active()
             .unwrap()
-            .control_out
+            .data_out
             .clone();
         let mut source = AndroidBleSource {
             inbound,

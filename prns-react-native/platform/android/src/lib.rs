@@ -33,7 +33,9 @@ pub fn ensure_linked() {
             as *const (),
         bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleControlOut
             as *const (),
-        bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleCommitControlOut
+        bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleControlCapacity
+            as *const (),
+        bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleCompleteControlOut
             as *const (),
         bluetooth_jni::Java_rs_reticulum_prns_expo_PrnsBluetoothNative_nativeBleL2capIn
             as *const (),

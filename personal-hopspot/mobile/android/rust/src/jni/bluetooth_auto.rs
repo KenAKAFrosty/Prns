@@ -1,8 +1,11 @@
 use crate::bluetooth_auto::AndroidBleIngressAdmission;
 use crate::engine::ble_bridge;
-use jni::objects::{JByteBuffer, JClass};
+use jni::objects::{JByteBuffer, JClass, JLongArray};
 use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
+use prns_ffi::bluetooth_auto::android::{
+    AndroidBleControlOutput, AndroidBleControlTicket, CONTROL_BUFFER_LEN,
+};
 
 #[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleSetPsm(
@@ -212,29 +215,74 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleControlOu
     _class: JClass,
     conn_id: jint,
     buffer: JByteBuffer,
+    receipt: JLongArray,
 ) -> jint {
+    if env
+        .get_array_length(&receipt)
+        .ok()
+        .is_none_or(|len| len < 2)
+    {
+        return -3;
+    }
     let Ok(address) = env.get_direct_buffer_address(&buffer) else {
-        return 0;
+        return -3;
     };
     let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
-        return 0;
+        return -3;
     };
     if address.is_null() || capacity == 0 {
-        return 0;
+        return -3;
     }
     // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for this call;
     // nothing else aliases it while we drain the outgoing control PDU into it.
     let out = unsafe { core::slice::from_raw_parts_mut(address, capacity) };
-    ble_bridge().control_out(conn_id as u32, out) as jint
+    match ble_bridge().control_out(conn_id as u32, out) {
+        AndroidBleControlOutput::Empty => 0,
+        AndroidBleControlOutput::Closed => -1,
+        AndroidBleControlOutput::BufferTooSmall { .. } => -2,
+        AndroidBleControlOutput::Ready { len, ticket } => {
+            if env
+                .set_long_array_region(
+                    &receipt,
+                    0,
+                    &[ticket.session as jlong, ticket.operation as jlong],
+                )
+                .is_err()
+            {
+                return -3;
+            }
+            len as jint
+        }
+    }
 }
 
 #[no_mangle]
-pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleCommitControlOut(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleControlCapacity(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    CONTROL_BUFFER_LEN as jint
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleCompleteControlOut(
     _env: JNIEnv,
     _class: JClass,
     conn_id: jint,
+    session: jlong,
+    operation: jlong,
+    success: jboolean,
 ) -> jboolean {
-    ble_bridge().commit_control_out(conn_id as u32).into()
+    ble_bridge()
+        .complete_control_out(
+            conn_id as u32,
+            AndroidBleControlTicket {
+                session: session as u64,
+                operation: operation as u64,
+            },
+            success != 0,
+        )
+        .into()
 }
 
 #[no_mangle]

@@ -83,7 +83,7 @@ windows = { version = "0.58", features = [
 ] }
 
 [dev-dependencies]
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "test-util"] }
 
 # Same panic-free discipline as the engine. Native calls live here specifically so every unsafe
 # operation has one reviewed invariant rather than leaking throughout otherwise-safe crates.

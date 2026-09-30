@@ -9,7 +9,8 @@ use tokio::sync::Notify;
 use prns_core::interfaces::bluetooth_auto::{AdvertisingMode, RadioMode, ScanningMode};
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, PeerProtocol};
 
-use super::outbound::{BoundedByteQueue, BoundedMessageQueue};
+use super::outbound::{BoundedByteQueue, BoundedMessageQueue, ControlOutbox};
+use super::{AndroidBleControlOutput, AndroidBleControlTicket, AndroidBleError};
 use super::{RADIO_ADVERTISING, RADIO_ENABLED, RADIO_SCANNING};
 
 const CONTROL_IN_DEPTH: usize = 8;
@@ -18,6 +19,8 @@ const OUTBOUND_BYTE_CAP: usize = 8 * prns_core::interfaces::bluetooth_auto::BLE_
 const OUTBOUND_FRAME_DEPTH: usize = 16;
 pub(super) const PEER_CAPACITY: usize = 7;
 const LIFECYCLE_EVENT_DEPTH: usize = 3 * PEER_CAPACITY;
+// Process-wide, including bridge/radio recreation. Exhaustion fails link admission.
+static NEXT_CONTROL_SESSION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AndroidBleIngressAdmission {
@@ -76,7 +79,7 @@ pub(super) struct Endpoints {
     control_in_tx: Sender<Vec<u8>>,
     l2cap_in_tx: Sender<Vec<u8>>,
     data_in_tx: Sender<Vec<u8>>,
-    pub(super) control_out: Arc<BoundedMessageQueue>,
+    pub(super) control_out: Arc<ControlOutbox>,
     l2cap_out: Arc<BoundedByteQueue>,
     pub(super) data_out: Arc<BoundedMessageQueue>,
     l2cap_up: Arc<LinkSignal>,
@@ -171,7 +174,7 @@ pub(super) struct PendingLink {
     pub(super) control_in: Receiver<Vec<u8>>,
     pub(super) l2cap_in: Receiver<Vec<u8>>,
     pub(super) data_in: Receiver<Vec<u8>>,
-    pub(super) control_out: Arc<BoundedMessageQueue>,
+    pub(super) control_out: Arc<ControlOutbox>,
     pub(super) l2cap_out: Arc<BoundedByteQueue>,
     pub(super) data_out: Arc<BoundedMessageQueue>,
     pub(super) l2cap_up: Arc<LinkSignal>,
@@ -445,7 +448,14 @@ impl AndroidBleBridge {
         let (control_tx, control_rx) = channel::<Vec<u8>>(CONTROL_IN_DEPTH);
         let (l2cap_tx, l2cap_rx) = channel::<Vec<u8>>(DATA_IN_DEPTH);
         let (data_tx, data_rx) = channel::<Vec<u8>>(DATA_IN_DEPTH);
-        let control_out = Arc::new(BoundedMessageQueue::with_byte_limit(OUTBOUND_BYTE_CAP));
+        let Ok(session) =
+            NEXT_CONTROL_SESSION.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
+        else {
+            return false;
+        };
+        let control_out = Arc::new(ControlOutbox::new(session));
         let l2cap_out = Arc::new(BoundedByteQueue::new(OUTBOUND_BYTE_CAP));
         let data_out = Arc::new(BoundedMessageQueue::with_count_limit(OUTBOUND_FRAME_DEPTH));
         let l2cap_up = Arc::new(LinkSignal {
@@ -520,18 +530,48 @@ impl AndroidBleBridge {
         AndroidBleIngressAdmission::Closed
     }
 
-    pub fn control_out(&self, conn_id: u32, out: &mut [u8]) -> usize {
-        match self.out_message_queue(conn_id, |ep| Arc::clone(&ep.control_out)) {
-            Some(queue) => queue.peek(out),
-            None => 0,
-        }
+    pub fn control_out(&self, conn_id: u32, out: &mut [u8]) -> AndroidBleControlOutput {
+        self.shared
+            .links
+            .lock()
+            .ok()
+            .and_then(|links| {
+                links
+                    .get(&conn_id)
+                    .and_then(LinkRecord::active)
+                    .map(|ep| ep.control_out.peek(out))
+            })
+            .unwrap_or(AndroidBleControlOutput::Closed)
     }
 
-    pub fn commit_control_out(&self, conn_id: u32) -> bool {
-        match self.out_message_queue(conn_id, |ep| Arc::clone(&ep.control_out)) {
-            Some(queue) => queue.commit(),
-            None => false,
+    /// Only a matching native callback may acknowledge a control operation.
+    pub fn complete_control_out(
+        &self,
+        conn_id: u32,
+        ticket: AndroidBleControlTicket,
+        success: bool,
+    ) -> bool {
+        let Some((control, owner)) = self.shared.links.lock().ok().and_then(|links| {
+            links
+                .get(&conn_id)
+                .and_then(LinkRecord::active)
+                .map(|ep| (Arc::clone(&ep.control_out), Arc::clone(&ep.data_out)))
+        }) else {
+            return false;
+        };
+        let result = if success {
+            Ok(())
+        } else {
+            Err(AndroidBleError::ControlWriteFailed)
+        };
+        let Some(result) = control.complete(ticket, result) else {
+            return false;
+        };
+        if result.is_err() {
+            self.close_owned_connection(conn_id, &owner);
         }
+        self.shared.work.wake();
+        true
     }
 
     pub fn l2cap_in(&self, conn_id: u32, bytes: &[u8]) -> bool {
@@ -723,18 +763,6 @@ impl AndroidBleBridge {
                 AndroidBleIngressAdmission::Closed
             }
         }
-    }
-
-    fn out_message_queue(
-        &self,
-        conn_id: u32,
-        pick: impl Fn(&Endpoints) -> Arc<BoundedMessageQueue>,
-    ) -> Option<Arc<BoundedMessageQueue>> {
-        self.shared
-            .links
-            .lock()
-            .ok()
-            .and_then(|links| links.get(&conn_id).and_then(LinkRecord::active).map(pick))
     }
 
     fn out_byte_queue(

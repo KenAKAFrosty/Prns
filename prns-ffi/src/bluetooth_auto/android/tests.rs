@@ -5,6 +5,214 @@ use prns_core::interfaces::bluetooth_auto::{AdvertisingMode, RadioMode, Scanning
 use std::sync::mpsc;
 use std::time::Duration;
 
+use super::{AndroidBleControlOutput, AndroidBleControlTicket, AndroidBleError};
+use prns_core::interfaces::bluetooth_auto::{
+    BleBackend, BleControl, BleEvent, CloseReason, Control,
+};
+
+async fn control_link(bridge: &AndroidBleBridge, conn_id: u32) -> super::AndroidBleLink {
+    let mut backend = super::AndroidBleBackend::new(bridge.clone());
+    assert!(bridge.link_up(conn_id, [1; 6], None, false));
+    let BleEvent::Inbound(link) = backend.next_event().await else {
+        panic!("inbound link")
+    };
+    link
+}
+
+fn control_ticket(bridge: &AndroidBleBridge, conn_id: u32) -> AndroidBleControlTicket {
+    let mut bytes = [0; super::CONTROL_BUFFER_LEN];
+    let AndroidBleControlOutput::Ready { ticket, .. } = bridge.control_out(conn_id, &mut bytes)
+    else {
+        panic!("pending control")
+    };
+    ticket
+}
+
+async fn start_control(control: &mut super::AndroidBleControl, message: &Control) {
+    // Poll once, then cancel just the waiting future. The operation remains owned.
+    tokio::select! {
+        biased;
+        result = control.send(message) => panic!("admission is not completion: {result:?}"),
+        () = tokio::task::yield_now() => {},
+    }
+}
+
+#[tokio::test]
+async fn canceled_control_send_rejoins_only_its_exact_message_and_receipt() {
+    let bridge = AndroidBleBridge::new();
+    let mut link = control_link(&bridge, 1).await;
+    let message = Control::Close {
+        reason: CloseReason::DuplicateLink,
+    };
+    start_control(&mut link.control, &message).await;
+    let ticket = control_ticket(&bridge, 1);
+    start_control(&mut link.control, &message).await;
+    assert_eq!(control_ticket(&bridge, 1), ticket);
+    assert_eq!(
+        link.control
+            .send(&Control::Close {
+                reason: CloseReason::Incompatible
+            })
+            .await,
+        Err(AndroidBleError::ControlBusy)
+    );
+    assert!(!bridge.complete_control_out(
+        1,
+        AndroidBleControlTicket {
+            operation: ticket.operation + 1,
+            ..ticket
+        },
+        true
+    ));
+    assert_eq!(control_ticket(&bridge, 1), ticket);
+    assert!(bridge.complete_control_out(1, ticket, true));
+    assert!(!bridge.complete_control_out(1, ticket, true));
+    assert_eq!(link.control.send(&message).await, Ok(()));
+    start_control(&mut link.control, &message).await;
+    let next = control_ticket(&bridge, 1);
+    assert_eq!(ticket.session, next.session);
+    assert_ne!(ticket.operation, next.operation);
+    assert!(!bridge.complete_control_out(1, ticket, false));
+    assert!(bridge.complete_control_out(1, next, false));
+    assert_eq!(
+        link.control.send(&message).await,
+        Err(AndroidBleError::ControlWriteFailed)
+    );
+    assert_eq!(bridge.next_close(), Some(1));
+}
+
+#[tokio::test(start_paused = true)]
+async fn canceled_control_keeps_original_deadline_and_retires_the_physical_owner() {
+    let bridge = AndroidBleBridge::new();
+    let mut link = control_link(&bridge, 1).await;
+    let message = Control::Close {
+        reason: CloseReason::DuplicateLink,
+    };
+    start_control(&mut link.control, &message).await;
+    let ticket = control_ticket(&bridge, 1);
+    tokio::time::advance(Duration::from_secs(20)).await;
+    start_control(&mut link.control, &message).await;
+    assert_eq!(control_ticket(&bridge, 1), ticket);
+    tokio::time::advance(Duration::from_secs(10)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(bridge.next_close(), Some(1));
+    assert_eq!(
+        link.control.send(&message).await,
+        Err(AndroidBleError::ControlTimedOut)
+    );
+    assert!(!bridge.complete_control_out(1, ticket, true));
+}
+
+#[tokio::test]
+async fn late_control_callback_cannot_complete_a_reused_connection_id() {
+    let bridge = AndroidBleBridge::new();
+    let mut old = control_link(&bridge, 7).await;
+    let message = Control::Close {
+        reason: CloseReason::DuplicateLink,
+    };
+    start_control(&mut old.control, &message).await;
+    let stale = control_ticket(&bridge, 7);
+    bridge.set_radio_mode(RadioMode::Off);
+    let mut replacement = control_link(&bridge, 7).await;
+    start_control(&mut replacement.control, &message).await;
+    let current = control_ticket(&bridge, 7);
+    assert_ne!(stale.session, current.session);
+    assert!(!bridge.complete_control_out(7, stale, true));
+    assert!(!bridge.complete_control_out(7, stale, false));
+    assert_eq!(
+        old.control.send(&message).await,
+        Err(AndroidBleError::Closed)
+    );
+    drop(old);
+    assert_eq!(control_ticket(&bridge, 7), current);
+    assert_eq!(bridge.next_close(), None);
+    assert!(bridge.complete_control_out(7, current, true));
+    assert_eq!(replacement.control.send(&message).await, Ok(()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn native_completion_after_deadline_retires_even_if_watchdog_has_not_started() {
+    let bridge = AndroidBleBridge::new();
+    let link = control_link(&bridge, 1).await;
+    let queue = link.control.outbound.clone();
+    let (ticket, _, _) = queue
+        .begin(
+            &[3, 2],
+            tokio::time::Instant::now() + Duration::from_secs(30),
+        )
+        .unwrap();
+    tokio::time::advance(Duration::from_secs(30)).await;
+    assert!(bridge.complete_control_out(1, ticket, true));
+    assert_eq!(
+        queue.result(ticket).await,
+        Err(AndroidBleError::ControlTimedOut)
+    );
+    assert_eq!(bridge.next_close(), Some(1));
+}
+
+#[tokio::test]
+async fn waiting_watchdog_does_not_hold_the_physical_lease_alive() {
+    let bridge = AndroidBleBridge::new();
+    let mut link = control_link(&bridge, 1).await;
+    let queue = link.control.outbound.clone();
+    let message = Control::Close {
+        reason: CloseReason::DuplicateLink,
+    };
+    start_control(&mut link.control, &message).await;
+    drop(link);
+    assert_eq!(bridge.next_close(), Some(1));
+    tokio::task::yield_now().await;
+    assert_eq!(std::sync::Arc::strong_count(&queue), 1);
+}
+
+#[tokio::test]
+async fn control_output_reports_required_capacity_without_consuming_the_operation() {
+    use prns_core::interfaces::bluetooth_auto::{
+        AndroidHost, BleIdentity, Endpoint, LinkCapabilities, PeerDiscoveryGroups,
+    };
+    use prns_core::interfaces::{DiscoveryGroupHash, DiscoveryGroupHashSet};
+    for count in [2, 4] {
+        let bridge = AndroidBleBridge::new();
+        let mut link = control_link(&bridge, 1).await;
+        let hashes: Vec<_> = (1..=count)
+            .map(|value| DiscoveryGroupHash::from_bytes([value; 32]))
+            .collect();
+        let hello = Control::Hello {
+            identity: BleIdentity::new([1; 16]),
+            endpoint: Endpoint::Android(AndroidHost::Android),
+            capabilities: LinkCapabilities {
+                l2cap: None,
+                link_mtu: 247,
+            },
+            peer_rssi: None,
+            discovery_groups: PeerDiscoveryGroups::Explicit(
+                DiscoveryGroupHashSet::try_from_wire_ordered(&hashes).unwrap(),
+            ),
+        };
+        start_control(&mut link.control, &hello).await;
+        let mut wire = [0; super::CONTROL_BUFFER_LEN];
+        let len = hello.encode(&mut wire).unwrap();
+        assert_eq!(len, 25 + usize::from(count) * 32);
+        assert_eq!(
+            bridge.control_out(1, &mut [0; 64]),
+            AndroidBleControlOutput::BufferTooSmall { required: len }
+        );
+        let mut received = [0; super::CONTROL_BUFFER_LEN];
+        let AndroidBleControlOutput::Ready {
+            ticket,
+            len: actual,
+        } = bridge.control_out(1, &mut received)
+        else {
+            panic!("full control output")
+        };
+        assert_eq!(actual, len);
+        assert_eq!(&received[..len], &wire[..len]);
+        assert_eq!(control_ticket(&bridge, 1), ticket);
+        assert!(bridge.complete_control_out(1, ticket, true));
+        assert_eq!(link.control.send(&hello).await, Ok(()));
+    }
+}
+
 #[test]
 fn disabled_radio_exposes_no_android_ble_work() {
     let bridge = AndroidBleBridge::new();
@@ -66,22 +274,14 @@ fn inbound_link_queues_are_bounded() {
 async fn outbound_messages_remain_owned_until_commit() {
     let bridge = AndroidBleBridge::new();
     assert!(bridge.link_up(9, [1, 2, 3, 4, 5, 7], None, true));
-    let (control, data) = {
+    let data = {
         let links = bridge.shared.links.lock().unwrap();
         let endpoints = links.get(&9).unwrap().active().unwrap();
-        (endpoints.control_out.clone(), endpoints.data_out.clone())
+        endpoints.data_out.clone()
     };
-    control.push(vec![vec![1, 2], vec![3, 4, 5]]).await.unwrap();
     data.push(vec![vec![6, 7], vec![8, 9, 10]]).await.unwrap();
 
     let mut out = [0u8; 8];
-    assert_eq!(bridge.control_out(9, &mut out), 2);
-    assert_eq!(&out[..2], &[1, 2]);
-    assert_eq!(bridge.control_out(9, &mut out), 2);
-    assert_eq!(&out[..2], &[1, 2]);
-    assert!(bridge.commit_control_out(9));
-    assert_eq!(bridge.control_out(9, &mut out), 3);
-    assert_eq!(&out[..3], &[3, 4, 5]);
 
     assert_eq!(bridge.data_out(9, &mut out), 2);
     assert_eq!(&out[..2], &[6, 7]);
@@ -423,10 +623,27 @@ async fn settled_control_retains_delivery_and_disconnect_observation_on_both_dat
             AndroidBleIngressAdmission::Accepted
         );
         assert_eq!(control.recv().await.unwrap(), message);
-        control.send(&message).await.unwrap();
-        let mut written = [0; CONTROL_MAX_LEN];
-        assert_eq!(bridge.control_out(1, &mut written), len);
-        assert_eq!(&written[..len], &bytes[..len]);
+        {
+            let send = control.send(&message);
+            tokio::pin!(send);
+            tokio::select! {
+                biased;
+                result = &mut send => panic!("queue admission completed send: {result:?}"),
+                () = tokio::task::yield_now() => {},
+            }
+            let mut written = [0; CONTROL_MAX_LEN];
+            let super::AndroidBleControlOutput::Ready {
+                len: written_len,
+                ticket,
+            } = bridge.control_out(1, &mut written)
+            else {
+                panic!("pending control")
+            };
+            assert_eq!(written_len, len);
+            assert_eq!(&written[..len], &bytes[..len]);
+            assert!(bridge.complete_control_out(1, ticket, true));
+            assert_eq!(send.await, Ok(()));
+        }
         bridge.disconnected(1);
         assert!(matches!(
             tokio::time::timeout(Duration::from_secs(1), control.recv())
