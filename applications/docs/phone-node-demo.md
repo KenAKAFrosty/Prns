@@ -1,35 +1,30 @@
 # Two-phone local-node demo plan
 
-Status: the local Connections slice passed bounded retained-data iOS/Android
-acceptance on September 24, 2026. The [checkpoint](../checkpoints/2026-09-24-local-bluetooth.md)
-records persisted app-off cold launches, retained data and reciprocal physical
-connections on that slice's final builds, plus Android radio recovery and
-larger-text checks on both platforms. iOS radio recovery, permission-denial trials
-and broader lifecycle qualification remain open.
-Persisted messaging names, bounded Saved/Discovered contacts, recipient selection
-and native recipient resolution are implemented. The
-[messaging checkpoint](../checkpoints/2026-09-24-messaging-discovery.md) records
-reciprocal discovery, proof-backed delivery, discovery-clear sends and Android
-cold-launch sending before the final Apple notification repair. Automatic iOS
-cold-launch recovery is blocked by a stale Bluetooth member retained by the other
-phone; fix settled link ownership before adding broader network inspection.
-The latest Apple notification repair passed the retained-message retry, fresh
-Saved send and reverse delivery on September 25. The additional cold-restart
-check later reproduced the recovery failure on that final build: a baseline
-message delivered, the post-restart lookup failed without queueing, and resetting
-only Android's app Bluetooth restored delivery of the same draft. The
-[shared recovery sequence](../../docs/bluetooth-session-recovery.md) separates
-implemented ownership repairs from pending control lifetime and negotiated
-liveness; the [September 28 checkpoint](../checkpoints/2026-09-28-bluetooth-ownership.md)
-records automated validation and the remaining device gap. The LXMF service now
-refreshes bounded authenticated-key retention in source;
+Status: Connections, persisted messaging names, bounded Saved/Discovered contacts,
+recipient selection and native recipient resolution are implemented. The
+[September 30 checkpoint](../checkpoints/2026-09-30-mobile-liveness.md) records
+retained-data builds, an Apple restored-service upgrade repair and successful
+isolated app restarts in both directions, followed by verified saved-contact
+delivery. No manual announce, Bluetooth reset or restart of the other phone was
+needed in those final trials. Later checks passed Android node Stop/Start and
+system-radio recovery, iOS interface off/on, and receipt with each app off-screen
+for more than five minutes. Competing-connection churn remains a stability
+follow-up; silent-peer expiry, iOS OS-radio recovery, permission denial and broader
+background/idle qualification remain open.
+
+Earlier [Connections acceptance](../checkpoints/2026-09-24-local-bluetooth.md)
+records persisted app-off launches, Android radio recovery and larger-text checks.
+The [messaging checkpoint](../checkpoints/2026-09-24-messaging-discovery.md) records
+reciprocal discovery, proof-backed delivery and discovery-clear sends. Historical
+restart failures and their recoverable drafts remain in the
+[September 29 checkpoint](../checkpoints/2026-09-29-mobile-persistence-recovery.md);
+the [shared recovery notes](../../docs/bluetooth-session-recovery.md) describe the
+implemented ownership, retained controls and negotiated liveness. These dated
+results qualify only their recorded builds and scenarios.
+
+The LXMF service refreshes bounded authenticated-key retention;
 [automated checks](../checkpoints/2026-09-24-messaging-discovery.md#authenticated-key-retention-follow-up)
-passed. The [September 29 checkpoint](../checkpoints/2026-09-29-mobile-persistence-recovery.md)
-records current retained-data Release installs, a repaired sandbox persistence
-regression, successful interval saves, reciprocal source-verified BLE delivery
-and an Android restart send. The isolated iOS restart still fails recipient
-resolution; resetting only Android's app Bluetooth restores the unchanged draft.
-Broader retained-key validation remains open. Unknown-sender resolution and
+passed. Broader retained-key validation remains open. Unknown-sender resolution and
 stored-message re-verification remain separate work; delivery proof does not establish
 the sender's identity. The user accepts losing ASK's extra force-quit relaunch
 support to make the phone usable as its own node,
@@ -72,8 +67,8 @@ The existing foundation is useful; this is not a messaging-engine rewrite.
 | Local node | One process-owned Rust runtime and stable primary identity; ordinary iOS Bluetooth admission; This phone appears before managed boards; retained-data cold launches passed on both platforms | Permission recovery and full physical lifecycle qualification remain |
 | Announcing | Contacts exposes a persisted messaging name, explicit Announce yourself and separate My address sharing; reciprocal messaging-build discovery passed | Wider announce/activity inspection remains planned |
 | Discovery | Discovered contacts shows accepted LXMF names, age, ingress and hops; 256-entry capacity, 24-hour expiry and explicit clear | General accepted-announce activity inspection remains planned |
-| Contacts | Save / Message from discovery; saved messaging recipients, private aliases and announced names remain distinct; Inbox contains message-backed conversations; discovery-clear sends passed on both platforms | Android cold-launch send passed; iOS cold-launch send is blocked by Bluetooth recovery |
-| Bluetooth | Connections shows local status, stored enable/disable and physical peers; final Apple notification repair passed retained-message retry and fresh-session two-way delivery | Stale settled peer after iOS restart remains an open blocker; iOS OS-radio recovery, permission denial, background and long-idle qualification remain |
+| Contacts | Save / Message from discovery; saved recipients, private aliases and announced names remain distinct; discovery-clear sends and isolated restart sends passed on both platforms | Wider retained-key and lifecycle qualification remain |
+| Bluetooth | Connections shows local status, stored enable/disable and physical peers; negotiated liveness and the Apple service-upgrade repair passed bounded isolated restart trials | Competing-connection churn, silent-peer expiry, iOS OS-radio recovery, permission denial and background/long-idle qualification remain |
 | TCP (deferred) | Optional developer TCP client fixture | Not part of this milestone |
 | Inspection | Logical interfaces, counters, routes and identity associations; Connections adds physical Bluetooth peers and their counters/details | Broader network views still use raw labels/IDs/times; current route is not historical message evidence |
 
@@ -323,18 +318,19 @@ routes or counters.
    permission-denial gaps;
    keep background/restoration and USB-unplugged trials separately bounded and
    recorded. This slice did not repeat message-delivery acceptance.
-2. **Complete the messaging journey over BLE (implemented; iOS recovery remains blocked).**
+2. **Complete the messaging journey over BLE (implemented; bounded restart checks passed).**
    Persisted name, explicit announce, bounded Discovered list, Save/Message actions
    and contact recipient selection are implemented. Reciprocal discovery and
    proof-backed messages without typing addresses passed, as did discovery-clear
    sending on both phones and Android cold-launch sending without a remote
-   manual announce. The messaging checkpoint records a reproducible iOS restart
-   failure and honest unqueued-draft feedback.
-3. **Settled Bluetooth link recovery (next).** Define bounded control ownership
-   after the handshake, send/cleanup ordering, graceful Off semantics and stale
-   incumbent recovery. Preserve keeper/authentication policy and late-callback
-   fencing. Prove ordinary iOS restart and one-sided app Off/On recover without
-   resetting the other phone, then repeat the saved-recipient send check.
+   manual announce. The September 30 checkpoint adds isolated app restart sends
+   in both directions and preserves earlier failed attempts.
+3. **Settled Bluetooth link recovery (implemented; qualification continues).**
+   Retained control ownership, correlated writes and negotiated liveness are
+   implemented. Preserve keeper/authentication policy and late-callback fencing.
+   Qualify silent-peer expiry, interface off/on and platform recovery separately;
+   investigate repeated competing connections. Cooperative shutdown notification
+   remains implementation work, not a property of the current Stop behavior.
 4. **Network explainability.** Complete announce/activity inspection, readable
    route age/expiry, broader connection inspection and conversation delivery details.
    Add a narrow upstream seam only where existing public evidence cannot answer
