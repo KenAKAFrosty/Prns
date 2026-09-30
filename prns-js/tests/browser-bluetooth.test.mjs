@@ -9,6 +9,8 @@ const CONTROL_UUID = "37145b00-442d-4a94-917f-8f42c5da28e7";
 const DATA_UUID = "37145b00-442d-4a94-917f-8f42c5da28e8";
 const HELLO = 0xa1;
 const WELCOME = 0xa2;
+const PROBE = 0xa4;
+const PROBE_REPLY = 0xa5;
 const FRAGMENT = 0xaf;
 const PEER_IDENTITY = new Uint8Array([
   0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
@@ -103,6 +105,99 @@ test("Web Bluetooth reports a GATT disconnect during the handshake", async () =>
     restoreNavigator();
   }
 });
+
+test("Web Bluetooth ignores settled liveness controls without opting in or replying", async () => {
+  const control = new FakeCharacteristic();
+  const data = new FakeCharacteristic();
+  const service = new FakeService(control, data);
+  const device = new FakeDevice(service);
+  const restoreNavigator = replaceNavigator(new FakeBluetooth(device));
+  const host = new BluetoothHost();
+  let session;
+  control.onWrite = () => {
+    queueMicrotask(() => control.notify(new Uint8Array([WELCOME])));
+  };
+
+  try {
+    const connected = await new BluetoothInterface(host).connect();
+    assert.equal(connected.tag, "Connected");
+    session = connected.data;
+    for (const nonce of [0n, 0x0020_0000_0000_0001n, 0xffff_ffff_ffff_ffffn]) {
+      host.livenessNonce = nonce;
+      control.notify(new Uint8Array([PROBE]));
+      control.notify(new Uint8Array([PROBE_REPLY]));
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(host.controlDecodes, 7);
+    assert.equal(session.status.tag, "Active");
+    assert.deepEqual(service.requested, [CONTROL_UUID, DATA_UUID]);
+    assert.deepEqual(control.responseWrites, [[HELLO]]);
+    assert.deepEqual(control.commandWrites, []);
+    assert.equal(host.registrations.length, 1);
+    assert.deepEqual(host.deactivations, []);
+
+    data.notify(new Uint8Array([FRAGMENT, 0x41]));
+    host.queueOutbound({ bytes: new Uint8Array([0x51]) });
+    await waitUntil(() => host.inbound.length === 1 && data.responseWrites.length === 1);
+    assert.deepEqual(host.inbound, [[0x41]]);
+    assert.deepEqual(data.responseWrites, [[FRAGMENT, 0x51]]);
+  } finally {
+    await session?.close();
+    restoreNavigator();
+  }
+});
+
+for (const [type, tag] of [["probe", PROBE], ["probeReply", PROBE_REPLY]]) {
+  test(`Web Bluetooth rejects ${type} in place of the welcome`, async () => {
+    const control = new FakeCharacteristic();
+    const device = new FakeDevice(new FakeService(control, new FakeCharacteristic()));
+    const restoreNavigator = replaceNavigator(new FakeBluetooth(device));
+    const host = new BluetoothHost();
+    control.onWrite = () => {
+      queueMicrotask(() => control.notify(new Uint8Array([tag])));
+    };
+
+    try {
+      const connected = await new BluetoothInterface(host).connect();
+      assert.equal(connected.tag, "ConnectionFailed");
+      assert.equal(connected.data.stage, "Handshake");
+      assert.match(connected.data.detail, /liveness control before its welcome/);
+      assert.equal(device.gatt.connected, false);
+      assert.deepEqual(host.registrations, []);
+      assert.deepEqual(control.responseWrites, [[HELLO]]);
+    } finally {
+      restoreNavigator();
+    }
+  });
+
+  for (const nonce of [undefined, 1, "1", -1n, 0x1_0000_0000_0000_0000n]) {
+    test(`Web Bluetooth rejects invalid ${type} nonce ${typeof nonce}:${String(nonce)}`, async () => {
+      const control = new FakeCharacteristic();
+      const device = new FakeDevice(new FakeService(control, new FakeCharacteristic()));
+      const restoreNavigator = replaceNavigator(new FakeBluetooth(device));
+      const host = new BluetoothHost();
+      host.livenessNonce = nonce;
+      let session;
+      control.onWrite = () => {
+        queueMicrotask(() => control.notify(new Uint8Array([WELCOME])));
+      };
+
+      try {
+        const connected = await new BluetoothInterface(host).connect();
+        assert.equal(connected.tag, "Connected");
+        session = connected.data;
+        control.notify(new Uint8Array([tag]));
+        await waitUntil(() => session.status.tag === "Failed");
+        assert.equal(session.status.data.tag, "ProtocolViolation");
+        assert.match(session.status.data.data.detail, /nonce must/);
+        assert.deepEqual(control.responseWrites, [[HELLO]]);
+      } finally {
+        await session?.close();
+        restoreNavigator();
+      }
+    });
+  }
+}
 
 test("Web Bluetooth carries packet fragments over the control characteristic fallback", async () => {
   const control = new FakeCharacteristic();
@@ -230,6 +325,7 @@ class BluetoothHost {
   deactivations = [];
   inbound = [];
   controlDecodes = 0;
+  livenessNonce = 0xffff_ffff_ffff_ffffn;
   outboundTakes = 0;
   #outbound;
   #outboundWaiters = [];
@@ -272,10 +368,16 @@ class BluetoothHost {
 
   bluetoothDecodeControl(bytes) {
     this.controlDecodes += 1;
-    if (bytes[0] !== WELCOME) {
-      throw new Error("not a Bluetooth control frame");
+    switch (bytes[0]) {
+      case WELCOME:
+        return { type: "welcome", identity: PEER_IDENTITY };
+      case PROBE:
+        return { type: "probe", nonce: this.livenessNonce };
+      case PROBE_REPLY:
+        return { type: "probeReply", nonce: this.livenessNonce };
+      default:
+        throw new Error("not a Bluetooth control frame");
     }
-    return { type: "welcome", identity: PEER_IDENTITY };
   }
 
   bluetoothDataFragments(packet) {
