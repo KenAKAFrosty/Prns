@@ -1,6 +1,20 @@
 import { routeParamsAreValid, screenById } from "./catalog";
 
 describe("route parameter validation", () => {
+  it("accepts only the implemented optional Network filters", () => {
+    const entry = screenById("activity.index");
+    expect(entry.label).toBe("Network");
+    expect(entry.availability).toBe("implementedScaffold");
+    expect(routeParamsAreValid(entry, {})).toBe(true);
+    for (const filter of ["connections", "routes", "announcements"]) {
+      expect(routeParamsAreValid(entry, { filter })).toBe(true);
+    }
+    for (const filter of ["all", "network", "operation", "unknown"]) {
+      expect(routeParamsAreValid(entry, { filter })).toBe(false);
+    }
+    expect(routeParamsAreValid(entry, { filter: ["routes"] })).toBe(false);
+  });
+
   it("rejects unknown parameters on routes without parameters", () => {
     const entry = screenById("nodes.index");
 

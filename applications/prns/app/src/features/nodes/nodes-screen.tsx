@@ -78,6 +78,7 @@ export function NodesScreen() {
         <CardSection>
           <ActionRow>
             <NavigationLink href="/more/interfaces">Connections</NavigationLink>
+            <NavigationLink href="/more/activity">Network</NavigationLink>
             <NavigationLink href="/nodes/local/grants">Remote access</NavigationLink>
           </ActionRow>
         </CardSection>
@@ -341,25 +342,15 @@ function HostCards({ localHost }: { readonly localHost: DevelopmentNodeSnapshot[
           </Card>
         ))
       )}
-      <Subheading>Routes</Subheading>
-      {host.routes.length === 0 ? (
-        <Card>
-          <Badge>No live routes</Badge>
-        </Card>
-      ) : (
-        host.routes.map((route) => (
-          <Card key={formatBytes(route.destination)}>
-            <KeyValue label="Destination" value={formatBytes(route.destination)} />
-            <KeyValue label="Hops" value={route.hops.toString()} />
-            <KeyValue label="Interface ID" value={formatBytes(route.interfaceId)} />
-            <KeyValue
-              label="Via identity"
-              value={route.viaIdentity === undefined ? "Direct" : formatBytes(route.viaIdentity)}
-            />
-            <KeyValue label="Expires" value={`${route.expiresAtMillis} ms`} />
-          </Card>
-        ))
-      )}
+      <Card>
+        <Subheading>Network</Subheading>
+        <BodyText muted>
+          Inspect known routes, nearby connections, and recent announcements.
+        </BodyText>
+        <NavigationLink href={{ pathname: "/more/activity", params: { filter: "routes" } }}>
+          View network routes
+        </NavigationLink>
+      </Card>
       <Subheading>Verified network identities</Subheading>
       {host.destinationIdentities.length === 0 ? (
         <Card>

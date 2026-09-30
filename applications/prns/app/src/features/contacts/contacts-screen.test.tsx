@@ -124,6 +124,13 @@ beforeEach(() => {
 function snapshot(): DevelopmentNodeSnapshot {
   return {
     contractFingerprint: "test",
+    network: {
+      state: Bindings.LocalNetworkState.Stopped.new(),
+      routes: [],
+      announces: [],
+      activityRevision: 0n,
+      droppedAnnounceCount: 0n,
+    },
     revision: 0n,
     runtime: Bindings.DevelopmentNodeRuntime.Stopped,
     primaryIdentity: Bindings.PrimaryIdentityState.Missing.new(),
