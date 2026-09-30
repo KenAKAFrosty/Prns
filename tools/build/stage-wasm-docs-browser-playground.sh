@@ -24,9 +24,7 @@ export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$home_native=~ --
 if [[ -n "${PRNS_SOURCE_ARCHIVE:-}" ]]; then
     (
         cd "$wasm_dir"
-        cargo build --locked --release --target wasm32-unknown-unknown --features source-archive
-        wasm-bindgen target/wasm32-unknown-unknown/release/prns_wasm.wasm \
-            --target web \
+        node scripts/build-wasm.mjs --release --features source-archive \
             --out-dir target/browser-playground/pkg
         npm run build:playground:ts
     )
