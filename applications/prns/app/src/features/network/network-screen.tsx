@@ -484,7 +484,10 @@ const styles = StyleSheet.create({
   tabs: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
   tab: {
     flexGrow: 1,
-    flexBasis: 100,
+    // Wrap whole tabs rather than squeezing the longer label into an equal-width cell.
+    flexBasis: "auto",
+    flexShrink: 0,
+    maxWidth: "100%",
     minHeight: 48,
     justifyContent: "center",
     padding: space.sm,
