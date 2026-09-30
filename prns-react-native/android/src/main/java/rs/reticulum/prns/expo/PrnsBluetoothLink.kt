@@ -1393,13 +1393,21 @@ class PrnsBluetoothLink(
                         val nativeData = service.getCharacteristic(NATIVE_DATA)
                         link.clientControl = nativeControl
                         link.clientData = nativeData
-                        val capability = service.getCharacteristic(NATIVE_LIVENESS)?.takeIf {
-                            it.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0 &&
-                                PrnsBluetoothNative.nativeBleLivenessCapability().isNotEmpty()
-                        }
-                        when (link.liveness.start(link.gattState, capability?.uuid) {
+                        val advertisedCapability = service.getCharacteristic(NATIVE_LIVENESS)
+                        val capabilityReadable = advertisedCapability?.let {
+                            it.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0
+                        } ?: false
+                        val localLivenessEnabled = PrnsBluetoothNative.nativeBleLivenessCapability().isNotEmpty()
+                        val capability = advertisedCapability?.takeIf { capabilityReadable && localLivenessEnabled }
+                        val capabilityProgress = link.liveness.start(link.gattState, capability?.uuid) {
                             gatt.readCharacteristic(requireNotNull(capability))
-                        }) {
+                        }
+                        Log.i(
+                            TAG,
+                            "dialer[$connId] liveness capability present=${advertisedCapability != null} " +
+                                "readable=$capabilityReadable localEnabled=$localLivenessEnabled start=$capabilityProgress",
+                        )
+                        when (capabilityProgress) {
                             CapabilityProgress.Ready -> subscribeNativeControl(connId, gatt, link)
                             CapabilityProgress.Rejected -> closeLink(connId)
                             else -> Unit
@@ -1472,10 +1480,18 @@ class PrnsBluetoothLink(
                 }
                 if (characteristic.uuid == NATIVE_LIVENESS) {
                     val link = links[connId] ?: return
-                    when (link.liveness.complete(
+                    val capabilityProgress = link.liveness.complete(
                         link.gattState, characteristic.uuid, value, status,
                         System.nanoTime() / 1_000_000, CLIENT_LINK_READY_TIMEOUT_MS,
-                    )) {
+                    )
+                    if (capabilityProgress != CapabilityProgress.Ignored) {
+                        Log.i(
+                            TAG,
+                            "dialer[$connId] liveness capability read status=$status size=${value.size} " +
+                                "supported=${link.liveness.isSupported()} completion=$capabilityProgress",
+                        )
+                    }
+                    when (capabilityProgress) {
                         CapabilityProgress.Ready -> subscribeNativeControl(connId, gatt, link)
                         CapabilityProgress.Expired -> closeLink(connId)
                         else -> Unit
@@ -1583,7 +1599,10 @@ class PrnsBluetoothLink(
                         linkedConnIds.add(connId)
                         val direct = ByteBuffer.allocateDirect(6)
                         direct.put(octets)
-                        if (!PrnsBluetoothNative.nativeBleLinkUp(connId, direct, RSSI_NONE, true, link.liveness.isSupported())) {
+                        val livenessSupported = link.liveness.isSupported()
+                        val admitted = PrnsBluetoothNative.nativeBleLinkUp(connId, direct, RSSI_NONE, true, livenessSupported)
+                        Log.i(TAG, "dialer[$connId] link admission accepted=$admitted livenessSupported=$livenessSupported")
+                        if (!admitted) {
                             Log.w(TAG, "dialer[$connId] lifecycle admission rejected")
                             closeLink(connId)
                         }
