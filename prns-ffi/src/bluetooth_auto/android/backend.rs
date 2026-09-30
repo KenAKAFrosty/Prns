@@ -24,6 +24,11 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
     type Error = AndroidBleError;
     type Link = AndroidBleLink;
 
+    async fn set_session_liveness(&mut self, enabled: bool) -> Result<(), AndroidBleError> {
+        self.bridge.set_session_liveness(enabled);
+        Ok(())
+    }
+
     async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), AndroidBleError> {
         self.bridge.set_radio_mode(mode);
         Ok(())
@@ -77,6 +82,7 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
                             inbound: pending.control_in,
                             outbound: pending.control_out,
                             work: pending.work.clone(),
+                            liveness_mode: pending.liveness_mode,
                         },
                         conn_id: pending.conn_id,
                         address: pending.address,

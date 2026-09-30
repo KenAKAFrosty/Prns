@@ -25,6 +25,33 @@ class ControlWriteTest {
     }
 
     @Test
+    fun controlWaitsBehindHealthyDataWithoutFailingOrSpendingItsReceipt() {
+        val state = GattState { 0 }
+        assertEquals(OutboundAdmission.Accepted, submitGattClientWrite(state, data) { 0 }.admission)
+        repeat(3) {
+            assertEquals(OutboundAdmission.Busy, submitGattClientWrite(state, control, first) {
+                error("data still owns the physical write lane")
+            }.admission)
+        }
+        assertEquals(GattWriteCompletion(true, false), completeGattClientWrite(state, data, 0))
+        assertEquals(OutboundAdmission.Accepted, submitGattClientWrite(state, control, first) { 0 }.admission)
+        assertEquals(GattWriteCompletion(true, false, first), completeGattClientWrite(state, control, 0))
+        assertTrue(state.isOpen())
+    }
+
+    @Test
+    fun serverControlWaitsForDataNotificationWithoutMisattributingItsCompletion() {
+        val state = GattState { 0 }
+        assertTrue(state.begin(PendingGattOperation(GattOperationKind.ServerNotify, data)))
+        val probe = PendingGattOperation(GattOperationKind.ServerNotify, control, first)
+        assertFalse(state.begin(probe))
+        assertEquals(GattWriteCompletion(true, false), completeGattServerNotify(state, 0))
+        assertTrue(state.begin(probe))
+        assertEquals(GattWriteCompletion(true, false, first), completeGattServerNotify(state, 0))
+        assertTrue(state.isOpen())
+    }
+
+    @Test
     fun stalePumpSnapshotCannotResubmitAnAcknowledgedControl() {
         val state = GattState { 0 }
         var submitted = 0
