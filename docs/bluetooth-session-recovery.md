@@ -153,21 +153,22 @@ server-registration reset must explicitly retire all affected peripheral
 sessions; it cannot pretend only one peer was reset. Keep that policy separate
 from completion handling.
 
-### Control completion validation
+### Historical control completion validation
 
-The focused checks pass 31 Tokio Bluetooth tests, 90 Embassy/Trouble tests,
-65 simulation BLE unit tests and 102 controlled-time Embassy integration tests.
-FFI host tests pass 145 tests with one existing hardware-radio test ignored;
-the SDK JNI adapter passes two host tests. Strict all-target Clippy passes for
+Before negotiated liveness, the completion-only slice passed 31 Tokio Bluetooth
+tests, 90 Embassy/Trouble tests, 65 simulation BLE unit tests and 102 controlled-time
+Embassy integration tests.
+FFI host tests passed 145 tests with one existing hardware-radio test ignored;
+the SDK JNI adapter passed two host tests. Strict all-target Clippy passed for
 Tokio, Embassy, FFI and the SDK JNI adapter.
 
-Both JNI consumers compile for Android ARM64. Production Kotlin compilation and
-unit tests pass for both consumers: 63 SDK tests and 33 Hopspot tests. The SDK
-check uses its exact source through the existing aggregate app consumer; it
-does not build or install a new phone binary. Repository validation/tooling
-registries, formatting and documentation-link checks also pass.
+Both JNI consumers compiled for Android ARM64. Production Kotlin compilation and
+unit tests passed for both consumers: 63 SDK tests and 33 Hopspot tests. The SDK
+check used its exact source through the existing aggregate app consumer; it
+did not build or install a new phone binary. Repository validation/tooling
+registries, formatting and documentation-link checks also passed.
 
-Linked resource checks pass for t-echo with both S140 versions and for E290,
+Linked resource checks passed for t-echo with both S140 versions and for E290,
 without reducing features, connection limits, pool capacity or reservations.
 The nRF control and L2CAP pools now use zero-initialized claim flags, placing
 their unchanged four and nine buffers in `.bss` instead of copying zero-filled
@@ -180,11 +181,12 @@ storage.
 | S140 v6 | 620,748 | 5,940 | 1,180 |
 | S140 v7 | 620,860 | 1,732 | 1,180 |
 
-Both retain the 69,632-byte runtime-stack reservation. The v7 margin remains
-small and must be checked again as liveness is added. These linked-size checks
-do not measure peak runtime memory use or qualify physical Android callbacks,
-nRF notification completion, or rebuilt-phone restart recovery. No phone or
-board has been installed with this slice.
+Both retained the 69,632-byte runtime-stack reservation. These are historical
+completion-only measurements; the liveness measurements below supersede them.
+These linked-size checks do not measure peak runtime memory use or qualify
+physical Android callbacks, nRF notification completion, or rebuilt-phone restart
+recovery. No phone or
+board was installed as part of these checks.
 
 ## Negotiated mobile liveness
 
@@ -247,13 +249,58 @@ library passes 2,105 tests with three existing ignores. The 90 Embassy/Trouble,
 65 simulation BLE and 102 controlled-time integration tests still pass without
 enabling embedded probes.
 
-FFI passes 164 tests with one existing hardware-only ignore, strict Clippy and
+FFI passes 165 tests with one existing hardware-only ignore, strict Clippy and
 the iOS target check. Android's shared helpers pass 75 SDK and 45 Hopspot Kotlin
 tests; both private JNI consumers pass host tests, strict Clippy and Android
 ARM64 target checks. Both Android consumers preserve their existing eight-second
 startup limit; Apple retains its original 15-second limit. Late callbacks cannot
-extend startup by beating a delayed watchdog. Firmware resource and physical
-phone checks remain separate gates.
+extend startup by beating a delayed watchdog. Linked resource checks and physical
+phone acceptance remain separate gates.
+
+### Liveness resource validation
+
+The configured resource gates pass for both t-echo profiles and E290, with all
+five canonical memory contracts unchanged and ordinary linker overflow checks
+enabled. These figures include the liveness codec but do not enable embedded
+probes. No features, connection limits, pool capacity or reservations were reduced.
+
+| Target | Firmware bytes | Flash headroom | Internal RAM headroom after reservations |
+| --- | ---: | ---: | ---: |
+| t-echo S140 v7 | 621,436 | 1,156 | 1,180 |
+| t-echo S140 v6 | 621,324 | 5,364 | 1,180 |
+| Heltec E290 | 2,347,392 | 12,779,136 | 42,188 |
+
+Both t-echo profiles retain the 69,632-byte runtime-stack reservation. The v7
+flash margin remains small and requires rechecking after code changes.
+
+Adding the probe variants exposed a compiler code-size regression in control
+decoding: fusing the parser's `Result` with the public decoder's `Option`
+conversion expanded aggregate greeting copies even on the short probe path.
+Keeping `Control::try_decode` out of line reduced v7 `.text` by 1,400 bytes
+against the overflowing liveness build, without changing parsing, wire bytes or
+static RAM. The single `#[inline(never)]` boundary restored fit; the 107 core
+Bluetooth tests, strict all-target Clippy and no-default-features check passed
+again with this final source.
+
+The three JSON receipts are retained under
+`/Volumes/wavlink/dev/prns-mobile-build/control-firmware/resources/configured/reports/`:
+`t-echo-s140-v7.json`, `t-echo-s140-v6.json` and `heltec-e290.json`. Matching linker
+maps and stack evidence are under the sibling `work/<target>/` directories.
+Each receipt records the same frozen working-tree source:
+
+```text
+kind: working-tree
+head: 472d5fb07750f2e08fed27e5bc9bc6ab1d1a7e4b
+diff_fingerprint: 4612f9fd864370141455deac262da5c3a5f91a578ad56494257f662589e477d6
+```
+
+That source was subsequently committed as
+`8d641e6dea4560729e8ddebfd01c492a6b2aa178`. These are working-tree receipts, not
+clean-commit receipts for that commit or later revisions. The later Apple-only
+capability-read ownership fix, `87c7350d6`, is outside the firmware targets and
+is not part of these receipts. They establish linked fit under the recorded
+configuration, not peak runtime memory use or physical recovery. Rebuilt-phone
+restart acceptance remains required.
 
 ## Shutdown and acceptance
 
