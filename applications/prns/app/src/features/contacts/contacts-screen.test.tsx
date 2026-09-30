@@ -1,6 +1,6 @@
 import * as Bindings from "@prns-internal/expo";
 import type { DevelopmentNodeSnapshot, DevelopmentRuntime } from "@prns-internal/expo";
-import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, fireEventAsync, render, waitFor } from "@testing-library/react-native";
 import { destinationHash, identityHash, interfaceId } from "personal-rns/contract";
 import type { ReactNode } from "react";
 import { Share } from "react-native";
@@ -529,7 +529,8 @@ describe("messaging discovery and local profile", () => {
     await view.findByText("Private Alice");
     fireEvent.press(view.getByRole("button", { name: "Discovered" }));
     expect(view.getByRole("link", { name: "Open contact" })).toBeTruthy();
-    fireEvent.press(
+    // Flush both the save command and its contact-list refresh before checking the new UI.
+    await fireEventAsync.press(
       await view.findByRole("button", { name: "Save messaging contact Private Alice" }),
     );
     await waitFor(() =>
