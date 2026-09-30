@@ -719,6 +719,13 @@ enum SupervisorStep<L: BleLink> {
     Outbound,
 }
 
+/// Bounded embedded supervisor with resumable handshake operations.
+///
+/// Its backend must preserve an in-flight control send across cancellation of
+/// the send future: re-entry with the same message rejoins the original physical
+/// operation, deadline and result. Unrelated supervisor events may recreate the
+/// handshake future; they must not submit the write twice. This is a stronger
+/// requirement than the generic [`BleLink`] cancellation contract.
 pub struct BluetoothAuto<B, const MEMBERS: usize> {
     backend: B,
     local: LocalPeer,
@@ -1176,6 +1183,8 @@ async fn advance_handshake<L: BleLink>(
     pending: &mut Option<PendingHandshake<L>>,
     local: &LocalPeer,
 ) -> HandshakeStep<L> {
+    // The outer supervisor may cancel this future to service another event.
+    // Backends retain pending sends, including admission waits, outside it.
     let completion = match pending.as_mut() {
         Some(pending) => {
             let deadline = pending.deadline;

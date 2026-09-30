@@ -2301,6 +2301,7 @@ mod tests {
         }
     }
 
+    mod control_completion;
     mod settled_control;
 
     #[tokio::test]
