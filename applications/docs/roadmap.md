@@ -43,7 +43,9 @@ contacts, exchange LXMF messages over automatic, pair-free BLE, and inspect how
 the network is communicating. The
 [ordinary CoreBluetooth checkpoint](../checkpoints/2026-09-23-ordinary-corebluetooth.md)
 records direct discovery, two-way messages and one bounded off-screen receipt.
-The remaining UX and inspection slices are still planned.
+The Network inspection slice is implemented in source; its new native contract
+still needs rebuilt-phone UI acceptance. Conversation delivery details remain
+the next inspection increment.
 
 Connection states and the announcing/discovery/contact journey are implemented
 with the bounded evidence in the [messaging checkpoint](../checkpoints/2026-09-24-messaging-discovery.md).
@@ -54,7 +56,12 @@ records an Apple restored-service upgrade repair and successful isolated app
 restarts in both directions, followed by verified saved-contact delivery. Later
 checks passed Android node Stop/Start and radio recovery, iOS interface off/on,
 and bounded off-screen receipt on both phones.
-Proceed with bounded network inspection as the next product slice. Retry backoff,
+Network now separates physical Bluetooth connections, current routes with
+readable age/expiry, and the latest 200 accepted announcements. Technical IDs
+are expandable. Clearing history preserves contacts, routes and messages;
+history is session-only. It uses existing public inspection and observer APIs,
+without changing the canonical Host contract or inferring message paths.
+Retry backoff,
 cooperative shutdown and wider lifecycle qualification remain reliability
 follow-ups, not prerequisites for these features. Silent-peer expiry and dependable
 background delivery are not established by the current trials; revisit them

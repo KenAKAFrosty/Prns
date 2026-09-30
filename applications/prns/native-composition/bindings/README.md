@@ -109,6 +109,14 @@ not durable contacts or routing. A fresh send resolves missing authenticated
 recipient metadata before durable mailbox acceptance; the UI may still be waiting
 while the native send lane owns that work.
 
+Network inspection is app-only: `DevelopmentNodeSnapshot.network` exposes current
+routes and a bounded, generation-owned accepted-announcement history. It does
+not change the canonical Host contract. `clearNetworkActivity` requires the
+expected generation and returns an activity revision; presentation can suppress
+older projections after acknowledgement without rewriting native snapshot
+arrays or hiding newer observations. It needs neither storage preparation nor
+outbound Bluetooth admission and never clears contacts, routes or messages.
+
 Async admission uses bounded lanes and nonblocking supervisor access. It performs
 no path resolution, database opening, synchronous response wait or worker join
 on Hermes. A process-wide timer driver keeps offline query deadlines working;
