@@ -325,13 +325,14 @@ routes or counters.
    sending on both phones and Android cold-launch sending without a remote
    manual announce. The September 30 checkpoint adds isolated app restart sends
    in both directions and preserves earlier failed attempts.
-3. **Settled Bluetooth link recovery (implemented; qualification continues).**
+3. **Settled Bluetooth link recovery (sufficient for feature development).**
    Retained control ownership, correlated writes and negotiated liveness are
    implemented. Preserve keeper/authentication policy and late-callback fencing.
-   Qualify silent-peer expiry, interface off/on and platform recovery separately;
-   investigate repeated competing connections. Cooperative shutdown notification
+   Track silent-peer expiry, wider platform recovery and repeated competing
+   connections as reliability follow-ups. Cooperative shutdown notification
    remains implementation work, not a property of the current Stop behavior.
-4. **Network explainability.** Complete announce/activity inspection, readable
+   These do not block network inspection unless a new failure prevents normal use.
+4. **Network explainability (next).** Complete announce/activity inspection, readable
    route age/expiry, broader connection inspection and conversation delivery details.
    Add a narrow upstream seam only where existing public evidence cannot answer
    the UI's question. Clearly separate current routes from actual message paths.
