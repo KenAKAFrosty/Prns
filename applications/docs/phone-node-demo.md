@@ -1,5 +1,11 @@
 # Two-phone local-node demo plan
 
+This is the bounded direct-message BLE baseline, not the full product scope or
+the current priority order. The [October 1 scope](product-scope.md) centers direct
+and group messaging with a required reusable library, while leaving protocol and
+multi-device design open. Use the [roadmap](roadmap.md) to select new work; the
+implementation details and recorded acceptance below describe this demo only.
+
 Status: Connections, persisted messaging names, bounded Saved/Discovered contacts,
 recipient selection and native recipient resolution are implemented. The
 [September 30 checkpoint](../checkpoints/2026-09-30-mobile-liveness.md) records
@@ -62,7 +68,8 @@ silently to improve a particular iOS restoration scenario.
 
 ## Current state and gaps
 
-The existing foundation is useful; this is not a messaging-engine rewrite.
+This demo builds on the existing services. The broader reusable direct/group
+messaging contract still needs the review described in the product scope.
 
 | Area | What exists | Gap for the demo |
 | --- | --- | --- |
@@ -83,11 +90,10 @@ Source anchors: [Inbox](../prns/app/src/features/inbox/inbox-screen.native.tsx),
 [durable messaging owner](../services/lxmf/src/mailbox.rs), and
 [iOS admission](../prns/platform/ios/PrnsBluetoothCoordinator.swift).
 
-The historical local `scratch/prns-app/product-and-ux.md` already called
-for Saved/Discovered contacts, local-node-first navigation, local interfaces and
-network inspection. Restore those product priorities, not its superseded bridge
-designs or speculative service registries. The tracked roadmap remains the
-current backlog; old physical results do not qualify new binaries.
+Saved/Discovered contacts, local connections and network inspection support the
+messaging journey. The [product scope](product-scope.md) now owns their role in
+the overall experience; the old universal-app scratch plans do not set current
+priorities. Old physical results do not qualify new binaries.
 
 ## Implemented Connections slice
 
@@ -203,7 +209,7 @@ interface/activity routes rather than introducing another top-level tab.
 | Inbox | Actual conversations, not every heard peer. New message selects a saved/discovered recipient; manual address entry remains available. Contact detail also has Message. |
 | Connections | Implemented with bounded iOS/Android retained-data acceptance: automatic Bluetooth, readable state, app-level permission actions, stored enable/disable and physical peer details. Remaining recovery/lifecycle checks are listed in the checkpoint. No per-phone picker; local settings do not use remote-board controls. |
 | Network / Activity | Implemented at the existing Activity route: separate Connections, Routes and Announcements views; latest 200 accepted announcements and clear local history. Technical IDs remain available on demand. General connection/message event history is not included. |
-| Conversation details | Next: current route availability and independently recorded delivery evidence, clearly labeled. No inferred historical path presented as fact. |
+| Conversation details | Follow-up: current route availability and independently recorded delivery evidence, clearly labeled. Schedule under the messaging roadmap; no inferred historical path presented as fact. |
 
 Use Discovered, not Nearby, for announce-derived people: they may be reached over
 multiple hops, even when this phone uses only BLE. Reserve Nearby for physical
@@ -354,7 +360,8 @@ routes or counters.
    the rebuilt standalone apps. Readable tabs, clear/reannounce, retained routes
    and contacts, and two-way messaging passed on both phones; see the
    [build and validation record](validation.md#standalone-phone-builds-and-focused-acceptance).
-   Next add conversation delivery details using independently recorded evidence.
+   Conversation delivery details remain a follow-up under the broader messaging
+   roadmap, using independently recorded evidence.
    Add a narrow upstream seam only where existing public evidence cannot answer
    the UI's question. Clearly separate current routes from actual message paths.
 5. **Repeatable device acceptance and recovery.** Test out-of-range, reconnect,
@@ -390,10 +397,12 @@ own pass/fail records; foreground demo success must not be called full backgroun
 qualification. Preserve background support as a requirement, not a guarantee of
 an always-running iOS daemon.
 
-Defer TCP and all other transport configuration, LXMF Resources/attachments,
-propagation, opportunistic delivery, push notifications, full persistent packet
-history, graph visualizations,
-multi-endpoint contact merging, identity export/sync, new desktop/browser
-providers and additional board-control features. Existing board qualification
+Within this BLE demo, defer TCP and other transport configuration, LXMF
+Resources/attachments, propagation, opportunistic delivery, push notifications,
+full persistent packet history, graph visualizations, group messaging
+implementation, multi-endpoint contact merging, identity export/sync, new
+desktop/browser providers and additional board-control features. Existing board qualification
 and firmware faults remain tracked separately; they do not gate a board-free
 phone-to-phone demo unless a shared dependency is actually involved.
+These are limits of this acceptance slice, not the product roadmap: group
+messaging is primary scope, and device/sync questions are active design work.

@@ -1,5 +1,11 @@
 # Expanded node management
 
+Node management is a supporting capability of the
+[messaging-focused product scope](product-scope.md). Keep everyday flows simple
+while making full supported control and detail available on demand. This plan
+records the existing management work and its remaining acceptance; the
+[roadmap](roadmap.md) sets its priority alongside messaging work.
+
 Implementation status and remaining plan against upstream `8c211827b`, including
 [PR #232](https://github.com/KenAKAFrosty/Prns/pull/232) and discovery-group
 read/write support. The app names all 30 request kinds and implements its first

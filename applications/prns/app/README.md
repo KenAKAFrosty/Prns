@@ -1,17 +1,27 @@
 # Prns development app
 
-The Expo app presents the application-owned Rust services. Start with the
-[workspace guide](../../README.md) for installation, ownership, generation and
-checks; use the [iOS](../../docs/ios.md) or [Android](../../docs/android.md) guide
-for device setup. The [validation summary](../../docs/validation.md) separates
-current source behavior from build-specific device evidence.
+Prns is being built primarily for direct and group messaging, with people who
+currently use Meshtastic or MeshCore as its intended audience. Everyday messaging
+should be easy, with full control and technical detail available when wanted.
+Node management and network inspection support that experience.
+
+The [product scope](../../docs/product-scope.md) owns the agreed direction and
+open design questions; the [roadmap](../../docs/roadmap.md) owns sequencing.
+Start with the [workspace guide](../../README.md) for installation, ownership,
+generation and checks; use the [iOS](../../docs/ios.md) or
+[Android](../../docs/android.md) guide for device setup. The
+[validation summary](../../docs/validation.md) separates current source behavior
+from build-specific device evidence.
 
 ## Current features
 
-The native iOS and Android providers support identity creation/import, local
-node inspection, contacts, RemoteControl pairing and connection checks, node
-address sharing, expanded node read/write controls, and a persistent mailbox for
-small direct LXMF messages.
+The native iOS and Android providers support contacts and a persistent mailbox
+for small direct LXMF messages, along with identity creation/import, local node
+inspection, RemoteControl pairing and connection checks, node address sharing
+and expanded node read/write controls. Group messaging remains planned.
+Coordinated multi-device identity and state synchronization remain open design
+work, and light profile/social functionality beyond today's messaging name is
+exploratory. None is implemented by this scope revision.
 
 **Nodes → This phone → Connections** shows local Bluetooth state, connected
 physical peers and their traffic/details. Its stored enable/disable setting

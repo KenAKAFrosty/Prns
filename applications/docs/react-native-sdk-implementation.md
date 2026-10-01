@@ -4,6 +4,14 @@ The reusable SDK lives below app services and policy. The app composes the share
 host and SDK in one native image, using app-owned package staging. This is a
 development implementation, not a release-qualified distribution.
 
+The [product scope](product-scope.md) separately requires an app-independent Rust
+messaging crate/library for use by any application that needs messaging over
+Reticulum. The Expo host SDK supplies runtime and platform mechanics; it does
+not fulfill that messaging-library requirement. The existing LXMF service is
+reusable groundwork, while the broader direct/group messaging boundary and
+multi-device model remain design work. Protocol choices follow the product
+scope; this guide describes the implementation that exists today.
+
 The [SDK adoption checkpoint](../checkpoints/2026-09-24-sdk-adoption.md) records
 independent SDK integration and retained-data app builds. The completed
 [investigation, migration plan and cutover receipts](../checkpoints/react-native-sdk/README.md)

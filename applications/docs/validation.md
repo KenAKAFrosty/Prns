@@ -8,9 +8,17 @@ status, not the dated publishing receipts.
 
 The [workspace guide](../README.md) owns setup and commands, the
 [SDK guide](react-native-sdk-implementation.md) owns the shared host boundary,
-and the [roadmap](roadmap.md) owns priorities. The full app has native Android/iOS
-providers, not browser or Tauri providers. The general SDK's web entry separately
-uses the existing PRNS browser host.
+the [product scope](product-scope.md) owns agreed product and architecture
+direction, and the [roadmap](roadmap.md) owns sequencing. The full app has native
+Android/iOS providers, not browser or Tauri providers. The general SDK's web entry
+separately uses the existing PRNS browser host.
+
+The revised scope adds group messaging and a general messaging-library
+requirement; neither is established by existing direct-LXMF or Expo SDK evidence.
+Multi-device identity and state synchronization remain unresolved, and optional
+profile/social work has no acceptance claim. Existing LXMF interoperability
+checks continue to qualify the implementation's actual compatibility claims;
+allowing future application-protocol divergence does not waive those checks.
 
 ## Evidence index
 
@@ -38,9 +46,9 @@ The [Network checkpoint](../checkpoints/2026-09-30-network-inspection.md#standal
 records the latest focused phone builds at source `6ad5efadb`, exact artifact
 hashes, retained-data checks and observed delivery times. Those bundled Release
 builds do not use Metro. They are locally signed development artifacts, not
-production distribution. More transport testing is not a prerequisite for the
-next conversation-inspection slice; broader reliability claims still require
-the separate work below.
+production distribution. These results can support bounded foreground work
+selected in the roadmap; broader reliability claims still require the separate
+work below.
 
 ## Repeatable checks
 

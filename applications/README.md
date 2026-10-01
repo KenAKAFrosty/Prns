@@ -1,10 +1,14 @@
 # Prns applications
 
-This workspace owns the Prns app, its native composition and reusable application
-services. It consumes public core APIs; the core does not depend on this tree.
+This workspace owns the Prns messaging app, its native composition and reusable
+application services. The product centers on direct and group messaging for
+people who currently use Meshtastic or MeshCore, with easy everyday flows and
+full control and detail available when wanted. It consumes public core APIs;
+the core does not depend on this tree.
 
 ## Start here
 
+- [Agreed product scope and architecture direction](docs/product-scope.md)
 - [App behavior and routes](prns/app/README.md)
 - [iOS development](docs/ios.md) and [Android development](docs/android.md)
 - [Current validation and limits](docs/validation.md)
@@ -13,9 +17,11 @@ services. It consumes public core APIs; the core does not depend on this tree.
 - [Expanded remote-control plan](docs/remote-control-expansion.md)
 - [Two-phone local-node demo plan and progress](docs/phone-node-demo.md)
 
-This guide owns setup and workspace commands. The binding and platform guides
-own their narrower boundaries; dated checkpoints preserve historical evidence,
-not current setup instructions. The original scratch plans are design history.
+This guide owns setup and workspace commands. The product scope owns the agreed
+direction, the roadmap owns sequencing, and the validation index owns evidence
+and limits. The binding and platform guides own their narrower boundaries;
+dated checkpoints preserve historical evidence, not current setup instructions.
+The original scratch plans are design history.
 
 ## Ownership
 
@@ -25,12 +31,20 @@ not current setup instructions. The original scratch plans are design history.
 | `prns/native-composition/src` | Rust application policy, storage, service composition and ownership of the shared host session |
 | `prns/native-composition/bindings` | Generated product interface; imports shared host converters and borrows the SDK-selected native image |
 | `prns/platform` | App storage/startup/reset admission, notification presentation and product platform facade; delegates generic lifecycle and Bluetooth mechanics to the SDK |
-| `services` | Reusable application services, including LXMF and its wire format |
+| `services` | Reusable application services; currently LXMF and its wire format, with the general messaging library boundary to be developed |
 | `../prns-host/impls/native` | Shared native runtime, queues/resources, readiness and joined shutdown used by C, UniFFI and native services |
 | `../prns-react-native` | Canonical general Expo SDK with its standalone default native image |
 | `target/react-native-sdk` | Generated app-selected SDK package, with the app aggregate native image; no separately maintained SDK sources |
 | `tools/generated-bindings` | App generation recipe using shared `../tools/uniffi` orchestration |
 | `../vendor/ubrn` | Shared pinned upstream runtime archives, patches and provenance |
+
+Messaging must be a reusable Rust crate/library that other Reticulum applications
+can compose without depending on this product. That requirement is distinct from
+the reusable Expo host SDK. The existing LXMF service is a starting point; its
+presence does not establish the full messaging and group-messaging boundary.
+The [product scope](docs/product-scope.md) records the open protocol and
+multi-device decisions. LXMF interoperability remains desirable, while the
+application protocol may diverge where the agreed design requires it.
 
 Start with the [binding boundary](prns/native-composition/bindings/README.md) for
 generated values, cancellation and native ownership. Edit Rust declarations and
