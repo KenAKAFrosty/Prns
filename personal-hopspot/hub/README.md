@@ -8,12 +8,13 @@ uncommitted until approved.
 ## Core organization
 
 `core/src/domain_primitives` owns validated labels, device identifiers, and
-enrollment and connection correlation values. It has no dependency on state
+enrollment, connection, and interface request correlation values. It has no dependency on state
 machines.
 `core/src/state_machines/device_registry` owns the registry's temporal state,
 input/output protocol, transitions, and behavioral tests. Primitive validation
 tests live with their primitive. Modules remain private behind the curated
-exports in `lib.rs`.
+exports in `lib.rs`. The `state_machines/interface_inventory` owner collects
+interface pages for one connection and publishes complete results.
 
 New core work follows these ownership lanes. Add circuitry only when there are
 concrete participants to compose. The standalone workspace owns the Rust and
@@ -92,9 +93,45 @@ old callback cannot settle a newer connection, even if the link ID is reused.
 Tokens are scoped to their originating registry lifetime.
 
 This slice owns connection bookkeeping and emits a connection intent. The
-network adapter, deadlines, automatic reconnect scheduling while active, and
-interface inventory remain integration work. No configuration is queued or
+network adapter, deadlines, and automatic reconnect scheduling while active
+remain integration work. No configuration is queued or
 replayed by these steps.
+
+## Interface inventory
+
+Create one `InterfaceInventory::<CAPACITY>` for each confirmed connection. The
+caller selects its interface limit explicitly; staging and published data use
+separate bounded buffers with no heap allocation. The collector is subordinate
+to the registry's connection lifecycle. The future circuit must route
+`CloseInterfaceInventory` when that connection ends or its device is forgotten,
+and construct a new collector for a newly confirmed connection. It does not
+observe registry changes automatically.
+
+`RefreshInterfaces` issues an opaque `InterfacePageRequest`. Its `request()`
+returns PRNS's `RemoteControlRequest::InventoryInterfaces`; `connection()`
+identifies the connection on which the adapter must send it. The adapter routes
+the decoded `RemoteControlInterfaceInventory` back with that exact token.
+Every continuation returns the next token and cursor. Duplicate begins report
+`Busy`; stale pages or failures cannot alter the pending refresh. Tokens belong
+to one collector lifetime; do not reuse an old collector's callbacks if a
+collector is recreated for the same connection.
+
+`ReceiveInterfacePage` checks ascending interface IDs across pages and the total
+capacity. It publishes only after the final page, preserving upstream interface
+kinds, modes, link status, enabled state, and counters. An empty final inventory
+replaces earlier data. Duplicate or backwards IDs and capacity overflow fail the
+refresh; partial data is discarded. This is complete pagination, not a claim
+that all remote interfaces were sampled at the same instant.
+
+`ReadInterfaces` returns owned data plus `NotRequested`, `Receiving`, `Ready`,
+`Failed`, or `Closed` status. During refresh or failure, any published entries
+are the last complete result and must be displayed as such. `InterfaceRefreshFailed`
+settles transport, deadline, permission, or decoding failures. Closing returns
+any pending request for cancellation, clears all data, and permanently refuses
+reuse. A stale-page outcome returns the rejected page to its caller.
+
+Network dispatch, timed polling, interface names/configuration, live watches,
+and interface power changes remain follow-up work.
 
 ## Verification
 
@@ -156,6 +193,10 @@ map model. Connection properties exercise arbitrary connect/confirm/end historie
 reject all retired tokens, and check another device remains unchanged. Maximum
 generation is covered by a deterministic exhaustion test. These stateful checks
 use proptest because importing the full PRNS graph still blocks Kani.
+Interface inventory properties vary sorted interface sets and page boundaries,
+roundtrip real PRNS request/response bytes, and compare the complete published
+result with the original entries. Deterministic tests cover invalid ordering,
+overflow, failure recovery, exhaustion, and reconnect invalidation.
 The isolated proof package avoids an existing `prns-core` Kani
 compilation failure in its request-set proof (a `u32` shift by 32); the main core
 crate's Kani lane is not claimed to pass.
@@ -168,8 +209,8 @@ qualified by these core checks.
 Discovery requires user selection before pairing. Remembered devices will
 reconnect automatically without replaying configuration commands. Headless
 first enrollment will use an unowned boot window, direct-only admission,
-code-free automatic approval, and owner authority. Interface status and power
-controls follow; a change affecting the requesting controller's management
+code-free automatic approval, and owner authority. Network-driven interface
+status and power controls follow; a change affecting the requesting controller's management
 interface will need a device-owned confirmation deadline and rollback.
 
 Per-installation controller identity comes first. Controller sharing, explicit

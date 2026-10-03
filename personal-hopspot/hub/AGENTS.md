@@ -10,7 +10,7 @@ contracts, tests, and architecture/behavior expectations with their owner.
 Use private modules and curated public exports. Inherit the hub workspace's
 lint baseline explicitly and keep production core `no_std`.
 
-Every registry operation, including queries, has its own `StepInputOf` input
+Every machine operation, including queries, has its own `StepInputOf` input
 and exact outcome. Constructors and private helpers may remain methods. Do not
 add comments, including doc comments. Put necessary prose in owning Markdown
 documentation and express contracts through names, types, and tests.
