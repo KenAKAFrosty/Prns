@@ -1,6 +1,6 @@
 # Heltec V3 e Remote Control PRNS
 
-Stato: **Build combinata UI/enrollment `253fce8ff` flashata dalla UI Controller `de20e3bd7` con Enroll: gestione RC via BLE e whitelist verificate senza pairing manuale, anche dopo spegnimento/riaccensione V3 riferiti dall'utente e riapertura Controller. Prova svolta con launcher temporaneo: porta V3 esplicita e conversione di `--developer-artifacts` in `--local-build`, necessarie per le incompatibilità delle due build. Il percorso Controller/flasher senza launcher non è qualificato. La UI continua a mostrare Offline e USB Waiting; DescribeNetworkTransport restituisce UnknownRequestKind 32. Le prove OLED/menu/Announce precedenti riguardano il candidato3 storico, non questa nuova build. Calibrazione ADC, stabilità sotto carico e RF con secondo nodo restano aperti e non sono stati eseguiti in questa prova; UF2 e notices iOS conservano i blocchi preesistenti**. Ultimo aggiornamento: 2026-10-03.
+Stato: **Build combinata UI/enrollment `253fce8ff` flashata dalla UI Controller `de20e3bd7` con Enroll: gestione RC via BLE e whitelist verificate senza pairing manuale, anche dopo spegnimento/riaccensione V3 riferiti dall'utente e riapertura Controller. Prova svolta con launcher temporaneo: porta V3 esplicita e conversione di `--developer-artifacts` in `--local-build`, necessarie per le incompatibilità delle due build. Il percorso Controller/flasher senza launcher non è qualificato. La UI continua a mostrare Offline e USB Waiting; DescribeNetworkTransport restituisce UnknownRequestKind 32. Le prove OLED/menu/Announce precedenti riguardano il candidato3 storico, non questa nuova build. Calibrazione ADC, stabilità sotto carico e RF con secondo nodo restano aperti e non sono stati eseguiti in questa prova; UF2 nel branch Controller resta preesistente; lockfile iOS e notices sono stati aggiornati per questa PR**. Ultimo aggiornamento: 2026-10-03.
 
 ## Come riprendere il lavoro in una nuova sessione Codex
 
@@ -30,7 +30,7 @@ L'integrazione deve preservare i contratti pubblici e non introdurre dipendenze 
 
 - [x] Identificare le responsabilità: RC comune in `trunk`, PRNS Controller come client opzionale, V3 assente da `trunk` alla data sopra. Prova: ispezione del codice e degli alberi Git il 2026-09-27.
 - [x] Verificare che la PR V3 originale sia aperta e che la checkout originale sia pulita. Prova: `git status` e `gh pr view` il 2026-09-27.
-- [ ] Aggiornare i ref remoti e confermare con i maintainer se l'integrazione V3+RC debba seguire la PR #242, sostituirne la base o avere una PR separata verso `trunk`. Preferire una branch d'integrazione separata finché la decisione non è presa.
+- [x] Aggiornare i ref remoti e confermare la destinazione: il 2026-10-03 utente richiede aggiornamento della PR #242 esistente verso main; ref aggiornati e base mantenuta. Decisione precedente: confermare con i maintainer se l'integrazione V3+RC debba seguire la PR #242, sostituirne la base o avere una PR separata verso `trunk`. Preferire una branch d'integrazione separata finché la decisione non è presa.
 - [x] Creare o ripulire una worktree d'integrazione basata sul `trunk` aggiornato; annotarne commit base e stato. Non sovrascrivere modifiche locali né pubblicare il cherry-pick sperimentale. Prova nel registro del 2026-09-27.
 - [x] Confrontare i due commit V3 con i contratti S3 correnti e scegliere per ciascun file se portare, adattare o lasciare la versione `trunk`. Evitare modifiche non pertinenti introdotte dalla risoluzione automatica dei conflitti. La mappa sotto e il registro delle prove distinguono la decisione dal porting ancora incompleto.
 
@@ -237,3 +237,25 @@ Ambito autorizzato dall'utente: soltanto flash con Enroll, gestione immediata e 
 - [x] Provare enrollment durante flash dalla UI e gestione senza pairing manuale, con persistenza dopo riavvio V3 riferito dall'utente e riapertura Controller: prove e limiti sopra.
 - [ ] Qualificare lo stesso flusso senza launcher temporaneo: risolvere selezione porta macOS e compatibilità CLI Controller/flasher. Non eseguito nell'ambito della prova richiesta.
 - La checklist precedente che comprende anche UI/menu/Announce della build combinata resta aperta per quella parte: nessuna nuova verifica fisica UI in questa sessione.
+
+### Preparazione aggiornamento PR #242 — 2026-10-03
+
+Richiesta utente: aggiornare la PR esistente `feature/heltec-v3` con RC, UI ed enrollment. Verificata via CLI: aperta, base `main`, head originale `c4581c8e0`. Fetch di `origin/main` a `2de38cfa1` (promozione di trunk attraverso `586b075cd`) e di `fork/feature/heltec-v3`. Base PR mantenuta; nessun rebase o force-push.
+
+Commit sorgente `2c383bda2325572441aa092eaf05780f7da1feb0`: merge di main nella storia V3, applicando il porting netto `586b075cd..253fce8ff` e conservando i fix main-only. Il vecchio percorso V3 S3 è sostituito dalla variante S3FN8 verificata. Le modifiche Controller restano separate; nessuna intera applicazione Controller importata. Aggiornate tre fixture Embassy per il nuovo signal Path table e il test della board in bring-up sul sito.
+
+Prove sul sorgente integrato, macOS arm64:
+
+- `rtk cargo test --locked`: 2449 passati, 4 ignorati.
+- `rtk cargo test --locked -p prns-core --features flash remote_control`: 224 passati; filtro `enrolled_page`: 1 passato.
+- `rtk cargo test --locked -p hopspot-flash -p prns-flash-manifest -p personal-hopspot-memory`: 205 passati.
+- Hopspot core con `display,remote-control-pairing`: 219 passati; embedded ESP32 host con `heltec-v3,remote-control-pairing`: 54; driver Embassy con `lora`: 90.
+- Test lib `remote_control` dei workspace Tokio ed Embassy (Embassy con `std`): 28 passati ciascuno.
+- Test website: 49 passati. Format root, ESP32 ed Embassy; diff-check; tool/validation registry e core `--no-default-features`: passati.
+- Ambiente ESP caricato: `rtk cargo heltec-v3`, `heltec-wireless-stick-lite-v3`, `heltec-v4`, `c6`: quattro build release riuscite. Warning driver/feature e segmenti linker RWX restano visibili. Nessun nuovo flash o test fisico del commit integrato.
+
+Commit generato successivo alla merge: notices rigenerate col processo documentato e fingerprint verificato, nuova board nei grafi audit e snapshot unsafe rigenerato/verificato. Risolti i blocchi locked di iOS, host C/native e NAPI mediante sole aggiunte di dipendenze locali; confronto dei sei lockfile modificati conferma versioni/sorgenti esterne invariate. I due blocchi del registro del 1 ottobre descrivono lo stato storico: notices/iOS non sono più un blocco su questa integrazione, mentre il test UF2 del branch Controller resta separato.
+
+Non eseguita l'intera lane PR multipiattaforma: prove mirate ai package/runtime e target interessati. Nessun file modificato nel perimetro mutation configurato. Le evidenze fisiche restano attribuite ai commit storici sopra; il launcher temporaneo, Offline, USB Waiting e UnknownRequestKind 32 non sono stati corretti né nascosti. Digest privati dei backup omessi dalla spec pubblicabile; vault, log privati e immagini restano fuori Git.
+
+I percorsi home nella spec pubblicata sono anonimizzati come /Users/user; i comandi originali e i backup privati rimangono locali. Il codice pubblicabile è identico al candidato verificato; differiscono soltanto i percorsi e il registro documentale.
