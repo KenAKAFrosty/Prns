@@ -24,6 +24,9 @@ pub(crate) use pipecircuit::{
 pub(crate) use std::sync::Mutex;
 pub(crate) use tokio::sync::Notify;
 
+mod bounded_circuit;
+pub(crate) use bounded_circuit::BoundedCircuit;
+
 pub(crate) const LINK: LinkId = LinkId::new([41; 16]);
 
 pub(crate) fn target(seed: u8) -> RemoteControlTargetIdentity {

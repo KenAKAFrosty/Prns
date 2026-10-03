@@ -21,5 +21,10 @@ pub use wiring::{
     DeviceSessionRoutingError, DeviceSessionSnapshot, DeviceSessionSwitchboard,
 };
 
+pub use wiring::{
+    MioDeviceSessionCircuit, MioDeviceSessionTurn, MioSessionPoll, MioSessionReaction,
+    MioSessionReactor, MioSessionSender, MioSessionSubmission, MioSessionWakeFailure,
+};
+
 #[cfg(test)]
 mod tests;

@@ -729,6 +729,7 @@ version = "0.1.0"
 dependencies = [
  "expect-test",
  "hopspot-hub-core",
+ "mio",
  "personal-hopspot-core",
  "personal-rns",
  "pipecircuit",
@@ -857,6 +858,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b18443e9c262bfe8fa82f51666e2642c53393f7e5c27b3e1aeab922cff5b9d8"
 dependencies = [
  "libc",
+ "log",
  "wasi",
  "windows-sys",
 ]

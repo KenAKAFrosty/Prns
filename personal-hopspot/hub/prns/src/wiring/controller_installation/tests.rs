@@ -83,12 +83,16 @@ fn corrupt_identity_material_is_refused_without_replacement() {
         let path = root.path().join("remote_control").join(name);
         std::fs::write(&path, b"short").unwrap();
         for _ in 0..2 {
-            assert!(matches!(
-                ControllerInstallation::open(root.path()),
-                Err(ControllerInstallationError::Identity(
-                    RemoteControlFileIdentityBootstrapError::Bootstrap(_)
-                ))
-            ));
+            let error = ControllerInstallation::open(root.path()).err().unwrap();
+            assert!(
+                matches!(
+                    error,
+                    ControllerInstallationError::Identity(
+                        RemoteControlFileIdentityBootstrapError::Bootstrap(_)
+                    )
+                ),
+                "unexpected startup failure: {error:?}"
+            );
             assert_eq!(std::fs::read(&path).unwrap(), b"short");
         }
     }
@@ -140,4 +144,23 @@ proptest! {
         drop(owner);
         prop_assert_eq!(ControllerInstallation::open(root.path()).unwrap().identity.secrets().identities(), expected);
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn release_unlocks_even_while_a_duplicated_descriptor_is_still_open() {
+    let root = tempfile::tempdir().unwrap();
+    let installation = ControllerInstallation::open(root.path()).unwrap();
+    let duplicate = installation.state_lock.0.try_clone().unwrap();
+    assert!(matches!(
+        ControllerInstallation::open(root.path()),
+        Err(ControllerInstallationError::Lock(TryLockError::WouldBlock))
+    ));
+    drop(installation);
+    let reopened = ControllerInstallation::open(root.path());
+    assert!(
+        reopened.is_ok(),
+        "duplicate descriptor retained the installation lock"
+    );
+    drop(duplicate);
 }

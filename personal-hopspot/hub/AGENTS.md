@@ -26,6 +26,12 @@ Capacity limits, missing records, stale callbacks, and peer-response failures
 are ordinary outcomes. Keep each step's error type precise and owned locally.
 
 Before presenting each candidate, run the verification commands in `README.md`.
+For incremental mutation runs, include changed and new production owners plus
+affected existing owners, retaining full workspace tests for every mutant.
+Use file filters to include untracked source; a Git diff alone omits it. Report
+the exact mutation scope and prior full baseline. Run a full sweep when changes
+to shared contracts, dependencies, or test infrastructure make impact broad,
+or when explicitly requested.
 Reuse Pipecircuit's Cargo aliases and mutation configuration; do not add custom
 verification runners. Require 100% LLVM production-source function, line, and
 region coverage and no surviving, timed-out, or unclassified mutants. Tests, snapshot

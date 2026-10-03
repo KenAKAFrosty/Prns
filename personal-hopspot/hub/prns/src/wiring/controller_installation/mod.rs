@@ -21,9 +21,17 @@ pub enum ControllerInstallationError {
 }
 
 pub struct ControllerInstallation {
-    pub(crate) state_lock: File,
+    pub(crate) state_lock: InstallationLock,
     pub(crate) identity: RemoteControlNodeIdentityBootstrap,
     pub(crate) persistence: NodePersistence,
+}
+
+pub(crate) struct InstallationLock(File);
+
+impl Drop for InstallationLock {
+    fn drop(&mut self) {
+        let _unlock = self.0.unlock();
+    }
 }
 
 impl ControllerInstallation {
@@ -42,6 +50,7 @@ impl ControllerInstallation {
         state_lock
             .try_lock()
             .map_err(ControllerInstallationError::Lock)?;
+        let state_lock = InstallationLock(state_lock);
         let identity = RemoteControlIdentityDirectory::new(directory.join("remote_control"))
             .load_or_generate()
             .map_err(ControllerInstallationError::Identity)?;

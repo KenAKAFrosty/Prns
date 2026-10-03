@@ -449,7 +449,10 @@ exclusive filesystem lease, PRNS identity bootstrap, and retained-state store.
 `ControllerInstallation::open` takes an explicit dedicated state directory.
 It creates that directory, restricts its Unix permissions to 0700, opens a new
 0600 `hub.lock` without truncating an existing lock file, and acquires the lock
-before loading identities or retained state. A competing owner receives the
+before loading identities or retained state. Its private lock guard explicitly
+unlocks on release, so a duplicated or inherited descriptor cannot prolong the
+lease merely by remaining open. As with file closure, destructor unlock errors
+cannot be returned; the descriptor is then closed. A competing owner receives the
 underlying typed lock error. Failed startup releases the lease.
 
 The existing `RemoteControlIdentityDirectory` stores the distinct controller and
@@ -492,6 +495,55 @@ mobile platform attachment and physical MCU qualification remain future work.
 There is no new state machine or artificial architecture snapshot in this slice;
 both resource owners retain compiled-test behavior inventories.
 
+## Mio session conduction
+
+`wiring/reactors/mio_session` owns a dedicated Mio poll and a single-slot mailbox.
+`MioSessionReactor::try_open` returns the reactor and a clonable sender. Submit
+UI intents and PRNS completions through that sender. `Submitted` transfers the
+message; `Busy` and `Closed` return the original message for caller settlement.
+Wake failure preserves its OS error, but the message is already queued: do not
+blindly resubmit it. Dropping a sender closes its channel endpoint before waking
+Mio; the destructor wake is best effort because it cannot return an I/O failure.
+
+The reactor checks the mailbox before blocking, retains one pending message
+until consumed, retries interrupted polls, and propagates other poll errors.
+Wake coalescing cannot erase queued messages. It drains accepted input before
+reporting that every sender has closed. At most one message is pending in the
+reactor and one is waiting in the mailbox; callers retain rejected submissions.
+The physical poll parameter keeps readiness faults testable independently of
+the session logic.
+
+`wiring/circuits/device_session` owns the registry and reactor. Compose it with
+`DeviceSessionSwitchboard` using `Pipecircuit::new`. Each `conduct()` returns one
+`MioDeviceSessionTurn::Routed` with the exact route, including events, ordered
+commands, cancellations, and snapshot. Dispatch those commands through the
+bounded worker and submit completions back through the mailbox. Callers still
+settle cancellations before dispatch and preserve rejected work. Conduction
+blocks its calling thread while idle; run the conductor on a dedicated thread
+when integrated into an asynchronous application.
+
+`SendersClosed` ends mailbox consumption; it does not disconnect a device or
+shut down PRNS. Disconnect and drain accepted worker work while the PRNS node
+is alive, then perform native shutdown. `into_parts` and `into_registry` recover
+the registry. This circuit currently conducts one device; shared multi-device
+registry ownership and automatic worker dispatch remain application assembly.
+
+This follows the Reactor/Circuit split in Pipecircuit's Mio examples, using Mio
+1.2.3 directly. Published `pipecircuit-mio` 0.0.5 enables a Pipecircuit default
+feature whose Roaring requirement conflicts with PRNS's exact version pin.
+The hub therefore keeps its existing explicit Pipecircuit feature selection.
+
+Tests compare complete circuit routes against direct switchboard execution,
+exercise actual OS wake delivery and sender closure, inject interrupted,
+spurious, and failed polls, and compare arbitrary mailbox histories with a
+bounded FIFO model. Finite test scenarios enforce reaction and poll budgets
+so loops fail by assertion. The native two-node exchange now passes through this
+circuit and the worker. Its messages are submitted before conduction so the
+integration test does not block Tokio while waiting for network I/O. OS polling
+and the PRNS graph remain integration/property-test territory; the existing
+bounded Kani label proof is retained. Both wiring owners have behavior
+inventories without artificial machine architecture snapshots.
+
 ## Verification
 
 From this directory, run:
@@ -503,7 +555,7 @@ cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
 cargo build --locked -p hopspot-hub-core --lib --no-default-features
 cargo llvm-cov clean --workspace
 cargo hub-coverage
-CARGO_INCREMENTAL=0 cargo hub-mutants
+CARGO_INCREMENTAL=0 cargo hub-mutants --file 'prns/src/wiring/reactors/**' --file 'prns/src/wiring/circuits/**' --file 'prns/src/wiring/controller_installation/**' --file 'prns/src/wiring/runtime/**'
 cargo kani --manifest-path verification/kani/Cargo.toml --lib --output-format terse
 ```
 
@@ -517,9 +569,14 @@ without the WebSocket-specific exclusions. No hooks are installed by this slice.
 Coverage requires zero uncovered production functions, lines, or regions. Test
 files, architecture/behavior snapshots, and proof harnesses are outside that
 denominator; no production source is excluded. This is source coverage, not
-exhaustive branch or application verification. Mutation candidates cover both
-workspace crates except proof bodies, and each mutation runs the full workspace
-test suite. Require zero missed or timed-out mutants and report caught and
+exhaustive branch or application verification. The unfiltered mutation alias covers both
+workspace crates except proof bodies. For incremental candidates, filter to
+changed and new production owners plus affected existing owners; the command
+above shows this slice's scope. File filters include untracked source that a Git
+diff would omit. Every selected mutation still runs the full workspace test
+suite. Report the scope and prior full baseline explicitly. Run the unfiltered
+`cargo hub-mutants` for changes with broad impact on contracts, dependencies,
+or test infrastructure, or when requested. Require zero missed or timed-out mutants and report caught and
 unviable counts separately.
 
 Mutation testing runs in place so the existing PRNS path dependency resolves

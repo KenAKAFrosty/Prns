@@ -1,10 +1,11 @@
 use super::*;
 use crate::{
-    DeviceSessionEvent, DeviceSessionInput, DeviceSessionMessage, DeviceSessionSwitchboard,
+    DeviceSessionEvent, DeviceSessionMessage, DeviceSessionSwitchboard, MioDeviceSessionCircuit,
+    MioDeviceSessionTurn, MioSessionReactor, MioSessionSender, MioSessionSubmission,
 };
 use personal_rns::identity::vault::IdentitySecretKey;
 use personal_rns::prelude::*;
-use pipecircuit::Switchboard;
+use pipecircuit::Pipecircuit;
 
 fn secrets(controller: u8, target: u8) -> RemoteControlNodeIdentitySecrets {
     RemoteControlNodeIdentitySecrets::new(
@@ -19,7 +20,7 @@ fn secrets(controller: u8, target: u8) -> RemoteControlNodeIdentitySecrets {
 }
 
 #[tokio::test]
-async fn native_nodes_authenticate_and_publish_interface_status_through_the_worker() {
+async fn native_nodes_authenticate_and_publish_interface_status_through_the_mio_circuit() {
     let target_secrets = secrets(0xD0, 0xD1);
     let target_identity =
         RemoteControlTargetIdentity::new(*target_secrets.identities().target().public_keys());
@@ -114,7 +115,11 @@ async fn native_nodes_authenticate_and_publish_interface_status_through_the_work
             .unwrap();
         let mut registry = DeviceRegistry::try_new(NonZeroU32::new(1).unwrap()).unwrap();
         let device = paired(&mut registry, target_identity);
-        let mut board = DeviceSessionSwitchboard::<16>::new(device);
+        let (reactor, sender) = MioSessionReactor::try_open().unwrap();
+        let mut conductor = Pipecircuit::new(
+            DeviceSessionSwitchboard::<16>::new(device),
+            BoundedCircuit::new(MioDeviceSessionCircuit::new(registry, reactor), 32),
+        );
         let (mut fitting, run) = crate::PrnsDeviceWorker::try_new(
             device,
             handle.clone(),
@@ -122,12 +127,7 @@ async fn native_nodes_authenticate_and_publish_interface_status_through_the_work
         )
         .unwrap();
         let worker = tokio::spawn(run);
-        let mut routed = board
-            .route(DeviceSessionInput {
-                registry: &mut registry,
-                message: DeviceSessionMessage::Connect,
-            })
-            .unwrap();
+        let mut routed = conduct(&mut conductor, &sender, DeviceSessionMessage::Connect);
         let mut commands = alloc::collections::VecDeque::new();
         loop {
             commands.extend(routed.commands.iter_mut().filter_map(Option::take));
@@ -135,12 +135,7 @@ async fn native_nodes_authenticate_and_publish_interface_status_through_the_work
                 break;
             };
             let output = perform_worker(&mut fitting, command).await;
-            routed = board
-                .route(DeviceSessionInput {
-                    registry: &mut registry,
-                    message: DeviceSessionMessage::Prns(output),
-                })
-                .unwrap();
+            routed = conduct(&mut conductor, &sender, DeviceSessionMessage::Prns(output));
         }
         let DeviceSessionEvent::InterfacesReceived {
             outcome: ReceiveInterfacePageOutcome::Complete { count },
@@ -163,12 +158,7 @@ async fn native_nodes_authenticate_and_publish_interface_status_through_the_work
                 .any(|entry| entry.enabled
                     && entry.connection == personal_rns::interfaces::ConnectionState::Connected)
         );
-        let disconnected = board
-            .route(DeviceSessionInput {
-                registry: &mut registry,
-                message: DeviceSessionMessage::Disconnect,
-            })
-            .unwrap();
+        let disconnected = conduct(&mut conductor, &sender, DeviceSessionMessage::Disconnect);
         let [Some(command), None] = disconnected.commands else {
             panic!("close not dispatched")
         };
@@ -180,12 +170,7 @@ async fn native_nodes_authenticate_and_publish_interface_status_through_the_work
                 ..
             }
         ));
-        let closed = board
-            .route(DeviceSessionInput {
-                registry: &mut registry,
-                message: DeviceSessionMessage::Prns(output),
-            })
-            .unwrap();
+        let closed = conduct(&mut conductor, &sender, DeviceSessionMessage::Prns(output));
         assert_eq!(closed.commands, [None, None]);
         assert_eq!(
             closed.snapshot.interfaces,
@@ -236,4 +221,22 @@ async fn perform_worker(
         panic!("worker failed")
     };
     output
+}
+
+fn conduct(
+    conductor: &mut Pipecircuit<
+        DeviceSessionSwitchboard<16>,
+        BoundedCircuit<MioDeviceSessionCircuit>,
+    >,
+    sender: &MioSessionSender,
+    message: DeviceSessionMessage,
+) -> crate::DeviceSessionRoute<16> {
+    assert!(matches!(
+        sender.submit(message).unwrap(),
+        MioSessionSubmission::Submitted
+    ));
+    let MioDeviceSessionTurn::Routed(route) = conductor.conduct().unwrap() else {
+        panic!("mailbox closed")
+    };
+    route
 }
