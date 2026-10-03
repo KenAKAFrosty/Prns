@@ -322,6 +322,58 @@ The fitting's `behavior.rs` inventories its compiled behavior tests. Architectur
 snapshots remain with the core state machines, where Pipecircuit visualization
 provides source-derived visual expectations.
 
+## Bounded native work
+
+`prns/src/wiring/fittings/prns_device_worker` owns `PrnsDeviceWorker`, a queued
+`DuplexFitting<PrnsDevice>` around the existing physical fitting. Its `try_new`
+constructor takes the device, backend, and an explicit nonzero queue capacity,
+and returns the fitting plus a future to drive. Capacities beyond Tokio's
+semaphore bound return `PrnsDeviceQueueCapacityError` before channel creation.
+The queue holds at most the configured number of waiting commands, in addition
+to one active command. No registry borrow crosses the worker's I/O awaits.
+
+`TransportTo::send` performs no device I/O and returns `Submitted { completion }`,
+`Busy { input }`, or `Stopped { input }`. Rejected commands remain owned by the
+caller, which can revalidate and retry them. An accepted completion is independent
+of the outgoing transport borrow. Await `completion.complete()` and pass its
+result through the incoming fitting; the original PRNS output or fitting
+invariant is retained. Loss of the executor becomes a typed worker error.
+
+Dropping a pending completion, including a dropped `complete()` future, cancels
+queued connect and inventory work before it starts. It interrupts an active
+inventory await without closing the authenticated session. Accepted close work
+always executes even if its completion is dropped, so abandoning an observer
+cannot suppress requested cleanup. These physical cancellations do not settle
+core state: apply the matching core transition before discarding a completion,
+and retain all noncancelled session events.
+
+An active connect finishes authentication before processing later work. A new
+connection remains provisional until `complete()` accepts its result. If its
+caller disappears before or after the result is buffered, the worker releases
+the new link before taking another job. Dropping a duplicate-connect completion
+preserves the previously accepted connection. This acknowledgement closes the
+race between completion delivery and cancellation without detaching another
+worker task or copying connection state into a second registry.
+
+For orderly shutdown, stop submissions, consume or drop every outstanding
+completion, drop the worker fitting, and await its run future while the PRNS
+node remains alive. It drains accepted work and releases its remaining lease
+before returning. Holding an unaccepted connection completion deliberately
+holds that worker at the delivery boundary. Arbitrarily dropping the run future
+is not graceful shutdown; PRNS's existing deferred connection cleanup still
+requires a live Tokio executor and node. A close remains a local queue settlement,
+not a peer acknowledgement.
+
+The localhost integration now authenticates, collects paginated inventory, and
+closes through the queued fitting and session switchboard. Controlled tests cover
+backpressure, queued and active cancellation, delivery races, constructor bounds,
+typed failures, and shutdown drain. Property tests vary queue capacities and
+command/cancellation histories across connection generations, comparing physical
+calls with an independent ownership model. PRNS and Tokio dependencies make
+these integration and property tests the practical lane; the existing bounded
+Kani proof remains unchanged. The application-wide event loop and its shutdown
+ordering remain the next integration boundary.
+
 ## Device session routing
 
 `prns/src/wiring/switchboards/device_session` composes the existing registry and
@@ -387,7 +439,7 @@ PRNS/Tokio graph still makes proptest the practical stateful verification lane;
 the existing bounded Kani label proof remains unchanged.
 
 A process-wide session event loop, enrollment, automatic reconnect, GUI events,
-and settlement of outstanding fitting work remain integration work. No physical
+and application-wide settlement of outstanding work remain integration work. No physical
 USB qualification is claimed by the localhost test.
 
 ## Native controller bootstrap
@@ -537,6 +589,8 @@ code-free automatic approval, and owner authority. Network-driven interface
 status and power controls follow; a change affecting the requesting controller's management
 interface will need a device-owned confirmation deadline and rollback.
 
-Per-installation controller identity comes first. Controller sharing, explicit
+Per-installation identity, native USB bootstrap, and bounded physical work are
+in place. The application event loop must now connect session routing, verified
+USB discovery, cancellation, and shutdown ordering. Controller sharing, explicit
 device replacement, firmware installation, clusters, and relationship views
-remain later capabilities. None is represented as implemented by this registry.
+remain later capabilities.

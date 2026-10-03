@@ -10,7 +10,9 @@ mod participants;
 
 pub use participants::{PrnsDevice, PrnsDeviceIn, PrnsDeviceOut};
 pub use wiring::{
-    PrnsDeviceFitting, PrnsDeviceIncoming, PrnsDeviceOutgoing, PrnsDeviceWork, PrnsFittingError,
+    PrnsDeviceCompletion, PrnsDeviceFitting, PrnsDeviceIncoming, PrnsDeviceOutgoing,
+    PrnsDeviceQueueCapacityError, PrnsDeviceSubmission, PrnsDeviceWork, PrnsDeviceWorker,
+    PrnsDeviceWorkerError, PrnsDeviceWorkerIncoming, PrnsDeviceWorkerOutgoing, PrnsFittingError,
     PrnsInventoryTransport,
 };
 

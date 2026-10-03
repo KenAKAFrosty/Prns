@@ -102,6 +102,8 @@ pub(crate) struct Shared {
     pub(crate) identified: Notify,
     pub(crate) release: Notify,
     pub(crate) closed: Notify,
+    pub(crate) inventory_started: Notify,
+    pub(crate) inventory_release: Notify,
 }
 
 pub(crate) struct Mock {
@@ -110,6 +112,7 @@ pub(crate) struct Mock {
     pub(crate) permitted: RemoteControlRequestSet,
     pub(crate) settlement: CloseRemoteControlTargetOutcome,
     pub(crate) block: bool,
+    pub(crate) block_inventory: bool,
     pub(crate) shared: Arc<Shared>,
 }
 
@@ -121,11 +124,14 @@ impl Mock {
             permitted: RemoteControlRequestSet::only(RemoteControlRequestKind::InventoryInterfaces),
             settlement: CloseRemoteControlTargetOutcome::Queued,
             block: false,
+            block_inventory: false,
             shared: Arc::new(Shared {
                 calls: Mutex::new(alloc::vec::Vec::new()),
                 identified: Notify::new(),
                 release: Notify::new(),
                 closed: Notify::new(),
+                inventory_started: Notify::new(),
+                inventory_release: Notify::new(),
             }),
         }
     }
@@ -218,6 +224,10 @@ impl PrnsInventoryTransport for Mock {
         page: RemoteControlInterfacePage,
     ) -> Result<(RemoteControlInterfaceInventory, RttMillis), RemoteControlError> {
         self.record(Call::Inventory(link, page));
+        self.shared.inventory_started.notify_one();
+        if self.block_inventory {
+            self.shared.inventory_release.notified().await;
+        }
         if matches!(self.failure, Failure::Inventory) {
             return Err(RemoteControlError::Request(SendError::NodeStopped));
         }

@@ -19,7 +19,7 @@ fn secrets(controller: u8, target: u8) -> RemoteControlNodeIdentitySecrets {
 }
 
 #[tokio::test]
-async fn native_nodes_authenticate_and_publish_interface_status_through_the_fitting() {
+async fn native_nodes_authenticate_and_publish_interface_status_through_the_worker() {
     let target_secrets = secrets(0xD0, 0xD1);
     let target_identity =
         RemoteControlTargetIdentity::new(*target_secrets.identities().target().public_keys());
@@ -115,7 +115,13 @@ async fn native_nodes_authenticate_and_publish_interface_status_through_the_fitt
         let mut registry = DeviceRegistry::try_new(NonZeroU32::new(1).unwrap()).unwrap();
         let device = paired(&mut registry, target_identity);
         let mut board = DeviceSessionSwitchboard::<16>::new(device);
-        let mut fitting = PrnsDeviceFitting::new(device, handle.clone());
+        let (mut fitting, run) = crate::PrnsDeviceWorker::try_new(
+            device,
+            handle.clone(),
+            core::num::NonZeroUsize::new(2).unwrap(),
+        )
+        .unwrap();
+        let worker = tokio::spawn(run);
         let mut routed = board
             .route(DeviceSessionInput {
                 registry: &mut registry,
@@ -128,7 +134,7 @@ async fn native_nodes_authenticate_and_publish_interface_status_through_the_fitt
             let Some(command) = commands.pop_front() else {
                 break;
             };
-            let output = perform(&mut fitting, command).await;
+            let output = perform_worker(&mut fitting, command).await;
             routed = board
                 .route(DeviceSessionInput {
                     registry: &mut registry,
@@ -166,7 +172,7 @@ async fn native_nodes_authenticate_and_publish_interface_status_through_the_fitt
         let [Some(command), None] = disconnected.commands else {
             panic!("close not dispatched")
         };
-        let output = perform(&mut fitting, command).await;
+        let output = perform_worker(&mut fitting, command).await;
         assert!(matches!(
             output,
             PrnsDeviceOut::Closed {
@@ -185,6 +191,8 @@ async fn native_nodes_authenticate_and_publish_interface_status_through_the_fitt
             closed.snapshot.interfaces,
             ReadDeviceInterfacesOutcome::Unavailable { device }
         );
+        drop(fitting);
+        worker.await.unwrap();
     };
     tokio::select! {
         result = tokio::time::timeout(core::time::Duration::from_secs(15), exchange) => result.unwrap(),
@@ -212,4 +220,20 @@ impl RemoteControlHostControls for InventoryHost {
             .map(RemoteControlHostResponse::InventoryInterfaces)
             .map_err(|_| RemoteControlHostCommandError::ApplyFailed)
     }
+}
+
+async fn perform_worker(
+    worker: &mut crate::PrnsDeviceWorker,
+    input: PrnsDeviceIn,
+) -> PrnsDeviceOut {
+    let (mut incoming, mut outgoing) = <_ as DuplexFitting<PrnsDevice>>::split(worker);
+    let crate::PrnsDeviceSubmission::Submitted { completion } = outgoing.send(input) else {
+        panic!("worker rejected command")
+    };
+    let ReceiveFromOutcome::Received { output } =
+        incoming.receive_from(completion.complete().await)
+    else {
+        panic!("worker failed")
+    };
+    output
 }

@@ -39,6 +39,10 @@ pub struct PrnsDeviceFitting<Backend: PrnsInventoryTransport = PrnsNodeHandle> {
 }
 
 impl<Backend: PrnsInventoryTransport> PrnsDeviceFitting<Backend> {
+    pub(super) fn release_unaccepted_connection(&mut self) {
+        drop(self.active.take());
+    }
+
     pub fn new(device: DeviceId, backend: Backend) -> Self {
         Self {
             device,
