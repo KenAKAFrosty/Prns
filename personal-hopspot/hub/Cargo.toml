@@ -1,0 +1,26 @@
+[workspace]
+members = ["core"]
+resolver = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unnameable_types = "deny"
+private_interfaces = "deny"
+private_bounds = "deny"
+unreachable_patterns = "deny"
+unused_must_use = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+float_arithmetic = "deny"
+let_underscore_must_use = "deny"
+wildcard_enum_match_arm = "deny"
+std_instead_of_core = "deny"
+std_instead_of_alloc = "deny"

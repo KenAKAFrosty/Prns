@@ -1,0 +1,4 @@
+cap_lints = true
+exclude_globs = ["**/proofs.rs", "**/proofs/**"]
+output = "target/hub-mutants"
+test_workspace = false

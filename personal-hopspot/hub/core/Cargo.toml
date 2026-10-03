@@ -1,0 +1,19 @@
+[package]
+name = "hopspot-hub-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+heapless = { version = "0.8", default-features = false }
+pipecircuit = { version = "=0.0.16", default-features = false, features = ["storage"] }
+prns-core = { path = "../../../prns-core", default-features = false }
+
+[dev-dependencies]
+expect-test = "=1.5.1"
+pipecircuit-visualization = "=0.0.2"
+proptest = "=1.11.0"
+prns-core = { path = "../../../prns-core", default-features = false, features = ["test-support"] }
+
+[lints]
+workspace = true

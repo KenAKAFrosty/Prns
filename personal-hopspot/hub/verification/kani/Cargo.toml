@@ -1,0 +1,13 @@
+[package]
+name = "hopspot-hub-primitive-proofs"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+heapless = { version = "0.8", default-features = false }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
