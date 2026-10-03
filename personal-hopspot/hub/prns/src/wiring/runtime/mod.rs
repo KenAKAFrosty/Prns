@@ -1,6 +1,7 @@
 use crate::ControllerInstallation;
 use alloc::sync::Arc;
 use core::future::Future;
+use personal_rns::manifold::tokio::TokioClock;
 use personal_rns::prelude::*;
 use personal_rns::runtime::{AttachedInterface, NodeRunError};
 use tokio::sync::Notify;
@@ -12,6 +13,7 @@ mod tests;
 
 pub struct NativeHubRuntime<Run> {
     pub handle: PrnsNodeHandle,
+    pub clock: TokioClock,
     pub identities: RemoteControlNodeIdentities,
     pub identity_origins: RemoteControlNodeIdentityOrigins,
     pub usb_interface: AttachedInterface,
@@ -35,7 +37,7 @@ pub fn prepare_native_hub(
     )
 }
 
-fn prepare_hub(
+pub(super) fn prepare_hub(
     installation: ControllerInstallation,
     attach_usb: impl FnOnce(&PrnsNodeHandle) -> AttachedInterface,
     usb_rescan: Arc<Notify>,
@@ -68,6 +70,7 @@ fn prepare_hub(
     let handle = node.handle();
     let usb_interface = attach_usb(&handle);
     NativeHubRuntime {
+        clock: node.clock(),
         handle,
         identities,
         identity_origins,

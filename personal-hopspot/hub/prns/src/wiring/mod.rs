@@ -32,3 +32,14 @@ pub use circuits::{
 };
 
 pub use session_supervisor::{SessionStopReason, SupervisedSessionExit, supervise_device_session};
+
+pub use switchboards::{
+    UsbDiscoveryEvent, UsbDiscoveryInput, UsbDiscoveryIntent, UsbDiscoveryMessage,
+    UsbDiscoveryRoutingError, UsbDiscoverySwitchboard, UsbDiscoveryUpdate,
+};
+
+mod usb_discovery;
+pub use usb_discovery::{
+    NativeUsbDiscoveryEvent, NativeUsbDiscoveryRuntime, UsbDiscoveryFailure, UsbDiscoveryHandle,
+    prepare_native_usb_discovery,
+};

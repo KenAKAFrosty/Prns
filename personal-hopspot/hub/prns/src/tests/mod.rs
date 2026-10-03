@@ -306,3 +306,5 @@ pub(crate) fn within_runtime(future: impl core::future::Future<Output = ()>) {
         Err(panic) => std::panic::resume_unwind(panic),
     }
 }
+
+pub(crate) mod usb_observation;

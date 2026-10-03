@@ -36,3 +36,13 @@ pub use wiring::{SessionStopReason, SupervisedSessionExit, supervise_device_sess
 
 #[cfg(test)]
 mod tests;
+
+pub use wiring::{
+    UsbDiscoveryEvent, UsbDiscoveryInput, UsbDiscoveryIntent, UsbDiscoveryMessage,
+    UsbDiscoveryRoutingError, UsbDiscoverySwitchboard, UsbDiscoveryUpdate,
+};
+
+pub use wiring::{
+    NativeUsbDiscoveryEvent, NativeUsbDiscoveryRuntime, UsbDiscoveryFailure, UsbDiscoveryHandle,
+    prepare_native_usb_discovery,
+};

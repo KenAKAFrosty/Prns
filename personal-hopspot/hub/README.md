@@ -244,11 +244,61 @@ target identity. Raw USB locators and announcement app data are not interpreted
 as device identity or labels. Existing PRNS pairing requires an invitation code;
 the planned code-free headless enrollment requires separate protocol work.
 
-This slice implements the deterministic discovery owner. The native bootstrap now supplies USB Auto attachment and controller identity
-persistence, and the session driver supplies automatic inventory dispatch.
-Routing verified discovery events and initiating pairing remain integration work. The fitting below
-implements authenticated connection and inventory for already authorized
-targets. It has not opened a physical USB device.
+The native wiring below connects this owner to verified PRNS events and exposes
+inspection and selection. Initiating pairing remains integration work. The
+connection fitting authenticates already authorized targets; discovery has not
+qualified a physical USB device.
+
+## Live USB discovery
+
+`wiring/switchboards/usb_discovery` owns `UsbDiscoverySwitchboard`. Route a
+`UsbDiscoveryInput` with an explicit current time and either verified availability
+or an `Inspect`, `Select`, or `Clear` intent. Every turn advances the core clock
+and expires candidates before routing its operation. Its owned update includes
+the number expired, the exact operation outcome, and a complete snapshot.
+Capacity, stale observations, wrong interfaces, and unavailable selections stay
+flat outcomes. Clock and observation-time invariant failures preserve their
+precise core errors. A future observation is refused after advancing to the
+supplied current time; backward time refuses the whole turn.
+
+`wiring/usb_discovery` provides `prepare_native_usb_discovery::<CAPACITY>`.
+It wraps the existing persistent native bootstrap and returns `native` plus a
+cloneable `discovery` handle. Poll `native.run` to start USB Auto and PRNS. The
+handle is initialized before preparation returns, using the actual attached
+interface and the node's own `TokioClock`, including its persisted timeline
+origin. `NativeHubRuntime` also exposes that clock for subsequent wiring.
+
+Verified pairing-availability messages become `NativeUsbDiscoveryEvent::Discovery`
+updates. Other messages and diagnostics are forwarded as `Prns` events. The
+borrowed advertisement is consumed during its callback; no unbounded event queue
+or copied advertisement payload is introduced. The one-time callback binding is
+initialized before the native run future can be polled.
+
+`discovery.submit(intent)` synchronously returns the routed update and can be
+called from another thread. A mutex serializes short, bounded core operations;
+the clock is sampled after acquiring it. No user callback or physical I/O runs
+under that lock. Callbacks may therefore inspect or select through a cloned
+handle. Lock poisoning is an invariant failure and does not recover potentially
+uncertain state.
+
+Inspect before rendering and select through the handle when the user chooses a
+candidate. These operations recheck expiry at their own execution time. There is
+no periodic expiry notification yet: previously returned snapshots remain dated
+by `as_of`. Clear removes the current list; later verified events may repopulate
+it. A retained handle continues to inspect and expire its local list after the
+node stops. A selected candidate remains an advertisement observation, not proof
+of a running node, live USB connection, authenticated target, or enrollment.
+Selection neither sends pairing traffic nor creates registry records.
+
+Tests exercise deterministic expiry/admission ordering, invariant errors,
+independent-model intent histories, cross-thread handle sharing, and callback
+reentrancy. A localhost byte-stream test sends signed availability frames through
+the actual native PRNS ingress and verification path before inspecting and
+selecting both candidates. Its configured attachment substitutes TCP for USB;
+physical MCU and mobile qualification remain outstanding. Both new wiring
+owners have compiled behavior inventories and reuse the existing discovery core
+architecture. PRNS dependency constraints still make property tests the practical
+lane here; the existing bounded label Kani proof remains unchanged.
 
 ## Native PRNS fitting
 
@@ -641,7 +691,7 @@ cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
 cargo build --locked -p hopspot-hub-core --lib --no-default-features
 cargo llvm-cov clean --workspace
 cargo hub-coverage
-CARGO_INCREMENTAL=0 cargo hub-mutants --file 'prns/src/wiring/reactors/**' --file 'prns/src/wiring/circuits/**' --file 'prns/src/wiring/fittings/prns_device_worker/**' --file 'prns/src/wiring/runtime/**' --file 'prns/src/wiring/session_supervisor/**'
+CARGO_INCREMENTAL=0 cargo hub-mutants --file 'prns/src/wiring/switchboards/usb_discovery/**' --file 'prns/src/wiring/usb_discovery/**' --file 'prns/src/wiring/runtime/**' --file 'core/src/state_machines/usb_pairing_discovery/**' --file 'core/src/domain_primitives/pairing_candidate.rs'
 cargo kani --manifest-path verification/kani/Cargo.toml --lib --output-format terse
 ```
 
@@ -664,6 +714,16 @@ suite. Report the scope and prior full baseline explicitly. Run the unfiltered
 `cargo hub-mutants` for changes with broad impact on contracts, dependencies,
 or test infrastructure, or when requested. Require zero missed or timed-out mutants and report caught and
 unviable counts separately.
+
+The live-discovery candidate passes 133 tests and covers all 182 production
+functions, 1,706 lines, and 1,880 regions. The five file filters above resolve
+41 mutants: 14 caught and 27 unviable, with no survivors or timeouts. All unviable
+results are compiler rejections of generated defaults or constructors
+(16 E0277, 11 E0599). The previous full baseline is `d0e688246`: 71 caught and
+93 unviable; the intervening session-driver candidate `19a09ffa3` resolved its
+64 affected-owner mutants as 31 caught and 33 unviable. The existing two-byte
+ASCII label proof passes all 569 checks, with 33 unreachable; no broader formal
+proof is claimed for native discovery.
 
 Mutation testing runs in place so the existing PRNS path dependency resolves
 normally. Run it without concurrent edits or checks; cargo-mutants restores each
@@ -724,7 +784,8 @@ checks.
 
 ## Next boundaries
 
-USB discovery now exposes an explicit selection step; runtime pairing dispatch
+Native USB discovery now routes verified observations and exposes current
+inspection and selection; runtime pairing dispatch
 still requires that user intent. Remembered devices will
 reconnect automatically without replaying configuration commands. Headless
 first enrollment will use an unowned boot window, direct-only admission,
@@ -734,7 +795,8 @@ interface will need a device-owned confirmation deadline and rollback.
 
 Per-installation identity, native USB bootstrap, and bounded physical work are
 in place, together with automatic per-device dispatch, cancellation, and native
-shutdown supervision. Next, connect verified USB discovery and enrollment to
-this driver, persist Hub device records, and add reconnect/deadline policy. Controller sharing, explicit
+shutdown supervision and live verified discovery. Next, implement headless
+enrollment and connect it to the session driver, persist Hub device records,
+and add reconnect/deadline policy. Controller sharing, explicit
 device replacement, firmware installation, clusters, and relationship views
 remain later capabilities.
