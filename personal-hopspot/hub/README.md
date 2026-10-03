@@ -1,9 +1,10 @@
 # Hopspot Hub
 
 Hopspot Hub is the desktop and mobile management application for embedded
-Hopspots. This standalone workspace currently contains only its deterministic
-Rust core. It is local development on `hopspot-hub`; review slices stay
-uncommitted until approved.
+Hopspots. This standalone workspace contains its deterministic Rust core and a
+native PRNS fitting for remembered-device connections and interface inventory.
+It is local development on `hopspot-hub`; review slices stay uncommitted until
+approved.
 
 ## Core organization
 
@@ -49,8 +50,8 @@ Each operation has its own `StepInputOf<DeviceRegistry>` implementation and
 exact outcome: `CreateDevice`, `RenameDevice`, `ForgetDevice`, `ReadDevice`,
 `ListDevices`, `BeginEnrollment`, `CancelEnrollment`, `FailEnrollment`,
 `CompleteEnrollment`, `BeginConnection`, `ConfirmConnection`, and `EndConnection`.
-Invoke them through `StateMachine::step`. Transport and participant contracts
-belong to the later integration slice.
+Invoke them through `StateMachine::step`. The `hopspot-hub-prns` crate owns
+the participant and physical transport contracts described below.
 
 `ReadDevice` returns an owned `DeviceSnapshot` that survives subsequent changes.
 Read and forget outcomes keep bounded state inline, with local Clippy
@@ -112,10 +113,10 @@ intact. Ending or forgetting a record invalidates subsequent callbacks; an
 old callback cannot settle a newer connection, even if the link ID is reused.
 Tokens are scoped to their originating registry lifetime.
 
-This slice owns connection bookkeeping and emits a connection intent. The
-network adapter, deadlines, and automatic reconnect scheduling while active
-remain integration work. No configuration is queued or
-replayed by these steps.
+The registry owns connection bookkeeping and emits a connection intent. The
+PRNS fitting executes that intent. Circuit routing, application deadlines, and
+automatic reconnect scheduling while active remain integration work. No
+configuration is queued or replayed by these steps.
 
 ## Interface inventory
 
@@ -133,8 +134,9 @@ reads only the collector's connection token without copying its inventory.
 
 `RefreshInterfaces` issues an opaque `InterfacePageRequest`. Its `request()`
 returns PRNS's `RemoteControlRequest::InventoryInterfaces`; `connection()`
-identifies the connection on which the adapter must send it. The adapter routes
-the decoded `RemoteControlInterfaceInventory` back with that exact token.
+identifies the connection on which the adapter must send it. Its `page()`
+accessor preserves the exact upstream cursor for the native PRNS API. The
+adapter routes the decoded `RemoteControlInterfaceInventory` back with that exact token.
 Every continuation returns the next token and cursor. Duplicate begins report
 `Busy`; stale pages or failures cannot alter the pending refresh. Tokens belong
 to one collector lifetime; do not reuse an old collector's callbacks if a
@@ -154,8 +156,8 @@ settles transport, deadline, permission, or decoding failures. Closing returns
 any pending request for cancellation, clears all data, and permanently refuses
 reuse. A stale-page outcome returns the rejected page to its caller.
 
-Network dispatch, timed polling, interface names/configuration, live watches,
-and interface power changes remain follow-up work.
+Automatic circuit dispatch, timed polling, interface names/configuration, live
+watches, and interface power changes remain follow-up work.
 
 ## Per-device interface lifecycle
 
@@ -242,8 +244,82 @@ the planned code-free headless enrollment requires separate protocol work.
 
 This slice implements the deterministic discovery owner. Attaching USB Auto to
 a Hub runtime, routing its events, identity persistence, pairing initiation,
-authenticated connection, and automatic inventory dispatch remain integration
-work. It has not opened a physical USB device.
+and automatic inventory dispatch remain integration work. The fitting below
+implements authenticated connection and inventory for already authorized
+targets. It has not opened a physical USB device.
+
+## Native PRNS fitting
+
+`prns/src/participants` owns the closed `PrnsDevice` input/output protocol.
+`prns/src/fittings/prns_device` owns physical link lifetime and its asynchronous
+PRNS calls. The deterministic machines remain in the core ownership lanes.
+Create one `PrnsDeviceFitting::new(device, node_handle)` per local device in
+its originating registry. Its default backend is the actual `PrnsNodeHandle`;
+`PrnsInventoryTransport` adds the existing paged inventory operation to PRNS's
+connection transport contract and permits deterministic transport fixtures.
+
+The supplied node must already have its controller identity, authorized target
+access, route discovery, and intended interfaces configured. Production's first
+attachment remains existing USB Auto. The target must grant inventory permission
+and advertise that capability with an installed host provider. This fitting does
+not create permissions, persist identities, or initiate pairing.
+
+`DuplexFitting::split` exposes incoming and outgoing halves. Outgoing `send`
+returns `PrnsDeviceWork` without starting IO. The async driver calls
+`complete().await` outside synchronous Pipecircuit routing, then passes that
+result into the incoming half. It emits either the participant output or a
+fitting invariant failure. The mutable borrow serializes work per fitting;
+independent devices can have independent work in flight. There is no application
+switchboard yet, and the fitting never updates core state implicitly.
+
+`Connect` uses PRNS's target resolution, link establishment, and controller
+identification. Success returns the exact `ConfirmConnection` for the core;
+the driver must check its outcome and close rejected or obsolete successes.
+Connecting again with the active token returns `AlreadyConnected`; another
+connection generation returns `Busy` until the existing lease is closed.
+`Inventory` verifies the active token and local grant, calls PRNS's bounded
+paged API, and returns the correlated `ReceiveInterfacePage` plus RTT.
+`Close` releases only the matching lease and preserves PRNS's `Queued` or
+`NotQueued` settlement. Queue acceptance does not acknowledge peer shutdown.
+
+Stale callbacks, missing leases, denied requests, and native connection or
+exchange failures are ordinary flat outputs. Native failures retain their
+upstream types. Wrong-device routing, an unexpected resolved identity, and a
+stopped connection worker are fitting invariant errors. The future switchboard
+owns mapping operational failures into core disconnection/refresh reasons.
+The fitting trusts supplied core intents; the driver must synchronize the
+registry and per-device inventory owner before dispatch and callback handling.
+
+A successful lease queues link closure on drop. Explicit close disarms that
+fallback, so it attempts closure once. PRNS owns handling a queued closure; a
+`NotQueued` result is returned for explicit close and cannot be reported from
+Rust's `Drop`. Shutdown must release fittings before stopping the PRNS node.
+
+PRNS connection establishment is not cancellation safe on its own once a link
+exists. The fitting runs resolution, establishment, and identification in a
+Tokio worker that continues if its awaiting work is dropped. The worker's
+abandoned result drops its lease and queues closure; PRNS itself closes a link
+when identification fails. Cancellation therefore abandons the result rather
+than immediately aborting the wire operation. Keep the Tokio runtime and node
+alive for that settlement. This is not a shutdown-drain coordinator, and the
+future driver must bound retries while abandoned work settles. Dropping an
+inventory future preserves the established lease for later use or closure.
+Calling `complete` requires an active Tokio runtime.
+
+The native integration test runs two PRNS nodes over localhost TCP, with real
+identities, explicit grants, request codecs, and Hopspot's existing inventory
+provider reading actual interface snapshots. It sends results through the
+fitting and core collector. TCP is the test carrier; this does not qualify a
+physical USB device, a mobile host, or fresh enrollment. The deterministic tests
+also verify pagination, permission and transport failures, stale generations,
+foreign-device routing, worker panic, and abandoned connection cleanup.
+Property tests compare arbitrary command histories with a single-link ownership
+model across three connection generations. Kani cannot practically model this
+Tokio/PRNS graph; the isolated label proof remains the bounded formal lane.
+
+The fitting's `behavior.rs` inventories its compiled behavior tests. Architecture
+snapshots remain with the core state machines, where Pipecircuit visualization
+provides source-derived visual expectations.
 
 ## Verification
 
@@ -270,9 +346,10 @@ without the WebSocket-specific exclusions. No hooks are installed by this slice.
 Coverage requires zero uncovered production functions, lines, or regions. Test
 files, architecture/behavior snapshots, and proof harnesses are outside that
 denominator; no production source is excluded. This is source coverage, not
-exhaustive branch or application verification. Mutation candidates cover the
-whole core except proof bodies. Require zero missed or timed-out mutants and
-report caught and unviable counts separately.
+exhaustive branch or application verification. Mutation candidates cover both
+workspace crates except proof bodies, and each mutation runs the full workspace
+test suite. Require zero missed or timed-out mutants and report caught and
+unviable counts separately.
 
 Mutation testing runs in place so the existing PRNS path dependency resolves
 normally. Run it without concurrent edits or checks; cargo-mutants restores each
@@ -286,7 +363,7 @@ not itself evidence that they passed. To accept an intentionally reviewed
 snapshot change in this nested workspace:
 
 ```sh
-CARGO_WORKSPACE_DIR="$PWD" UPDATE_EXPECT=1 cargo test --lib remains_reviewable
+CARGO_WORKSPACE_DIR="$PWD" UPDATE_EXPECT=1 cargo test --workspace --lib remains_reviewable
 ```
 
 Tests use PRNS's test-support feature to construct protocol attempt IDs; that
@@ -326,8 +403,9 @@ The isolated proof package avoids an existing `prns-core` Kani
 compilation failure in its request-set proof (a `u32` shift by 32); the main core
 crate's Kani lane is not claimed to pass.
 
-Both workspaces retain lockfiles. No physical device or non-host platform is
-qualified by these core checks.
+Both workspaces retain lockfiles. The native integration test requires localhost
+socket access. No physical device or non-host platform is qualified by these
+checks.
 
 ## Next boundaries
 

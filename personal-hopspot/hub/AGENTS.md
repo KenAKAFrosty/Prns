@@ -1,7 +1,7 @@
 # Hopspot Hub candidate contract
 
 Work on the local `hopspot-hub` branch. Leave review candidates uncommitted and
-do not push. The roughly 1,000-line slice target is a scale guideline; keep a
+do not push. The roughly 2,000-line slice target is a scale guideline; keep a
 larger change together when required for cohesive implementation and evidence.
 
 Core ownership follows `domain_primitives` and `state_machines`. Keep validated

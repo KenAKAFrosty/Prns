@@ -15,6 +15,10 @@ impl InterfacePageRequest {
         self.connection
     }
 
+    pub const fn page(self) -> RemoteControlInterfacePage {
+        self.page
+    }
+
     pub const fn request(self) -> RemoteControlRequest {
         RemoteControlRequest::InventoryInterfaces { page: self.page }
     }

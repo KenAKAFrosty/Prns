@@ -1,5 +1,5 @@
 [workspace]
-members = ["core"]
+members = ["core", "prns"]
 resolver = "3"
 
 [workspace.lints.rust]
