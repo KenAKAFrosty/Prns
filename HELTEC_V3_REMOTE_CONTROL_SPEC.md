@@ -258,4 +258,16 @@ Commit generato successivo alla merge: notices rigenerate col processo documenta
 
 Non eseguita l'intera lane PR multipiattaforma: prove mirate ai package/runtime e target interessati. Nessun file modificato nel perimetro mutation configurato. Le evidenze fisiche restano attribuite ai commit storici sopra; il launcher temporaneo, Offline, USB Waiting e UnknownRequestKind 32 non sono stati corretti né nascosti. Digest privati dei backup omessi dalla spec pubblicabile; vault, log privati e immagini restano fuori Git.
 
-I percorsi home nella spec pubblicata sono anonimizzati come /Users/user; i comandi originali e i backup privati rimangono locali. Il codice pubblicabile è identico al candidato verificato; differiscono soltanto i percorsi e il registro documentale.
+I percorsi home nella spec pubblicata sono anonimizzati come /Users/user; i comandi originali e i backup privati rimangono locali.
+
+### Controlli pre-push e integrazione della matrice — 2026-10-03
+
+- `rtk git config core.hooksPath .githooks`: hook richiesto da CONTRIBUTING attivato.
+- `rtk proxy python3 validation/hygiene/no-personal-paths.py HEAD`: passato sull'intera storia raggiungibile.
+- `rtk proxy python3 validation/hygiene/pre-push-ci-parity.py --update HEAD c4581c8e0 --phase preflight`: bloccato dalla baseline risorse che contiene 16 board, senza V3.
+- `rtk proxy target/debug/personal-hopspot-resources refresh-baseline`: report V3 riuscito sul commit `40b60e3`, app 1.476.208 byte, SRAM statica interna 297.968 byte e headroom 43.792 byte. La matrice completa si ferma alla T096 con "static memory leaves too little runtime stack"; nessuna baseline parziale pubblicata come completa.
+- Confronto T096 su main intatto `2de38cfa1` e integrazione, usando release, `board-t096,softdevice-s140-v6`, target Thumb e gli stessi flag della misura risorse (`--icf=all`, machine outliner, SHA2 compact, emit-stack-sizes): main compila, integrazione iniziale no. Reso condizionale alla feature `remote-control-path-table` il signal reply e il suo wiring Embassy; la T096 integrata ora compila con lo stesso contratto stack. Nessun limite di memoria indebolito.
+- Aggiornate le tre fixture della matrice a 17 target e il forwarding `hopspot/remote-control-path-table`. `rtk cargo test --locked -p personal-hopspot-resources --lib`: 97 passati; test lib Embassy con `std`: 174 passati; `rtk cargo check --locked -p hopspot --features remote-control-path-table`: passato.
+- `release.host-sdk.versions`, `release.host-sdk.distribution.check`, `repo.host-contract.check` e registry validation: passati dopo il forwarding della feature.
+- Test lib assurance: 46 passati, 2 falliti per `IncompatibleTargetContract`: la baseline assurance salvata contiene ancora 16 board. Va rigenerata da una matrice completa con custody coerente; non copiare prove storiche attribuendole al nuovo commit.
+- `rtk proxy ./tools/prns doctor embedded-assurance`: ambiente non pronto; toolchain ISA 1.96.0 e nightly Miri mancanti, QEMU ARM/RISC-V/Xtensa e Renode assenti, toolchain ESP locale diversa dal pin; spazio libero inferiore ai 24 GiB richiesti. Il pre-push completo non è superato. Nessun nuovo flash o prova hardware.

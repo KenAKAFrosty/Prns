@@ -15,14 +15,14 @@ use crate::engine::{
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::rns_management::RnsRemotePathTableRequest;
-#[cfg(feature = "remote-control-path-table")]
-use crate::remote_control::RemoteControlPathPage;
 use crate::remote_control::{
     ForgetRemoteControlTargetOutcome, RemoteControlControllerGrant,
-    RemoteControlControllerIdentity, RemoteControlPathInventory, RemoteControlTargetAccess,
+    RemoteControlControllerIdentity, RemoteControlTargetAccess,
     RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
     SetRemoteControlTargetAccessOutcome,
 };
+#[cfg(feature = "remote-control-path-table")]
+use crate::remote_control::{RemoteControlPathInventory, RemoteControlPathPage};
 use crate::routing::links::request::{response_envelope_prefix, RequestId, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -77,6 +77,7 @@ pub struct CompletionPool<
     remote_control_target_accesses: RemoteControlTargetAccessExchange<M>,
     remote_control_pairing_settlement: RemoteControlPairingSettlementAwaiter<M>,
     resource_responses: Channel<M, ResourceResponse<RESPONSE_BYTES>, 1>,
+    #[cfg(feature = "remote-control-path-table")]
     path_page_reply: Signal<M, RemoteControlPathInventory>,
 }
 
@@ -247,6 +248,7 @@ impl<
             remote_control_target_accesses: RemoteControlTargetAccessExchange::new(),
             remote_control_pairing_settlement: RemoteControlPairingSettlementAwaiter::new(),
             resource_responses: Channel::new(),
+            #[cfg(feature = "remote-control-path-table")]
             path_page_reply: Signal::new(),
         }
     }
@@ -820,6 +822,7 @@ impl<
         self.pool.resource_responses.receiver()
     }
 
+    #[cfg(feature = "remote-control-path-table")]
     pub fn path_page_reply(&self) -> &'a Signal<M, RemoteControlPathInventory> {
         &self.pool.path_page_reply
     }

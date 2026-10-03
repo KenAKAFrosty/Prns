@@ -2,6 +2,7 @@ use embassy_futures::select::{select, select6, Either, Either6};
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
+#[cfg(feature = "remote-control-path-table")]
 use embassy_sync::signal::Signal;
 use heapless::Vec as HeaplessVec;
 
@@ -21,10 +22,10 @@ use crate::manifold::interface_seam::{EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_F
 use crate::manifold::timers::{wait_for_due_reason, wait_for_pacer};
 use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::{AppDeciders, Host};
-use crate::remote_control::RemoteControlPathInventory;
 #[cfg(feature = "remote-control-path-table")]
 use crate::remote_control::{
-    RemoteControlPathEntry, RemoteControlPathPage, RemoteControlPathPageBuilder,
+    RemoteControlPathEntry, RemoteControlPathInventory, RemoteControlPathPage,
+    RemoteControlPathPageBuilder,
 };
 use crate::routing::links::request::{response_envelope_prefix, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::resources::ResourceOffer;
@@ -181,6 +182,7 @@ pub struct PooledWiring<
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
     pub resource_responses: Receiver<'run, M, ResourceResponse<RESPONSE_BYTES>, 1>,
+    #[cfg(feature = "remote-control-path-table")]
     pub path_page_reply: &'run Signal<M, RemoteControlPathInventory>,
     pub lifecycle: Receiver<'run, M, InterfaceLifecycle, LIFECYCLE>,
 }
@@ -234,11 +236,10 @@ pub(crate) async fn run_pooled<
         notify,
         commands,
         resource_responses,
+        #[cfg(feature = "remote-control-path-table")]
         path_page_reply,
         lifecycle,
     } = wiring;
-    #[cfg(not(feature = "remote-control-path-table"))]
-    let _ = path_page_reply;
     let mut pacers: HeaplessVec<InterfacePacer, LANE_COUNT> = HeaplessVec::new();
     for descriptor in descriptors.iter_mut() {
         *descriptor = clamp_to_embedded_ceiling(*descriptor);

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn canonical_matrix_has_sixteen_unique_profile_bound_targets(
+fn canonical_matrix_has_seventeen_unique_profile_bound_targets(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let catalog = prns_flash_manifest::board_catalog()?;
     let matrix = Matrix::from_catalog(&catalog)?;
@@ -38,6 +38,13 @@ fn canonical_matrix_has_sixteen_unique_profile_bound_targets(
             (
                 "heltec-e290",
                 "heltec-e290",
+                "xtensa-esp32s3-none-elf",
+                "xtensa-esp32s3-gnu-ld",
+                TargetPlatform::Esp
+            ),
+            (
+                "heltec-v3",
+                "heltec-v3",
                 "xtensa-esp32s3-none-elf",
                 "xtensa-esp32s3-gnu-ld",
                 TargetPlatform::Esp
