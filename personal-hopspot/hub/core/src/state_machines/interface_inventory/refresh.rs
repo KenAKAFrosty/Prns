@@ -1,7 +1,6 @@
 use super::{InterfaceInventory, InterfaceInventoryStatus};
 use crate::domain_primitives::InterfacePageRequest;
 use pipecircuit::StepInputOf;
-use prns_core::remote_control::RemoteControlInterfacePage;
 
 pub struct RefreshInterfaces;
 
@@ -34,14 +33,8 @@ impl<const CAPACITY: usize> StepInputOf<InterfaceInventory<CAPACITY>> for Refres
         let Some(generation) = inventory.next_refresh else {
             return Err(RefreshInterfacesError::IdentifiersExhausted);
         };
-        let request = InterfacePageRequest {
-            connection: inventory.connection,
-            generation,
-            page: RemoteControlInterfacePage::First,
-        };
-        inventory.next_refresh = generation.checked_add(1);
-        inventory.staging.clear();
-        inventory.status = InterfaceInventoryStatus::Receiving { pending: request };
-        Ok(RefreshInterfacesOutcome::Requested { request })
+        Ok(RefreshInterfacesOutcome::Requested {
+            request: inventory.begin_refresh(generation),
+        })
     }
 }

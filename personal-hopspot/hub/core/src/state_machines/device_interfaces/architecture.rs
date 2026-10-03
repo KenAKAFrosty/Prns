@@ -4,11 +4,11 @@ use pipecircuit_visualization::{ArchitectureError, CrateArchitecture, DiagramTar
 #[test]
 fn architecture_remains_reviewable() -> Result<(), ArchitectureError> {
     let architecture = CrateArchitecture::read(env!("CARGO_MANIFEST_DIR"))?;
-    let inventory = architecture.state_machine("InterfaceInventory")?;
+    let interfaces = architecture.state_machine("DeviceInterfaces")?;
     expect![[r#"
         ● state machine  ▸ step input  ◆ outcome
 
-        ● InterfaceInventory
+        ● DeviceInterfaces
         ├── ▸ CloseInterfaceInventory
         │   └── ◆ CloseInterfaceInventoryOutcome
         │       ├── Closed
@@ -17,10 +17,10 @@ fn architecture_remains_reviewable() -> Result<(), ArchitectureError> {
         │   └── ◆ InterfaceRefreshFailedOutcome
         │       ├── Failed
         │       └── StaleRequest
-        ├── ▸ ReadInterfaces
-        │   └── ◆ InterfaceInventorySnapshot
-        ├── ▸ ReadInventoryConnection
-        │   └── ◆ Connection
+        ├── ▸ ReadDeviceInterfaces
+        │   └── ◆ ReadDeviceInterfacesOutcome
+        │       ├── Found
+        │       └── Unavailable
         ├── ▸ ReceiveInterfacePage
         │   └── ◆ ReceiveInterfacePageOutcome
         │       ├── More
@@ -28,17 +28,22 @@ fn architecture_remains_reviewable() -> Result<(), ArchitectureError> {
         │       ├── StaleRequest
         │       ├── OutOfOrder
         │       └── CapacityExceeded
-        └── ▸ RefreshInterfaces
-            └── ◆ Result
-                ├── Ok
-                │   └── RefreshInterfacesOutcome
-                │       ├── Requested
-                │       ├── Busy
-                │       └── Closed
-                └── Err
-                    └── RefreshInterfacesError
-                        └── IdentifiersExhausted
+        ├── ▸ RefreshInterfaces
+        │   └── ◆ Result
+        │       ├── Ok
+        │       │   └── RefreshInterfacesOutcome
+        │       │       ├── Requested
+        │       │       ├── Busy
+        │       │       └── Closed
+        │       └── Err
+        │           └── RefreshInterfacesError
+        │               └── IdentifiersExhausted
+        └── ▸ SynchronizeDeviceInterfaces
+            └── ◆ SynchronizeDeviceInterfacesOutcome
+                ├── Started
+                ├── Unchanged
+                └── Unavailable
     "#]]
-    .assert_eq(&inventory.render(DiagramTarget::TextTree));
+    .assert_eq(&interfaces.render(DiagramTarget::TextTree));
     Ok(())
 }

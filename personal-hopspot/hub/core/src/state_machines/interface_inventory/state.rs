@@ -22,6 +22,16 @@ pub struct InterfaceInventorySnapshot<const CAPACITY: usize> {
 
 pub struct ReadInterfaces;
 
+pub struct ReadInventoryConnection;
+
+impl<const CAPACITY: usize> StepInputOf<InterfaceInventory<CAPACITY>> for ReadInventoryConnection {
+    type Outcome = Connection;
+
+    fn step(self, inventory: &mut InterfaceInventory<CAPACITY>) -> Self::Outcome {
+        inventory.connection
+    }
+}
+
 impl<const CAPACITY: usize> StepInputOf<InterfaceInventory<CAPACITY>> for ReadInterfaces {
     type Outcome = InterfaceInventorySnapshot<CAPACITY>;
 

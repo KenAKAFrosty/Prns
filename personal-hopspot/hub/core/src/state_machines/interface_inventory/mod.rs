@@ -9,10 +9,10 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-use crate::domain_primitives::{Connection, InterfaceRefreshFailure};
+use crate::domain_primitives::{Connection, InterfacePageRequest, InterfaceRefreshFailure};
 use core::num::NonZeroU64;
 use pipecircuit::StateMachine;
-use prns_core::remote_control::RemoteControlInterfaceEntry;
+use prns_core::remote_control::{RemoteControlInterfaceEntry, RemoteControlInterfacePage};
 
 pub use receive::{ReceiveInterfacePage, ReceiveInterfacePageOutcome};
 pub use refresh::{RefreshInterfaces, RefreshInterfacesError, RefreshInterfacesOutcome};
@@ -20,7 +20,9 @@ pub use settlement::{
     CloseInterfaceInventory, CloseInterfaceInventoryOutcome, InterfaceRefreshFailed,
     InterfaceRefreshFailedOutcome,
 };
-pub use state::{InterfaceInventorySnapshot, InterfaceInventoryStatus, ReadInterfaces};
+pub use state::{
+    InterfaceInventorySnapshot, InterfaceInventoryStatus, ReadInterfaces, ReadInventoryConnection,
+};
 
 pub struct InterfaceInventory<const CAPACITY: usize> {
     connection: Connection,
@@ -39,6 +41,24 @@ impl<const CAPACITY: usize> InterfaceInventory<CAPACITY> {
             staging: heapless::Vec::new(),
             published: None,
         }
+    }
+
+    pub fn with_initial_refresh(connection: Connection) -> (Self, InterfacePageRequest) {
+        let mut inventory = Self::new(connection);
+        let request = inventory.begin_refresh(NonZeroU64::MIN);
+        (inventory, request)
+    }
+
+    fn begin_refresh(&mut self, generation: NonZeroU64) -> InterfacePageRequest {
+        let request = InterfacePageRequest {
+            connection: self.connection,
+            generation,
+            page: RemoteControlInterfacePage::First,
+        };
+        self.next_refresh = generation.checked_add(1);
+        self.staging.clear();
+        self.status = InterfaceInventoryStatus::Receiving { pending: request };
+        request
     }
 
     fn fail(&mut self, reason: InterfaceRefreshFailure) {

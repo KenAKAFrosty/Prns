@@ -15,6 +15,8 @@ input/output protocol, transitions, and behavioral tests. Primitive validation
 tests live with their primitive. Modules remain private behind the curated
 exports in `lib.rs`. The `state_machines/interface_inventory` owner collects
 interface pages for one connection and publishes complete results.
+`state_machines/device_interfaces` owns that collector's lifetime for one device,
+using the registry as the authority for its current connection.
 `state_machines/usb_pairing_discovery` owns the bounded set of USB pairing
 candidates and its explicit clock.
 
@@ -120,10 +122,14 @@ replayed by these steps.
 Create one `InterfaceInventory::<CAPACITY>` for each confirmed connection. The
 caller selects its interface limit explicitly; staging and published data use
 separate bounded buffers with no heap allocation. The collector is subordinate
-to the registry's connection lifecycle. The future circuit must route
-`CloseInterfaceInventory` when that connection ends or its device is forgotten,
-and construct a new collector for a newly confirmed connection. It does not
-observe registry changes automatically.
+to the registry's connection lifecycle. `DeviceInterfaces` manages that lifetime
+through explicit synchronization, described below. A standalone collector's
+caller must close it when its connection ends or the device is forgotten.
+
+`InterfaceInventory::with_initial_refresh(connection)` constructs a collector
+already receiving its first page and returns the correlated request. It shares
+the same generation transition as `RefreshInterfaces`. `ReadInventoryConnection`
+reads only the collector's connection token without copying its inventory.
 
 `RefreshInterfaces` issues an opaque `InterfacePageRequest`. Its `request()`
 returns PRNS's `RemoteControlRequest::InventoryInterfaces`; `connection()`
@@ -150,6 +156,46 @@ reuse. A stale-page outcome returns the rejected page to its caller.
 
 Network dispatch, timed polling, interface names/configuration, live watches,
 and interface power changes remain follow-up work.
+
+## Per-device interface lifecycle
+
+Create one `DeviceInterfaces::<CAPACITY>::new(device)` for each device record,
+and keep it for that record's lifetime in its originating registry. The owner
+holds at most one collector and allocates no heap storage. Do not reconstruct
+the owner for the same live connection: correlation tokens belong to that
+collector lifetime.
+
+`SynchronizeDeviceInterfaces { registry: &mut registry }` reads the authoritative
+record in one synchronous step. Its borrow is temporary; it neither retains the
+registry nor changes its state. A confirmed connection starts an initial
+inventory and returns `Started { request, link, cancelled }`. Repeated
+synchronization for the same connection returns `Unchanged` and preserves the
+pending request, published data, and any failure. It does not retry a failed
+refresh automatically. A newly confirmed connection replaces the old collector
+and returns its pending request for cancellation, even if intermediate
+disconnected/connecting states were not synchronized.
+
+An unconnected, connecting, disconnected, or forgotten device returns
+`Unavailable { cancelled }` and removes the collector. Another device's
+connection and inventory are unaffected. The same `ReceiveInterfacePage`,
+`InterfaceRefreshFailed`, `RefreshInterfaces`, and `CloseInterfaceInventory`
+steps apply to this owner with their exact existing outcomes. Late callbacks
+from removed collectors, older connections, or another device are stale.
+Refreshing with no collector returns `Ok(Closed)`; identifier exhaustion remains
+the existing typed invariant error.
+
+`ReadDeviceInterfaces` returns an owned inventory snapshot or `Unavailable` for
+the bound device. Explicit close is idempotent and retains a closed collector
+until its connection changes or disappears; synchronization cannot reopen it
+under the same connection token. A new connection is required to resume after
+explicit close.
+
+The future circuit must synchronize this owner after relevant registry changes
+and before handling inventory callbacks, refresh intents, or rendering its
+snapshot. It must settle the returned cancellation before dispatching a new
+request. This step supplies lifecycle coordination and dispatch values; it does
+not subscribe to registry mutations or perform network IO. USB runtime wiring
+and physical cancellation remain integration work.
 
 ## USB pairing discovery
 
@@ -269,6 +315,13 @@ the machine. Its property test compares arbitrary arrival, expiry, selection,
 and clear histories with an independent bounded model. The same PRNS dependency
 restriction makes property tests the practical lane for this machine; no new
 Kani result is claimed for discovery.
+Device-interface lifecycle properties vary completed and pending inventories,
+explicit close, and intermediate synchronization across reconnect histories.
+They reuse the same physical link ID while rejecting every retired request.
+Deterministic cases cover wrong-target confirmation, two-device isolation,
+forgetting and registry row reuse, pagination, refresh failure, and idempotence.
+These PRNS-dependent stateful checks also use proptest instead of a new Kani
+harness; the isolated label proof remains the formal verification lane.
 The isolated proof package avoids an existing `prns-core` Kani
 compilation failure in its request-set proof (a `u32` shift by 32); the main core
 crate's Kani lane is not claimed to pass.
