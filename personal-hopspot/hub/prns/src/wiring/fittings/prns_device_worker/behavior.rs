@@ -9,6 +9,7 @@ fn behavior_remains_reviewable() -> Result<(), BehaviorError> {
         - An unaccepted connection completion is closed even after delivery
         - Arbitrary cancellation histories preserve link ownership
         - Arbitrary queue bounds retain every rejected command
+        - Asynchronous execution waits for capacity and preserves stopped worker errors
         - Backpressure and stopped submission return the original input
         - Cancelled connect settles authentication and closes before later work
         - Cancelled queued connect and inventory never reach the backend

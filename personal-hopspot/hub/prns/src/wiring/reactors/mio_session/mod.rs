@@ -33,6 +33,22 @@ pub struct MioSessionPoll {
     events: Events,
 }
 
+impl MioSessionPoll {
+    pub(crate) fn try_open() -> Result<(Self, Arc<Waker>), std::io::Error> {
+        Poll::new().and_then(|poll| {
+            Waker::new(poll.registry(), MAILBOX_TOKEN).map(|waker| {
+                (
+                    Self {
+                        poll,
+                        events: Events::with_capacity(MAILBOX_CAPACITY),
+                    },
+                    Arc::new(waker),
+                )
+            })
+        })
+    }
+}
+
 impl Reactor for MioSessionPoll {
     type Reaction = ();
     type Failure = std::io::Error;
@@ -44,21 +60,16 @@ impl Reactor for MioSessionPoll {
 
 impl MioSessionReactor {
     pub fn try_open() -> Result<(Self, MioSessionSender), std::io::Error> {
-        Poll::new().and_then(|poll| {
-            Waker::new(poll.registry(), MAILBOX_TOKEN).map(|waker| {
-                let (sender, inbox) = sync_channel(MAILBOX_CAPACITY);
-                (
-                    Self {
-                        physical: MioSessionPoll {
-                            poll,
-                            events: Events::with_capacity(MAILBOX_CAPACITY),
-                        },
-                        inbox,
-                        pending: None,
-                    },
-                    MioSessionSender::new(sender, Arc::new(waker)),
-                )
-            })
+        MioSessionPoll::try_open().map(|(physical, waker)| {
+            let (sender, inbox) = sync_channel(MAILBOX_CAPACITY);
+            (
+                Self {
+                    physical,
+                    inbox,
+                    pending: None,
+                },
+                MioSessionSender::new(sender, waker),
+            )
         })
     }
 }

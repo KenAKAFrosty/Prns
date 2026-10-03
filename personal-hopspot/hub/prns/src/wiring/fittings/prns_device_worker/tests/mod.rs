@@ -351,3 +351,37 @@ async fn fitting_invariants_and_peer_failures_keep_their_original_types() {
         }).await;
     }
 }
+
+#[tokio::test]
+async fn asynchronous_execution_waits_for_capacity_and_preserves_stopped_worker_errors() {
+    let (_, connection, backend) = fixture();
+    let (mut worker, run) =
+        PrnsDeviceWorker::try_new(connection.device(), backend, NonZeroUsize::MIN).unwrap();
+    let queued = submit(&mut worker, PrnsDeviceIn::Connect { connection });
+    let close = worker.execute(PrnsDeviceIn::Close { connection });
+    tokio::pin!(close);
+    core::future::poll_fn(|context| {
+        assert!(close.as_mut().poll(context).is_pending());
+        core::task::Poll::Ready(())
+    })
+    .await;
+    drop(queued);
+    drop(worker);
+    bounded(async {
+        tokio::join!(run, async {
+            assert_eq!(
+                close.await.unwrap(),
+                PrnsDeviceOut::StaleClose { connection }
+            );
+        });
+    })
+    .await;
+    let (_, connection, backend) = fixture();
+    let (worker, run) =
+        PrnsDeviceWorker::try_new(connection.device(), backend, NonZeroUsize::MIN).unwrap();
+    drop(run);
+    assert!(matches!(
+        worker.execute(PrnsDeviceIn::Close { connection }).await,
+        Err(PrnsDeviceWorkerError::Stopped(_))
+    ));
+}

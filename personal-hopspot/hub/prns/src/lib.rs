@@ -26,5 +26,13 @@ pub use wiring::{
     MioSessionReactor, MioSessionSender, MioSessionSubmission, MioSessionWakeFailure,
 };
 
+pub use wiring::{
+    DeviceDriverFailure, DeviceDriverReaction, DeviceDriverReactor, DeviceDriverTurn,
+    DeviceSessionDriver, DeviceSessionExit, DeviceSessionHandle, DeviceSessionIntent,
+    DeviceSessionRuntime, DeviceSessionSubmission, DeviceSessionUpdate, prepare_device_session,
+};
+
+pub use wiring::{SessionStopReason, SupervisedSessionExit, supervise_device_session};
+
 #[cfg(test)]
 mod tests;

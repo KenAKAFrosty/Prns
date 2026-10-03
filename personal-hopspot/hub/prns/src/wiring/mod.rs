@@ -3,6 +3,7 @@ mod controller_installation;
 mod fittings;
 mod reactors;
 mod runtime;
+mod session_supervisor;
 mod switchboards;
 
 pub use controller_installation::{ControllerInstallation, ControllerInstallationError};
@@ -23,3 +24,11 @@ pub use reactors::{
     MioSessionPoll, MioSessionReaction, MioSessionReactor, MioSessionSender, MioSessionSubmission,
     MioSessionWakeFailure,
 };
+
+pub use circuits::{
+    DeviceDriverFailure, DeviceDriverReaction, DeviceDriverReactor, DeviceDriverTurn,
+    DeviceSessionDriver, DeviceSessionExit, DeviceSessionHandle, DeviceSessionIntent,
+    DeviceSessionRuntime, DeviceSessionSubmission, DeviceSessionUpdate, prepare_device_session,
+};
+
+pub use session_supervisor::{SessionStopReason, SupervisedSessionExit, supervise_device_session};

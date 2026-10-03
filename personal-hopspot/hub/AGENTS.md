@@ -3,6 +3,7 @@
 Work on the local `hopspot-hub` branch. Leave review candidates uncommitted and
 do not push. The roughly 2,000-line slice target is a scale guideline; keep a
 larger change together when required for cohesive implementation and evidence.
+Present two cohesive slices together per review candidate, uncommitted.
 
 Native runtime assembly, filesystem resources, circuits, switchboards, and physical
 fittings belong under `prns/src/wiring`. Keep external I/O out of core owners.

@@ -289,3 +289,20 @@ pub(crate) async fn connect<B: PrnsInventoryTransport>(
     assert_eq!(confirmation.target, connection.target());
     confirmation
 }
+
+pub(crate) fn within_runtime(future: impl core::future::Future<Output = ()>) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
+        runtime.block_on(async {
+            tokio::time::timeout(core::time::Duration::from_secs(5), future).await
+        })
+    }));
+    runtime.shutdown_timeout(core::time::Duration::from_millis(100));
+    match result {
+        Ok(result) => result.unwrap(),
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}

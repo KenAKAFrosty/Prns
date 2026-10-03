@@ -157,8 +157,9 @@ settles transport, deadline, permission, or decoding failures. Closing returns
 any pending request for cancellation, clears all data, and permanently refuses
 reuse. A stale-page outcome returns the rejected page to its caller.
 
-Automatic circuit dispatch, timed polling, interface names/configuration, live
-watches, and interface power changes remain follow-up work.
+The session driver below provides automatic circuit dispatch. Timed polling,
+interface names/configuration, live watches, and interface power changes remain
+follow-up work.
 
 ## Per-device interface lifecycle
 
@@ -243,9 +244,9 @@ target identity. Raw USB locators and announcement app data are not interpreted
 as device identity or labels. Existing PRNS pairing requires an invitation code;
 the planned code-free headless enrollment requires separate protocol work.
 
-This slice implements the deterministic discovery owner. Attaching USB Auto to
-a Hub runtime, routing its events, identity persistence, pairing initiation,
-and automatic inventory dispatch remain integration work. The fitting below
+This slice implements the deterministic discovery owner. The native bootstrap now supplies USB Auto attachment and controller identity
+persistence, and the session driver supplies automatic inventory dispatch.
+Routing verified discovery events and initiating pairing remain integration work. The fitting below
 implements authenticated connection and inventory for already authorized
 targets. It has not opened a physical USB device.
 
@@ -371,8 +372,8 @@ typed failures, and shutdown drain. Property tests vary queue capacities and
 command/cancellation histories across connection generations, comparing physical
 calls with an independent ownership model. PRNS and Tokio dependencies make
 these integration and property tests the practical lane; the existing bounded
-Kani proof remains unchanged. The application-wide event loop and its shutdown
-ordering remain the next integration boundary.
+Kani proof remains unchanged. The session driver and supervisor below now provide automatic dispatch and
+shutdown ordering for one device.
 
 ## Device session routing
 
@@ -544,6 +545,91 @@ and the PRNS graph remain integration/property-test territory; the existing
 bounded Kani label proof is retained. Both wiring owners have behavior
 inventories without artificial machine architecture snapshots.
 
+## Automatic device session execution
+
+`wiring/circuits/device_session_driver` owns `prepare_device_session::<CAPACITY>`.
+Supply the registry, one device ID, a PRNS inventory transport, and an update
+callback. The returned `DeviceSessionRuntime` contains a clonable handle and a
+future to drive inside Tokio. The future runs the Mio conductor on a blocking
+thread while driving the existing asynchronous worker. Preparation performs no
+device I/O; polling the run future begins execution.
+
+The handle accepts `Connect`, `Refresh`, `Disconnect`, and `Inspect`. Its
+single-slot mailbox returns `Submitted`, `Busy`, or `Stopped`, retaining rejected
+intents. A wake error occurs after successful publication, so blindly retrying
+would duplicate an accepted intent. The public handle cannot inject PRNS
+completions. Updates expose settled events and snapshots; the driver already
+owns dispatch and cancellation. The callback runs on the conductor thread and
+must return promptly; application presentation queues must apply their own
+bounded delivery policy.
+
+The driver retains at most one observed worker operation and two pending
+commands. The worker has one waiting slot. Completion futures wake Mio directly,
+including when worker queue capacity becomes available. The conductor never
+blocks on an asynchronous operation or polls it in a busy loop. Ready work is
+processed before another intent, preventing a stream of inspections from
+starving completions. New intents wait while commands remain pending; the
+explicit shutdown signal bypasses that admission gate.
+
+Each route cancels matching inventory work before dispatch and preserves command
+order. Closing a connection also discards its pending connect or inventory
+observer; the worker still finishes active authentication and releases an
+unaccepted connection. Existing closes are preserved. Automatically returned
+pages drive subsequent inventory requests, and only complete inventories become
+ready. Native peer failures retain their existing route events. Routing,
+worker, and internal command-capacity invariants stop conduction and return the
+registry with the exact failure for recovery.
+
+`shutdown()` stops admission and wakes the conductor even when the intent
+mailbox is full. Shutdown supersedes queued UI intents and undispatched device
+commands, routes disconnect, and drains cleanup. Dropping the last handle also
+starts shutdown after accepted mailbox input is consumed. The run future returns
+only after the conductor exits and the worker drains. Its `DeviceSessionExit`
+returns registry ownership and conduction settlement. Observer panics are
+reported as Tokio join errors after worker drain; they do not return the
+registry. Ordinary shutdown and invariant exits do return it.
+
+Dropping the run future requests stop and cancels its async worker; it is not
+orderly shutdown and does not await cleanup. Keep polling the future after
+requesting shutdown, and keep the PRNS node alive until it returns. Active
+connection operations still use PRNS's own deadlines. Configurable Hub operation
+deadlines, timed refresh, and automatic reconnect remain subsequent work.
+
+Tests cover automatic pagination, refresh, cancellation, reconnect, bounded
+admission, queue ordering, retained readiness, typed failures, and observer panic.
+Property tests compare arbitrary intent histories with an independent physical
+connection/inventory call model. OS polling and Tokio ownership use integration
+and property tests; the existing bounded Kani label proof remains the formal lane.
+
+## Session and native shutdown supervision
+
+`wiring/session_supervisor` owns `supervise_device_session`. Supply a
+prepared session, the native node's run future, a one-shot node-stop callback,
+and the application's shutdown future. With `prepare_native_hub`, that callback
+resolves the shutdown signal originally supplied to the native bootstrap.
+
+On an application shutdown request, supervision stops session admission and
+continues polling both owners while the session disconnects and drains its
+worker. Only then does it signal native shutdown and await the node's result.
+If the session ends first, it requests native shutdown immediately. If the node
+ends first, it stops and settles the session while retaining the node result.
+An already exited node cannot perform additional cleanup; its failure remains
+visible rather than being replaced by a successful local stop.
+
+`SupervisedSessionExit` preserves the triggering reason, session result, node
+result, and any explicit shutdown-wake error. Shutdown is local settlement and
+PRNS persistence completion, not acknowledgement from the remote MCU. A stuck
+observer or backend can delay orderly shutdown; the supervisor does not impose
+an arbitrary forced-termination deadline.
+
+Tests cover all three initiating events and prove authentication/close drain
+precedes the node-stop callback. The real localhost two-node exchange now uses
+automatic session execution and this supervisor to authenticate, collect
+inventory, disconnect, and stop its controller. Native bootstrap tests retain
+coverage of persistence flushing and installation lock lifetime. These two
+wiring slices retain behavior inventories; no new deterministic core machine or
+artificial architecture snapshot was introduced.
+
 ## Verification
 
 From this directory, run:
@@ -555,7 +641,7 @@ cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
 cargo build --locked -p hopspot-hub-core --lib --no-default-features
 cargo llvm-cov clean --workspace
 cargo hub-coverage
-CARGO_INCREMENTAL=0 cargo hub-mutants --file 'prns/src/wiring/reactors/**' --file 'prns/src/wiring/circuits/**' --file 'prns/src/wiring/controller_installation/**' --file 'prns/src/wiring/runtime/**'
+CARGO_INCREMENTAL=0 cargo hub-mutants --file 'prns/src/wiring/reactors/**' --file 'prns/src/wiring/circuits/**' --file 'prns/src/wiring/fittings/prns_device_worker/**' --file 'prns/src/wiring/runtime/**' --file 'prns/src/wiring/session_supervisor/**'
 cargo kani --manifest-path verification/kani/Cargo.toml --lib --output-format terse
 ```
 
@@ -647,7 +733,8 @@ status and power controls follow; a change affecting the requesting controller's
 interface will need a device-owned confirmation deadline and rollback.
 
 Per-installation identity, native USB bootstrap, and bounded physical work are
-in place. The application event loop must now connect session routing, verified
-USB discovery, cancellation, and shutdown ordering. Controller sharing, explicit
+in place, together with automatic per-device dispatch, cancellation, and native
+shutdown supervision. Next, connect verified USB discovery and enrollment to
+this driver, persist Hub device records, and add reconnect/deadline policy. Controller sharing, explicit
 device replacement, firmware installation, clusters, and relationship views
 remain later capabilities.

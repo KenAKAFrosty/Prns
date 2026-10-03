@@ -31,19 +31,9 @@ impl TransportTo<PrnsDevice> for PrnsDeviceWorkerOutgoing<'_> {
         &'transport mut self,
         input: PrnsDeviceIn,
     ) -> Self::Outcome<'transport, 'message> {
-        let (result, completed) = oneshot::channel();
-        let (accepted, acceptance) = oneshot::channel();
-        match self.commands.try_send(Job {
-            input,
-            result,
-            accepted: acceptance,
-        }) {
-            Ok(()) => PrnsDeviceSubmission::Submitted {
-                completion: PrnsDeviceCompletion {
-                    result: completed,
-                    accepted,
-                },
-            },
+        let (job, completion) = Job::new(input);
+        match self.commands.try_send(job) {
+            Ok(()) => PrnsDeviceSubmission::Submitted { completion },
             Err(mpsc::error::TrySendError::Full(job)) => {
                 PrnsDeviceSubmission::Busy { input: job.input }
             }

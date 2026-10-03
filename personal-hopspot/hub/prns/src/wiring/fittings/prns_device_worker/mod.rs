@@ -60,9 +60,57 @@ impl PrnsDeviceWorker {
                 maximum: tokio::sync::Semaphore::MAX_PERMITS,
             });
         }
+        Ok(Self::with_capacity(device, backend, queue_capacity))
+    }
+}
+
+impl PrnsDeviceWorker {
+    pub(crate) fn with_single_slot(
+        device: DeviceId,
+        backend: impl PrnsInventoryTransport,
+    ) -> (Self, impl Future<Output = ()>) {
+        Self::with_capacity(device, backend, NonZeroUsize::MIN)
+    }
+
+    fn with_capacity(
+        device: DeviceId,
+        backend: impl PrnsInventoryTransport,
+        queue_capacity: NonZeroUsize,
+    ) -> (Self, impl Future<Output = ()>) {
         let (commands, jobs) = mpsc::channel(queue_capacity.get());
         let fitting = PrnsDeviceFitting::new(device, backend);
-        Ok((Self { commands }, run(fitting, jobs)))
+        (Self { commands }, run(fitting, jobs))
+    }
+
+    pub(crate) fn execute(
+        &self,
+        input: PrnsDeviceIn,
+    ) -> impl Future<Output = Result<PrnsDeviceOut, PrnsDeviceWorkerError>> + Send + 'static {
+        let commands = self.commands.clone();
+        let (job, completion) = Job::new(input);
+        async move {
+            drop(commands.send(job).await);
+            drop(commands);
+            completion.complete().await
+        }
+    }
+}
+
+impl Job {
+    fn new(input: PrnsDeviceIn) -> (Self, PrnsDeviceCompletion) {
+        let (result, completed) = oneshot::channel();
+        let (accepted, acceptance) = oneshot::channel();
+        (
+            Self {
+                input,
+                result,
+                accepted: acceptance,
+            },
+            PrnsDeviceCompletion {
+                result: completed,
+                accepted,
+            },
+        )
     }
 }
 
