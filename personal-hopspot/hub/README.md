@@ -2,7 +2,8 @@
 
 Hopspot Hub is the desktop and mobile management application for embedded
 Hopspots. This standalone workspace contains its deterministic Rust core and a
-native PRNS fitting for remembered-device connections and interface inventory.
+native PRNS fitting for remembered-device connections and interface inventory,
+with a persistent native controller bootstrap and USB Auto attachment.
 It is local development on `hopspot-hub`; review slices stay uncommitted until
 approved.
 
@@ -251,7 +252,7 @@ targets. It has not opened a physical USB device.
 ## Native PRNS fitting
 
 `prns/src/participants` owns the closed `PrnsDevice` input/output protocol.
-`prns/src/fittings/prns_device` owns physical link lifetime and its asynchronous
+`prns/src/wiring/fittings/prns_device` owns physical link lifetime and its asynchronous
 PRNS calls. The deterministic machines remain in the core ownership lanes.
 Create one `PrnsDeviceFitting::new(device, node_handle)` per local device in
 its originating registry. Its default backend is the actual `PrnsNodeHandle`;
@@ -323,7 +324,7 @@ provides source-derived visual expectations.
 
 ## Device session routing
 
-`prns/src/switchboards/device_session` composes the existing registry and
+`prns/src/wiring/switchboards/device_session` composes the existing registry and
 per-device inventory machines through `DeviceSessionSwitchboard::<CAPACITY>`.
 Create it once for a device in its originating registry, alongside that device's
 PRNS fitting. Its only temporal state is the existing `DeviceInterfaces` owner;
@@ -385,10 +386,59 @@ uses this same switchboard to connect, fetch inventory, and disconnect. The
 PRNS/Tokio graph still makes proptest the practical stateful verification lane;
 the existing bounded Kani label proof remains unchanged.
 
-A process-wide event loop, USB Auto attachment, identity persistence, enrollment,
-automatic reconnect, GUI events, and shutdown settlement remain runtime
-integration work. No physical USB qualification is
-claimed by the localhost test.
+A process-wide session event loop, enrollment, automatic reconnect, GUI events,
+and settlement of outstanding fitting work remain integration work. No physical
+USB qualification is claimed by the localhost test.
+
+## Native controller bootstrap
+
+`prns/src/wiring/controller_installation` owns the installation's
+exclusive filesystem lease, PRNS identity bootstrap, and retained-state store.
+`ControllerInstallation::open` takes an explicit dedicated state directory.
+It creates that directory, restricts its Unix permissions to 0700, opens a new
+0600 `hub.lock` without truncating an existing lock file, and acquires the lock
+before loading identities or retained state. A competing owner receives the
+underlying typed lock error. Failed startup releases the lease.
+
+The existing `RemoteControlIdentityDirectory` stores the distinct controller and
+target keys beneath `remote_control`; `NodePersistence` owns `retained`.
+Malformed identity material is refused unchanged. Missing keys follow PRNS's
+load-or-generate policy. Identity origins remain available so callers can
+surface generation versus loading. Bootstrap filesystem, lock, identity, and
+persistence errors preserve their typed sources and stage; this is an external
+I/O constructor, not a core machine step.
+
+`prns/src/wiring/runtime` assembles those resources through `prepare_native_hub`.
+Call it inside a Tokio runtime with the installation, a PRNS event callback,
+and a shutdown future. It returns `NativeHubRuntime` with the native node
+handle, public identities and their origins, attached USB interface, rescan
+signal, and a future to drive. Preparation queues the existing `AutoUsb` with
+its upstream interface ID, baud, and policy. Scanning starts when the returned
+run future is polled. The handle can supply the existing per-device fitting;
+its interface snapshots expose the local USB status. Event callbacks retain
+PRNS's verified pairing observations and persistence diagnostics without
+introducing a second event representation or an unbounded event queue.
+
+The node starts with no inbound controller grants, no host controls, and no
+self-announcement. PRNS restores retained authorization when the run future
+starts. Resolve the supplied shutdown future and await `run` to let PRNS flush
+state and ratchets before releasing the installation lock. Keep the run future
+alive while settling outstanding fitting work first. Dropping an unpolled run
+future releases the lease; cancelling a running future does not promise a final
+flush. This bootstrap does not coordinate session cancellation or persist the
+Hub registry's labels and local device IDs.
+
+Tests cover native USB preparation without polling its hardware scanner, then
+drive the same assembly with an empty controlled `UsbAutoHost` scanner. They
+check explicit rescans, retained authorization and controller identity across
+restart, lock ownership through shutdown diagnostics, and terminal persistence
+failure. Filesystem properties vary competing acquisition and release histories
+while checking a stable identity. These OS and Tokio contracts use integration
+and property tests; the existing bounded Kani label proof remains the formal
+lane. The native USB entry point currently targets PRNS's desktop host support;
+mobile platform attachment and physical MCU qualification remain future work.
+There is no new state machine or artificial architecture snapshot in this slice;
+both resource owners retain compiled-test behavior inventories.
 
 ## Verification
 
@@ -401,7 +451,7 @@ cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
 cargo build --locked -p hopspot-hub-core --lib --no-default-features
 cargo llvm-cov clean --workspace
 cargo hub-coverage
-cargo hub-mutants
+CARGO_INCREMENTAL=0 cargo hub-mutants
 cargo kani --manifest-path verification/kani/Cargo.toml --lib --output-format terse
 ```
 
@@ -422,7 +472,8 @@ unviable counts separately.
 
 Mutation testing runs in place so the existing PRNS path dependency resolves
 normally. Run it without concurrent edits or checks; cargo-mutants restores each
-source mutation. Its reports live in `target/hub-mutants/mutants.out`. Coverage
+source mutation. Disabling incremental compilation bounds build-cache growth
+during the many rebuilds. Its reports live in `target/hub-mutants/mutants.out`. Coverage
 data remains in `target/llvm-cov-target`. Tool requirements are `cargo-llvm-cov`
 with LLVM tools, `cargo-mutants`, and an installed Kani toolchain.
 

@@ -4,6 +4,9 @@ Work on the local `hopspot-hub` branch. Leave review candidates uncommitted and
 do not push. The roughly 2,000-line slice target is a scale guideline; keep a
 larger change together when required for cohesive implementation and evidence.
 
+Native runtime assembly, filesystem resources, circuits, switchboards, and physical
+fittings belong under `prns/src/wiring`. Keep external I/O out of core owners.
+
 Core ownership follows `domain_primitives` and `state_machines`. Keep validated
 values independent of machines. Keep machine state, transitions, input/output
 contracts, tests, and architecture/behavior expectations with their owner.

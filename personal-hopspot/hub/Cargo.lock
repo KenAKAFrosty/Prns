@@ -734,6 +734,7 @@ dependencies = [
  "pipecircuit",
  "pipecircuit-visualization",
  "proptest",
+ "tempfile",
  "tokio",
 ]
 

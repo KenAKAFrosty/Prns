@@ -1,23 +1,15 @@
-extern crate alloc;
+mod controller_installation;
+mod fittings;
+mod runtime;
+mod switchboards;
 
-mod wiring;
-
-pub use wiring::{
-    ControllerInstallation, ControllerInstallationError, NativeHubRuntime, prepare_native_hub,
-};
-
-mod participants;
-
-pub use participants::{PrnsDevice, PrnsDeviceIn, PrnsDeviceOut};
-pub use wiring::{
+pub use controller_installation::{ControllerInstallation, ControllerInstallationError};
+pub use fittings::{
     PrnsDeviceFitting, PrnsDeviceIncoming, PrnsDeviceOutgoing, PrnsDeviceWork, PrnsFittingError,
     PrnsInventoryTransport,
 };
-
-pub use wiring::{
+pub use runtime::{NativeHubRuntime, prepare_native_hub};
+pub use switchboards::{
     DeviceSessionEvent, DeviceSessionInput, DeviceSessionMessage, DeviceSessionRoute,
     DeviceSessionRoutingError, DeviceSessionSnapshot, DeviceSessionSwitchboard,
 };
-
-#[cfg(test)]
-mod tests;
