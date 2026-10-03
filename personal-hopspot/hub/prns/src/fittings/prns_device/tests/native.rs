@@ -1,6 +1,10 @@
 use super::*;
+use crate::{
+    DeviceSessionEvent, DeviceSessionInput, DeviceSessionMessage, DeviceSessionSwitchboard,
+};
 use personal_rns::identity::vault::IdentitySecretKey;
 use personal_rns::prelude::*;
+use pipecircuit::Switchboard;
 
 fn secrets(controller: u8, target: u8) -> RemoteControlNodeIdentitySecrets {
     RemoteControlNodeIdentitySecrets::new(
@@ -110,43 +114,37 @@ async fn native_nodes_authenticate_and_publish_interface_status_through_the_fitt
             .unwrap();
         let mut registry = DeviceRegistry::try_new(NonZeroU32::new(1).unwrap()).unwrap();
         let device = paired(&mut registry, target_identity);
-        let connection = begin(&mut registry, device);
+        let mut board = DeviceSessionSwitchboard::<16>::new(device);
         let mut fitting = PrnsDeviceFitting::new(device, handle.clone());
-        let confirmation = connect(&mut fitting, connection).await;
-        let link = confirmation.link;
-        assert_eq!(
-            registry.step(confirmation),
-            ConfirmConnectionOutcome::Connected { connection, link }
-        );
-        let mut interfaces = DeviceInterfaces::<16>::new(device);
-        let SynchronizeDeviceInterfacesOutcome::Started { mut request, .. } =
-            interfaces.step(SynchronizeDeviceInterfaces {
+        let mut routed = board
+            .route(DeviceSessionInput {
                 registry: &mut registry,
+                message: DeviceSessionMessage::Connect,
             })
-        else {
-            panic!("inventory not started")
-        };
+            .unwrap();
+        let mut commands = alloc::collections::VecDeque::new();
         loop {
-            let output = perform(&mut fitting, PrnsDeviceIn::Inventory { request }).await;
-            let PrnsDeviceOut::InterfacesReceived { response, .. } = output else {
-                panic!("native inventory failed: {output:?}")
+            commands.extend(routed.commands.iter_mut().filter_map(Option::take));
+            let Some(command) = commands.pop_front() else {
+                break;
             };
-            assert_eq!(response.request, request);
-            match interfaces.step(response) {
-                ReceiveInterfacePageOutcome::More { request: next } => request = next,
-                ReceiveInterfacePageOutcome::Complete { count } => {
-                    assert!(count > 0);
-                    break;
-                }
-                other @ (ReceiveInterfacePageOutcome::StaleRequest { .. }
-                | ReceiveInterfacePageOutcome::OutOfOrder { .. }
-                | ReceiveInterfacePageOutcome::CapacityExceeded { .. }) => {
-                    panic!("inventory rejected {other:?}")
-                }
-            }
+            let output = perform(&mut fitting, command).await;
+            routed = board
+                .route(DeviceSessionInput {
+                    registry: &mut registry,
+                    message: DeviceSessionMessage::Prns(output),
+                })
+                .unwrap();
         }
-        let ReadDeviceInterfacesOutcome::Found { inventory, .. } =
-            interfaces.step(ReadDeviceInterfaces)
+        let DeviceSessionEvent::InterfacesReceived {
+            outcome: ReceiveInterfacePageOutcome::Complete { count },
+            ..
+        } = routed.event
+        else {
+            panic!("inventory did not complete")
+        };
+        assert!(count > 0);
+        let ReadDeviceInterfacesOutcome::Found { inventory, .. } = routed.snapshot.interfaces
         else {
             panic!("inventory missing")
         };
@@ -159,12 +157,33 @@ async fn native_nodes_authenticate_and_publish_interface_status_through_the_fitt
                 .any(|entry| entry.enabled
                     && entry.connection == personal_rns::interfaces::ConnectionState::Connected)
         );
-        assert_eq!(
-            perform(&mut fitting, PrnsDeviceIn::Close { connection }).await,
+        let disconnected = board
+            .route(DeviceSessionInput {
+                registry: &mut registry,
+                message: DeviceSessionMessage::Disconnect,
+            })
+            .unwrap();
+        let [Some(command), None] = disconnected.commands else {
+            panic!("close not dispatched")
+        };
+        let output = perform(&mut fitting, command).await;
+        assert!(matches!(
+            output,
             PrnsDeviceOut::Closed {
-                connection,
-                settlement: CloseRemoteControlTargetOutcome::Queued
+                settlement: CloseRemoteControlTargetOutcome::Queued,
+                ..
             }
+        ));
+        let closed = board
+            .route(DeviceSessionInput {
+                registry: &mut registry,
+                message: DeviceSessionMessage::Prns(output),
+            })
+            .unwrap();
+        assert_eq!(closed.commands, [None, None]);
+        assert_eq!(
+            closed.snapshot.interfaces,
+            ReadDeviceInterfacesOutcome::Unavailable { device }
         );
     };
     tokio::select! {

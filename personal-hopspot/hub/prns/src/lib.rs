@@ -8,3 +8,12 @@ pub use fittings::{
     PrnsInventoryTransport,
 };
 pub use participants::{PrnsDevice, PrnsDeviceIn, PrnsDeviceOut};
+
+mod switchboards;
+pub use switchboards::{
+    DeviceSessionEvent, DeviceSessionInput, DeviceSessionMessage, DeviceSessionRoute,
+    DeviceSessionRoutingError, DeviceSessionSnapshot, DeviceSessionSwitchboard,
+};
+
+#[cfg(test)]
+mod tests;

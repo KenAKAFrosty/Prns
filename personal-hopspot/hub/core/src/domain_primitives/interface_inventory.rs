@@ -26,6 +26,7 @@ impl InterfacePageRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterfaceRefreshFailure {
+    RequestFailed,
     TimedOut,
     TransportLost,
     PermissionDenied,

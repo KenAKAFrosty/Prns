@@ -269,8 +269,8 @@ returns `PrnsDeviceWork` without starting IO. The async driver calls
 `complete().await` outside synchronous Pipecircuit routing, then passes that
 result into the incoming half. It emits either the participant output or a
 fitting invariant failure. The mutable borrow serializes work per fitting;
-independent devices can have independent work in flight. There is no application
-switchboard yet, and the fitting never updates core state implicitly.
+independent devices can have independent work in flight. The session switchboard
+below owns routing into core steps; the fitting never updates core state implicitly.
 
 `Connect` uses PRNS's target resolution, link establishment, and controller
 identification. Success returns the exact `ConfirmConnection` for the core;
@@ -285,8 +285,8 @@ paged API, and returns the correlated `ReceiveInterfacePage` plus RTT.
 Stale callbacks, missing leases, denied requests, and native connection or
 exchange failures are ordinary flat outputs. Native failures retain their
 upstream types. Wrong-device routing, an unexpected resolved identity, and a
-stopped connection worker are fitting invariant errors. The future switchboard
-owns mapping operational failures into core disconnection/refresh reasons.
+stopped connection worker are fitting invariant errors. The session switchboard
+settles operational failures into core state while retaining the native diagnostic.
 The fitting trusts supplied core intents; the driver must synchronize the
 registry and per-device inventory owner before dispatch and callback handling.
 
@@ -320,6 +320,75 @@ Tokio/PRNS graph; the isolated label proof remains the bounded formal lane.
 The fitting's `behavior.rs` inventories its compiled behavior tests. Architecture
 snapshots remain with the core state machines, where Pipecircuit visualization
 provides source-derived visual expectations.
+
+## Device session routing
+
+`prns/src/switchboards/device_session` composes the existing registry and
+per-device inventory machines through `DeviceSessionSwitchboard::<CAPACITY>`.
+Create it once for a device in its originating registry, alongside that device's
+PRNS fitting. Its only temporal state is the existing `DeviceInterfaces` owner;
+registry and inventory operations still go through their exact core steps.
+The board keeps a compiled-test-derived `behavior.rs` inventory.
+
+Call `Switchboard::route` with `DeviceSessionInput { registry, message }`.
+Messages are `Connect`, `Refresh`, `Disconnect`, `Inspect`, and a completed
+`PrnsDeviceOut`. The registry borrow ends with that synchronous call. The owned
+route contains an event, a device/inventory snapshot, two optional commands,
+and two optional cancelled inventory tokens. It allocates no transport queue.
+Protocol messages keep bounded native outputs inline, with a local Clippy size
+expectation, rather than allocating a box per callback.
+
+The runtime must process cancellations before dispatch and send commands in
+array order. Each PRNS command goes through the fitting; feed its ordinary
+completion back as a `Prns` message and handle the resulting route in the same
+way. Preserve events and native diagnostics even when a route also emits work.
+An invariant error from either routing or the fitting requires explicit driver
+recovery and cleanup; it is not a normal device refusal. Commands are scoped to
+this device, registry lifetime, and fitting. Do not dispatch a command that was
+superseded by a later user intent; remove matching queued inventory work when
+its cancellation token is returned. Physical work stays outside the switchboard.
+
+Connect success confirms the registry and schedules the first inventory page.
+A continuation schedules the next page; only a complete inventory is published.
+Duplicate connection requests do not start a second link. Refresh preserves
+last complete data and refuses overlap. Disconnect settles the registry first,
+invalidates inventory, and emits a correlated close. An obsolete success emits
+a close for its old token; if registry synchronization discovers a newer session,
+its initial inventory command follows that cleanup. The fitting's token checks
+prevent an old close from tearing down the newer physical link.
+
+Every route synchronizes inventory before callbacks and again after registry
+changes. Returned snapshots therefore reflect that route's settled core state.
+`Inspect` can schedule initial inventory when it first observes a connection
+confirmed outside this board; it must be routed through the runtime, rather
+than called repeatedly inside a rendering function. The two cancellation slots
+cover removal before and after a route; a newly created request cancelled in the
+same route is suppressed from dispatch. An initial request already fulfilled by
+that callback is likewise not sent again.
+
+Connection failures record the general `DisconnectionReason::ConnectionFailed`;
+request failures record `InterfaceRefreshFailure::RequestFailed`. Their route
+events retain the exact PRNS error and core settlement outcome. These fallback
+reasons avoid labelling a busy service or rejected request as a lost transport.
+A fitting with no matching physical link ends only the corresponding registry
+connection. A busy fitting settles the rejected attempt and closes an obsolete
+lease, preserving one still owned by the registry. Foreign-device callbacks are
+invariant failures checked before either device's state can change.
+
+Deterministic tests cover dispatch order, duplicate requests, stale callbacks,
+forgetting, explicit disconnect, failed refreshes, malformed pages, and bounded
+inventory overflow. Property tests drive arbitrary connect/refresh/disconnect/
+inspect histories through the real fitting with a controlled backend, compare
+physical calls with an independent ownership model, and replay retired callbacks
+while checking another device remains unchanged. The native two-node test now
+uses this same switchboard to connect, fetch inventory, and disconnect. The
+PRNS/Tokio graph still makes proptest the practical stateful verification lane;
+the existing bounded Kani label proof remains unchanged.
+
+A process-wide event loop, USB Auto attachment, identity persistence, enrollment,
+automatic reconnect, GUI events, and shutdown settlement remain runtime
+integration work. No physical USB qualification is
+claimed by the localhost test.
 
 ## Verification
 

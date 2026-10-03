@@ -24,6 +24,7 @@ impl Connection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisconnectionReason {
     Cancelled,
+    ConnectionFailed,
     TimedOut,
     TransportLost,
     AuthenticationFailed,
