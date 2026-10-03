@@ -31,13 +31,15 @@ pub enum BeginConnectionOutcome {
         connection: Connection,
         link: LinkId,
     },
-    IdentifiersExhausted {
-        device: DeviceId,
-    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum BeginConnectionError {
+    IdentifiersExhausted { device: DeviceId },
 }
 
 impl StepInputOf<DeviceRegistry> for BeginConnection {
-    type Outcome = BeginConnectionOutcome;
+    type Outcome = Result<BeginConnectionOutcome, BeginConnectionError>;
 
     fn step(self, registry: &mut DeviceRegistry) -> Self::Outcome {
         match registry
@@ -46,18 +48,18 @@ impl StepInputOf<DeviceRegistry> for BeginConnection {
                 let target = match row.enrollment() {
                     EnrollmentState::Paired { target } => *target,
                     EnrollmentState::Planned | EnrollmentState::Pairing { .. } => {
-                        return BeginConnectionOutcome::NotPaired {
+                        return Ok(BeginConnectionOutcome::NotPaired {
                             device: self.device,
-                        };
+                        });
                     }
                 };
                 row.connection_mut()
                     .begin(self.device, target, &mut registry.next_connection)
             }) {
             WarpTableUpdateOutcome::Updated { output, .. } => output,
-            WarpTableUpdateOutcome::Absent { .. } => BeginConnectionOutcome::MissingDevice {
+            WarpTableUpdateOutcome::Absent { .. } => Ok(BeginConnectionOutcome::MissingDevice {
                 device: self.device,
-            },
+            }),
         }
     }
 }
@@ -68,23 +70,23 @@ impl ConnectionState {
         device: DeviceId,
         target: IdentityPublicKeys,
         next: &mut Option<NonZeroU64>,
-    ) -> BeginConnectionOutcome {
+    ) -> Result<BeginConnectionOutcome, BeginConnectionError> {
         match self {
             Self::Connecting { connection } => {
-                return BeginConnectionOutcome::AlreadyConnecting {
+                return Ok(BeginConnectionOutcome::AlreadyConnecting {
                     connection: *connection,
-                };
+                });
             }
             Self::Connected { connection, link } => {
-                return BeginConnectionOutcome::AlreadyConnected {
+                return Ok(BeginConnectionOutcome::AlreadyConnected {
                     connection: *connection,
                     link: *link,
-                };
+                });
             }
             Self::NotConnected | Self::Disconnected { .. } => {}
         }
         let Some(generation) = *next else {
-            return BeginConnectionOutcome::IdentifiersExhausted { device };
+            return Err(BeginConnectionError::IdentifiersExhausted { device });
         };
         let connection = Connection {
             device,
@@ -93,6 +95,6 @@ impl ConnectionState {
         };
         *next = generation.checked_add(1);
         *self = Self::Connecting { connection };
-        BeginConnectionOutcome::Connect { connection }
+        Ok(BeginConnectionOutcome::Connect { connection })
     }
 }

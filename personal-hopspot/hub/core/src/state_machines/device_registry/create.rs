@@ -20,13 +20,15 @@ pub enum CreateDeviceOutcome {
         rejected: CreateDevice,
         maximum_devices: NonZeroU32,
     },
-    IdentifiersExhausted {
-        rejected: CreateDevice,
-    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum CreateDeviceError {
+    IdentifiersExhausted { rejected: CreateDevice },
 }
 
 impl StepInputOf<DeviceRegistry> for CreateDevice {
-    type Outcome = CreateDeviceOutcome;
+    type Outcome = Result<CreateDeviceOutcome, CreateDeviceError>;
 
     fn step(self, registry: &mut DeviceRegistry) -> Self::Outcome {
         let outcome = registry.devices.insert(DeviceRecord {
@@ -39,26 +41,27 @@ impl StepInputOf<DeviceRegistry> for CreateDevice {
 }
 
 impl DeviceRegistry {
+    #[expect(clippy::result_large_err)]
     pub(super) fn created(
         &self,
         outcome: WarpTableInsertOutcome<WarpId<DeviceRecord>, DeviceRecord>,
-    ) -> CreateDeviceOutcome {
+    ) -> Result<CreateDeviceOutcome, CreateDeviceError> {
         match outcome {
-            WarpTableInsertOutcome::Inserted { id, .. } => CreateDeviceOutcome::Created {
+            WarpTableInsertOutcome::Inserted { id, .. } => Ok(CreateDeviceOutcome::Created {
                 device: DeviceId(id.value()),
-            },
-            WarpTableInsertOutcome::Full { rejected } => CreateDeviceOutcome::AtCapacity {
+            }),
+            WarpTableInsertOutcome::Full { rejected } => Ok(CreateDeviceOutcome::AtCapacity {
                 rejected: CreateDevice {
                     label: rejected.label,
                 },
                 maximum_devices: self.devices.capacity().value(),
-            },
+            }),
             WarpTableInsertOutcome::IdentifiersExhausted { rejected } => {
-                CreateDeviceOutcome::IdentifiersExhausted {
+                Err(CreateDeviceError::IdentifiersExhausted {
                     rejected: CreateDevice {
                         label: rejected.label,
                     },
-                }
+                })
             }
             WarpTableInsertOutcome::UniqueConflict { conflict, .. } => match conflict {},
         }

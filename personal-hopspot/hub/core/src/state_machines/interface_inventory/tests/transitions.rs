@@ -23,7 +23,7 @@ fn wire_pages_publish_only_complete_inventory_for_the_connected_device() {
     );
     assert_eq!(
         inventory.step(RefreshInterfaces),
-        RefreshInterfacesOutcome::Busy { pending: first }
+        Ok(RefreshInterfacesOutcome::Busy { pending: first })
     );
     let ReceiveInterfacePageOutcome::More { request: second } =
         inventory.step(wire_roundtrip(receive(first, &[1, 2], more(2))))
@@ -96,7 +96,7 @@ fn failed_refreshes_preserve_last_complete_data_and_reject_old_responses() {
         };
         assert_eq!(
             inventory.step(RefreshInterfaces),
-            RefreshInterfacesOutcome::Busy { pending: request }
+            Ok(RefreshInterfacesOutcome::Busy { pending: request })
         );
         assert_eq!(
             inventory.step(fail(first, reason)),
@@ -262,7 +262,7 @@ fn closing_cancels_pending_work_erases_data_and_rejects_reuse() {
     );
     assert_eq!(
         inventory.step(RefreshInterfaces),
-        RefreshInterfacesOutcome::Closed
+        Ok(RefreshInterfacesOutcome::Closed)
     );
     assert_eq!(
         inventory.step(receive(pending, &[2], Complete)),
@@ -270,9 +270,9 @@ fn closing_cancels_pending_work_erases_data_and_rejects_reuse() {
             rejected: receive(pending, &[2], Complete)
         }
     );
-    let BeginConnectionOutcome::Connect {
+    let Ok(BeginConnectionOutcome::Connect {
         connection: new_connection,
-    } = registry.step(BeginConnection {
+    }) = registry.step(BeginConnection {
         device: connection.device(),
     })
     else {
@@ -322,7 +322,7 @@ fn refresh_generations_exhaust_without_wrapping_or_losing_published_data() {
     let previous = inventory.step(ReadInterfaces);
     assert_eq!(
         inventory.step(RefreshInterfaces),
-        RefreshInterfacesOutcome::IdentifiersExhausted
+        Err(RefreshInterfacesError::IdentifiersExhausted)
     );
     assert_eq!(inventory.step(ReadInterfaces), previous);
 }

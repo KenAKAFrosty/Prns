@@ -19,13 +19,14 @@ use pipecircuit::storage::warp_table::{Capacity, WarpTable, WarpTableCreationErr
 
 use crate::domain_primitives::DeviceLabel;
 pub use connection::{
-    BeginConnection, BeginConnectionOutcome, ConfirmConnection, ConfirmConnectionOutcome,
-    EndConnection, EndConnectionOutcome,
+    BeginConnection, BeginConnectionError, BeginConnectionOutcome, ConfirmConnection,
+    ConfirmConnectionOutcome, EndConnection, EndConnectionOutcome,
 };
-pub use create::{CreateDevice, CreateDeviceOutcome};
+pub use create::{CreateDevice, CreateDeviceError, CreateDeviceOutcome};
 pub use enrollment::{
-    BeginEnrollment, BeginEnrollmentOutcome, CancelEnrollment, CancelEnrollmentOutcome,
-    CompleteEnrollment, CompleteEnrollmentOutcome, FailEnrollment, FailEnrollmentOutcome,
+    BeginEnrollment, BeginEnrollmentError, BeginEnrollmentOutcome, CancelEnrollment,
+    CancelEnrollmentOutcome, CompleteEnrollment, CompleteEnrollmentOutcome, FailEnrollment,
+    FailEnrollmentOutcome,
 };
 pub use forget::{ForgetDevice, ForgetDeviceOutcome};
 pub use query::{ListDevices, ListDevicesOutcome, ReadDevice, ReadDeviceOutcome};

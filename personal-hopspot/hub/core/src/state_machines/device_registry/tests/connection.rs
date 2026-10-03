@@ -15,7 +15,7 @@ fn paired(registry: &mut DeviceRegistry, seed: u8) -> DeviceId {
 
 fn connect(registry: &mut DeviceRegistry, device: DeviceId) -> Connection {
     let outcome = registry.step(BeginConnection { device });
-    let BeginConnectionOutcome::Connect { connection } = outcome else {
+    let Ok(BeginConnectionOutcome::Connect { connection }) = outcome else {
         panic!("unexpected connection: {outcome:?}");
     };
     connection
@@ -39,12 +39,12 @@ fn only_paired_devices_connect_and_confirmation_binds_the_expected_target() {
     let device = create(&mut registry, "New");
     assert_eq!(
         registry.step(BeginConnection { device }),
-        BeginConnectionOutcome::NotPaired { device }
+        Ok(BeginConnectionOutcome::NotPaired { device })
     );
     let enrollment = begin(&mut registry, device, 1);
     assert_eq!(
         registry.step(BeginConnection { device }),
-        BeginConnectionOutcome::NotPaired { device }
+        Ok(BeginConnectionOutcome::NotPaired { device })
     );
     assert_eq!(
         read(&mut registry, device).connection,
@@ -59,7 +59,7 @@ fn only_paired_devices_connect_and_confirmation_binds_the_expected_target() {
     assert_eq!(connection.target(), target(1));
     assert_eq!(
         registry.step(BeginConnection { device }),
-        BeginConnectionOutcome::AlreadyConnecting { connection }
+        Ok(BeginConnectionOutcome::AlreadyConnecting { connection })
     );
     assert_eq!(
         registry.step(confirmation(connection, 2)),
@@ -80,10 +80,10 @@ fn only_paired_devices_connect_and_confirmation_binds_the_expected_target() {
     );
     assert_eq!(
         registry.step(BeginConnection { device }),
-        BeginConnectionOutcome::AlreadyConnected {
+        Ok(BeginConnectionOutcome::AlreadyConnected {
             connection,
             link: LinkId::new([1; 16])
-        }
+        })
     );
     assert_eq!(
         registry.step(confirmation(connection, 2)),
@@ -233,7 +233,7 @@ fn forgetting_returns_pending_or_live_connection_and_invalidates_late_results() 
         let replacement = paired(&mut registry, 2);
         assert_eq!(
             registry.step(BeginConnection { device }),
-            BeginConnectionOutcome::MissingDevice { device }
+            Ok(BeginConnectionOutcome::MissingDevice { device })
         );
         assert_eq!(
             registry.step(confirmation(connection, 1)),
@@ -284,7 +284,7 @@ fn connection_generations_exhaust_without_wrapping_or_disturbing_other_devices()
     );
     assert_eq!(
         registry.step(BeginConnection { device: second }),
-        BeginConnectionOutcome::IdentifiersExhausted { device: second }
+        Err(BeginConnectionError::IdentifiersExhausted { device: second })
     );
     assert_eq!(
         read(&mut registry, second).connection,

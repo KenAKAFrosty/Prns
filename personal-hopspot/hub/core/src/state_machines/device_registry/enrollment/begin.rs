@@ -29,13 +29,15 @@ pub enum BeginEnrollmentOutcome {
     AlreadyPaired {
         rejected: BeginEnrollment,
     },
-    IdentifiersExhausted {
-        rejected: BeginEnrollment,
-    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum BeginEnrollmentError {
+    IdentifiersExhausted { rejected: BeginEnrollment },
 }
 
 impl StepInputOf<DeviceRegistry> for BeginEnrollment {
-    type Outcome = BeginEnrollmentOutcome;
+    type Outcome = Result<BeginEnrollmentOutcome, BeginEnrollmentError>;
 
     fn step(self, registry: &mut DeviceRegistry) -> Self::Outcome {
         match registry
@@ -47,7 +49,7 @@ impl StepInputOf<DeviceRegistry> for BeginEnrollment {
             WarpTableUpdateWithOutcome::Updated { output, .. } => output,
             WarpTableUpdateWithOutcome::Absent {
                 context: rejected, ..
-            } => BeginEnrollmentOutcome::MissingDevice { rejected },
+            } => Ok(BeginEnrollmentOutcome::MissingDevice { rejected }),
         }
     }
 }
@@ -57,21 +59,21 @@ impl EnrollmentState {
         &mut self,
         input: BeginEnrollment,
         next: &mut Option<NonZeroU64>,
-    ) -> BeginEnrollmentOutcome {
+    ) -> Result<BeginEnrollmentOutcome, BeginEnrollmentError> {
         match self {
             Self::Planned => {}
             Self::Pairing { enrollment, .. } => {
-                return BeginEnrollmentOutcome::AlreadyPairing {
+                return Ok(BeginEnrollmentOutcome::AlreadyPairing {
                     rejected: input,
                     active: *enrollment,
-                };
+                });
             }
             Self::Paired { .. } => {
-                return BeginEnrollmentOutcome::AlreadyPaired { rejected: input };
+                return Ok(BeginEnrollmentOutcome::AlreadyPaired { rejected: input });
             }
         }
         let Some(generation) = *next else {
-            return BeginEnrollmentOutcome::IdentifiersExhausted { rejected: input };
+            return Err(BeginEnrollmentError::IdentifiersExhausted { rejected: input });
         };
         let enrollment = Enrollment {
             device: input.device,
@@ -83,6 +85,6 @@ impl EnrollmentState {
             target: *input.target.public_keys(),
         };
         *next = generation.checked_add(1);
-        BeginEnrollmentOutcome::Started { enrollment }
+        Ok(BeginEnrollmentOutcome::Started { enrollment })
     }
 }

@@ -51,10 +51,10 @@ proptest! {
                 model.insert(id.0.get(), (id, name));
             } else {
                 let label = DeviceLabel::new(&name).unwrap();
-                prop_assert_eq!(registry.step(CreateDevice { label: label.clone() }), CreateDeviceOutcome::AtCapacity {
+                prop_assert_eq!(registry.step(CreateDevice { label: label.clone() }), Ok(CreateDeviceOutcome::AtCapacity {
                     rejected: CreateDevice { label },
                     maximum_devices: NonZeroU32::new(4).unwrap(),
-                });
+                }));
             }
             let listed = list::<4>(&mut registry);
             prop_assert_eq!(listed.len(), model.len());

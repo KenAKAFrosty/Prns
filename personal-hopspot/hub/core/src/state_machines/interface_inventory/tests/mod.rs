@@ -29,12 +29,12 @@ fn connected(seed: u8) -> (DeviceRegistry, Connection) {
         signing: IdentitySigningPublicKey::new(Ed25519PublicKey([seed; 32])),
     };
     let mut registry = DeviceRegistry::try_new(NonZeroU32::MIN).unwrap();
-    let CreateDeviceOutcome::Created { device } = registry.step(CreateDevice {
+    let Ok(CreateDeviceOutcome::Created { device }) = registry.step(CreateDevice {
         label: DeviceLabel::new("MCU").unwrap(),
     }) else {
         panic!("creation refused");
     };
-    let BeginEnrollmentOutcome::Started { enrollment } = registry.step(BeginEnrollment {
+    let Ok(BeginEnrollmentOutcome::Started { enrollment }) = registry.step(BeginEnrollment {
         device,
         target: RemoteControlTargetIdentity::new(target),
         attempt: RemoteControlPairingAttemptId::from_test_transcript_digest_bytes([seed; 32]),
@@ -48,7 +48,8 @@ fn connected(seed: u8) -> (DeviceRegistry, Connection) {
         }),
         CompleteEnrollmentOutcome::Recorded { enrollment }
     );
-    let BeginConnectionOutcome::Connect { connection } = registry.step(BeginConnection { device })
+    let Ok(BeginConnectionOutcome::Connect { connection }) =
+        registry.step(BeginConnection { device })
     else {
         panic!("connection refused");
     };
@@ -104,7 +105,8 @@ fn receive(
 }
 
 fn refresh<const N: usize>(inventory: &mut InterfaceInventory<N>) -> InterfacePageRequest {
-    let RefreshInterfacesOutcome::Requested { request } = inventory.step(RefreshInterfaces) else {
+    let Ok(RefreshInterfacesOutcome::Requested { request }) = inventory.step(RefreshInterfaces)
+    else {
         panic!("refresh refused");
     };
     request

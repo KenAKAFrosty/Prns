@@ -15,6 +15,13 @@ and exact outcome. Constructors and private helpers may remain methods. Do not
 add comments, including doc comments. Put necessary prose in owning Markdown
 documentation and express contracts through names, types, and tests.
 
+Machine steps return `Result<Outcome, Error>` only when they can encounter an
+invariant failure, such as exhausted identifiers or an invalid clock sequence.
+Keep ordinary domain outcomes flat inside `Ok` and reserve `Err` for those
+invariant failures. Steps without such failures return their outcome directly.
+Capacity limits, missing records, stale callbacks, and peer-response failures
+are ordinary outcomes. Keep each step's error type precise and owned locally.
+
 Before presenting each candidate, run the verification commands in `README.md`.
 Reuse Pipecircuit's Cargo aliases and mutation configuration; do not add custom
 verification runners. Require 100% LLVM production-source function, line, and

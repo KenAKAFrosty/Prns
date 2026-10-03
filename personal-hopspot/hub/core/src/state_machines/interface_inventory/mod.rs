@@ -15,7 +15,7 @@ use pipecircuit::StateMachine;
 use prns_core::remote_control::RemoteControlInterfaceEntry;
 
 pub use receive::{ReceiveInterfacePage, ReceiveInterfacePageOutcome};
-pub use refresh::{RefreshInterfaces, RefreshInterfacesOutcome};
+pub use refresh::{RefreshInterfaces, RefreshInterfacesError, RefreshInterfacesOutcome};
 pub use settlement::{
     CloseInterfaceInventory, CloseInterfaceInventoryOutcome, InterfaceRefreshFailed,
     InterfaceRefreshFailedOutcome,

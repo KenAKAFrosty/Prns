@@ -27,11 +27,15 @@ fn architecture_remains_reviewable() -> Result<(), ArchitectureError> {
         │       ├── OutOfOrder
         │       └── CapacityExceeded
         └── ▸ RefreshInterfaces
-            └── ◆ RefreshInterfacesOutcome
-                ├── Requested
-                ├── Busy
-                ├── Closed
-                └── IdentifiersExhausted
+            └── ◆ Result
+                ├── Ok
+                │   └── RefreshInterfacesOutcome
+                │       ├── Requested
+                │       ├── Busy
+                │       └── Closed
+                └── Err
+                    └── RefreshInterfacesError
+                        └── IdentifiersExhausted
     "#]]
     .assert_eq(&inventory.render(DiagramTarget::TextTree));
     Ok(())

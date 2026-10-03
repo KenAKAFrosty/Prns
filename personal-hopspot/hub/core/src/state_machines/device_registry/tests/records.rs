@@ -11,10 +11,10 @@ fn bounded_records_support_duplicate_labels_and_stable_ids_after_removal() {
         registry.step(CreateDevice {
             label: label.clone()
         }),
-        CreateDeviceOutcome::AtCapacity {
+        Ok(CreateDeviceOutcome::AtCapacity {
             rejected: CreateDevice { label },
             maximum_devices: NonZeroU32::new(2).unwrap(),
-        }
+        })
     );
     assert_eq!(
         registry.step(ForgetDevice { device: first }),
@@ -121,9 +121,9 @@ fn exhausted_storage_returns_the_unmodified_rejected_label() {
     });
     assert_eq!(
         outcome,
-        CreateDeviceOutcome::IdentifiersExhausted {
+        Err(CreateDeviceError::IdentifiersExhausted {
             rejected: CreateDevice { label }
-        }
+        })
     );
     assert!(list::<0>(&mut registry).is_empty());
 }

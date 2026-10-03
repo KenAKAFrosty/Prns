@@ -10,20 +10,28 @@ fn architecture_remains_reviewable() -> Result<(), ArchitectureError> {
 
         ● DeviceRegistry
         ├── ▸ BeginConnection
-        │   └── ◆ BeginConnectionOutcome
-        │       ├── Connect
-        │       ├── MissingDevice
-        │       ├── NotPaired
-        │       ├── AlreadyConnecting
-        │       ├── AlreadyConnected
-        │       └── IdentifiersExhausted
+        │   └── ◆ Result
+        │       ├── Ok
+        │       │   └── BeginConnectionOutcome
+        │       │       ├── Connect
+        │       │       ├── MissingDevice
+        │       │       ├── NotPaired
+        │       │       ├── AlreadyConnecting
+        │       │       └── AlreadyConnected
+        │       └── Err
+        │           └── BeginConnectionError
+        │               └── IdentifiersExhausted
         ├── ▸ BeginEnrollment
-        │   └── ◆ BeginEnrollmentOutcome
-        │       ├── Started
-        │       ├── MissingDevice
-        │       ├── AlreadyPairing
-        │       ├── AlreadyPaired
-        │       └── IdentifiersExhausted
+        │   └── ◆ Result
+        │       ├── Ok
+        │       │   └── BeginEnrollmentOutcome
+        │       │       ├── Started
+        │       │       ├── MissingDevice
+        │       │       ├── AlreadyPairing
+        │       │       └── AlreadyPaired
+        │       └── Err
+        │           └── BeginEnrollmentError
+        │               └── IdentifiersExhausted
         ├── ▸ CancelEnrollment
         │   └── ◆ CancelEnrollmentOutcome
         │       ├── Cancelled
@@ -43,10 +51,14 @@ fn architecture_remains_reviewable() -> Result<(), ArchitectureError> {
         │       ├── StaleConnection
         │       └── TargetMismatch
         ├── ▸ CreateDevice
-        │   └── ◆ CreateDeviceOutcome
-        │       ├── Created
-        │       ├── AtCapacity
-        │       └── IdentifiersExhausted
+        │   └── ◆ Result
+        │       ├── Ok
+        │       │   └── CreateDeviceOutcome
+        │       │       ├── Created
+        │       │       └── AtCapacity
+        │       └── Err
+        │           └── CreateDeviceError
+        │               └── IdentifiersExhausted
         ├── ▸ EndConnection
         │   └── ◆ EndConnectionOutcome
         │       ├── AttemptEnded

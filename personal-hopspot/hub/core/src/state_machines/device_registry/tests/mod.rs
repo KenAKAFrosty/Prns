@@ -31,7 +31,7 @@ fn create(registry: &mut DeviceRegistry, name: &str) -> DeviceId {
     let outcome = registry.step(CreateDevice {
         label: DeviceLabel::new(name).unwrap(),
     });
-    let CreateDeviceOutcome::Created { device } = outcome else {
+    let Ok(CreateDeviceOutcome::Created { device }) = outcome else {
         panic!("unexpected creation: {outcome:?}");
     };
     device
@@ -63,7 +63,7 @@ fn begin_input(device: DeviceId, seed: u8) -> BeginEnrollment {
 
 fn begin(registry: &mut DeviceRegistry, device: DeviceId, seed: u8) -> Enrollment {
     let outcome = registry.step(begin_input(device, seed));
-    let BeginEnrollmentOutcome::Started { enrollment } = outcome else {
+    let Ok(BeginEnrollmentOutcome::Started { enrollment }) = outcome else {
         panic!("unexpected enrollment: {outcome:?}");
     };
     enrollment

@@ -42,9 +42,9 @@ fn two_devices_pair_independently_and_reject_replacement() {
     );
     assert_eq!(
         registry.step(begin_input(first, 2)),
-        BeginEnrollmentOutcome::AlreadyPaired {
+        Ok(BeginEnrollmentOutcome::AlreadyPaired {
             rejected: begin_input(first, 2)
-        }
+        })
     );
     assert_eq!(
         registry.step(CancelEnrollment {
@@ -91,10 +91,10 @@ fn cancellation_and_failure_preserve_reasons_and_reject_old_generations() {
     let old = begin(&mut registry, device, 1);
     assert_eq!(
         registry.step(begin_input(device, 1)),
-        BeginEnrollmentOutcome::AlreadyPairing {
+        Ok(BeginEnrollmentOutcome::AlreadyPairing {
             rejected: begin_input(device, 1),
             active: old
-        }
+        })
     );
     assert_eq!(
         registry.step(CancelEnrollment { enrollment: old }),
@@ -243,9 +243,9 @@ fn forgetting_invalidates_every_enrollment_step_even_after_row_reuse() {
     );
     assert_eq!(
         registry.step(begin_input(old, 1)),
-        BeginEnrollmentOutcome::MissingDevice {
+        Ok(BeginEnrollmentOutcome::MissingDevice {
             rejected: begin_input(old, 1)
-        }
+        })
     );
     assert_eq!(
         registry.step(CancelEnrollment { enrollment }),
@@ -281,9 +281,9 @@ fn enrollment_generations_exhaust_without_wrapping_or_changing_state() {
     );
     assert_eq!(
         registry.step(begin_input(device, 1)),
-        BeginEnrollmentOutcome::IdentifiersExhausted {
+        Err(BeginEnrollmentError::IdentifiersExhausted {
             rejected: begin_input(device, 1)
-        }
+        })
     );
     assert_eq!(
         read(&mut registry, device).enrollment,

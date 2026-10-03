@@ -3,7 +3,7 @@ mod cancel;
 mod complete;
 mod fail;
 
-pub use begin::{BeginEnrollment, BeginEnrollmentOutcome};
+pub use begin::{BeginEnrollment, BeginEnrollmentError, BeginEnrollmentOutcome};
 pub use cancel::{CancelEnrollment, CancelEnrollmentOutcome};
 pub use complete::{CompleteEnrollment, CompleteEnrollmentOutcome};
 pub use fail::{FailEnrollment, FailEnrollmentOutcome};

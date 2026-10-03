@@ -8,17 +8,33 @@ uncommitted until approved.
 ## Core organization
 
 `core/src/domain_primitives` owns validated labels, device identifiers, and
-enrollment, connection, and interface request correlation values. It has no dependency on state
+enrollment, connection, interface request correlation values, and pairing candidate provenance. It has no dependency on state
 machines.
 `core/src/state_machines/device_registry` owns the registry's temporal state,
 input/output protocol, transitions, and behavioral tests. Primitive validation
 tests live with their primitive. Modules remain private behind the curated
 exports in `lib.rs`. The `state_machines/interface_inventory` owner collects
 interface pages for one connection and publishes complete results.
+`state_machines/usb_pairing_discovery` owns the bounded set of USB pairing
+candidates and its explicit clock.
 
 New core work follows these ownership lanes. Add circuitry only when there are
 concrete participants to compose. The standalone workspace owns the Rust and
 Clippy baseline, and the core explicitly inherits it through `lints.workspace`.
+
+Machine steps use `Result<Outcome, Error>` only for invariant failure paths.
+Their ordinary outcomes remain flat inside `Ok`; steps with no invariant
+failure path return their outcome directly. In particular, configured capacity
+limits, missing records, stale callbacks, and peer-response failures are domain
+outcomes, not invariant errors.
+
+`CreateDevice`, `BeginEnrollment`, `BeginConnection`, and `RefreshInterfaces`
+return step-specific errors for exhausted identifiers. `AdvanceUsbPairingDiscovery`
+returns an error for backward time, and `ObserveUsbPairingAvailability` returns
+an error when the observation is ahead of the discovery clock. These errors
+preserve existing state and retain the rejected input or device context where
+the operation previously returned it. Architecture snapshots show the `Ok` and
+`Err` branches separately.
 
 ## Device registry
 
@@ -37,6 +53,8 @@ belong to the later integration slice.
 `ReadDevice` returns an owned `DeviceSnapshot` that survives subsequent changes.
 Read and forget outcomes keep bounded state inline, with local Clippy
 expectations for variant size differences, to avoid allocating on these steps.
+The creation error likewise preserves the rejected bounded label inline, with a
+local `result_large_err` expectation so exhaustion requires no new allocation.
 `ListDevices::<CAPACITY>` returns IDs in a stack-backed bounded vector, or
 `InsufficientCapacity` with the required count. It never returns a partial list.
 List order follows table storage and is not a sorting contract. Ordinary steps
@@ -133,6 +151,54 @@ reuse. A stale-page outcome returns the rejected page to its caller.
 Network dispatch, timed polling, interface names/configuration, live watches,
 and interface power changes remain follow-up work.
 
+## USB pairing discovery
+
+USB Auto is the first live transport target. PRNS already owns USB scanning,
+handshaking, lanes, and reconnects through
+[`UsbAutoHost`](../../prns-interfaces/impls/tokio/src/usb_auto/mod.rs) and its
+[native attachment](../../prns-interfaces/impls/tokio/src/usb_auto/host.rs).
+The existing [desktop runtime](../desktop/src/desktop/runtime.rs) demonstrates
+that attachment. Hub does not introduce another serial protocol.
+
+`UsbPairingDiscovery::<CAPACITY>::new(interface, now)` requires the actual USB
+Auto interface ID and the runtime's monotonic time. Its five operations are
+`ObserveUsbPairingAvailability`, `AdvanceUsbPairingDiscovery`,
+`ReadUsbPairingCandidates`, `SelectUsbPairingCandidate`, and
+`ClearUsbPairingCandidates`. All use `StateMachine::step`.
+
+Observation accepts PRNS's `RemoteControlPairingAvailabilityObservation`, which
+the engine emits after signature verification and direct-hop admission. Hub
+admits only observations from the configured USB interface. It rejects arrivals
+later than its clock, already expired observations, and older or equal-time
+updates for the same endpoint. Newer observations replace that endpoint's
+provenance and expiry, even when the list is full. Other endpoints are refused
+when capacity is reached; no existing candidate is evicted.
+
+The runtime must advance discovery to its current time before processing an
+observation, rendering a list, or handling selection. Advancement expires
+candidates at their deadline and refuses backward time. Snapshots include
+`as_of` so their freshness is explicit. Owned snapshots survive later updates
+and clearing. Clearing removes the list without changing its clock or interface;
+the runtime must stop or drain old events when resetting the discovery session.
+
+Selection rechecks membership and returns the current candidate, preserving its
+endpoint, source interface, observation time, and expiry. It does not consume
+the candidate, record enrollment, reserve an attempt, or send a packet. The
+future circuit will handle this explicit user intent and the registry's attempt
+lifecycle. Availability alone never initiates pairing. Presence in this list
+means pairing was advertised within its lifetime; it does not guarantee the
+device is still plugged in or that pairing will succeed.
+
+The pairing endpoint is ephemeral and is not the remembered authenticated
+target identity. Raw USB locators and announcement app data are not interpreted
+as device identity or labels. Existing PRNS pairing requires an invitation code;
+the planned code-free headless enrollment requires separate protocol work.
+
+This slice implements the deterministic discovery owner. Attaching USB Auto to
+a Hub runtime, routing its events, identity persistence, pairing initiation,
+authenticated connection, and automatic inventory dispatch remain integration
+work. It has not opened a physical USB device.
+
 ## Verification
 
 From this directory, run:
@@ -197,6 +263,12 @@ Interface inventory properties vary sorted interface sets and page boundaries,
 roundtrip real PRNS request/response bytes, and compare the complete published
 result with the original entries. Deterministic tests cover invalid ordering,
 overflow, failure recovery, exhaustion, and reconnect invalidation.
+USB discovery fixtures construct signed availability packets, run PRNS's
+ingress and deferred signature verification, and feed genuine observations to
+the machine. Its property test compares arbitrary arrival, expiry, selection,
+and clear histories with an independent bounded model. The same PRNS dependency
+restriction makes property tests the practical lane for this machine; no new
+Kani result is claimed for discovery.
 The isolated proof package avoids an existing `prns-core` Kani
 compilation failure in its request-set proof (a `u32` shift by 32); the main core
 crate's Kani lane is not claimed to pass.
@@ -206,7 +278,8 @@ qualified by these core checks.
 
 ## Next boundaries
 
-Discovery requires user selection before pairing. Remembered devices will
+USB discovery now exposes an explicit selection step; runtime pairing dispatch
+still requires that user intent. Remembered devices will
 reconnect automatically without replaying configuration commands. Headless
 first enrollment will use an unowned boot window, direct-only admission,
 code-free automatic approval, and owner authority. Network-driven interface
