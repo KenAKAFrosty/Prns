@@ -2,6 +2,7 @@
 mod architecture;
 #[cfg(test)]
 mod behavior;
+mod connection;
 mod create;
 mod enrollment;
 mod forget;
@@ -17,6 +18,10 @@ use pipecircuit::StateMachine;
 use pipecircuit::storage::warp_table::{Capacity, WarpTable, WarpTableCreationError, WarpTableRow};
 
 use crate::domain_primitives::DeviceLabel;
+pub use connection::{
+    BeginConnection, BeginConnectionOutcome, ConfirmConnection, ConfirmConnectionOutcome,
+    EndConnection, EndConnectionOutcome,
+};
 pub use create::{CreateDevice, CreateDeviceOutcome};
 pub use enrollment::{
     BeginEnrollment, BeginEnrollmentOutcome, CancelEnrollment, CancelEnrollmentOutcome,
@@ -25,12 +30,13 @@ pub use enrollment::{
 pub use forget::{ForgetDevice, ForgetDeviceOutcome};
 pub use query::{ListDevices, ListDevicesOutcome, ReadDevice, ReadDeviceOutcome};
 pub use rename::{RenameDevice, RenameDeviceOutcome};
-pub use state::{DeviceSnapshot, EnrollmentState};
+pub use state::{ConnectionState, DeviceSnapshot, EnrollmentState};
 
 #[derive(WarpTableRow)]
 struct DeviceRecord {
     label: DeviceLabel,
     enrollment: EnrollmentState,
+    connection: ConnectionState,
 }
 
 type StorageCreationError = WarpTableCreationError<
@@ -56,6 +62,7 @@ impl DeviceRegistryCreationError {
 pub struct DeviceRegistry {
     devices: WarpTable<DeviceRecord>,
     next_enrollment: Option<NonZeroU64>,
+    next_connection: Option<NonZeroU64>,
 }
 
 impl DeviceRegistry {
@@ -64,6 +71,7 @@ impl DeviceRegistry {
             .map(|devices| Self {
                 devices,
                 next_enrollment: Some(NonZeroU64::MIN),
+                next_connection: Some(NonZeroU64::MIN),
             })
             .map_err(DeviceRegistryCreationError::from_storage)
     }

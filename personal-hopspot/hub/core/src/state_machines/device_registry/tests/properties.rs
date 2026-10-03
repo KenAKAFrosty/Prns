@@ -42,7 +42,7 @@ proptest! {
         for (remove, name) in actions {
             if remove && !model.is_empty() {
                 let (&key, &(id, _)) = model.first_key_value().unwrap();
-                prop_assert_eq!(registry.step(ForgetDevice { device: id }), ForgetDeviceOutcome::Forgotten { device: id, enrollment: EnrollmentState::Planned });
+                prop_assert_eq!(registry.step(ForgetDevice { device: id }), ForgetDeviceOutcome::Forgotten { connection: ConnectionState::NotConnected, device: id, enrollment: EnrollmentState::Planned });
                 model.remove(&key);
                 retired.push(id);
             } else if model.len() < 4 {

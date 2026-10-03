@@ -8,7 +8,8 @@ uncommitted until approved.
 ## Core organization
 
 `core/src/domain_primitives` owns validated labels, device identifiers, and
-enrollment correlation values. It has no dependency on state machines.
+enrollment and connection correlation values. It has no dependency on state
+machines.
 `core/src/state_machines/device_registry` owns the registry's temporal state,
 input/output protocol, transitions, and behavioral tests. Primitive validation
 tests live with their primitive. Modules remain private behind the curated
@@ -27,13 +28,14 @@ character, and preserve the supplied text. Labels may be duplicated.
 
 Each operation has its own `StepInputOf<DeviceRegistry>` implementation and
 exact outcome: `CreateDevice`, `RenameDevice`, `ForgetDevice`, `ReadDevice`,
-`ListDevices`, `BeginEnrollment`, `CancelEnrollment`, `FailEnrollment`, and
-`CompleteEnrollment`. Invoke them through `StateMachine::step`. Transport and
-participant contracts belong to the later integration slice.
+`ListDevices`, `BeginEnrollment`, `CancelEnrollment`, `FailEnrollment`,
+`CompleteEnrollment`, `BeginConnection`, `ConfirmConnection`, and `EndConnection`.
+Invoke them through `StateMachine::step`. Transport and participant contracts
+belong to the later integration slice.
 
 `ReadDevice` returns an owned `DeviceSnapshot` that survives subsequent changes.
-Its outcome keeps the bounded snapshot inline, with a local Clippy expectation
-for the variant size difference, to avoid allocating on each read.
+Read and forget outcomes keep bounded state inline, with local Clippy
+expectations for variant size differences, to avoid allocating on these steps.
 `ListDevices::<CAPACITY>` returns IDs in a stack-backed bounded vector, or
 `InsufficientCapacity` with the required count. It never returns a partial list.
 List order follows table storage and is not a sorting contract. Ordinary steps
@@ -61,10 +63,38 @@ Failure outcomes preserve the semantic reason; future adapters own additional
 transport diagnostics.
 
 Forgetting removes only the local record and returns its previous enrollment
-state, including any outstanding token. The caller remains responsible for
-cancelling physical work. It neither revokes target permissions nor erases a
-controller identity. Replacement of an existing pairing is deliberately refused
-until an explicit replacement operation is designed.
+state and connection state, including outstanding tokens and any live link ID.
+The caller remains responsible for cancelling physical work and closing links.
+It neither revokes target permissions nor erases a controller identity.
+Replacement of an existing pairing is deliberately refused until an explicit
+replacement operation is designed.
+
+## Remembered-device connections
+
+`BeginConnection` only accepts paired records. Its `Connect` outcome gives the
+transport adapter an opaque `Connection` token carrying the local device ID,
+fresh nonwrapping generation, and expected target identity. Duplicate begins
+report the active attempt or session without starting another connection.
+Connection and enrollment generations are independent.
+
+The trusted adapter supplies `ConfirmConnection` only after PRNS authenticates
+the expected target on the reported `LinkId`. The registry checks the attempt
+and identity before publishing `Connected`. These in-process values do not
+constitute authentication proof. Wrong-target confirmation leaves the pending
+attempt intact so the adapter can explicitly settle it.
+
+`EndConnection` settles either an attempt or a live session, preserving its
+reason and returning the live link when one exists. Snapshots distinguish
+`NotConnected`, `Connecting`, `Connected`, and `Disconnected`. Cancellation,
+timeout, transport loss, and authentication failure leave remembered pairing
+intact. Ending or forgetting a record invalidates subsequent callbacks; an
+old callback cannot settle a newer connection, even if the link ID is reused.
+Tokens are scoped to their originating registry lifetime.
+
+This slice owns connection bookkeeping and emits a connection intent. The
+network adapter, deadlines, automatic reconnect scheduling while active, and
+interface inventory remain integration work. No configuration is queued or
+replayed by these steps.
 
 ## Verification
 
@@ -122,7 +152,11 @@ and proves preservation/rejection for every two-byte ASCII input with unwinding
 assertions enabled. The bound does not cover all Unicode or label lengths;
 Unicode property tests complement it. Registry properties exercise arbitrary
 cancel/retry histories and compare record creation/removal with an independent
-map model. The isolated proof package avoids an existing `prns-core` Kani
+map model. Connection properties exercise arbitrary connect/confirm/end histories,
+reject all retired tokens, and check another device remains unchanged. Maximum
+generation is covered by a deterministic exhaustion test. These stateful checks
+use proptest because importing the full PRNS graph still blocks Kani.
+The isolated proof package avoids an existing `prns-core` Kani
 compilation failure in its request-set proof (a `u32` shift by 32); the main core
 crate's Kani lane is not claimed to pass.
 

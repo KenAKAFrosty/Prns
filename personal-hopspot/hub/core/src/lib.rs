@@ -4,12 +4,15 @@ mod domain_primitives;
 mod state_machines;
 
 pub use domain_primitives::{
-    DeviceId, DeviceLabel, DeviceLabelError, Enrollment, EnrollmentFailure, MAX_DEVICE_LABEL_BYTES,
+    Connection, DeviceId, DeviceLabel, DeviceLabelError, DisconnectionReason, Enrollment,
+    EnrollmentFailure, MAX_DEVICE_LABEL_BYTES,
 };
 pub use state_machines::{
-    BeginEnrollment, BeginEnrollmentOutcome, CancelEnrollment, CancelEnrollmentOutcome,
-    CompleteEnrollment, CompleteEnrollmentOutcome, CreateDevice, CreateDeviceOutcome,
-    DeviceRegistry, DeviceRegistryCreationError, DeviceSnapshot, EnrollmentState, FailEnrollment,
-    FailEnrollmentOutcome, ForgetDevice, ForgetDeviceOutcome, ListDevices, ListDevicesOutcome,
-    ReadDevice, ReadDeviceOutcome, RenameDevice, RenameDeviceOutcome,
+    BeginConnection, BeginConnectionOutcome, BeginEnrollment, BeginEnrollmentOutcome,
+    CancelEnrollment, CancelEnrollmentOutcome, CompleteEnrollment, CompleteEnrollmentOutcome,
+    ConfirmConnection, ConfirmConnectionOutcome, ConnectionState, CreateDevice,
+    CreateDeviceOutcome, DeviceRegistry, DeviceRegistryCreationError, DeviceSnapshot,
+    EndConnection, EndConnectionOutcome, EnrollmentState, FailEnrollment, FailEnrollmentOutcome,
+    ForgetDevice, ForgetDeviceOutcome, ListDevices, ListDevicesOutcome, ReadDevice,
+    ReadDeviceOutcome, RenameDevice, RenameDeviceOutcome,
 };

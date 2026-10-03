@@ -19,6 +19,7 @@ fn bounded_records_support_duplicate_labels_and_stable_ids_after_removal() {
     assert_eq!(
         registry.step(ForgetDevice { device: first }),
         ForgetDeviceOutcome::Forgotten {
+            connection: ConnectionState::NotConnected,
             device: first,
             enrollment: EnrollmentState::Planned,
         }
@@ -40,6 +41,7 @@ fn bounded_records_support_duplicate_labels_and_stable_ids_after_removal() {
     assert_eq!(
         read(&mut registry, second),
         DeviceSnapshot {
+            connection: ConnectionState::NotConnected,
             id: second,
             label: DeviceLabel::new("Hill").unwrap(),
             enrollment: EnrollmentState::Planned,
@@ -97,6 +99,7 @@ fn query_steps_own_snapshots_and_refuse_incomplete_lists() {
     assert_eq!(
         snapshot,
         DeviceSnapshot {
+            connection: ConnectionState::NotConnected,
             id: first,
             label: DeviceLabel::new("First").unwrap(),
             enrollment: EnrollmentState::Planned
@@ -111,6 +114,7 @@ fn exhausted_storage_returns_the_unmodified_rejected_label() {
     let label = DeviceLabel::new(" Unstarted 🛰 ").unwrap();
     let outcome = registry.created(WarpTableInsertOutcome::IdentifiersExhausted {
         rejected: DeviceRecord {
+            connection: ConnectionState::NotConnected,
             label: label.clone(),
             enrollment: EnrollmentState::Planned,
         },

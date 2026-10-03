@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+mod connection;
 mod enrollment;
 mod properties;
 mod records;

@@ -9,6 +9,14 @@ fn architecture_remains_reviewable() -> Result<(), ArchitectureError> {
         ● state machine  ▸ step input  ◆ outcome
 
         ● DeviceRegistry
+        ├── ▸ BeginConnection
+        │   └── ◆ BeginConnectionOutcome
+        │       ├── Connect
+        │       ├── MissingDevice
+        │       ├── NotPaired
+        │       ├── AlreadyConnecting
+        │       ├── AlreadyConnected
+        │       └── IdentifiersExhausted
         ├── ▸ BeginEnrollment
         │   └── ◆ BeginEnrollmentOutcome
         │       ├── Started
@@ -28,11 +36,23 @@ fn architecture_remains_reviewable() -> Result<(), ArchitectureError> {
         │       ├── StaleEnrollment
         │       ├── TargetMismatch
         │       └── TargetAlreadyPaired
+        ├── ▸ ConfirmConnection
+        │   └── ◆ ConfirmConnectionOutcome
+        │       ├── Connected
+        │       ├── MissingDevice
+        │       ├── StaleConnection
+        │       └── TargetMismatch
         ├── ▸ CreateDevice
         │   └── ◆ CreateDeviceOutcome
         │       ├── Created
         │       ├── AtCapacity
         │       └── IdentifiersExhausted
+        ├── ▸ EndConnection
+        │   └── ◆ EndConnectionOutcome
+        │       ├── AttemptEnded
+        │       ├── SessionEnded
+        │       ├── MissingDevice
+        │       └── StaleConnection
         ├── ▸ FailEnrollment
         │   └── ◆ FailEnrollmentOutcome
         │       ├── Failed

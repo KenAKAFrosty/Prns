@@ -2,7 +2,7 @@ use core::num::NonZeroU32;
 use pipecircuit::StepInputOf;
 use pipecircuit::storage::warp_table::{WarpId, WarpTableInsertOutcome};
 
-use super::{DeviceRecord, DeviceRegistry, EnrollmentState};
+use super::{ConnectionState, DeviceRecord, DeviceRegistry, EnrollmentState};
 use crate::domain_primitives::{DeviceId, DeviceLabel};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -32,6 +32,7 @@ impl StepInputOf<DeviceRegistry> for CreateDevice {
         let outcome = registry.devices.insert(DeviceRecord {
             label: self.label,
             enrollment: EnrollmentState::Planned,
+            connection: ConnectionState::NotConnected,
         });
         registry.created(outcome)
     }

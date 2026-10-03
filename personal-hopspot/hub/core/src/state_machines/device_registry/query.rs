@@ -27,6 +27,7 @@ impl StepInputOf<DeviceRegistry> for ReadDevice {
                     id: self.device,
                     label: row.label.clone(),
                     enrollment: row.enrollment.clone(),
+                    connection: *row.connection,
                 },
             },
             WarpTableGetOutcome::Absent { .. } => ReadDeviceOutcome::MissingDevice {

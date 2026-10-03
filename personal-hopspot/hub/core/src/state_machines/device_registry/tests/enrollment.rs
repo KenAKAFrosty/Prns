@@ -69,6 +69,7 @@ fn two_devices_pair_independently_and_reject_replacement() {
     assert_eq!(
         registry.step(ForgetDevice { device: first }),
         ForgetDeviceOutcome::Forgotten {
+            connection: ConnectionState::NotConnected,
             device: first,
             enrollment: EnrollmentState::Paired {
                 target: *target(1).public_keys()
@@ -225,6 +226,7 @@ fn forgetting_invalidates_every_enrollment_step_even_after_row_reuse() {
     assert_eq!(
         registry.step(ForgetDevice { device: old }),
         ForgetDeviceOutcome::Forgotten {
+            connection: ConnectionState::NotConnected,
             device: old,
             enrollment: EnrollmentState::Pairing {
                 enrollment,

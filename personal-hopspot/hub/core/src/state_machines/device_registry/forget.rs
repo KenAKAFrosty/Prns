@@ -1,7 +1,7 @@
 use pipecircuit::StepInputOf;
 use pipecircuit::storage::warp_table::{WarpId, WarpTableRemoveOutcome};
 
-use super::{DeviceRegistry, EnrollmentState};
+use super::{ConnectionState, DeviceRegistry, EnrollmentState};
 use crate::domain_primitives::DeviceId;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -11,10 +11,12 @@ pub struct ForgetDevice {
 
 #[derive(Debug, PartialEq, Eq)]
 #[must_use]
+#[expect(clippy::large_enum_variant)]
 pub enum ForgetDeviceOutcome {
     Forgotten {
         device: DeviceId,
         enrollment: EnrollmentState,
+        connection: ConnectionState,
     },
     MissingDevice {
         device: DeviceId,
@@ -29,6 +31,7 @@ impl StepInputOf<DeviceRegistry> for ForgetDevice {
             WarpTableRemoveOutcome::Removed { removed, .. } => ForgetDeviceOutcome::Forgotten {
                 device: self.device,
                 enrollment: removed.enrollment,
+                connection: removed.connection,
             },
             WarpTableRemoveOutcome::Absent { .. } => ForgetDeviceOutcome::MissingDevice {
                 device: self.device,
