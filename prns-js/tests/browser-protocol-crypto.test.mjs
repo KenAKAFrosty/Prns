@@ -8,7 +8,7 @@ import {
   WebCryptoX25519Deriver,
   verifyPrnsWebCryptoCompatibility,
 } from "../dist/browser/protocol_crypto.js";
-import { parseProtocolCryptoJob } from "../dist/browser/protocol_crypto_runtime.js";
+import { parseBrowserWork } from "../dist/browser/browser_work.js";
 import { PortableCryptoWorkerPool } from "../dist/browser/portable_crypto_pool.js";
 import { BrowserCryptoExecutor } from "../dist/browser/crypto_pool.js";
 
@@ -106,9 +106,9 @@ test("Web Crypto protocol primitives reject malformed sizes before cryptography"
   );
 });
 
-test("protocol crypto runtime jobs preserve their exact operation shapes", () => {
+test("browser work preserves exact protocol operation shapes", () => {
   assert.deepEqual(
-    parseProtocolCryptoJob({
+    parseBrowserWork({
       tag: "AnnounceVerify",
       data: {
         id: 1,
@@ -128,7 +128,7 @@ test("protocol crypto runtime jobs preserve their exact operation shapes", () =>
     },
   );
   assert.deepEqual(
-    parseProtocolCryptoJob({
+    parseBrowserWork({
       tag: "LinkProofVerify",
       data: {
         id: 2,
@@ -152,7 +152,7 @@ test("protocol crypto runtime jobs preserve their exact operation shapes", () =>
     },
   );
   assert.throws(
-    () => parseProtocolCryptoJob({
+    () => parseBrowserWork({
       tag: "LinkProofVerify",
       data: {
         id: 3,

@@ -193,7 +193,9 @@ fn network_encrypted_publication_round_trips_through_the_shared_identity_crypto(
         DiscoverySourcePolicy::Open,
         AutoConnectPolicy::Disabled,
         AutoConnectRoutingPolicy {
-            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            gravity: crate::interfaces::InterfaceGravity::from_bitrate(
+                crate::interface_discovery::AUTOCONNECT_BITRATE,
+            ),
             announces_to_internal: false,
         },
     );

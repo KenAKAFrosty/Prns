@@ -135,6 +135,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
     A: FnMut(&ResourceOffer) -> bool,
     Store: InterfaceInspectionStore,
 {
+    engine.use_inline_resource_work();
     let AppDeciders {
         mut should_prove,
         mut should_accept_resource,
@@ -202,14 +203,16 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                             None => frame,
                         };
                         let now = host.now();
-                        let packet = ClassifiedInboundPacket::classify(InboundPacket {
+                        let mut packet = ClassifiedInboundPacket::classify(InboundPacket {
                             arrived_at: now,
                             source_interface: source,
                             bytes,
                         });
-                        retain_packet_phy(store, &packet, packet_phy);
+                        retain_packet_phy(store, &mut packet, packet_phy);
                         let mut owed_work = InlineOwedWorkQueue::new();
-                        let report = engine.ingest_classified_into_report(
+                        let report = engine.ingest_classified_into_report_with_request_diagnostics::<
+                            { cfg!(feature = "log") }, _, _, _, _,
+                        >(
                             packet,
                             IngestIo {
                                 interfaces,
@@ -248,6 +251,10 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                             source,
                             report.protocol_violation,
                         );
+                        #[cfg(feature = "log")]
+                        if let Some(request) = report.request {
+                            log::debug!(target: "prns::request", "request ingress: {request:?}");
+                        }
                         lane.release();
                         let mut step_delta = report.wake_schedules;
                         step_delta.merge(completion_delta);

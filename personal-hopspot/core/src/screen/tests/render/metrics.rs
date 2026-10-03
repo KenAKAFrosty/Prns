@@ -1,4 +1,6 @@
 use super::*;
+use embedded_graphics::mono_font::{iso_8859_1::FONT_5X8, MonoTextStyle};
+use embedded_graphics::text::{Baseline, Text};
 
 #[test]
 fn count_formatter_uses_blank_base_then_metric_suffixes() {
@@ -37,6 +39,22 @@ fn live_stat_formatters_stay_compact() {
     assert_eq!(fmt_activity_age(Some(3)).as_str(), "3s");
     assert_eq!(fmt_activity_age(Some(123)).as_str(), "2m");
     assert_eq!(fmt_activity_age(Some(7200)).as_str(), "2h");
+}
+
+#[test]
+fn compact_ascii_glyphs_match_the_font_instead_of_replacement_characters() {
+    let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
+    for text in [
+        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "B", "K", "M", "s", "n", "o", "w", "-",
+    ] {
+        let mut actual = MockDisplay::new();
+        draw_compact_number(&mut actual, text, Point::zero(), BinaryColor::On);
+        let mut expected = MockDisplay::new();
+        Text::with_baseline(text, Point::zero(), style, Baseline::Top)
+            .draw(&mut expected)
+            .unwrap();
+        assert_eq!(actual, expected, "compact glyph {text}");
+    }
 }
 
 #[test]

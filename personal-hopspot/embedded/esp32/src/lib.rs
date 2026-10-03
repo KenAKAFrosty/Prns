@@ -3,6 +3,29 @@
 
 extern crate alloc;
 
+#[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
+macro_rules! firmware_app_descriptor {
+    () => {
+        esp_bootloader_esp_idf::esp_app_desc!(
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_NAME"),
+            match option_env!("HOPSPOT_BUILD_TIME") {
+                Some(value) => value,
+                None => esp_bootloader_esp_idf::BUILD_TIME,
+            },
+            match option_env!("HOPSPOT_BUILD_DATE") {
+                Some(value) => value,
+                None => esp_bootloader_esp_idf::BUILD_DATE,
+            },
+            esp_bootloader_esp_idf::ESP_IDF_COMPATIBLE_VERSION,
+            esp_bootloader_esp_idf::MMU_PAGE_SIZE,
+            0,
+            u16::MAX,
+            esp_bootloader_esp_idf::SECURE_VERSION
+        );
+    };
+}
+
 #[cfg(all(feature = "display", any(test, target_arch = "xtensa")))]
 mod display_runtime;
 
@@ -22,21 +45,52 @@ mod immediate_display;
 
 #[cfg(all(
     target_arch = "xtensa",
-    not(all(
-        feature = "bluetooth-auto",
-        feature = "usb",
-        any(
-            all(feature = "esp-now", feature = "tcp", feature = "wifi-auto"),
-            feature = "sram-storage"
+    not(any(
+        all(
+            not(feature = "esp32s3fn8"),
+            feature = "bluetooth-auto",
+            feature = "esp-now",
+            feature = "tcp",
+            feature = "usb",
+            feature = "wifi-auto"
+        ),
+        all(
+            feature = "esp32s3fn8",
+            feature = "bluetooth-auto",
+            feature = "lora",
+            feature = "usb",
+            not(feature = "esp-now"),
+            not(feature = "tcp"),
+            not(feature = "wifi-auto")
         )
     ))
 ))]
 compile_error!(
-    "ESP32-S3 board firmware selects bluetooth-auto and usb. PSRAM boards additionally select esp-now, tcp, and wifi-auto; the SRAM-only Heltec V3 selects sram-storage instead."
+    "ESP32-S3 firmware is built through a board package with one complete board capability set"
 );
 
-#[cfg(all(target_arch = "xtensa", feature = "bluetooth-auto", feature = "usb"))]
+#[cfg(all(
+    target_arch = "xtensa",
+    not(feature = "esp32s3fn8"),
+    feature = "bluetooth-auto",
+    feature = "esp-now",
+    feature = "tcp",
+    feature = "usb",
+    feature = "wifi-auto"
+))]
 pub mod s3;
+
+#[cfg(all(
+    target_arch = "xtensa",
+    feature = "esp32s3fn8",
+    feature = "bluetooth-auto",
+    feature = "lora",
+    feature = "usb",
+    not(feature = "esp-now"),
+    not(feature = "tcp"),
+    not(feature = "wifi-auto")
+))]
+pub mod s3fn8;
 
 #[cfg(all(
     target_arch = "riscv32",
@@ -73,13 +127,21 @@ mod flash;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod identity;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
+mod memory;
+#[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod persistence;
+#[cfg(all(feature = "remote-control-pairing", any(test, target_arch = "xtensa")))]
+mod remote_control_composition;
 
-#[cfg(any(test, target_arch = "xtensa"))]
+#[cfg(any(test, all(target_arch = "xtensa", not(feature = "esp32s3fn8"))))]
 mod station_recovery;
-#[cfg(any(test, target_arch = "xtensa"))]
+#[cfg(any(test, all(target_arch = "xtensa", not(feature = "esp32s3fn8"))))]
 mod station_security;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod storage;
-#[cfg(any(test, target_arch = "xtensa"))]
+#[cfg(any(test, all(target_arch = "xtensa", not(feature = "esp32s3fn8"))))]
 mod wifi_data_path_recovery;
+
+#[cfg(all(feature = "heltec-v3", any(test, target_arch = "xtensa")))]
+#[path = "s3fn8/ui.rs"]
+mod s3fn8_ui;

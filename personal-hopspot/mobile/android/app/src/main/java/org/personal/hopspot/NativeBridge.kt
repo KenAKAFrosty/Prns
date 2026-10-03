@@ -182,6 +182,89 @@ object NativeBridge {
 
     external fun nativeBleIdentity(buffer: ByteBuffer): Int
 
+    private external fun nativeDiscoveryGroupsWireCapacity(): Long
+
+    private external fun nativeDiscoveryGroups(discoveryInterface: Int, buffer: ByteBuffer): Int
+
+    private external fun nativeReplaceDiscoveryGroups(
+        discoveryInterface: Int,
+        buffer: ByteBuffer,
+        len: Int,
+    ): Int
+
+    fun discoveryGroups(discoveryInterface: DiscoveryInterface): DiscoveryGroupsInventoryResult {
+        val buffer = ByteBuffer.allocateDirect(nativeDiscoveryGroupsWireCapacity().toInt())
+        val result = nativeDiscoveryGroups(discoveryInterface.code, buffer)
+        if (result < 0) {
+            return DiscoveryGroupsInventoryResult.Failed(
+                DiscoveryGroupOutcome.fromCode(-1 - result),
+            )
+        }
+        if (result < 1) {
+            return DiscoveryGroupsInventoryResult.Failed(DiscoveryGroupOutcome.InvalidEncoding)
+        }
+        var offset = 0
+        val count = buffer.get(offset++).toInt() and 0xff
+        val groups = ArrayList<String>(count)
+        repeat(count) {
+            if (offset >= result) {
+                return DiscoveryGroupsInventoryResult.Failed(
+                    DiscoveryGroupOutcome.InvalidEncoding,
+                )
+            }
+            val length = buffer.get(offset++).toInt() and 0xff
+            if (length == 0 || offset + length > result) {
+                return DiscoveryGroupsInventoryResult.Failed(
+                    DiscoveryGroupOutcome.InvalidEncoding,
+                )
+            }
+            val bytes = ByteArray(length)
+            repeat(length) { index -> bytes[index] = buffer.get(offset + index) }
+            groups += bytes.toString(Charsets.UTF_8)
+            offset += length
+        }
+        return if (offset == result) {
+            DiscoveryGroupsInventoryResult.Available(groups)
+        } else {
+            DiscoveryGroupsInventoryResult.Failed(DiscoveryGroupOutcome.InvalidEncoding)
+        }
+    }
+
+    fun replaceDiscoveryGroups(
+        discoveryInterface: DiscoveryInterface,
+        groups: List<String>,
+    ): DiscoveryGroupOutcome {
+        val capacity = nativeDiscoveryGroupsWireCapacity().toInt()
+        val buffer = ByteBuffer.allocateDirect(capacity)
+        if (groups.isEmpty() || groups.size > 4) {
+            return DiscoveryGroupOutcome.InvalidEncoding
+        }
+        val canonical = groups
+            .map { it.toByteArray(Charsets.UTF_8) }
+            .sortedWith { left, right -> compareUnsignedBytes(left, right) }
+        buffer.put(canonical.size.toByte())
+        for (bytes in canonical) {
+            if (bytes.isEmpty() || bytes.size > 32 || buffer.remaining() < bytes.size + 1) {
+                return DiscoveryGroupOutcome.InvalidEncoding
+            }
+            buffer.put(bytes.size.toByte())
+            buffer.put(bytes)
+        }
+        return DiscoveryGroupOutcome.fromCode(
+            nativeReplaceDiscoveryGroups(discoveryInterface.code, buffer, buffer.position()),
+        )
+    }
+
+    private fun compareUnsignedBytes(left: ByteArray, right: ByteArray): Int {
+        val shared = minOf(left.size, right.size)
+        for (index in 0 until shared) {
+            val comparison = (left[index].toInt() and 0xff)
+                .compareTo(right[index].toInt() and 0xff)
+            if (comparison != 0) return comparison
+        }
+        return left.size.compareTo(right.size)
+    }
+
     external fun nativeBleSighting(address: ByteBuffer, rssi: Int)
 
     external fun nativeBleDialFailed(address: ByteBuffer): Boolean
@@ -314,6 +397,33 @@ object NativeBridge {
             code = nativeEngineLastFailure(),
             name = nativeEngineLastFailureName() ?: "invalid",
         )
+}
+
+enum class DiscoveryInterface(val code: Int) {
+    BluetoothAuto(0),
+    AutoWifi(1),
+}
+
+enum class DiscoveryGroupOutcome(val code: Int) {
+    Applied(0),
+    Unchanged(1),
+    EngineUnavailable(2),
+    Unsupported(3),
+    InvalidInterface(4),
+    InvalidEncoding(5),
+    BufferTooShort(6),
+    ApplyFailed(7),
+    Busy(8);
+
+    companion object {
+        fun fromCode(code: Int): DiscoveryGroupOutcome =
+            entries.firstOrNull { it.code == code } ?: InvalidEncoding
+    }
+}
+
+sealed interface DiscoveryGroupsInventoryResult {
+    data class Available(val groups: List<String>) : DiscoveryGroupsInventoryResult
+    data class Failed(val outcome: DiscoveryGroupOutcome) : DiscoveryGroupsInventoryResult
 }
 
 enum class PrnsEngineState(

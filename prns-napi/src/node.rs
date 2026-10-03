@@ -172,6 +172,11 @@ pub struct RespondTokenSpec {
 pub struct RequestOptions {
     /// Request timeout in milliseconds.
     pub timeout_millis: Option<f64>,
+    /// Encoded response limit before binary decoding (`packed.length`, not
+    /// `data.length`) for packets and whole, metadata-free Resources.
+    /// Whole metadata-bearing Resources count literal file bytes, excluding
+    /// metadata. Segmented Resources count the entire advertised uncompressed
+    /// stream, including envelope and metadata.
     pub maximum_response_bytes: Option<f64>,
 }
 
@@ -626,6 +631,9 @@ fn send_link_error(error: personal_rns::SendError<SendToLinkFailure>) -> crate::
 
 fn request_error(error: personal_rns::SendError<SendRequestFailure>) -> crate::errors::CodeError {
     match error {
+        personal_rns::SendError::Failed(SendRequestFailure::RequestTransferFailed(inner)) => {
+            send_resource_failure(inner)
+        }
         personal_rns::SendError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
         personal_rns::SendError::Busy => code_err(ErrorCode::Busy, "engine busy"),
         personal_rns::SendError::PayloadTooLarge => {
@@ -3114,6 +3122,9 @@ fn native_snapshot_error(error: NativeSnapshotError) -> crate::errors::CodeError
         NativeSnapshotError::Busy => code_err(ErrorCode::Busy, "snapshot queue is busy"),
         NativeSnapshotError::Stopped => code_err(ErrorCode::NodeStopped, "node stopped"),
         NativeSnapshotError::TimedOut => code_err(ErrorCode::Unavailable, "snapshot timed out"),
+        NativeSnapshotError::Unavailable => {
+            code_err(ErrorCode::Unavailable, "snapshot state is unavailable")
+        }
     }
 }
 

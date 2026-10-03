@@ -54,6 +54,7 @@ async fn metrics_snapshots_are_requested_from_the_manifold() {
         engine: Default::default(),
         egress: Default::default(),
         crypto: None,
+        manifold: Default::default(),
         reliability: Default::default(),
     };
     let snapshotting = tokio::spawn(async move { handle.metrics_snapshot().await });

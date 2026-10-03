@@ -13,6 +13,12 @@ from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "release"
 ROOT = SCRIPTS.parents[1]
+CATALOG_INTERFACES = {
+    board["slug"]: board["interfaces"]
+    for board in json.loads(
+        (ROOT / "release" / "flash" / "boards.json").read_text(encoding="utf-8")
+    )["boards"]
+}
 
 
 def load_script(name: str, module_name: str):
@@ -37,6 +43,8 @@ def complete_roster() -> dict:
         ("heltec-v4", "web"): ("linux", "x86_64"),
         ("heltec-v4-r8", "cli"): ("linux", "x86_64"),
         ("heltec-v4-r8", "web"): ("linux", "x86_64"),
+        ("heltec-wireless-stick-lite-v3", "cli"): ("linux", "x86_64"),
+        ("heltec-wireless-stick-lite-v3", "web"): ("linux", "x86_64"),
         ("t-beam-supreme", "cli"): ("macos", "aarch64"),
         ("t-beam-supreme", "web"): ("macos", "aarch64"),
         ("xiao-esp32-c6", "cli"): ("windows", "x86_64"),
@@ -52,6 +60,8 @@ def complete_roster() -> dict:
     }
     physical_assignments = []
     for (board, surface), (os_name, architecture) in hosts.items():
+        if board not in CONTRACT.SHIPPING_BOARDS:
+            continue
         assignment = {
             "board": board,
             "surface": surface,
@@ -118,6 +128,13 @@ def manifest() -> dict:
     boards = (
         ("heltec-v4", "Heltec LoRa 32 V4 (S3R2)", "esp-serial", "esp32s3", True),
         ("heltec-v4-r8", "Heltec LoRa 32 V4 (S3R8)", "esp-serial", "esp32s3", True),
+        (
+            "heltec-wireless-stick-lite-v3",
+            "Heltec Wireless Stick Lite V3",
+            "esp-serial",
+            "esp32s3",
+            False,
+        ),
         ("t-beam-supreme", "LilyGO T-Beam Supreme", "esp-serial", "esp32s3", True),
         ("xiao-esp32-c6", "Seeed XIAO ESP32-C6", "esp-serial", "esp32c6", False),
         ("t-echo", "LilyGO T-Echo", "uf2-mass-storage", None, False),
@@ -133,6 +150,7 @@ def manifest() -> dict:
             {
                 "board_slug": slug,
                 "display_name": display_name,
+                "interfaces": CATALOG_INTERFACES[slug],
                 "transport": transport,
                 "expected_chip": chip,
                 "parts": (
@@ -198,6 +216,7 @@ def manifest() -> dict:
                 "provisioning": {"format": "HSPCFG1"} if provisioned else None,
             }
             for slug, display_name, transport, chip, provisioned in boards
+            if slug in CONTRACT.SHIPPING_BOARDS
         ],
     }
 
@@ -248,7 +267,13 @@ class AcceptanceScaffoldTests(unittest.TestCase):
         )
         self.assertEqual(candidate["prerelease_published_at"], PUBLISHED_AT)
         self.assertEqual(record["schema"], 5)
-        self.assertEqual(len(record["runs"]), 18)
+        self.assertEqual(
+            len(record["runs"]),
+            sum(
+                len(CONTRACT.required_compatibilities(target)) * len(CONTRACT.SURFACES)
+                for target in self.manifest_document["targets"]
+            ),
+        )
         self.assertEqual(len(record["web_serial_smoke"]), 3)
         self.assertEqual(len(record["browser_fallbacks"]), 1)
         self.assertEqual(len(record["installation_smoke"]), 5)
@@ -293,7 +318,7 @@ class AcceptanceScaffoldTests(unittest.TestCase):
             )
         )
         self.assertEqual(acceptance_template["schema"], 5)
-        self.assertEqual(roster_template["schema"], 3)
+        self.assertEqual(roster_template["schema"], 4)
         records = ROOT / "release" / "acceptance" / "records"
         rosters = ROOT / "release" / "acceptance" / "rosters"
         self.assertEqual(
@@ -339,6 +364,34 @@ class AcceptanceScaffoldTests(unittest.TestCase):
                         set(row["scenarios"]),
                         CONTRACT.applicable_scenarios(target, surface, chip_counts),
                     )
+
+    def test_wireless_stick_declared_interfaces_become_physical_scenarios(self) -> None:
+        target = {
+            "transport": "esp-serial",
+            "expected_chip": "esp32s3",
+            "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+            "provisioning": None,
+        }
+        scenarios = CONTRACT.applicable_scenarios(
+            target,
+            "cli",
+            Counter(("esp32s3", "esp32s3")),
+        )
+        self.assertTrue({"ble", "lora", "usb"} <= scenarios)
+        self.assertNotIn("wifi", scenarios)
+        self.assertNotIn("configure", scenarios)
+
+    def test_unknown_or_missing_interfaces_fail_closed(self) -> None:
+        target = {
+            "transport": "esp-serial",
+            "expected_chip": "esp32s3",
+            "provisioning": None,
+        }
+        with self.assertRaisesRegex(ValueError, "interfaces"):
+            CONTRACT.applicable_scenarios(target, "cli", Counter(("esp32s3",)))
+        target["interfaces"] = ["Mystery Radio"]
+        with self.assertRaisesRegex(ValueError, "unsupported interfaces"):
+            CONTRACT.applicable_scenarios(target, "cli", Counter(("esp32s3",)))
 
     def test_hotfix_scaffold_contains_only_committed_changed_board_checks(self) -> None:
         self.manifest_document["release"]["version"] = "0.2.6-hotfix.1"

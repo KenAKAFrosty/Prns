@@ -3,6 +3,7 @@ use personal_rns::config::{
 };
 use personal_rns::from_plan::PlanRuntimeContext;
 use personal_rns::identity::IdentityHash;
+use personal_rns::routing::announce::derive_single_destination_hash;
 use personal_rns::runtime::PrnsNodeHandle;
 use personal_rns::shared_instance::{
     join_shared_instance, ExistingSharedInstancePolicy, RnsBlackholeFiles,
@@ -110,6 +111,14 @@ pub(super) async fn establish(
                     credentials: credentials.clone(),
                     transport_identity,
                     network_identity,
+                    probe_responder: plan.probe_responder.is_enabled().then(|| {
+                        derive_single_destination_hash(
+                            &transport_identity,
+                            "rnstransport",
+                            &["probe"],
+                        )
+                        .expect("rnstransport.probe is a valid destination name")
+                    }),
                     blackhole_source: transport_identity,
                     blackhole_files: blackhole_files.clone(),
                     ports,

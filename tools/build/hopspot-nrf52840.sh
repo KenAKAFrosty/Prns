@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if (( $# != 1 )); then
-    echo "usage: hopspot-nrf52840.sh <t096|t114|t1000e>" >&2
+    echo "usage: hopspot-nrf52840.sh <t096|t114|mesh-pocket-5000|mesh-pocket-10000|t1000e|rak4631>" >&2
     exit 1
 fi
 
@@ -18,10 +18,25 @@ case "$board" in
         board_feature="board-t114"
         firmware_name="heltec-t114"
         ;;
+    mesh-pocket-5000)
+        board_name="MeshPocket 5000 mAh"
+        board_feature="board-mesh-pocket,mesh-pocket-battery-5000"
+        firmware_name="heltec-mesh-pocket"
+        ;;
+    mesh-pocket-10000)
+        board_name="MeshPocket 10000 mAh"
+        board_feature="board-mesh-pocket,mesh-pocket-battery-10000"
+        firmware_name="heltec-mesh-pocket"
+        ;;
     t1000e)
         board_name="T1000-E"
         board_feature="board-t1000e"
         firmware_name="t1000e"
+        ;;
+    rak4631)
+        board_name="RAK4631"
+        board_feature="board-rak4631"
+        firmware_name="rak4631"
         ;;
     *)
         printf 'unsupported nRF52840 board: %s\n' "$board" >&2

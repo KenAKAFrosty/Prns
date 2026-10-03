@@ -270,7 +270,8 @@ fn typed_interface_routing_is_applied_before_attachment() -> Result<(), String> 
         .ok_or_else(|| "default interface plan was empty".to_string())?
         .policy;
     if default_policy.mode != personal_rns::interfaces::InterfaceMode::Full
-        || default_policy.gravity.get() != 0
+        || default_policy.gravity
+            != personal_rns::interfaces::InterfaceGravity::from_bitrate(default_policy.bitrate)
         || default_policy.common.forwarding.recursive_path_requests
             != personal_rns::interfaces::RecursivePathRequestPolicy::InheritNode
         || !default_policy.common.forwarding.announces_from_internal
@@ -430,6 +431,8 @@ fn attach_supplied_wire(
 
 #[cfg(unix)]
 fn wait_until_connected(host: &NativeHost, interface: InterfaceId) -> Result<(), String> {
+    use prns_host::InterfaceHealth;
+
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         let snapshot = host

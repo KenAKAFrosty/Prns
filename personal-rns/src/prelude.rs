@@ -7,7 +7,7 @@ pub use crate::{
     CloseRemoteControlTargetOutcome, CommandId, ConnectRemoteControlTargetError, DestinationHash,
     Diagnostic, ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError,
     InitiateRemoteControlControllerPairing, InitiateRemoteControlControllerPairingError,
-    InterfaceStatus, ManuallyAttached, Message, NoPersistence,
+    InterfaceStatus, ManuallyAttached, Message, NoPersistence, NoRemoteControlHostControls,
     OpenRemoteControlPairingControlError, PacketReceiptDelivered, PreConfiguredDestination,
     PrnsCommand, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy,
     RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
@@ -15,7 +15,8 @@ pub use crate::{
     RemoteControlControllerGrantControl, RemoteControlControllerPairingConfirmation,
     RemoteControlControllerPairingInitiationControl,
     RemoteControlControllerPairingInitiationTransport, RemoteControlDescribe, RemoteControlError,
-    RemoteControlPairingConfirmation, RemoteControlPairingControl,
+    RemoteControlHostCommand, RemoteControlHostCommandError, RemoteControlHostControls,
+    RemoteControlHostResponse, RemoteControlPairingConfirmation, RemoteControlPairingControl,
     RemoteControlPairingControlError, RemoteControlPairingLinkCleanupOutcome,
     RemoteControlTargetAccessControl, RemoteControlTargetConnection,
     RemoteControlTargetConnectionControl, RemoteControlTargetConnectionTransport,
@@ -151,7 +152,10 @@ pub use crate::usb_auto::AutoUsb;
 #[cfg(all(feature = "usb", feature = "tokio-host"))]
 pub use crate::usb_auto::UsbAutoHost;
 #[cfg(all(feature = "usb", feature = "embassy-host"))]
-pub use crate::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
+pub use crate::usb_auto::{
+    PhysicalHostPresence, ProtocolHostPresence, UsbAutoDevice, UsbAutoDeviceInput,
+    UsbAutoHostPresence,
+};
 #[cfg(all(feature = "weave", feature = "tokio-host"))]
 pub use crate::weave::WeaveInterface;
 #[cfg(all(feature = "websocket", feature = "tokio-host"))]

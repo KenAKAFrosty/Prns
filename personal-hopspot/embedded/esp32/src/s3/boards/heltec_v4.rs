@@ -23,7 +23,6 @@ use super::heltec_frontend;
 use crate::s3::{
     self, BoardFace, Esp32S3Board, GnssProvider, GnssShared, ImmediateBoardDisplay,
     ImmediateDisplayDevice, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
-    S3UsbHardware,
 };
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
@@ -248,7 +247,8 @@ impl Esp32S3Board for HeltecBoard {
     const NODE_ANNOUNCE_APP_DATA: &'static [u8] = NODE_ANNOUNCE_APP_DATA;
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTECV4";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
-    const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_16_MIB_FLASH_LAYOUT;
+    const MEMORY_PROFILE: &'static personal_hopspot_memory::MemoryProfile =
+        &personal_hopspot_memory::HELTEC_V4;
     type Display = ImmediateBoardDisplay<HeltecDisplay>;
     type Battery = HeltecBattery;
     type Gnss = HeltecV4Gnss;
@@ -258,7 +258,7 @@ impl Esp32S3Board for HeltecBoard {
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
         let runtime_bootstrap =
-            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::FLASH_LAYOUT).await;
+            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::MEMORY_PROFILE).await;
 
         // GPIO35 drives the V4's bright white user LED active-high. Claim it immediately so the
         // reset/default pin state cannot leave the LED lit while the Hopspot is running.
@@ -392,7 +392,7 @@ impl Esp32S3Board for HeltecBoard {
             },
             gnss,
             interface_hardware: S3InterfaceHardware {
-                usb: S3UsbHardware::SerialJtag(p.USB_DEVICE),
+                usb_device: p.USB_DEVICE,
                 lora_radio,
                 wifi: p.WIFI,
                 bluetooth: p.BT,

@@ -7,7 +7,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
 const USAGE: &str = "usage: cargo benchmark [--smoke] [--publish] [--energy] [--resume RUN_ID]";
-const HELP: &str = "Prns benchmark qualification\n\n  cargo benchmark             run all 34 cells × 3 isolated samples locally\n  cargo benchmark --smoke     check every endpoint pairing and relay profile quickly, without publishable data\n  cargo benchmark --resume ID continue a compatible interrupted local suite\n  cargo benchmark --publish   require a clean tree, run, then publish atomically\n  cargo benchmark --energy    require platform energy evidence\n\nRust/Cargo, uv, and a native C compiler are required. Generated local runs are ignored.";
+const HELP: &str = "Prns benchmark qualification\n\n  cargo benchmark             run all 34 cells × 3 isolated samples locally\n  cargo benchmark --smoke     check every endpoint pairing and relay profile quickly, without publishable data\n  cargo benchmark --resume ID continue a compatible interrupted local suite\n  cargo benchmark --publish   require a clean tree, run, then publish atomically\n  cargo benchmark --energy    require platform energy evidence\n\nRust/Cargo, uv, and the platform compiler are required. Generated local runs are ignored.";
 
 #[derive(Default)]
 struct Options {
@@ -328,10 +328,10 @@ fn benchmark_rustflags(flags: String) -> String {
 }
 
 fn prepare_reference(root: &Path) -> Result<(), CliError> {
-    println!("[2/4] Preparing locked compiled RNS {REFERENCE_VERSION} reference");
+    println!("[2/4] Preparing locked stock RNS {REFERENCE_VERSION} reference");
     let reference = root.join("reference");
     let environment = reference.join(".venv");
-    let cache = reference.join(".object-cache/uv");
+    let cache = reference.join(".reference-state/uv-cache");
     std::fs::create_dir_all(&cache).map_err(|source| CliError::Io {
         action: "create uv cache",
         path: cache.clone(),
@@ -352,13 +352,13 @@ fn prepare_reference(root: &Path) -> Result<(), CliError> {
             .arg("--python")
             .arg(reference_python(&reference))
             .arg(reference.join("requirements.lock")),
-        "sync compiled-reference dependencies",
+        "sync stock-reference dependencies",
     )?;
     checked(
         Command::new(reference_python(&reference))
-            .arg(reference.join("compiled_reference.py"))
+            .arg(reference.join("stock_reference.py"))
             .arg("--verify-only"),
-        "verify compiled RNS 1.4.2",
+        "verify stock interpreted RNS 1.5.4",
     )?;
     checked(
         Command::new(reference_python(&reference))
@@ -436,7 +436,7 @@ fn validate_completed_suite(suite: &CompletedSuite, options: &Options) -> Result
     {
         return Err(CliError::Evidence(
             format!(
-                "release suite lacks the complete {expected_cells}-cell matrix or compiled-reference proof"
+                "release suite lacks the complete {expected_cells}-cell matrix or stock-reference proof"
             ),
         ));
     }

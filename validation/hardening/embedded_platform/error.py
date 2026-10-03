@@ -1,0 +1,2 @@
+class EmbeddedPlatformError(RuntimeError):
+    pass

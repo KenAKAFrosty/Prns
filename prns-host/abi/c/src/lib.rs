@@ -1649,6 +1649,7 @@ pub unsafe extern "C" fn prns_host_snapshot(
             Err(NativeSnapshotError::Busy) => return status(AbiStatus::QueueFull),
             Err(NativeSnapshotError::Stopped) => return status(AbiStatus::Stopped),
             Err(NativeSnapshotError::TimedOut) => return status(AbiStatus::TimedOut),
+            Err(NativeSnapshotError::Unavailable) => return status(AbiStatus::Unavailable),
         };
         *out = Box::into_raw(PrnsHostInspection::new(snapshot));
         status(AbiStatus::Ok)

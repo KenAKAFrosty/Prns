@@ -294,10 +294,6 @@ impl BleHub {
         self.status.note_ingress_pressure();
     }
 
-    pub(super) fn note_successful_admission(&self) {
-        self.status.note_successful_admission();
-    }
-
     pub(super) fn track_live_link(&self) -> LiveLinkGuard<'_> {
         self.discovery.track_live_link()
     }
@@ -555,9 +551,8 @@ impl BleSource for EmbeddedBleSource {
         match select(self.data_in.receive(), self.slot.wait_for_close()).await {
             Either::First(frame) => {
                 let frame = frame.lock().await;
-                let len = frame.len().min(out.len());
-                out[..len].copy_from_slice(&frame[..len]);
-                Ok(len)
+                prns_core::interfaces::bluetooth_auto::copy_received_frame(&frame, out)
+                    .map_err(|_| Closed)
             }
             Either::Second(()) => Err(Closed),
         }

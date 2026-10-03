@@ -130,7 +130,9 @@ fn auto_connect_capacity_reports_only_when_auto_connect_is_enabled() {
             DiscoverySourcePolicy::from_sources(Vec::new()),
             AutoConnectPolicy::Disabled,
             AutoConnectRoutingPolicy {
-                gravity: prns_core::interfaces::InterfaceGravity::ZERO,
+                gravity: prns_core::interfaces::InterfaceGravity::from_bitrate(
+                    prns_core::interface_discovery::AUTOCONNECT_BITRATE,
+                ),
                 announces_to_internal: false,
             },
         ),
@@ -194,13 +196,13 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
-        app_state: (),
+        app_state: prns_runtime::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: prns_runtime::request_endpoints![],
         remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &prns_runtime::runtime::NoRemoteControlHostControls| {},
     })
     .with_timeline_origin(InstantMillis(10_000));
     let handle = node.handle();

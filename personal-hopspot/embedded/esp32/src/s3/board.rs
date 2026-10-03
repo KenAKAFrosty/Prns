@@ -1,4 +1,5 @@
 use super::*;
+use personal_hopspot_memory::MemoryProfile;
 
 #[cfg(feature = "lora")]
 pub(crate) type LoraRadio = Sx126x<
@@ -15,16 +16,8 @@ pub(crate) struct BoardFace<D, B> {
     pub(crate) button: Input<'static>,
 }
 
-pub(crate) enum S3UsbHardware {
-    SerialJtag(USB_DEVICE<'static>),
-    Uart {
-        rx: esp_hal::uart::UartRx<'static, Async>,
-        tx: esp_hal::uart::UartTx<'static, Async>,
-    },
-}
-
 pub(crate) struct S3InterfaceHardware {
-    pub(crate) usb: S3UsbHardware,
+    pub(crate) usb_device: USB_DEVICE<'static>,
     #[cfg(feature = "lora")]
     pub(crate) lora_radio: LoraRadio,
     pub(crate) wifi: esp_hal::peripherals::WIFI<'static>,
@@ -52,10 +45,9 @@ pub(crate) trait Esp32S3Board {
     const NODE_ANNOUNCE_APP_DATA: &'static [u8];
     const BOOT_BANNER: &'static str;
     const USB_INTERFACE_ID: InterfaceId;
-    const FLASH_LAYOUT: screen::HopspotS3FlashLayout;
-    /// Boards without PSRAM keep their runtime future and bounded queues in
-    /// ESP32-S3 internal SRAM.
-    const INTERNAL_SRAM_ONLY: bool = false;
+    const MEMORY_PROFILE: &'static MemoryProfile;
+    #[cfg(feature = "remote-control-pairing")]
+    const REMOTE_CONTROL_PAIRING: bool = false;
     type Display: crate::display_runtime::S3BoardDisplay;
     type Battery: screen::BatterySource;
     type Gnss: GnssProvider;

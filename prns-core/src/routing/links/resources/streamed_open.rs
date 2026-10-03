@@ -25,6 +25,10 @@ impl core::fmt::Debug for StreamedOpen {
 }
 
 impl StreamedOpen {
+    pub fn sealed_byte_len(&self) -> usize {
+        self.token.sealed_byte_len()
+    }
+
     /// `None` when the sealed length is no token shape at all. The conclusion's whole-transfer fallback then refuses it with the stock `Malformed`.
     pub fn begin(key: &LinkKey, sealed: &[u8], compression: ResourceCompression) -> Option<Self> {
         let iv = sealed.get(..16)?.try_into().ok()?;
@@ -230,6 +234,7 @@ mod tests {
 
         let mut open =
             StreamedOpen::begin(&link_key(), &transfer, ResourceCompression::Uncompressed).unwrap();
+        assert_eq!(open.sealed_byte_len(), transfer.len());
         for part_index in 0..built.part_count {
             let contiguous = ((part_index + 1) * sdu).min(transfer.len());
             open.advance(&mut transfer, contiguous);

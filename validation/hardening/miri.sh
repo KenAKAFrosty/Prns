@@ -14,7 +14,7 @@ cargo "+$nightly" miri setup
 export PROPTEST_CASES="${PROPTEST_CASES:-32}"
 export PROPTEST_DISABLE_FAILURE_PERSISTENCE="${PROPTEST_DISABLE_FAILURE_PERSISTENCE:-1}"
 
-base_flags="${MIRIFLAGS:-} -Zmiri-env-forward=PROPTEST_CASES -Zmiri-env-forward=PROPTEST_DISABLE_FAILURE_PERSISTENCE"
+base_flags="-Zmiri-env-forward=PROPTEST_CASES -Zmiri-env-forward=PROPTEST_DISABLE_FAILURE_PERSISTENCE"
 
 run_miri() {
     local model="$1"
@@ -23,7 +23,7 @@ run_miri() {
     if [[ "$model" == "tree" ]]; then
         flags="$flags -Zmiri-tree-borrows"
     fi
-    echo "[miri:$model] ${*:-all prns-core tests}"
+    echo "[miri:$model toolchain=$nightly flags=$flags] ${*:-all prns-core tests}"
     MIRIFLAGS="$flags" cargo "+$nightly" miri test --locked -p prns-core -- "$@" --test-threads=1
 }
 

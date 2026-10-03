@@ -1,21 +1,200 @@
+#[cfg(feature = "shared-instance-rpc")]
 use alloc::string::{String, ToString};
+#[cfg(feature = "shared-instance-rpc")]
 use alloc::vec::Vec;
+#[cfg(feature = "shared-instance-rpc")]
 use core::fmt;
 
-use rmp::Marker;
+#[cfg(feature = "shared-instance-rpc")]
+use super::message_pack::Marker;
 
 use crate::engine::RouteSnapshot;
 use crate::units::InstantMillis;
+#[cfg(feature = "shared-instance-rpc")]
 use crate::wire::{DestinationHash, TransportId};
 
+#[cfg(feature = "shared-instance-rpc")]
 use super::message_pack::{MessagePackInteger, MessagePackReader};
 use super::wire_names::{common, path};
-use super::{
-    interface_name, next_hop_bytes, rns_timestamp, MessagePackEncoder, RnsManagementEncodeError,
-};
+#[cfg(feature = "shared-instance-rpc")]
+use super::{interface_name, MessagePackEncoder, RnsManagementEncodeError};
+use super::{next_hop_bytes, rns_timestamp, write_interface_name};
 
+#[cfg(feature = "shared-instance-rpc")]
 const MAXIMUM_DEPTH: usize = 4;
+const INTERFACE_NAME_CAPACITY: usize = 32;
+/// One fixed-map entry with six keys, two 16-byte hashes, two f64 values, a u8 hop
+/// count, and the longest interface name this writer can retain.
+pub const RNS_PATH_TABLE_MAX_ENCODED_ENTRY_BYTES: usize =
+    1 + 5 + 18 + 10 + 9 + 4 + 18 + 5 + 2 + 8 + 9 + 10 + 2 + INTERFACE_NAME_CAPACITY;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RnsPathTableWriteError {
+    TooManyEntries,
+    EntryCountMismatch,
+    BufferTooShort,
+    InterfaceNameTooLong,
+}
+
+pub struct RnsPathTableWriter<'a> {
+    output: &'a mut [u8],
+    capacity: usize,
+    remaining_entries: usize,
+}
+
+impl<'a> RnsPathTableWriter<'a> {
+    #[inline(never)]
+    pub fn new(
+        entry_count: usize,
+        mut output: &'a mut [u8],
+    ) -> Result<Self, RnsPathTableWriteError> {
+        let encoded_count =
+            u32::try_from(entry_count).map_err(|_| RnsPathTableWriteError::TooManyEntries)?;
+        let capacity = output.len();
+        write_array_length(&mut output, encoded_count)?;
+        Ok(Self {
+            output,
+            capacity,
+            remaining_entries: entry_count,
+        })
+    }
+
+    #[inline(never)]
+    pub fn push(&mut self, entry: &RouteSnapshot) -> Result<(), RnsPathTableWriteError> {
+        if self.remaining_entries == 0 {
+            return Err(RnsPathTableWriteError::TooManyEntries);
+        }
+        write_route_snapshot(&mut self.output, entry)?;
+        self.remaining_entries -= 1;
+        Ok(())
+    }
+
+    #[inline(never)]
+    pub fn finish(self) -> Result<usize, RnsPathTableWriteError> {
+        if self.remaining_entries != 0 {
+            return Err(RnsPathTableWriteError::EntryCountMismatch);
+        }
+        Ok(self.capacity - self.output.len())
+    }
+}
+
+pub fn write_route_snapshots(
+    entries: &[RouteSnapshot],
+    output: &mut [u8],
+) -> Result<usize, RnsPathTableWriteError> {
+    let mut writer = RnsPathTableWriter::new(entries.len(), output)?;
+    for entry in entries {
+        writer.push(entry)?;
+    }
+    writer.finish()
+}
+
+fn write_route_snapshot(
+    output: &mut &mut [u8],
+    entry: &RouteSnapshot,
+) -> Result<(), RnsPathTableWriteError> {
+    write_bytes(output, &[0x86])?;
+    write_string(output, common::HASH)?;
+    write_binary(output, entry.destination.as_bytes())?;
+    write_string(output, path::TIMESTAMP)?;
+    write_f64(
+        output,
+        rns_timestamp(InstantMillis(
+            entry.learned_at.0.max(entry.last_route_activity_at.0),
+        )),
+    )?;
+    write_string(output, path::VIA)?;
+    write_binary(output, &next_hop_bytes(entry))?;
+    write_string(output, path::HOPS)?;
+    write_unsigned(output, u64::from(entry.hops))?;
+    write_string(output, path::EXPIRES)?;
+    write_f64(output, rns_timestamp(entry.expires_at))?;
+    write_string(output, path::INTERFACE)?;
+    let mut interface = heapless::String::<INTERFACE_NAME_CAPACITY>::new();
+    write_interface_name(&mut interface, entry.interface)
+        .map_err(|_| RnsPathTableWriteError::InterfaceNameTooLong)?;
+    write_string(output, &interface)
+}
+
+fn write_array_length(output: &mut &mut [u8], length: u32) -> Result<(), RnsPathTableWriteError> {
+    if length <= 15 {
+        write_bytes(output, &[0x90 | length as u8])
+    } else if let Ok(length) = u16::try_from(length) {
+        write_bytes(output, &[0xdc])?;
+        write_bytes(output, &length.to_be_bytes())
+    } else {
+        write_bytes(output, &[0xdd])?;
+        write_bytes(output, &length.to_be_bytes())
+    }
+}
+
+fn write_string(output: &mut &mut [u8], value: &str) -> Result<(), RnsPathTableWriteError> {
+    write_blob_length(output, value.len(), Some((31, 0xa0)), 0xd9, 0xda, 0xdb)?;
+    write_bytes(output, value.as_bytes())
+}
+
+fn write_binary(output: &mut &mut [u8], value: &[u8]) -> Result<(), RnsPathTableWriteError> {
+    write_blob_length(output, value.len(), None, 0xc4, 0xc5, 0xc6)?;
+    write_bytes(output, value)
+}
+
+fn write_blob_length(
+    output: &mut &mut [u8],
+    length: usize,
+    fixed: Option<(usize, u8)>,
+    marker8: u8,
+    marker16: u8,
+    marker32: u8,
+) -> Result<(), RnsPathTableWriteError> {
+    if let Some((_, base)) = fixed.filter(|(maximum, _)| length <= *maximum) {
+        return write_bytes(output, &[base | length as u8]);
+    }
+    if let Ok(length) = u8::try_from(length) {
+        write_bytes(output, &[marker8, length])
+    } else if let Ok(length) = u16::try_from(length) {
+        write_bytes(output, &[marker16])?;
+        write_bytes(output, &length.to_be_bytes())
+    } else {
+        let length = u32::try_from(length).map_err(|_| RnsPathTableWriteError::BufferTooShort)?;
+        write_bytes(output, &[marker32])?;
+        write_bytes(output, &length.to_be_bytes())
+    }
+}
+
+fn write_unsigned(output: &mut &mut [u8], value: u64) -> Result<(), RnsPathTableWriteError> {
+    if value <= 0x7f {
+        write_bytes(output, &[value as u8])
+    } else if let Ok(value) = u8::try_from(value) {
+        write_bytes(output, &[0xcc, value])
+    } else if let Ok(value) = u16::try_from(value) {
+        write_bytes(output, &[0xcd])?;
+        write_bytes(output, &value.to_be_bytes())
+    } else if let Ok(value) = u32::try_from(value) {
+        write_bytes(output, &[0xce])?;
+        write_bytes(output, &value.to_be_bytes())
+    } else {
+        write_bytes(output, &[0xcf])?;
+        write_bytes(output, &value.to_be_bytes())
+    }
+}
+
+fn write_f64(output: &mut &mut [u8], value: f64) -> Result<(), RnsPathTableWriteError> {
+    write_bytes(output, &[0xcb])?;
+    write_bytes(output, &value.to_bits().to_be_bytes())
+}
+
+fn write_bytes(output: &mut &mut [u8], value: &[u8]) -> Result<(), RnsPathTableWriteError> {
+    if output.len() < value.len() {
+        return Err(RnsPathTableWriteError::BufferTooShort);
+    }
+    let current = core::mem::take(output);
+    let (destination, after) = current.split_at_mut(value.len());
+    destination.copy_from_slice(value);
+    *output = after;
+    Ok(())
+}
+
+#[cfg(feature = "shared-instance-rpc")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RnsPathTableField {
     Hash,
@@ -26,6 +205,7 @@ pub enum RnsPathTableField {
     Interface,
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl fmt::Display for RnsPathTableField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -39,6 +219,7 @@ impl fmt::Display for RnsPathTableField {
     }
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct RnsPathTableEntry {
     destination: DestinationHash,
@@ -49,6 +230,7 @@ pub struct RnsPathTableEntry {
     interface: String,
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl RnsPathTableEntry {
     pub const fn destination(&self) -> DestinationHash {
         self.destination
@@ -75,6 +257,7 @@ impl RnsPathTableEntry {
     }
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl From<RouteSnapshot> for RnsPathTableEntry {
     fn from(entry: RouteSnapshot) -> Self {
         Self {
@@ -90,11 +273,13 @@ impl From<RouteSnapshot> for RnsPathTableEntry {
     }
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct RnsPathTable {
     entries: Vec<RnsPathTableEntry>,
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl RnsPathTable {
     pub fn new(entries: Vec<RouteSnapshot>) -> Self {
         Self {
@@ -146,6 +331,7 @@ impl RnsPathTable {
     }
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RnsPathTableDecodeError {
     InvalidMessagePack,
@@ -179,6 +365,7 @@ pub enum RnsPathTableDecodeError {
     TrailingData,
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl fmt::Display for RnsPathTableDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -224,9 +411,10 @@ impl fmt::Display for RnsPathTableDecodeError {
     }
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "shared-instance-rpc", feature = "std"))]
 impl std::error::Error for RnsPathTableDecodeError {}
 
+#[cfg(feature = "shared-instance-rpc")]
 #[derive(Default)]
 struct EntryBuilder {
     destination: Option<DestinationHash>,
@@ -237,6 +425,7 @@ struct EntryBuilder {
     interface: Option<String>,
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl EntryBuilder {
     fn finish(self, index: usize) -> Result<RnsPathTableEntry, RnsPathTableDecodeError> {
         Ok(RnsPathTableEntry {
@@ -258,6 +447,7 @@ impl EntryBuilder {
     }
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn decode(bytes: &[u8]) -> Result<Vec<RnsPathTableEntry>, RnsPathTableDecodeError> {
     let mut reader = MessagePackReader::new(bytes);
     let marker = reader.marker().map_err(message_pack)?;
@@ -278,6 +468,7 @@ fn decode(bytes: &[u8]) -> Result<Vec<RnsPathTableEntry>, RnsPathTableDecodeErro
     Ok(entries)
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn decode_entry(
     reader: &mut MessagePackReader<'_>,
     index: usize,
@@ -345,6 +536,7 @@ fn decode_entry(
     builder.finish(index)
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn decode_hash(
     reader: &mut MessagePackReader<'_>,
     marker: Marker,
@@ -364,6 +556,7 @@ fn decode_hash(
         })
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn decode_nonnegative(
     reader: &mut MessagePackReader<'_>,
     marker: Marker,
@@ -374,6 +567,7 @@ fn decode_nonnegative(
     })
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn decode_number(
     reader: &mut MessagePackReader<'_>,
     marker: Marker,
@@ -385,6 +579,7 @@ fn decode_number(
     })
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn set<T>(
     slot: &mut Option<T>,
     value: Option<T>,
@@ -401,6 +596,7 @@ fn set<T>(
     Ok(())
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn required<T>(
     value: Option<T>,
     index: usize,
@@ -409,13 +605,16 @@ fn required<T>(
     value.ok_or(RnsPathTableDecodeError::MissingField { index, field })
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn message_pack(_: super::message_pack::MessagePackDecodeError) -> RnsPathTableDecodeError {
     RnsPathTableDecodeError::InvalidMessagePack
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "shared-instance-rpc"))]
 mod tests {
     use super::*;
+    use crate::interfaces::{InterfaceId, InterfaceKind};
+    use crate::routing::{NextHop, RouteRetention};
 
     const RNS_1_4_2_PATH_TABLE: &str = "9186a468617368c41011111111111111111111111111111111a974696d657374616d70cb41d954fc40080000a3766961c41022222222222222222222222222222222a4686f707302a765787069726573cb41d954fc59200000a9696e74657266616365ba544350436c69656e74496e746572666163655b6f7261636c655d";
 
@@ -444,6 +643,34 @@ mod tests {
             RnsPathTable::decode_message_pack(&[0x90, 0x00]),
             Err(RnsPathTableDecodeError::TrailingData)
         );
+    }
+
+    #[test]
+    fn bounded_writer_matches_the_owned_stock_projection() {
+        let entry = RouteSnapshot {
+            destination: DestinationHash::new([0x42; 16]),
+            hops: 2,
+            via: NextHop::Direct,
+            learned_at: InstantMillis(1_000),
+            last_route_activity_at: InstantMillis(1_500),
+            expires_at: InstantMillis(2_000),
+            interface: InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"remote"),
+            retention: RouteRetention::Network,
+        };
+        for count in [0, 1, 15, 16] {
+            let entries = vec![entry.clone(); count];
+            let expected = RnsPathTable::new(entries.clone())
+                .encode_message_pack()
+                .unwrap();
+            let mut output = vec![0u8; expected.len()];
+            let written = write_route_snapshots(&entries, &mut output).unwrap();
+
+            assert_eq!(&output[..written], expected);
+            assert_eq!(
+                write_route_snapshots(&entries, &mut output[..written - 1]),
+                Err(RnsPathTableWriteError::BufferTooShort)
+            );
+        }
     }
 
     fn bytes_from_hex(value: &str) -> Vec<u8> {

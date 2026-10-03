@@ -181,6 +181,9 @@ pub enum RemoteControlTargetPairingApproval {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApproveRemoteControlTargetPairingFailure {
+    AuthorizationPreparationFailed {
+        failure: RemoteControlTargetPairingPreparationFailure,
+    },
     Expired {
         expired: RemoteControlTargetPairingAborted,
         retired_link: LinkId,
@@ -335,6 +338,21 @@ pub enum RemoteControlTargetPairingAuthorizationPersistence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlTargetPairingPreparationFailure {
+    TargetSignerUnavailable {
+        target_identity: crate::identity::IdentityHash,
+    },
+    SigningFailed {
+        error: RemoteControlPairingCompletionSigningError,
+    },
+    DeadlineElapsed,
+    NoAuthorizationOwed,
+    AttemptMismatch {
+        active: RemoteControlPairingAttemptId,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SettleRemoteControlTargetPairingAuthorization {
     pub attempt_id: RemoteControlPairingAttemptId,
     pub persistence: RemoteControlTargetPairingAuthorizationPersistence,
@@ -382,6 +400,18 @@ pub enum SettleRemoteControlTargetPairingAuthorizationFailure {
         attempt_id: RemoteControlPairingAttemptId,
         failure: crate::engine::RemoteControlPairingResponseDispatchFailure,
     },
+}
+
+impl SettleRemoteControlTargetPairingAuthorizationFailure {
+    pub const fn is_completion_delivery_failure(&self) -> bool {
+        match self {
+            Self::CompletionDispatchFailed { .. } | Self::CompletionRetentionExpired { .. } => true,
+            Self::NoAuthorizationOwed { .. }
+            | Self::AttemptMismatch { .. }
+            | Self::TargetSignerUnavailable { .. }
+            | Self::CompletionSigningFailed { .. } => false,
+        }
+    }
 }
 
 impl Settleable for SettleRemoteControlTargetPairingAuthorization {

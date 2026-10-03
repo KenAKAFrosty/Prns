@@ -305,6 +305,12 @@ class FakeRuntime {
   #nextInterface = 1;
   #outbound = [];
 
+  configureBrowserWork() {}
+
+  takeBrowserWork() {}
+
+  completeBrowserWork() {}
+
   snapshot() {
     return {};
   }
@@ -591,7 +597,7 @@ function runtimeHost(runtime) {
     (length) => Tag("Filled", new Uint8Array(length)),
     () => 1_000,
     Tag("Available", new Uint8Array(16)),
-    Tag("PortableWasm"),
+    undefined,
     () => undefined,
   );
 }

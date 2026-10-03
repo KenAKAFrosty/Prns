@@ -244,7 +244,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
         throw new FlashBridgeError("artifact_hash_mismatch", "A firmware part failed SHA-256 verification.");
       }
       if (request.transport === "uf2-mass-storage") {
-        validateUf2Artifact(bytes, request.uf2Compatibility, request.boardSlug);
+        validateUf2Artifact(bytes, request.uf2Compatibility);
       }
       files.push({ ...part, bytes });
       completed += bytes.length;

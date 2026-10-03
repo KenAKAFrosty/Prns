@@ -2,7 +2,10 @@ mod byte_stream;
 mod handle_capabilities;
 mod interface_lifecycle;
 mod node_lifecycle;
+mod path_discovery;
 mod persistence;
+#[cfg(test)]
+pub(crate) use persistence::TestDirectory;
 mod remote_control;
 mod request_response;
 mod resource_admission;
@@ -25,16 +28,21 @@ use crate::engine::{
     AllowRequester, AllowRequesterFailure, AnnounceNow, CloseLink, CloseRemoteControlPairing,
     CloseRemoteControlPairingOutcome, CommandId, EgressTarget, EstablishLink, EstablishLinkFailure,
     Identify, IdentifyFailure, IssuedCommand, LinkEstablished, OpenRemoteControlPairing,
-    PacketReceiptDelivered, PathFound, PathRequestId, PrnsCommand, RemoteControlPairingOpened,
-    RequestPath, RequestPathFailure, SendGroup, SendGroupFailure, SendGroupPayload,
-    SendPlainPacket, SendPlainPacketFailure, SendPlainPacketPayload, SendSinglePacket,
-    SendSinglePacketFailure, SendSinglePacketPayload, SendToChannel, SendToChannelBody,
-    SendToChannelFailure, SendToLink, SendToLinkFailure, SendToLinkPayload,
-    SetRegisteredAnnounceAppData, Settlement, PATH_REQUEST_ID_LEN,
+    PacketReceiptDelivered, PrnsCommand, RemoteControlPairingOpened, RequestPathFailure, SendGroup,
+    SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
+    SendPlainPacketPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+    SendToChannel, SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure,
+    SendToLinkPayload, SetRegisteredAnnounceAppData, Settlement,
 };
 use crate::identity::IdentityHash;
+use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::interfaces::InterfaceId;
 use crate::manifold::driver::{HostCommand, LocalCommandProducer};
+use crate::node_introspection::NodeIntrospection;
+use crate::remote_control::{
+    RemoteControlPathEntry, RemoteControlPathInventory, RemoteControlPathPage,
+    RemoteControlPathPageBuilder,
+};
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
@@ -56,22 +64,23 @@ use super::{InterfaceStore, SendError};
 pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 pub use interface_lifecycle::{
     AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, DetachedFleet, Fleet,
-    InterfaceAttachmentMetadata, InterfaceSupervisor,
+    InterfaceArbitration, InterfaceAttachmentMetadata, InterfaceEventSource, InterfaceSupervisor,
 };
 use interface_lifecycle::{DriverMsg, RegisteredInterface};
 pub use node_lifecycle::{
     NodeRunError, NonRoutingIdentityError, PrnsNode, RegisterRequestEndpointError,
     SharedInstanceIdentityError,
 };
-pub(crate) use persistence::RemoteControlAuthorizationPersistence;
 pub use persistence::{
     boot_timeline_origin, wall_clock_timeline_origin, DefaultLocationError,
     DestinationIdentitySeedReport, FlushError, FlushFailurePolicy, FlushMark, FlushReport,
     NodePersistence, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
     PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PrepareFlushError,
-    PreparedFlush, RatchetSeedReport, RegionFlush, RemoteControlAuthorizationSeedReport,
-    RouteSeedProgress, RouteSeedReport, SaveOnLearn, SaveOnLearnWiring, TunnelSeedReport,
+    PreparedFlush, RatchetSeedReport, RegionFlush, RemoteControlAuthorizationPersistence,
+    RemoteControlAuthorizationSeedReport, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
+    SaveOnLearnWiring, TunnelSeedReport,
 };
+pub(crate) use persistence::{AuthorizationOwnerError, AuthorizationTransaction};
 pub use remote_control::{RemoteControlHandle, RemoteControlTargetHandle};
 pub use request_response::{RequestOptions, ResponseSendError};
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};
@@ -82,6 +91,15 @@ pub use resource_transfer::{
 
 #[cfg(test)]
 pub(crate) fn test_remote_control_service(
+) -> prns_core::remote_control::RemoteControlService<'static> {
+    test_remote_control_service_with_capabilities(
+        prns_core::remote_control::RemoteControlCapabilities::describe_only(),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn test_remote_control_service_with_capabilities(
+    capabilities: prns_core::remote_control::RemoteControlCapabilities,
 ) -> prns_core::remote_control::RemoteControlService<'static> {
     use prns_core::identity::vault::IdentitySecretKey;
     use prns_core::remote_control::{
@@ -99,10 +117,11 @@ pub(crate) fn test_remote_control_service(
         )),
     )
     .expect("distinct test identities");
-    RemoteControlService::new(
+    RemoteControlService::with_capabilities(
         identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
+        capabilities,
     )
 }
 
@@ -117,6 +136,7 @@ pub(crate) fn test_remote_control_grant(
         .identities();
     prns_core::remote_control::RemoteControlControllerGrant::new(
         *identities.controller(),
+        prns_core::remote_control::RemoteControlControllerAuthority::Operator,
         prns_core::remote_control::RemoteControlRequestSet::only(request),
     )
     .unwrap()
@@ -128,7 +148,7 @@ pub struct PrnsNodeHandle {
     commands: UnboundedSender<HostCommand>,
     ids: Arc<AtomicU64>,
     attachment_epochs: Arc<AtomicU64>,
-    notify_tx: UnboundedSender<InterfaceId>,
+    manifold_wake: crate::manifold::driver::ManifoldWakeSender,
     iface_build: UnboundedSender<DriverMsg>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     store: InterfaceStore,
@@ -248,7 +268,7 @@ impl PrnsNodeHandle {
         RemoteControlControllerGrantReceiver,
         RemoteControlTargetAccessReceiver,
     ) {
-        let (notify_tx, _notify_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (manifold_wake, _manifold_wake_rx) = crate::manifold::driver::manifold_wake();
         let (iface_build, _iface_build_rx) = tokio::sync::mpsc::unbounded_channel();
         let (remote_control_controller_grants, remote_control_controller_grants_rx) =
             remote_control_controller_grant_lane();
@@ -259,12 +279,12 @@ impl PrnsNodeHandle {
                 commands,
                 ids: Arc::new(AtomicU64::new(0)),
                 attachment_epochs: Arc::new(AtomicU64::new(0)),
-                notify_tx,
+                manifold_wake,
                 iface_build,
                 interfaces: Arc::new(Mutex::new(HashMap::new())),
                 store: InterfaceStore::new(),
                 resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
-                entropy: crate::manifold::driver::TokioEntropy,
+                entropy: crate::manifold::driver::TokioEntropy::new(),
                 timing_oracle: Arc::new(Mutex::new(None)),
                 remote_control_controller_grants,
                 remote_control_target_accesses,
@@ -449,28 +469,6 @@ impl PrnsNodeHandle {
         {
             Some(Settlement::EstablishLink(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
-        }
-    }
-
-    pub async fn request_path(
-        &self,
-        destination: DestinationHash,
-    ) -> Result<PathFound, RequestPathError> {
-        let mut request_id = [0; PATH_REQUEST_ID_LEN];
-        getrandom::getrandom(&mut request_id).map_err(|_| RequestPathError::EntropyUnavailable)?;
-        let timing = self.path_command_timing().await;
-        match self
-            .settle_with_timing(
-                PrnsCommand::RequestPath(RequestPath {
-                    destination,
-                    id: PathRequestId::new(request_id),
-                }),
-                timing,
-            )
-            .await
-        {
-            Some(Settlement::RequestPath(result)) => result.map_err(RequestPathError::Failed),
-            Some(_) | None => Err(RequestPathError::NodeStopped),
         }
     }
 
@@ -732,6 +730,33 @@ impl super::PrnsNodeApi for PrnsNodeHandle {
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
         self.respond_packed(responder, packed).is_some()
+    }
+
+    async fn respond_rns_path_table(
+        &self,
+        responder: RespondToken,
+        request: RnsRemotePathTableRequest,
+    ) -> bool {
+        self.respond_rns_path_table(responder, request).await
+    }
+
+    async fn inventory_path_table(
+        &self,
+        page: RemoteControlPathPage,
+    ) -> RemoteControlPathInventory {
+        let routes = NodeIntrospection::routes(self).await;
+        let mut builder = RemoteControlPathPageBuilder::new(page);
+        for snapshot in routes {
+            builder.observe(RemoteControlPathEntry::new(
+                snapshot.destination,
+                snapshot.hops,
+                snapshot.via,
+                snapshot.interface,
+                snapshot.learned_at.0,
+                snapshot.expires_at.0,
+            ));
+        }
+        builder.finish()
     }
 
     fn close_link(&self, link_id: LinkId) -> bool {

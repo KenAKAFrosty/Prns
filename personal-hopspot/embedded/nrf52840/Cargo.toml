@@ -19,8 +19,13 @@ default = ["board-t-echo", "softdevice-s140-v7"]
 board-t-echo = ["personal-hopspot-core/display", "dep:embedded-graphics"]
 board-t096 = ["personal-hopspot-core/display", "dep:embedded-graphics", "softdevice-s140-v6"]
 board-t114 = ["personal-hopspot-core/display", "dep:embedded-graphics", "softdevice-s140-v6"]
+board-mesh-pocket = ["personal-hopspot-core/display", "dep:embedded-graphics", "softdevice-s140-v6"]
+mesh-pocket-battery-5000 = []
+mesh-pocket-battery-10000 = []
 board-t1000e = ["cortex-m/critical-section-single-core"]
 board-mesh-tower-v2 = ["embassy-nrf/nfc-pins-as-gpio"]
+board-muzi-base-duo = ["embassy-nrf/nfc-pins-as-gpio"]
+board-rak4631 = ["embassy-nrf/nfc-pins-as-gpio", "softdevice-s140-v6"]
 softdevice-s140-v6 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v6"]
 softdevice-s140-v7 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v7"]
 
@@ -44,6 +49,11 @@ path = "src/bin/heltec_t114.rs"
 required-features = ["board-t114"]
 
 [[bin]]
+name = "heltec-mesh-pocket"
+path = "src/bin/heltec_mesh_pocket.rs"
+required-features = ["board-mesh-pocket"]
+
+[[bin]]
 name = "t1000e"
 path = "src/bin/t1000e.rs"
 required-features = ["board-t1000e"]
@@ -53,9 +63,20 @@ name = "heltec-mesh-tower-v2"
 path = "src/bin/heltec_mesh_tower_v2.rs"
 required-features = ["board-mesh-tower-v2", "softdevice-s140-v6"]
 
+[[bin]]
+name = "muzi-base-duo"
+path = "src/bin/muzi_base_duo.rs"
+required-features = ["board-muzi-base-duo", "softdevice-s140-v6"]
+
+[[bin]]
+name = "rak4631"
+path = "src/bin/rak4631.rs"
+required-features = ["board-rak4631"]
+
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }
-personal-hopspot-core = { path = "../../core", default-features = false, features = ["embedded"] }
+personal-hopspot-core = { path = "../../core", default-features = false, features = ["compact-node-pages", "embedded"] }
+personal-hopspot-memory = { path = "../../memory" }
 prns-core = { path = "../../../prns-core", default-features = false }
 
 embedded-graphics = { version = "0.8", optional = true }
@@ -105,4 +126,4 @@ unsafe_op_in_unsafe_fn = "deny"
 undocumented_unsafe_blocks = "deny"
 
 [build-dependencies]
-personal-hopspot-core = { path = "../../core", default-features = false }
+personal-hopspot-memory = { path = "../../memory" }

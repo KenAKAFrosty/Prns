@@ -64,6 +64,7 @@ fn resolved_target() -> (
         .identities();
     let access = RemoteControlTargetAccess::new(
         RemoteControlTargetIdentity::new(*identities.target().public_keys()),
+        crate::remote_control::RemoteControlControllerAuthority::Operator,
         RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
     )
     .unwrap();

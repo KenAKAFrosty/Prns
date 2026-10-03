@@ -211,12 +211,12 @@ async fn live_refresh_registers_added_paths_and_retires_removed_paths() {
         transport_identity: None,
         remote_control: crate::test_support::remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: personal_rns::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {},
     });
     let destination = node
         .register_preconfigured_destination(PreConfiguredDestination::Single {

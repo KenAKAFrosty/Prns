@@ -3,223 +3,178 @@
 //! inline or materialize an owning worker job, then returns [`ResourceOpenCompleted`] through
 //! [`EngineState::resume_resource_open`].
 
+#[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+use crate::engine::ResourceOpenWorkspace;
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, OpenedResourceSpan, OwedWork,
-    ResourceOpenCompleted, ResourceOpenOwed, WakeSchedules,
+    ResourceOpenCompleted, ResourceOpenOwed, ResourceOpenSpanResidence, WakeSchedules,
 };
-use crate::routing::links::resources::streamed_open::{ExternalOpenVerification, OpenProgress};
+#[cfg(feature = "resource-work-offload")]
+use crate::engine::{
+    StreamedResourceOpenReservation, WholeResourceOpenCompleted, WholeResourceOpenLanding,
+    WholeResourceOpenOutcome,
+};
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::streamed_open::ExternalOpenVerification;
+use crate::routing::links::resources::streamed_open::OpenProgress;
 use crate::routing::links::resources::table::IncomingResourceStatus;
+#[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+use crate::routing::links::resources::table::{ResourceTransferDetach, ResourceTransferRestore};
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 
-pub struct ExternalOpenJobView<'a> {
-    pub link_id: LinkId,
-    pub hash: ResourceHash,
-    pub key: &'a crate::routing::links::LinkKey,
-    pub sealed: &'a [u8],
-    pub compression: crate::routing::links::resources::ResourceCompression,
-    pub salt_nonce: crate::routing::links::resources::SaltNonce,
-    pub total_segments: u64,
-}
-
-impl ExternalOpenJobView<'_> {
-    pub fn signing_key_material(&self) -> &[u8; 32] {
-        self.key.token_material_halves().0
-    }
-
-    pub fn encryption_key_material(&self) -> &[u8; 32] {
-        self.key.token_material_halves().1
-    }
-}
-
 impl<S: StorageLayout> EngineState<S> {
-    pub fn external_open_job_view(&self) -> Option<ExternalOpenJobView<'_>> {
-        (0..self.incoming_resources.len()).find_map(|index| {
-            let state = self.incoming_resources.state(index);
-            if state.status != IncomingResourceStatus::AwaitingOpen {
-                return None;
-            }
-            let (_, slot) = self.incoming_resources.transfer_and_streamed_open(index);
-            if !matches!(slot, OpenProgress::NotBegun) {
-                return None;
-            }
-            let link_id = *self.incoming_resources.link_at(index);
-            let crate::routing::links::table::LinkPhase::Active { key, .. } =
-                self.links.phase_for(&link_id)?
-            else {
-                return None;
-            };
-            Some(ExternalOpenJobView {
-                link_id,
-                hash: *self.incoming_resources.hash_at(index),
-                key,
-                sealed: self.incoming_resources.sealed_transfer(index),
-                compression: state.compression,
-                salt_nonce: state.salt_nonce,
-                total_segments: state.total_segments,
-            })
-        })
-    }
-
-    pub fn mark_external_opening(&mut self, link_id: &LinkId, hash: &ResourceHash) {
-        let Some(index) = self.incoming_resources.lookup(link_id, hash) else {
-            return;
-        };
-        if self.incoming_resources.state(index).status != IncomingResourceStatus::AwaitingOpen {
-            return;
-        }
-        let sealed_len = self.incoming_resources.state(index).sealed_transfer_bytes;
-        let (_, slot) = self
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+    pub fn take_resource_open_workspace(
+        &mut self,
+        reservation: StreamedResourceOpenReservation,
+    ) -> ResourceOpenWorkspace {
+        let Some(index) = self
             .incoming_resources
-            .transfer_and_streamed_open_mut(index);
-        if matches!(slot, OpenProgress::NotBegun) {
-            *slot = OpenProgress::Chewing {
-                dispatched: 0..sealed_len,
-            };
-        }
-    }
-
-    pub fn apply_external_open(
-        &mut self,
-        link_id: &LinkId,
-        hash: &ResourceHash,
-        plaintext: &[u8],
-        now: InstantMillis,
-        sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
-    ) {
-        let Some(index) = self.external_opening_index(link_id, hash) else {
-            return;
+            .lookup(&reservation.link_id, &reservation.hash)
+        else {
+            return ResourceOpenWorkspace::Stale;
         };
-        let sealed_len = self.incoming_resources.state(index).sealed_transfer_bytes;
-        if plaintext.len() < crate::routing::links::resources::RESOURCE_NONCE_LEN
-            || plaintext.len() > sealed_len
+        let state = self.incoming_resources.state(index);
+        let expected = reservation.span_start..reservation.span_end;
+        if state.status != IncomingResourceStatus::AwaitingOpen
+            || state.open_generation != Some(reservation.generation)
+            || !matches!(
+                self.incoming_resources.streamed_open(index),
+                OpenProgress::Chewing { dispatched } if *dispatched == expected
+            )
+            || !self.incoming_resources.transfer_is_resident(index)
         {
-            self.fail_incoming_resource(
-                link_id,
-                hash,
-                crate::routing::links::resources::ResourceFailureCause::TransferUnopenable,
-                sink,
-            );
-            return;
+            return ResourceOpenWorkspace::Stale;
         }
-        {
-            let (transfer, slot) = self
-                .incoming_resources
-                .transfer_and_streamed_open_mut(index);
-            transfer[..plaintext.len()].copy_from_slice(plaintext);
-            *slot = OpenProgress::ExternallyOpened {
-                plaintext_byte_len: plaintext.len(),
-                verification: ExternalOpenVerification::Rehash,
-            };
+        match self.incoming_resources.detach_transfer(index) {
+            ResourceTransferDetach::Detached(transfer) => {
+                ResourceOpenWorkspace::DetachedTransfer(transfer)
+            }
+            ResourceTransferDetach::Unavailable => {
+                let transfer = self.incoming_resources.sealed_transfer(index);
+                ResourceOpenWorkspace::CopiedSpan(transfer[expected].to_vec())
+            }
         }
-        self.conclude_resource(link_id, hash, now, sink);
     }
 
-    // This landing seam keeps the resource identity, returned bytes, verification evidence,
-    // engine time, and reaction route explicit; bundling them would obscure their ownership.
-    #[allow(clippy::too_many_arguments)]
-    pub fn apply_external_open_verified(
+    #[cfg(feature = "resource-work-offload")]
+    pub fn resume_whole_resource_open(
         &mut self,
-        link_id: &LinkId,
-        hash: &ResourceHash,
-        plaintext: &[u8],
-        calculated_hash: ResourceHash,
-        proof: crate::routing::links::resources::ResourceProof,
+        completed: WholeResourceOpenCompleted<'_>,
         now: InstantMillis,
+        fill_random: &mut impl FnMut(&mut [u8]),
         sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
-    ) {
-        let Some(index) = self.external_opening_index(link_id, hash) else {
-            return;
+    ) -> WholeResourceOpenLanding {
+        let reservation = completed.reservation;
+        let Some(index) = self
+            .incoming_resources
+            .lookup(&reservation.link_id, &reservation.hash)
+        else {
+            return WholeResourceOpenLanding::Stale;
         };
         let state = *self.incoming_resources.state(index);
-        if state.compression != crate::routing::links::resources::ResourceCompression::Uncompressed
-            || plaintext.len() < crate::routing::links::resources::RESOURCE_NONCE_LEN
-            || plaintext.len() > state.sealed_transfer_bytes
+        if state.status != IncomingResourceStatus::AwaitingOpen
+            || state.open_generation != Some(reservation.generation)
         {
-            self.fail_incoming_resource(
-                link_id,
-                hash,
-                crate::routing::links::resources::ResourceFailureCause::TransferUnopenable,
-                sink,
-            );
-            return;
+            return WholeResourceOpenLanding::Stale;
         }
-        if calculated_hash != *hash {
-            self.fail_incoming_resource(
-                link_id,
-                hash,
-                crate::routing::links::resources::ResourceFailureCause::TransferCorrupt,
-                sink,
-            );
-            return;
-        }
-        {
-            let (transfer, slot) = self
-                .incoming_resources
-                .transfer_and_streamed_open_mut(index);
-            transfer[..plaintext.len()].copy_from_slice(plaintext);
-            *slot = OpenProgress::ExternallyOpened {
-                plaintext_byte_len: plaintext.len(),
-                verification: ExternalOpenVerification::Verified(proof),
-            };
-        }
-        self.conclude_resource(link_id, hash, now, sink);
-    }
-
-    pub fn reject_external_open(
-        &mut self,
-        link_id: &LinkId,
-        hash: &ResourceHash,
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) {
-        if self.external_opening_index(link_id, hash).is_none() {
-            return;
-        }
-        self.fail_incoming_resource(
-            link_id,
-            hash,
-            crate::routing::links::resources::ResourceFailureCause::TransferUnopenable,
-            sink,
-        );
-    }
-
-    pub fn retry_external_open_inline(
-        &mut self,
-        link_id: &LinkId,
-        hash: &ResourceHash,
-        now: InstantMillis,
-        sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
-    ) {
-        let Some(index) = self.external_opening_index(link_id, hash) else {
-            return;
-        };
-        let (_, slot) = self
-            .incoming_resources
-            .transfer_and_streamed_open_mut(index);
-        *slot = OpenProgress::NotBegun;
-        self.incoming_resources.state_mut(index).status = IncomingResourceStatus::Transferring;
-        let lane = core::mem::replace(
-            &mut self.resource_open_lane,
-            crate::routing::links::resources::streamed_open::ResourceOpenLane::EngineDirected,
-        );
-        self.conclude_resource(link_id, hash, now, sink);
-        self.resource_open_lane = lane;
-    }
-
-    fn external_opening_index(&self, link_id: &LinkId, hash: &ResourceHash) -> Option<usize> {
-        let index = self.incoming_resources.lookup(link_id, hash)?;
-        let state = self.incoming_resources.state(index);
-        if state.status != IncomingResourceStatus::AwaitingOpen {
-            return None;
-        }
-        let (_, slot) = self.incoming_resources.transfer_and_streamed_open(index);
-        matches!(
-            slot,
+        let (_, open) = self.incoming_resources.transfer_and_streamed_open(index);
+        if !matches!(
+            open,
             OpenProgress::Chewing { dispatched }
                 if *dispatched == (0..state.sealed_transfer_bytes)
-        )
-        .then_some(index)
+        ) {
+            return WholeResourceOpenLanding::Stale;
+        }
+        match completed.outcome {
+            WholeResourceOpenOutcome::Opened(plaintext) => {
+                if plaintext.len() < crate::routing::links::resources::RESOURCE_NONCE_LEN
+                    || plaintext.len() > state.sealed_transfer_bytes
+                {
+                    return WholeResourceOpenLanding::Invalid;
+                }
+                let (transfer, open) = self
+                    .incoming_resources
+                    .transfer_and_streamed_open_mut(index);
+                transfer[..plaintext.len()].copy_from_slice(plaintext);
+                *open = OpenProgress::ExternallyOpened {
+                    plaintext_byte_len: plaintext.len(),
+                    verification: ExternalOpenVerification::Rehash,
+                };
+                self.incoming_resources.state_mut(index).open_generation = None;
+                self.conclude_resource(
+                    &reservation.link_id,
+                    &reservation.hash,
+                    now,
+                    fill_random,
+                    sink,
+                );
+            }
+            WholeResourceOpenOutcome::OpenedAndDigested {
+                plaintext,
+                calculated_hash,
+                proof,
+            } => {
+                if state.compression
+                    != crate::routing::links::resources::ResourceCompression::Uncompressed
+                    || plaintext.len() < crate::routing::links::resources::RESOURCE_NONCE_LEN
+                    || plaintext.len() > state.sealed_transfer_bytes
+                    || calculated_hash != reservation.hash
+                {
+                    return WholeResourceOpenLanding::Invalid;
+                }
+                let (transfer, open) = self
+                    .incoming_resources
+                    .transfer_and_streamed_open_mut(index);
+                transfer[..plaintext.len()].copy_from_slice(plaintext);
+                *open = OpenProgress::ExternallyOpened {
+                    plaintext_byte_len: plaintext.len(),
+                    verification: ExternalOpenVerification::Verified(proof),
+                };
+                self.incoming_resources.state_mut(index).open_generation = None;
+                self.conclude_resource(
+                    &reservation.link_id,
+                    &reservation.hash,
+                    now,
+                    fill_random,
+                    sink,
+                );
+            }
+            WholeResourceOpenOutcome::Refused => {
+                self.fail_incoming_resource(
+                    &reservation.link_id,
+                    &reservation.hash,
+                    crate::routing::links::resources::ResourceFailureCause::TransferUnopenable,
+                    sink,
+                );
+            }
+            WholeResourceOpenOutcome::Unavailable => {
+                {
+                    let state = self.incoming_resources.state_mut(index);
+                    state.status = IncomingResourceStatus::Transferring;
+                    state.open_generation = None;
+                }
+                let (_, open) = self
+                    .incoming_resources
+                    .transfer_and_streamed_open_mut(index);
+                *open = OpenProgress::NotBegun;
+                let lane = core::mem::replace(
+                    &mut self.resource_open_lane,
+                    crate::routing::links::resources::streamed_open::ResourceOpenLane::EngineDirected,
+                );
+                self.conclude_resource(
+                    &reservation.link_id,
+                    &reservation.hash,
+                    now,
+                    fill_random,
+                    sink,
+                );
+                self.resource_open_lane = lane;
+            }
+        }
+        WholeResourceOpenLanding::Applied
     }
 }
 
@@ -241,7 +196,33 @@ impl<S: StorageLayout> EngineState<S> {
             return;
         }
         let other_transfers_in_flight = self.incoming_resources.len() > 1;
+        #[cfg(feature = "resource-work-offload")]
+        let status = self.incoming_resources.state(index).status;
         let contiguous = self.incoming_resources.state(index).contiguous_byte_len();
+        let span = match self.incoming_resources.streamed_open(index) {
+            OpenProgress::Parked(open) => open.pending_span(contiguous),
+            OpenProgress::NotBegun
+            | OpenProgress::Chewing { .. }
+            | OpenProgress::ExternallyOpened { .. } => return,
+        };
+        if span.is_empty() {
+            return;
+        }
+        let residence = ResourceOpenSpanResidence::Resident;
+        #[cfg(feature = "resource-work-offload")]
+        let residence = if status == IncomingResourceStatus::AwaitingOpen {
+            let generation = self.incoming_resources.take_open_generation();
+            self.incoming_resources.state_mut(index).open_generation = Some(generation);
+            ResourceOpenSpanResidence::Transferable(StreamedResourceOpenReservation {
+                link_id: *link_id,
+                hash: *hash,
+                span_start: span.start,
+                span_end: span.end,
+                generation,
+            })
+        } else {
+            residence
+        };
         let (transfer, slot) = self
             .incoming_resources
             .transfer_and_streamed_open_mut(index);
@@ -251,11 +232,6 @@ impl<S: StorageLayout> EngineState<S> {
         let OpenProgress::Parked(open) = core::mem::take(slot) else {
             return;
         };
-        let span = open.pending_span(contiguous);
-        if span.is_empty() {
-            *slot = OpenProgress::Parked(open);
-            return;
-        }
         let span_start = span.start;
         *slot = OpenProgress::Chewing {
             dispatched: span.clone(),
@@ -267,6 +243,7 @@ impl<S: StorageLayout> EngineState<S> {
                 span_start,
                 state: open,
                 bytes: &mut transfer[span],
+                residence,
                 other_transfers_in_flight,
             }),
         )));
@@ -282,6 +259,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         completed: ResourceOpenCompleted<'_>,
         now: InstantMillis,
+        fill_random: &mut impl FnMut(&mut [u8]),
         sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
     ) -> WakeSchedules {
         let ResourceOpenCompleted {
@@ -290,36 +268,103 @@ impl<S: StorageLayout> EngineState<S> {
             span_start,
             state,
             opened,
+            residence,
         } = completed;
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         let Some(index) = self.incoming_resources.lookup(&link_id, &hash) else {
             return wake_schedule_changes;
         };
+        let byte_len = match &opened {
+            OpenedResourceSpan::InPlace { byte_len } => *byte_len,
+            OpenedResourceSpan::Returned(bytes) => bytes.len(),
+            #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+            OpenedResourceSpan::ReturnedTransfer { span_byte_len, .. } => *span_byte_len,
+        };
+        let Some(span_end) = span_start.checked_add(byte_len) else {
+            return wake_schedule_changes;
+        };
+        let expected = span_start..span_end;
+        if !matches!(
+            self.incoming_resources.streamed_open(index),
+            OpenProgress::Chewing { dispatched } if *dispatched == expected
+        ) {
+            return wake_schedule_changes;
+        }
+        match residence {
+            ResourceOpenSpanResidence::Resident => {}
+            #[cfg(feature = "resource-work-offload")]
+            ResourceOpenSpanResidence::Transferable(reservation) => {
+                let tracked = self.incoming_resources.state(index);
+                if tracked.status != IncomingResourceStatus::AwaitingOpen
+                    || tracked.open_generation != Some(reservation.generation)
+                    || reservation.link_id != link_id
+                    || reservation.hash != hash
+                    || reservation.span_start != expected.start
+                    || reservation.span_end != expected.end
+                {
+                    return wake_schedule_changes;
+                }
+            }
+        }
+        #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+        let returns_transfer = matches!(&opened, OpenedResourceSpan::ReturnedTransfer { .. });
+        #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+        if returns_transfer == self.incoming_resources.transfer_is_resident(index) {
+            return wake_schedule_changes;
+        }
+        #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+        match opened {
+            OpenedResourceSpan::ReturnedTransfer { transfer, .. } => {
+                if !matches!(residence, ResourceOpenSpanResidence::Transferable(_)) {
+                    return wake_schedule_changes;
+                }
+                match self.incoming_resources.restore_transfer(index, transfer) {
+                    ResourceTransferRestore::Restored => {}
+                    ResourceTransferRestore::Unsupported(_)
+                    | ResourceTransferRestore::ShapeMismatch(_) => return wake_schedule_changes,
+                }
+                *self
+                    .incoming_resources
+                    .transfer_and_streamed_open_mut(index)
+                    .1 = OpenProgress::Parked(state);
+            }
+            OpenedResourceSpan::InPlace { .. } => {
+                *self
+                    .incoming_resources
+                    .transfer_and_streamed_open_mut(index)
+                    .1 = OpenProgress::Parked(state);
+            }
+            OpenedResourceSpan::Returned(bytes) => {
+                let (transfer, slot) = self
+                    .incoming_resources
+                    .transfer_and_streamed_open_mut(index);
+                transfer[expected].copy_from_slice(bytes);
+                *slot = OpenProgress::Parked(state);
+            }
+        }
+        #[cfg(not(all(feature = "resource-work-offload", feature = "alloc")))]
         {
             let (transfer, slot) = self
                 .incoming_resources
                 .transfer_and_streamed_open_mut(index);
-            let byte_len = match &opened {
-                OpenedResourceSpan::InPlace { byte_len } => *byte_len,
-                OpenedResourceSpan::Returned(bytes) => bytes.len(),
-            };
-            let Some(span_end) = span_start.checked_add(byte_len) else {
-                return wake_schedule_changes;
-            };
-            let expected = span_start..span_end;
-            let OpenProgress::Chewing { dispatched } = slot else {
-                return wake_schedule_changes;
-            };
-            if *dispatched != expected {
-                return wake_schedule_changes;
-            }
             if let OpenedResourceSpan::Returned(bytes) = opened {
                 transfer[expected].copy_from_slice(bytes);
             }
             *slot = OpenProgress::Parked(state);
         }
-        if self.incoming_resources.state(index).status == IncomingResourceStatus::AwaitingOpen {
-            self.conclude_resource(&link_id, &hash, now, sink);
+        #[cfg(feature = "resource-work-offload")]
+        if matches!(residence, ResourceOpenSpanResidence::Transferable(_)) {
+            self.incoming_resources.state_mut(index).open_generation = None;
+        }
+        let competing_transfers = self.incoming_resources.len() > 1;
+        let conclude_here = self.incoming_resources.state(index).status
+            == IncomingResourceStatus::AwaitingOpen
+            && matches!(
+                self.incoming_resources.streamed_open(index),
+                OpenProgress::Parked(open) if open.caught_up() || !competing_transfers
+            );
+        if conclude_here {
+            self.conclude_resource(&link_id, &hash, now, fill_random, sink);
             wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
         } else {
             self.emit_resource_open(&link_id, &hash, sink);
@@ -333,20 +378,26 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::{filled_frame, routable_descriptor};
+    #[cfg(feature = "resource-work-offload")]
+    use crate::engine::WholeResourceOpenPlan;
     use crate::engine::{
         CommandId, Directive, IngestIo, Journaled, OpenedResourceSpan, ResourceOpenCompleted,
         Settlement,
     };
     use crate::interfaces::{AttachedInterfaces, InboundPacket};
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+    use crate::routing::links::resources::receive::conclude::ConcludeResourceOutcome;
     use crate::routing::links::resources::receive::tests_support::*;
-    use crate::routing::links::resources::streamed_open::{ResourceOpenLane, StreamedOpen};
+    #[cfg(feature = "resource-work-offload")]
+    use crate::routing::links::resources::streamed_open::ResourceOpenLane;
+    use crate::routing::links::resources::streamed_open::StreamedOpen;
     use crate::routing::links::resources::table::IncomingResourceStatus;
     use crate::routing::links::resources::{
         ResourceBody, ResourceFailureCause, ResourceMetadata, ResourceSend, OPEN_VERDICT_GRACE_MS,
     };
 
-    fn advertise(
-        sender: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
+    fn advertise<S: StorageLayout>(
+        sender: &mut EngineState<S>,
         data: &[u8],
         at: u64,
     ) -> std::vec::Vec<u8> {
@@ -382,44 +433,198 @@ mod tests {
         span_start: usize,
         state: StreamedOpen,
         bytes: std::vec::Vec<u8>,
+        residence: ResourceOpenSpanResidence,
         other_transfers_in_flight: bool,
     }
 
+    #[cfg(feature = "resource-work-offload")]
+    struct OwnedWholeOpenJob {
+        plan: WholeResourceOpenPlan,
+        sealed: std::vec::Vec<u8>,
+    }
+
+    #[cfg(feature = "resource-work-offload")]
+    fn feed_deferring_whole_open(
+        receiver: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
+        frame: &[u8],
+        at: u64,
+    ) -> Option<OwnedWholeOpenJob> {
+        let mut job = None;
+        let mut raw = frame.to_vec();
+        receiver.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(at),
+                source_interface: lane(),
+                bytes: &mut raw,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&[routable_descriptor(lane())]),
+                now: InstantMillis(at),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::Fulfill(
+                        OwedWork::WholeResourceOpen(owed),
+                    )) = reaction
+                    {
+                        job = Some(OwnedWholeOpenJob {
+                            sealed: owed.sealed().to_vec(),
+                            plan: owed.into_plan(),
+                        });
+                    }
+                },
+            },
+        );
+        job
+    }
+
+    #[cfg(feature = "resource-work-offload")]
     fn park_external_transfer(
         sender: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
         receiver: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
         data: &[u8],
-    ) -> (LinkId, ResourceHash) {
+    ) -> OwnedWholeOpenJob {
         receiver.resource_open_lane = ResourceOpenLane::ExternalWhole;
         accept_everything(receiver);
         let advertisement = advertise(sender, data, 1_500);
         let pull = feed(receiver, &advertisement, 2_000);
         let serve = feed(sender, &pull.frames[0].1, 2_100);
+        let mut job = None;
         for (arrived, (_, part)) in serve.frames.iter().enumerate() {
-            let capture = feed(receiver, part, 2_200 + arrived as u64);
-            assert!(capture.received.is_empty());
+            let next = feed_deferring_whole_open(receiver, part, 2_200 + arrived as u64);
+            assert!(job.is_none() || next.is_none());
+            if next.is_some() {
+                job = next;
+            }
         }
-        let job = receiver.external_open_job_view().unwrap();
-        (job.link_id, job.hash)
+        job.expect("the completed transfer owes one whole-resource open")
     }
 
+    #[cfg(feature = "resource-work-offload")]
+    #[test]
+    fn external_split_refusal_uses_fresh_entropy_and_retires_both_peers() {
+        use crate::engine::{RespondFailure, SendRequestFailure, SendResourceFailure};
+        use crate::routing::links::resources::ResourceSegment;
+        use crate::units::ByteLimit;
+        use crate::wire::{WireContext, WirePacketHeader};
+
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        receiver.resource_open_lane = ResourceOpenLane::ExternalWhole;
+        let request = track_pending_request_with_limit(
+            &mut receiver,
+            CommandId(42),
+            1_800,
+            20_000,
+            ByteLimit::Maximum(0),
+        );
+        let advertisement = advertise_response_segment_from(
+            &mut sender,
+            CommandId(7),
+            request,
+            &[0xA7; 128],
+            None,
+            ResourceSegment {
+                index: 1,
+                total_segments: 2,
+                total_data_bytes: 256,
+            },
+            1_900,
+        );
+        let pull = feed(&mut receiver, &advertisement, 2_000);
+        let served = feed(&mut sender, &pull.frames[0].1, 2_100);
+        let mut jobs = served
+            .frames
+            .iter()
+            .filter_map(|(_, frame)| feed_deferring_whole_open(&mut receiver, frame, 2_200));
+        let job = jobs.next().unwrap();
+        assert!(jobs.next().is_none());
+        let mut sealed = job.sealed;
+        let plaintext = link_key().open_in_place(&mut sealed).unwrap().to_vec();
+        let mut entropy_lengths = std::vec::Vec::new();
+        let mut frames = std::vec::Vec::new();
+        let mut settlements = std::vec::Vec::new();
+        receiver.resume_whole_resource_open(
+            WholeResourceOpenCompleted {
+                reservation: job.plan.reservation(),
+                outcome: WholeResourceOpenOutcome::Opened(&plaintext),
+            },
+            InstantMillis(2_500),
+            &mut |bytes| {
+                entropy_lengths.push(bytes.len());
+                bytes.fill(0xD3);
+            },
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    frames.push(filled_frame(fill).unwrap());
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    settlements.push((id, settlement));
+                }
+                _ => panic!("unexpected completion effect"),
+            },
+        );
+        assert_eq!(entropy_lengths, std::vec![16]);
+        assert_eq!(
+            settlements,
+            std::vec![(
+                CommandId(42),
+                Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge))
+            )]
+        );
+        assert_eq!(frames.len(), 1);
+        assert_eq!(
+            WirePacketHeader::parse(&frames[0]).unwrap().0.context,
+            WireContext::ResourceReceiverCancel
+        );
+        assert_eq!(
+            feed(&mut sender, &frames[0], 2_600),
+            InboundCapture {
+                settlements: std::vec![(
+                    CommandId(7),
+                    Settlement::Respond(Err(RespondFailure::Resource(
+                        SendResourceFailure::RejectedByPeer
+                    )))
+                )],
+                ..InboundCapture::default()
+            }
+        );
+        assert!(sender.outgoing_resources.is_empty());
+        assert_eq!(sender.outgoing_assemblies.original_hash(&link_id()), None);
+        assert!(receiver.incoming_resources.is_empty());
+        assert_eq!(receiver.incoming_assemblies.original_hash(&link_id()), None);
+        assert!(!receiver.receipts.has_pending_request(&link_id(), request));
+        receiver.resume_whole_resource_open(
+            WholeResourceOpenCompleted {
+                reservation: job.plan.reservation(),
+                outcome: WholeResourceOpenOutcome::Opened(&plaintext),
+            },
+            InstantMillis(2_700),
+            &mut |_| panic!("stale completion must not consume entropy"),
+            &mut |_| panic!("stale completion must not emit effects"),
+        );
+    }
+
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_external_whole_open_delivers_and_proves() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
         let data = four_part_payload();
-        let (link_id, hash) = park_external_transfer(&mut sender, &mut receiver, &data);
-        let mut sealed = receiver.external_open_job_view().unwrap().sealed.to_vec();
+        let job = park_external_transfer(&mut sender, &mut receiver, &data);
+        let mut sealed = job.sealed;
         let plaintext = link_key().open_in_place(&mut sealed).unwrap().to_vec();
-        receiver.mark_external_opening(&link_id, &hash);
 
         let mut frames = std::vec::Vec::new();
         let mut received = std::vec::Vec::new();
-        receiver.apply_external_open(
-            &link_id,
-            &hash,
-            &plaintext,
+        let landing = receiver.resume_whole_resource_open(
+            WholeResourceOpenCompleted {
+                reservation: job.plan.reservation(),
+                outcome: WholeResourceOpenOutcome::Opened(&plaintext),
+            },
             InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
@@ -433,6 +638,7 @@ mod tests {
             },
         );
 
+        assert_eq!(landing, WholeResourceOpenLanding::Applied);
         assert_eq!(received, [data]);
         assert_eq!(frames.len(), 1);
         assert!(receiver.incoming_resources.is_empty());
@@ -443,15 +649,16 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_externally_verified_open_delivers_with_the_supplied_proof() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
         let data = four_part_payload();
-        let (link_id, hash) = park_external_transfer(&mut sender, &mut receiver, &data);
-        let view = receiver.external_open_job_view().unwrap();
-        let salt_nonce = view.salt_nonce;
-        let mut sealed = view.sealed.to_vec();
+        let job = park_external_transfer(&mut sender, &mut receiver, &data);
+        let hash = job.plan.hash();
+        let salt_nonce = job.plan.salt_nonce();
+        let mut sealed = job.sealed;
         let plaintext = link_key().open_in_place(&mut sealed).unwrap().to_vec();
         let proof = crate::routing::links::resources::assemble_incoming::verify_and_prove(
             &plaintext[crate::routing::links::resources::RESOURCE_NONCE_LEN..],
@@ -459,17 +666,19 @@ mod tests {
             &hash,
         )
         .unwrap();
-        receiver.mark_external_opening(&link_id, &hash);
-
         let mut frames = std::vec::Vec::new();
         let mut received = std::vec::Vec::new();
-        receiver.apply_external_open_verified(
-            &link_id,
-            &hash,
-            &plaintext,
-            hash,
-            proof,
+        let landing = receiver.resume_whole_resource_open(
+            WholeResourceOpenCompleted {
+                reservation: job.plan.reservation(),
+                outcome: WholeResourceOpenOutcome::OpenedAndDigested {
+                    plaintext: &plaintext,
+                    calculated_hash: hash,
+                    proof,
+                },
+            },
             InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
@@ -483,6 +692,7 @@ mod tests {
             },
         );
 
+        assert_eq!(landing, WholeResourceOpenLanding::Applied);
         assert_eq!(received, [data]);
         assert_eq!(frames.len(), 1);
         let settled = feed(&mut sender, &frames[0], 3_000);
@@ -492,24 +702,29 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
-    fn an_externally_verified_open_refuses_a_mismatched_calculated_hash() {
+    fn an_externally_verified_open_rejects_a_mismatched_calculated_hash() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
         let data = four_part_payload();
-        let (link_id, hash) = park_external_transfer(&mut sender, &mut receiver, &data);
-        let mut sealed = receiver.external_open_job_view().unwrap().sealed.to_vec();
+        let job = park_external_transfer(&mut sender, &mut receiver, &data);
+        let hash = job.plan.hash();
+        let mut sealed = job.sealed;
         let plaintext = link_key().open_in_place(&mut sealed).unwrap().to_vec();
-        receiver.mark_external_opening(&link_id, &hash);
 
         let mut failed = std::vec::Vec::new();
-        receiver.apply_external_open_verified(
-            &link_id,
-            &hash,
-            &plaintext,
-            ResourceHash::new([0xA7; 32]),
-            crate::routing::links::resources::ResourceProof::new([0xB8; 32]),
+        let landing = receiver.resume_whole_resource_open(
+            WholeResourceOpenCompleted {
+                reservation: job.plan.reservation(),
+                outcome: WholeResourceOpenOutcome::OpenedAndDigested {
+                    plaintext: &plaintext,
+                    calculated_hash: ResourceHash::new([0xA7; 32]),
+                    proof: crate::routing::links::resources::ResourceProof::new([0xB8; 32]),
+                },
+            },
             InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::ResourceFailed { cause, .. }) = reaction
                 {
@@ -518,46 +733,59 @@ mod tests {
             },
         );
 
-        assert_eq!(failed, [ResourceFailureCause::TransferCorrupt]);
-        assert!(receiver.incoming_resources.is_empty());
+        assert_eq!(landing, WholeResourceOpenLanding::Invalid);
+        assert!(failed.is_empty());
+        assert!(receiver
+            .incoming_resources
+            .lookup(&job.plan.link_id(), &hash)
+            .is_some());
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
-    fn an_external_open_refusal_only_fails_the_marked_job() {
+    fn an_external_open_refusal_fails_only_the_reserved_job() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
         let data = four_part_payload();
-        let (link_id, hash) = park_external_transfer(&mut sender, &mut receiver, &data);
+        let job = park_external_transfer(&mut sender, &mut receiver, &data);
         let mut failed = std::vec::Vec::new();
 
-        receiver.reject_external_open(&link_id, &hash, &mut |_| {
-            panic!("an unmarked row ignores a stale refusal")
-        });
-        assert!(receiver.external_open_job_view().is_some());
-        receiver.mark_external_opening(&link_id, &hash);
-        receiver.reject_external_open(&link_id, &hash, &mut |reaction| {
-            if let EngineReaction::Journaled(Journaled::ResourceFailed { cause, .. }) = reaction {
-                failed.push(cause);
-            }
-        });
+        let landing = receiver.resume_whole_resource_open(
+            WholeResourceOpenCompleted {
+                reservation: job.plan.reservation(),
+                outcome: WholeResourceOpenOutcome::Refused,
+            },
+            InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::ResourceFailed { cause, .. }) = reaction
+                {
+                    failed.push(cause);
+                }
+            },
+        );
 
+        assert_eq!(landing, WholeResourceOpenLanding::Applied);
         assert_eq!(failed, [ResourceFailureCause::TransferUnopenable]);
         assert!(receiver.incoming_resources.is_empty());
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_external_open_runtime_failure_retries_the_same_row_inline() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
         let data = four_part_payload();
-        let (link_id, hash) = park_external_transfer(&mut sender, &mut receiver, &data);
-        receiver.mark_external_opening(&link_id, &hash);
+        let job = park_external_transfer(&mut sender, &mut receiver, &data);
 
         let mut received = std::vec::Vec::new();
-        receiver.retry_external_open_inline(
-            &link_id,
-            &hash,
+        let landing = receiver.resume_whole_resource_open(
+            WholeResourceOpenCompleted {
+                reservation: job.plan.reservation(),
+                outcome: WholeResourceOpenOutcome::Unavailable,
+            },
             InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::ResourceReceived { data, .. }) =
                     reaction
@@ -567,13 +795,14 @@ mod tests {
             },
         );
 
+        assert_eq!(landing, WholeResourceOpenLanding::Applied);
         assert_eq!(received, [data]);
         assert!(receiver.incoming_resources.is_empty());
         assert_eq!(receiver.resource_open_lane, ResourceOpenLane::ExternalWhole);
     }
 
-    fn feed_deferring_open(
-        receiver: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
+    fn feed_deferring_open<S: StorageLayout>(
+        receiver: &mut EngineState<S>,
         frame: &[u8],
         at: u64,
     ) -> std::vec::Vec<OwnedOpenJob> {
@@ -602,6 +831,7 @@ mod tests {
                             span_start: owed.span_start,
                             state: owed.state,
                             bytes: owed.bytes.to_vec(),
+                            residence: owed.residence,
                             other_transfers_in_flight: owed.other_transfers_in_flight,
                         });
                     }
@@ -611,10 +841,8 @@ mod tests {
         jobs
     }
 
-    fn park_incomplete_transfer(
-        receiver: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
-    ) {
-        let mut sender = engine_with_active_link();
+    fn park_incomplete_transfer<S: StorageLayout>(receiver: &mut EngineState<S>) {
+        let mut sender = active_engine::<S>();
         let data = b"a second live resource supplies real overlap ".repeat(40);
         let advertisement = advertise(&mut sender, &data, 1_000);
         let pull = feed(receiver, &advertisement, 1_100);
@@ -642,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn a_transfer_completing_while_work_is_owed_parks_until_resume() {
+    fn a_lone_transfer_completing_while_work_is_owed_finishes_on_resume() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
@@ -681,8 +909,10 @@ mod tests {
                 span_start: job.span_start,
                 state: job.state,
                 opened: OpenedResourceSpan::Returned(&job.bytes),
+                residence: job.residence,
             },
             InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
@@ -709,6 +939,116 @@ mod tests {
         ));
     }
 
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+    #[test]
+    fn a_completed_heap_transfer_moves_through_the_tail_worker() {
+        let mut sender = active_engine::<crate::storage::GrowableHeap>();
+        let mut receiver = active_engine::<crate::storage::GrowableHeap>();
+        accept_everything(&mut receiver);
+        park_incomplete_transfer(&mut receiver);
+        let data = four_part_payload();
+
+        let advertisement = advertise_from(&mut sender, &data, None);
+        let pull = feed(&mut receiver, &advertisement, 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        let mut job = feed_deferring_open(&mut receiver, &serve.frames[0].1, 2_200)
+            .pop()
+            .unwrap();
+        for (arrived, (_, part)) in serve.frames[1..].iter().enumerate() {
+            assert!(feed_deferring_open(&mut receiver, part, 2_300 + arrived as u64).is_empty());
+        }
+
+        job.state.chew_span(&mut job.bytes);
+        let mut followup = None;
+        receiver.resume_resource_open(
+            ResourceOpenCompleted {
+                link_id: job.link_id,
+                hash: job.hash,
+                span_start: job.span_start,
+                state: job.state,
+                opened: OpenedResourceSpan::Returned(&job.bytes),
+                residence: job.residence,
+            },
+            InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xC9),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceOpen(owed))) =
+                    reaction
+                {
+                    followup = Some(OwnedOpenJob {
+                        link_id: owed.link_id,
+                        hash: owed.hash,
+                        span_start: owed.span_start,
+                        state: owed.state,
+                        bytes: owed.bytes.to_vec(),
+                        residence: owed.residence,
+                        other_transfers_in_flight: owed.other_transfers_in_flight,
+                    });
+                }
+            },
+        );
+        let mut followup = followup.unwrap();
+        let ResourceOpenSpanResidence::Transferable(reservation) = followup.residence else {
+            panic!("a completed heap transfer is transferable");
+        };
+        let mut transfer = match receiver.take_resource_open_workspace(reservation) {
+            ResourceOpenWorkspace::DetachedTransfer(transfer) => transfer,
+            ResourceOpenWorkspace::CopiedSpan(_) | ResourceOpenWorkspace::Stale => {
+                panic!("the heap row moves to its worker")
+            }
+        };
+        assert!(matches!(
+            receiver.take_resource_open_workspace(reservation),
+            ResourceOpenWorkspace::Stale
+        ));
+        receiver.emit_resource_open(&followup.link_id, &followup.hash, &mut |_| {
+            panic!("detached work cannot be emitted twice")
+        });
+        assert_eq!(
+            receiver.conclude_resource(
+                &followup.link_id,
+                &followup.hash,
+                InstantMillis(2_450),
+                &mut |bytes| bytes.fill(0xC9),
+                &mut |_| {},
+            ),
+            ConcludeResourceOutcome::AwaitingOpenVerdict,
+        );
+        let span = reservation.span_start()..reservation.span_end();
+        followup.state.chew_span(&mut transfer[span.clone()]);
+
+        let mut frames = std::vec::Vec::new();
+        let mut received = std::vec::Vec::new();
+        receiver.resume_resource_open(
+            ResourceOpenCompleted {
+                link_id: followup.link_id,
+                hash: followup.hash,
+                span_start: followup.span_start,
+                state: followup.state,
+                opened: OpenedResourceSpan::ReturnedTransfer {
+                    transfer,
+                    span_byte_len: span.len(),
+                },
+                residence: followup.residence,
+            },
+            InstantMillis(2_500),
+            &mut |bytes| bytes.fill(0xC9),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        frames.push(frame);
+                    }
+                }
+                EngineReaction::Journaled(Journaled::ResourceReceived { data, .. }) => {
+                    received.push(data.to_vec());
+                }
+                _ => {}
+            },
+        );
+        assert_eq!(received, [data]);
+        assert_eq!(frames.len(), 1);
+    }
+
     #[test]
     fn a_wrong_shape_completion_is_stale_and_leaves_the_real_work_owed() {
         let mut sender = engine_with_active_link();
@@ -731,8 +1071,10 @@ mod tests {
                 span_start: job.span_start + 16,
                 state: job.state,
                 opened: OpenedResourceSpan::Returned(&job.bytes[16..]),
+                residence: job.residence,
             },
             InstantMillis(2_250),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |_| panic!("a mismatched span touches nothing"),
         );
         assert_eq!(wrong_span, WakeSchedules::UNCHANGED);
@@ -775,8 +1117,10 @@ mod tests {
                 span_start: job.span_start,
                 state: job.state,
                 opened: OpenedResourceSpan::Returned(&job.bytes),
+                residence: job.residence,
             },
             InstantMillis(2_250),
+            &mut |bytes| bytes.fill(0xC9),
             &mut |_| panic!("stale work emits nothing"),
         );
 

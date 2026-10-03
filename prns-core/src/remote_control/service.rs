@@ -11,6 +11,57 @@ pub const DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES: usize = 8;
 pub const REMOTE_CONTROL_REQUEST_ENDPOINT_ID: &str = "/remote-control";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteControlCapabilities {
+    requests: RemoteControlRequestSet,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlCapabilitiesError {
+    DescribeRequired,
+}
+
+impl RemoteControlCapabilities {
+    #[must_use]
+    pub fn describe_only() -> Self {
+        Self {
+            requests: RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        }
+    }
+
+    pub fn from_requests(
+        requests: RemoteControlRequestSet,
+    ) -> Result<Self, RemoteControlCapabilitiesError> {
+        if !requests.supports(RemoteControlRequestKind::Describe) {
+            return Err(RemoteControlCapabilitiesError::DescribeRequired);
+        }
+        Ok(Self { requests })
+    }
+
+    /// Adds one supported operation while preserving the mandatory `Describe` capability.
+    /// Repeating an operation is intentionally idempotent.
+    #[must_use]
+    pub fn with_request(mut self, request: RemoteControlRequestKind) -> Self {
+        let _ = self.requests.insert(request);
+        self
+    }
+
+    #[must_use]
+    pub const fn requests(self) -> RemoteControlRequestSet {
+        self.requests
+    }
+
+    #[must_use]
+    pub fn supports(self, request: RemoteControlRequestKind) -> bool {
+        self.requests.supports(request)
+    }
+
+    #[must_use]
+    pub fn authorized_for(self, grant: &RemoteControlControllerGrant) -> RemoteControlRequestSet {
+        self.requests.intersection(&grant.effective_requests())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlControllerGrantsError {
     Empty,
     TooMany { actual: usize, maximum: usize },
@@ -92,11 +143,12 @@ pub struct RemoteControlConfiguration<'a> {
     identity_secrets: RemoteControlNodeIdentitySecrets,
     initial_controller_grants: RemoteControlInitialControllerGrants<'a>,
     self_announcement: RemoteControlSelfAnnouncement,
+    capabilities: RemoteControlCapabilities,
 }
 
 impl<'a> RemoteControlService<'a> {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         identity_secrets: RemoteControlNodeIdentitySecrets,
         initial_controller_grants: RemoteControlInitialControllerGrants<'a>,
         self_announcement: RemoteControlSelfAnnouncement,
@@ -105,6 +157,22 @@ impl<'a> RemoteControlService<'a> {
             identity_secrets,
             initial_controller_grants,
             self_announcement,
+            capabilities: RemoteControlCapabilities::describe_only(),
+        })
+    }
+
+    #[must_use]
+    pub const fn with_capabilities(
+        identity_secrets: RemoteControlNodeIdentitySecrets,
+        initial_controller_grants: RemoteControlInitialControllerGrants<'a>,
+        self_announcement: RemoteControlSelfAnnouncement,
+        capabilities: RemoteControlCapabilities,
+    ) -> Self {
+        Self::Available(RemoteControlConfiguration {
+            identity_secrets,
+            initial_controller_grants,
+            self_announcement,
+            capabilities,
         })
     }
 
@@ -156,7 +224,7 @@ impl<'a> RemoteControlConfiguration<'a> {
 
     #[must_use]
     pub fn available_requests(&self) -> RemoteControlRequestSet {
-        let mut available = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+        let mut available = self.capabilities.requests();
         match self.self_announcement {
             RemoteControlSelfAnnouncement::Unavailable => {}
             RemoteControlSelfAnnouncement::Destination(_) => {
@@ -192,9 +260,9 @@ mod tests {
         IDENTITY_SECRET_KEY_LEN,
     };
     use crate::remote_control::{
-        RemoteControlControllerGrantError, RemoteControlControllerIdentity,
-        RemoteControlControllerIdentitySecret, RemoteControlRequestKind, RemoteControlRequestSet,
-        RemoteControlTargetIdentitySecret,
+        RemoteControlControllerAuthority, RemoteControlControllerGrantError,
+        RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
+        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
     };
 
     const TOO_MANY_GRANTS: usize = DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS.saturating_add(1);
@@ -209,6 +277,7 @@ mod tests {
     fn grant(fill: u8) -> RemoteControlControllerGrant {
         RemoteControlControllerGrant::new(
             controller(fill),
+            RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         )
         .unwrap()
@@ -229,13 +298,22 @@ mod tests {
     #[test]
     fn a_controller_grant_requires_at_least_one_permitted_request() {
         assert_eq!(
-            RemoteControlControllerGrant::new(controller(1), RemoteControlRequestSet::empty()),
+            RemoteControlControllerGrant::new(
+                controller(1),
+                RemoteControlControllerAuthority::Operator,
+                RemoteControlRequestSet::empty(),
+            ),
             Err(RemoteControlControllerGrantError::NoPermittedRequests),
         );
         let controller = controller(2);
         let permitted_requests =
             RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf);
-        let grant = RemoteControlControllerGrant::new(controller, permitted_requests).unwrap();
+        let grant = RemoteControlControllerGrant::new(
+            controller,
+            RemoteControlControllerAuthority::Operator,
+            permitted_requests,
+        )
+        .unwrap();
 
         assert_eq!(grant.controller(), &controller);
         assert_eq!(grant.permitted_requests(), &permitted_requests);
@@ -334,10 +412,13 @@ mod tests {
             RemoteControlInitialControllerGrants::Nobody,
             RemoteControlSelfAnnouncement::Unavailable,
         );
-        let available = RemoteControlService::new(
+        let mut supported = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+        let _ = supported.insert(RemoteControlRequestKind::DescribeBuild);
+        let available = RemoteControlService::with_capabilities(
             identity_secrets(),
             RemoteControlInitialControllerGrants::Nobody,
             RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x43; 16])),
+            RemoteControlCapabilities::from_requests(supported).unwrap(),
         );
 
         assert!(!unavailable.is_available());
@@ -351,9 +432,16 @@ mod tests {
             describe_only.available_requests(),
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         );
+        let _ = supported.insert(RemoteControlRequestKind::AnnounceSelf);
+        assert_eq!(available.available_requests(), supported,);
         assert_eq!(
-            available.available_requests(),
-            RemoteControlRequestSet::all(),
+            RemoteControlCapabilities::from_requests(RemoteControlRequestSet::empty()),
+            Err(RemoteControlCapabilitiesError::DescribeRequired),
         );
+        let capabilities = RemoteControlCapabilities::describe_only()
+            .with_request(RemoteControlRequestKind::DescribeBuild)
+            .with_request(RemoteControlRequestKind::DescribeBuild);
+        assert!(capabilities.supports(RemoteControlRequestKind::Describe));
+        assert!(capabilities.supports(RemoteControlRequestKind::DescribeBuild));
     }
 }

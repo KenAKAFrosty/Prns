@@ -143,6 +143,7 @@ pub enum BuildOutgoingResourceError {
     Seal(BufferTooShort),
     HashmapBufferTooShort,
     BufferShapeMismatch,
+    PreparedDigestInputMismatch,
     SaltRerollsExhausted,
 }
 
@@ -156,6 +157,31 @@ pub struct BuiltResource {
     pub compression: ResourceCompression,
     pub has_metadata: bool,
     pub uncompressed_data_bytes: u64,
+}
+
+#[cfg(feature = "parallel-resource-hash")]
+pub struct PreparedResourceDigest {
+    prefix: Sha256PrefixState,
+    uncompressed_stream_len: usize,
+}
+
+#[cfg(feature = "parallel-resource-hash")]
+pub fn prepare_outgoing_resource_digest(
+    body: &ResourceBody<'_>,
+) -> Result<PreparedResourceDigest, BuildOutgoingResourceError> {
+    let uncompressed_stream_len = uncompressed_stream_len(0, body)?;
+    let metadata_prefix = match body.metadata {
+        ResourceMetadata::Packed(packed) => (packed.len() as u32).to_be_bytes(),
+        ResourceMetadata::None | ResourceMetadata::SentInFirstSegment { .. } => [0; 4],
+    };
+    let (block_prefix, block_packed): (&[u8], &[u8]) = match body.metadata {
+        ResourceMetadata::Packed(packed) => (&metadata_prefix[1..], packed),
+        ResourceMetadata::None | ResourceMetadata::SentInFirstSegment { .. } => (&[], &[]),
+    };
+    Ok(PreparedResourceDigest {
+        prefix: Sha256PrefixState::absorb(&[block_prefix, block_packed, body.data]),
+        uncompressed_stream_len,
+    })
 }
 
 /// The two slot regions a build writes: the sealed transfer stream and the flat map-hash names of its parts.
@@ -173,7 +199,42 @@ pub fn build_outgoing_resource(
     sdu: usize,
     regions: BuildRegions<'_>,
 ) -> Result<BuiltResource, BuildOutgoingResourceError> {
-    build_outgoing_resource_enveloped(&[], body, key, seal_iv, fresh_nonce, sdu, regions)
+    build_outgoing_resource_enveloped_with_digest(
+        OutgoingResourceBuildInputs {
+            envelope: &[],
+            body,
+            key,
+            seal_iv,
+            sdu,
+            regions,
+            digest_preparation: ResourceDigestPreparation::Calculate,
+        },
+        fresh_nonce,
+    )
+}
+
+#[cfg(feature = "parallel-resource-hash")]
+pub fn build_outgoing_resource_with_prepared_digest(
+    body: &ResourceBody<'_>,
+    prepared_digest: PreparedResourceDigest,
+    key: &LinkKey,
+    seal_iv: &[u8; 16],
+    fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+    sdu: usize,
+    regions: BuildRegions<'_>,
+) -> Result<BuiltResource, BuildOutgoingResourceError> {
+    build_outgoing_resource_enveloped_with_digest(
+        OutgoingResourceBuildInputs {
+            envelope: &[],
+            body,
+            key,
+            seal_iv,
+            sdu,
+            regions,
+            digest_preparation: ResourceDigestPreparation::Prepared(prepared_digest),
+        },
+        fresh_nonce,
+    )
 }
 
 pub fn build_outgoing_resource_enveloped(
@@ -181,10 +242,59 @@ pub fn build_outgoing_resource_enveloped(
     body: &ResourceBody<'_>,
     key: &LinkKey,
     seal_iv: &[u8; 16],
-    mut fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+    fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
     sdu: usize,
     regions: BuildRegions<'_>,
 ) -> Result<BuiltResource, BuildOutgoingResourceError> {
+    build_outgoing_resource_enveloped_with_digest(
+        OutgoingResourceBuildInputs {
+            envelope,
+            body,
+            key,
+            seal_iv,
+            sdu,
+            regions,
+            digest_preparation: ResourceDigestPreparation::Calculate,
+        },
+        fresh_nonce,
+    )
+}
+
+enum ResourceDigestPreparation {
+    Calculate,
+    #[cfg(feature = "parallel-resource-hash")]
+    Prepared(PreparedResourceDigest),
+}
+
+enum ResourceDigest<'a> {
+    Calculate(&'a [&'a [u8]]),
+    #[cfg(feature = "parallel-resource-hash")]
+    Prepared(Sha256PrefixState),
+}
+
+struct OutgoingResourceBuildInputs<'a> {
+    envelope: &'a [u8],
+    body: &'a ResourceBody<'a>,
+    key: &'a LinkKey,
+    seal_iv: &'a [u8; 16],
+    sdu: usize,
+    regions: BuildRegions<'a>,
+    digest_preparation: ResourceDigestPreparation,
+}
+
+fn build_outgoing_resource_enveloped_with_digest(
+    inputs: OutgoingResourceBuildInputs<'_>,
+    mut fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+) -> Result<BuiltResource, BuildOutgoingResourceError> {
+    let OutgoingResourceBuildInputs {
+        envelope,
+        body,
+        key,
+        seal_iv,
+        sdu,
+        regions,
+        digest_preparation,
+    } = inputs;
     let BuildRegions { transfer, hashmap } = regions;
     let &ResourceBody {
         data: plaintext,
@@ -234,15 +344,41 @@ pub fn build_outgoing_resource_enveloped(
 
     let sealed = &transfer[..sealed_transfer_bytes];
     let uncompressed_stream = [block_prefix, block_packed, envelope, plaintext];
+    let digest = match digest_preparation {
+        ResourceDigestPreparation::Calculate => ResourceDigest::Calculate(&uncompressed_stream),
+        #[cfg(feature = "parallel-resource-hash")]
+        ResourceDigestPreparation::Prepared(prepared)
+            if envelope.is_empty()
+                && prepared.uncompressed_stream_len == uncompressed_stream_len =>
+        {
+            ResourceDigest::Prepared(prepared.prefix)
+        }
+        #[cfg(feature = "parallel-resource-hash")]
+        ResourceDigestPreparation::Prepared(_) => {
+            return Err(BuildOutgoingResourceError::PreparedDigestInputMismatch);
+        }
+    };
     for _ in 0..SALT_REROLL_CAP {
         let salt_nonce = SaltNonce::new(fresh_nonce());
-        let (hashmap_outcome, digests) = hashmap_and_digest(
-            sealed,
-            sdu,
-            &salt_nonce,
-            &mut hashmap[..hashmap_len],
-            &uncompressed_stream,
-        );
+        let (hashmap_outcome, digests) = match &digest {
+            ResourceDigest::Calculate(uncompressed_stream) => hashmap_and_digest(
+                sealed,
+                sdu,
+                &salt_nonce,
+                &mut hashmap[..hashmap_len],
+                uncompressed_stream,
+            ),
+            #[cfg(feature = "parallel-resource-hash")]
+            ResourceDigest::Prepared(prefix) => (
+                write_hashmap_without_collision(
+                    sealed,
+                    sdu,
+                    &salt_nonce,
+                    &mut hashmap[..hashmap_len],
+                ),
+                prefix.digests_with_suffix(salt_nonce.as_bytes()),
+            ),
+        };
         if matches!(hashmap_outcome, HashmapWriteOutcome::Collided) {
             continue;
         }
@@ -289,9 +425,31 @@ pub(crate) fn write_hashmap_without_collision(
     HashmapWriteOutcome::DidNotCollide
 }
 
-/// Below this the join coordination outweighs the overlap: measured break-even ~64 KiB on an M4, ~1.24x at 1 MiB.
 #[cfg(feature = "parallel-resource-hash")]
-const PARALLEL_RESOURCE_MIN_BYTES: usize = 128 * 1024;
+pub const PARALLEL_RESOURCE_MIN_BYTES: usize = 128 * 1024;
+
+#[cfg(feature = "parallel-resource-hash")]
+fn parallel_hashmap_and_digest(
+    sealed: &[u8],
+    sdu: usize,
+    salt_nonce: &SaltNonce,
+    hashmap: &mut [u8],
+    uncompressed_stream: &[&[u8]],
+) -> Option<(HashmapWriteOutcome, crate::crypto::SharedPrefixDigests)> {
+    std::thread::scope(|scope| {
+        let digest = std::thread::Builder::new()
+            .name("prns-resource-digest".to_owned())
+            .spawn_scoped(scope, || {
+                crate::crypto::sha256_prefix_and_digest_suffix(
+                    uncompressed_stream,
+                    salt_nonce.as_bytes(),
+                )
+            })
+            .ok()?;
+        let outcome = write_hashmap_without_collision(sealed, sdu, salt_nonce, hashmap);
+        digest.join().ok().map(|digests| (outcome, digests))
+    })
+}
 
 fn hashmap_and_digest(
     sealed: &[u8],
@@ -307,15 +465,11 @@ fn hashmap_and_digest(
         .sum::<usize>()
         >= PARALLEL_RESOURCE_MIN_BYTES
     {
-        return rayon::join(
-            || write_hashmap_without_collision(sealed, sdu, salt_nonce, hashmap),
-            || {
-                crate::crypto::sha256_prefix_and_digest_suffix(
-                    uncompressed_stream,
-                    salt_nonce.as_bytes(),
-                )
-            },
-        );
+        if let Some(result) =
+            parallel_hashmap_and_digest(sealed, sdu, salt_nonce, hashmap, uncompressed_stream)
+        {
+            return result;
+        }
     }
     (
         write_hashmap_without_collision(sealed, sdu, salt_nonce, hashmap),
@@ -479,6 +633,88 @@ mod tests {
         assert_eq!(
             &hashmap[..4 * MAP_HASH_LEN],
             &bytes_from_hex(CASE2_HASHMAP)[..]
+        );
+    }
+
+    #[cfg(feature = "parallel-resource-hash")]
+    #[test]
+    fn a_prepared_digest_build_is_byte_identical_to_a_direct_build() {
+        let plaintext = case2_plaintext();
+        let packed_metadata = b"prepared digest metadata";
+        let body = ResourceBody {
+            data: &plaintext,
+            compressed_candidate: None,
+            metadata: ResourceMetadata::Packed(packed_metadata),
+        };
+        let mut direct_transfer = [0u8; 2_048];
+        let mut direct_hashmap = [0u8; 64];
+        let direct = build_outgoing_resource(
+            &body,
+            &link_key(),
+            &seal_iv(),
+            reference_nonces(),
+            resource_sdu(BROADCAST_MTU),
+            BuildRegions {
+                transfer: &mut direct_transfer,
+                hashmap: &mut direct_hashmap,
+            },
+        )
+        .unwrap();
+
+        let prepared_digest = prepare_outgoing_resource_digest(&body).unwrap();
+        let mut prepared_transfer = [0u8; 2_048];
+        let mut prepared_hashmap = [0u8; 64];
+        let prepared = build_outgoing_resource_with_prepared_digest(
+            &body,
+            prepared_digest,
+            &link_key(),
+            &seal_iv(),
+            reference_nonces(),
+            resource_sdu(BROADCAST_MTU),
+            BuildRegions {
+                transfer: &mut prepared_transfer,
+                hashmap: &mut prepared_hashmap,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(prepared, direct);
+        assert_eq!(prepared_transfer, direct_transfer);
+        assert_eq!(prepared_hashmap, direct_hashmap);
+    }
+
+    #[cfg(feature = "parallel-resource-hash")]
+    #[test]
+    fn a_prepared_digest_rejects_a_different_resource_length() {
+        let plaintext = case2_plaintext();
+        let prepared_body = ResourceBody {
+            data: &plaintext,
+            compressed_candidate: None,
+            metadata: ResourceMetadata::None,
+        };
+        let prepared_digest = prepare_outgoing_resource_digest(&prepared_body).unwrap();
+        let different_body = ResourceBody {
+            data: &plaintext[..plaintext.len() - 1],
+            ..prepared_body
+        };
+        let mut transfer = [0u8; 2_048];
+        let mut hashmap = [0u8; 64];
+        let result = build_outgoing_resource_with_prepared_digest(
+            &different_body,
+            prepared_digest,
+            &link_key(),
+            &seal_iv(),
+            reference_nonces(),
+            resource_sdu(BROADCAST_MTU),
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut hashmap,
+            },
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            BuildOutgoingResourceError::PreparedDigestInputMismatch,
         );
     }
 

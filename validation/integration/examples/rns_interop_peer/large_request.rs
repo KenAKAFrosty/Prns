@@ -8,8 +8,8 @@ use personal_rns::runtime::request_endpoints::{
     Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy,
 };
 use personal_rns::runtime::{
-    Diagnostic, NoPersistence, PrnsEvent, PrnsNode, PrnsNodeRecipe, SendError,
-    ServeMyRequestEndpoints,
+    Diagnostic, NoPersistence, NoRemoteControlHostControls, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+    SendError, ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::TcpClientInterface;
@@ -27,12 +27,12 @@ const RESPONSE_SIZE: usize = 128 * 1024;
 
 struct Large;
 
-impl RequestEndpoint for Large {
+impl RequestEndpoint<NoRemoteControlHostControls> for Large {
     const ENDPOINT_ID: &'static str = REQUEST_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(
-        mut context: RequestContext<'_, ()>,
+        mut context: RequestContext<'_, NoRemoteControlHostControls>,
         _node: &impl personal_rns::runtime::PrnsNodeApi,
     ) -> Result<(), Decline> {
         let expected =
@@ -94,7 +94,7 @@ pub async fn run() -> Result<(), Failure> {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [destination],
-        app_state: (),
+        app_state: NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![Large],
         interfaces: move |handle: &personal_rns::PrnsNodeHandle| {

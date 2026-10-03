@@ -1,10 +1,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rmp::Marker;
-
 use super::{
-    MessagePackDecodeError, MessagePackEncodeError, MessagePackEncoder, MessagePackInteger,
+    Marker, MessagePackDecodeError, MessagePackEncodeError, MessagePackEncoder, MessagePackInteger,
     MessagePackReader,
 };
 

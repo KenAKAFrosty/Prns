@@ -130,6 +130,32 @@ export type RuntimeRegisterNodePageOptions = {
   appData?: Uint8Array;
 };
 
+type RuntimeBrowserWorkContext = {
+  readonly id: number;
+  readonly nowMs: InstantMillis;
+  readonly entropy: EntropyBytes;
+};
+
+export type RuntimeBrowserWorkCompletion = RuntimeBrowserWorkContext & (
+  | { readonly outcome: "Valid" | "Invalid" | "Refused" | "Unavailable" }
+  | { readonly outcome: "Verified"; readonly sharedSecret: Uint8Array }
+  | { readonly outcome: "Sealed"; readonly sealed: Uint8Array }
+  | {
+      readonly outcome: "SealedAndDigested";
+      readonly sealed: Uint8Array;
+      readonly salt: Uint8Array;
+      readonly hash: Uint8Array;
+      readonly proof: Uint8Array;
+    }
+  | { readonly outcome: "Opened"; readonly plaintext: Uint8Array }
+  | {
+      readonly outcome: "OpenedAndDigested";
+      readonly plaintext: Uint8Array;
+      readonly hash: Uint8Array;
+      readonly proof: Uint8Array;
+    }
+);
+
 export type PrnsRuntimeBinding = {
   registerInterface(options: RuntimeRegisterInterfaceInput): InterfaceId;
   removeInterface(options: RuntimeRemoveInterfaceInput): boolean;
@@ -154,86 +180,9 @@ export type PrnsRuntimeBinding = {
   respond(options: RuntimeRespondOptions): bigint;
   resourceSegmentPlan(options: RuntimeResourcePlanInput): unknown;
   sendResourceSegment(options: RuntimeResourceSegmentInput): bigint;
-  sendResourceSegmentWebCrypto?(options: RuntimeResourceSegmentInput): unknown;
-  completeResourceSegmentSeal?(options: {
-    readonly commandId: bigint;
-    readonly linkId: LinkId;
-    readonly streamNonce: Uint8Array;
-    readonly noncePrefixedBytes: number;
-    readonly sealed: Uint8Array;
-    readonly salts: Uint8Array;
-    readonly promotionEntropy: Uint8Array;
-    readonly nowMs: InstantMillis;
-  }): void;
-  completeResourceSegmentSealDigests?(options: {
-    readonly commandId: bigint;
-    readonly linkId: LinkId;
-    readonly streamNonce: Uint8Array;
-    readonly noncePrefixedBytes: number;
-    readonly sealed: Uint8Array;
-    readonly salt: Uint8Array;
-    readonly hash: Uint8Array;
-    readonly proof: Uint8Array;
-    readonly promotionEntropy: Uint8Array;
-    readonly nowMs: InstantMillis;
-  }): unknown;
-  retryResourceSegmentSeal?(options: {
-    readonly commandId: bigint;
-    readonly linkId: LinkId;
-    readonly streamNonce: Uint8Array;
-    readonly noncePrefixedBytes: number;
-    readonly nowMs: InstantMillis;
-    readonly entropy: EntropyBytes;
-  }): void;
-  enableResourceWebCrypto?(): void;
-  enableProtocolWebCrypto?(): void;
-  enableProtocolCryptoOffload?(): void;
-  takeProtocolCryptoJob?(): unknown | undefined;
-  completeProtocolAnnounceValid?(
-    id: number,
-    nowMs: InstantMillis,
-    entropy: EntropyBytes,
-  ): void;
-  completeProtocolAnnounceInvalid?(id: number): void;
-  completeProtocolLinkProofValid?(
-    id: number,
-    sharedSecret: Uint8Array,
-    nowMs: InstantMillis,
-    entropy: EntropyBytes,
-  ): void;
-  completeProtocolLinkProofInvalid?(id: number): void;
-  completeProtocolCryptoInline?(
-    id: number,
-    nowMs: InstantMillis,
-    entropy: EntropyBytes,
-  ): void;
-  takeResourceOpenJob?(): unknown | undefined;
-  completeResourceOpen?(options: {
-    readonly linkId: LinkId;
-    readonly hash: Uint8Array;
-    readonly plaintext: Uint8Array;
-    readonly nowMs: InstantMillis;
-    readonly entropy: EntropyBytes;
-  }): void;
-  completeResourceOpenDigests?(options: {
-    readonly linkId: LinkId;
-    readonly hash: Uint8Array;
-    readonly calculatedHash: Uint8Array;
-    readonly proof: Uint8Array;
-    readonly plaintext: Uint8Array;
-    readonly nowMs: InstantMillis;
-    readonly entropy: EntropyBytes;
-  }): void;
-  rejectResourceOpen?(options: {
-    readonly linkId: LinkId;
-    readonly hash: Uint8Array;
-  }): void;
-  retryResourceOpen?(options: {
-    readonly linkId: LinkId;
-    readonly hash: Uint8Array;
-    readonly nowMs: InstantMillis;
-    readonly entropy: EntropyBytes;
-  }): void;
+  configureBrowserWork(execution: "Inline" | "BrowserWorkers"): void;
+  takeBrowserWork(): unknown | undefined;
+  completeBrowserWork(options: RuntimeBrowserWorkCompletion): unknown;
   setLinkResourceStrategy(
     options: RuntimeLinkResourceStrategyOptions,
   ): bigint;

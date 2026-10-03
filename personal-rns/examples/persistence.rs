@@ -30,7 +30,7 @@ async fn main() {
         transport_identity: None,
         remote_control: common::remote_control_service(0xD0, 0xD1),
         pre_configured_destinations: [listener_destination()],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
@@ -118,7 +118,7 @@ async fn main() {
         transport_identity: None,
         remote_control: common::remote_control_service(0xD2, 0xD3),
         pre_configured_destinations: [announcing_destination],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: move |node: &PrnsNodeHandle| {

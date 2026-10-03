@@ -136,6 +136,19 @@ tiers = ["release"]
         self.assertIn("runner: windows-latest", workflow)
         self.assertIn("CARGO_CHECK_RESULT: ${{ needs.cargo-check.result }}", workflow)
 
+    def test_esp_resource_job_installs_tools_for_the_repository_toolchain(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        esp_job = workflow.split("\n  esp32-firmware:\n", 1)[1].split(
+            "\n  embedded-miri:\n", 1
+        )[0]
+        toolchain = (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
+
+        self.assertIn('channel = "stable"', toolchain)
+        self.assertIn("components: llvm-tools-preview", esp_job)
+        self.assertNotIn("toolchain: 1.96.0", esp_job)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,7 @@ pub use common::{
     IngressControlPolicy, InterfaceCommonPolicy, InterfaceForwardingPolicy,
     PathRequestEgressControl, RecursivePathRequestPolicy,
 };
-pub use gravity::InterfaceGravity;
+pub use gravity::{InterfaceGravity, InterfaceGravityDefault};
 pub use mode::InterfaceMode;
 
 use core::num::NonZeroUsize;
@@ -86,7 +86,7 @@ impl MtuPolicy {
 pub struct InterfaceDefaults {
     pub capabilities: InterfaceCapabilities,
     pub mode: InterfaceMode,
-    pub gravity: InterfaceGravity,
+    pub gravity: InterfaceGravityDefault,
     pub bitrate: BitrateBps,
     pub mtu: MtuPolicy,
     pub announce_rate_limit: Option<AnnounceRateLimit>,
@@ -97,11 +97,14 @@ pub struct InterfaceDefaults {
 impl InterfaceDefaults {
     #[must_use]
     pub fn configured(self, configured: ConfiguredInterfacePolicy) -> EffectiveInterfacePolicy {
+        let bitrate = configured.bitrate.unwrap_or(self.bitrate);
         EffectiveInterfacePolicy {
             capabilities: configured.capabilities.unwrap_or(self.capabilities),
             mode: configured.mode.unwrap_or(self.mode),
-            gravity: configured.gravity.unwrap_or(self.gravity),
-            bitrate: configured.bitrate.unwrap_or(self.bitrate),
+            gravity: configured
+                .gravity
+                .unwrap_or_else(|| self.gravity.resolve(bitrate)),
+            bitrate,
             mtu: configured.mtu.unwrap_or(self.mtu),
             announce_rate_limit: configured.announce_rate_limit.or(self.announce_rate_limit),
             announce_bandwidth_cap: configured
@@ -171,7 +174,7 @@ mod tests {
                 egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
             },
             mode: InterfaceMode::PointToPoint,
-            gravity: InterfaceGravity::ZERO,
+            gravity: InterfaceGravityDefault::FromBitrate,
             bitrate: BitrateBps::guess(500_000_000),
             mtu: MtuPolicy::optimized_from_bitrate(524_288),
             announce_rate_limit: None,
@@ -181,14 +184,28 @@ mod tests {
     }
 
     #[test]
-    fn a_configured_bitrate_recomputes_an_optimized_mtu() {
+    fn a_configured_bitrate_recomputes_automatic_gravity_and_optimized_mtu() {
         let policy = defaults().configured(ConfiguredInterfacePolicy {
             bitrate: Some(BitrateBps::guess(1_000_000_000)),
             ..ConfiguredInterfacePolicy::default()
         });
 
         assert_eq!(policy.bitrate.get(), 1_000_000_000);
+        assert_eq!(policy.gravity, InterfaceGravity::new(1_000_000_000));
         assert_eq!(policy.mtu.resolve(policy.bitrate), Some(524_288));
+    }
+
+    #[test]
+    fn an_explicit_gravity_including_zero_overrides_bitrate() {
+        for gravity in [InterfaceGravity::ZERO, InterfaceGravity::new(-7)] {
+            let policy = defaults().configured(ConfiguredInterfacePolicy {
+                gravity: Some(gravity),
+                bitrate: Some(BitrateBps::guess(1_000_000_000)),
+                ..ConfiguredInterfacePolicy::default()
+            });
+
+            assert_eq!(policy.gravity, gravity);
+        }
     }
 
     #[test]
@@ -216,7 +233,7 @@ mod tests {
                 id,
                 capabilities: policy.capabilities,
                 mode: InterfaceMode::Full,
-                gravity: InterfaceGravity::ZERO,
+                gravity: InterfaceGravity::from_bitrate(policy.bitrate),
                 bitrate: policy.bitrate,
                 hardware_mtu: Some(131_072),
                 announce_rate_limit: None,

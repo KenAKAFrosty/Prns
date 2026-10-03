@@ -14,12 +14,20 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Iterable, Sequence
+
+from embedded_assurance_selection import Lane, Selection, selection_for_paths
 
 
 ZERO_SHA = "0" * 40
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class GatePhase(Enum):
+    PREFLIGHT = "preflight"
+    VERIFICATION = "verification"
 
 
 @dataclass(frozen=True)
@@ -28,14 +36,71 @@ class Gate:
     command: tuple[str, ...]
     cwd: Path = ROOT
     env: tuple[tuple[str, str], ...] = ()
+    phase: GatePhase = GatePhase.VERIFICATION
+
+
+@dataclass(frozen=True)
+class PrePushPlan:
+    gates: tuple[Gate, ...]
+    assurance: Selection
 
 
 def _has_prefix(paths: set[str], prefixes: Iterable[str]) -> bool:
     return any(path.startswith(prefix) for path in paths for prefix in prefixes)
 
 
-def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
+def validation_command(suites: tuple[str, ...]) -> tuple[str, ...]:
+    command = ["python3", "validation/run.py", "run"]
+    for suite in suites:
+        command.extend(("--suite", suite))
+    return tuple(command)
+
+
+def plan_for_paths(paths: set[str]) -> PrePushPlan:
     gates: list[Gate] = []
+
+    notice_surface = any(
+        path.endswith("Cargo.toml") or path.endswith("Cargo.lock") for path in paths
+    ) or bool(
+        paths
+        & {
+            "THIRD_PARTY_NOTICES.md",
+            "about.toml",
+            "docs/website/package-lock.json",
+            "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/"
+            "nrf-softdevice-s140-v6/LICENSE-NORDIC",
+            "tools/repo/generate-third-party-notices.py",
+        }
+    ) or _has_prefix(paths, ("release/licenses/",))
+    if notice_surface:
+        gates.append(
+            Gate(
+                "third-party notice inputs",
+                (
+                    "./tools/prns",
+                    "repo",
+                    "notices",
+                    "check-inputs",
+                ),
+                phase=GatePhase.PREFLIGHT,
+            )
+        )
+
+    embedded = selection_for_paths(paths)
+    if embedded.required(Lane.RESOURCES):
+        gates.append(
+            Gate(
+                "embedded baseline contracts",
+                (
+                    "./tools/prns",
+                    "build",
+                    "embedded",
+                    "resources",
+                    "baseline-contracts",
+                ),
+                phase=GatePhase.PREFLIGHT,
+            )
+        )
 
     root_rust = (
         "Cargo.toml" in paths
@@ -81,30 +146,86 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             )
         )
 
-    embedded_surface = (
-        "Cargo.toml" in paths
-        or "Cargo.lock" in paths
-        or _has_prefix(
-            paths,
-            (
-                "personal-rns/",
-                "personal-hopspot/core/",
-                "personal-hopspot/embedded/esp32/",
-                "personal-hopspot/embedded/nrf52840/",
-                "prns-core/",
-                "prns-interfaces/impls/embassy/",
-                "prns-runtime/core/",
-                "prns-runtime/impls/embassy/",
-                "validation/platforms/embedded.sh",
-                "validation/platforms/no-std-esp-build.sh",
-            ),
-        )
+    embassy_ble_surface = bool(
+        paths
+        & {
+            "Cargo.toml",
+            "Cargo.lock",
+            ".github/workflows/ci.yml",
+            "validation/manifest.toml",
+            "validation/hygiene/pre-push-ci-parity.py",
+        }
+    ) or _has_prefix(
+        paths,
+        (
+            "prns-core/",
+            "prns-interfaces/impls/embassy/",
+            "prns-runtime/core/",
+            "prns-runtime/impls/embassy/",
+        ),
     )
-    if embedded_surface:
+    if embassy_ble_surface:
         gates.append(
             Gate(
-                "embedded build matrix",
-                ("bash", "validation/platforms/embedded.sh"),
+                "Embassy BLE host tests",
+                validation_command(("bluetooth-auto-embassy",)),
+            )
+        )
+
+    if embassy_ble_surface or _has_prefix(
+        paths,
+        (
+            "validation/simulation/",
+            "personal-rns/",
+            "prns-runtime/impls/tokio/",
+            "prns-interfaces/impls/tokio/",
+        ),
+    ):
+        gates.extend(
+            (
+                Gate(
+                    "virtual device simulation Clippy",
+                    (
+                        "cargo", "clippy", "--locked", "-p", "prns-simulation",
+                        "--features", "controlled-time", "--all-targets", "--",
+                        "-D", "warnings",
+                    ),
+                ),
+                Gate(
+                    "virtual device simulation",
+                    validation_command(("virtual-device-simulation",)),
+                ),
+            )
+        )
+
+    if embedded.required(Lane.RESOURCES):
+        gates.append(
+            Gate(
+                "embedded resource matrix",
+                (
+                    "./tools/prns",
+                    "build",
+                    "embedded",
+                    "resources",
+                    "report",
+                    "--all",
+                ),
+            )
+        )
+        gates.append(
+            Gate(
+                "embedded resource summary",
+                (
+                    "./tools/prns",
+                    "build",
+                    "embedded",
+                    "resources",
+                    "summarize",
+                    "--reports",
+                    "target/flash-artifacts/resources/configured/reports",
+                    "--output",
+                    "target/flash-artifacts/resources/pre-push-matrix",
+                ),
             )
         )
         gates.append(
@@ -121,6 +242,23 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
                 ),
                 ROOT / "prns-runtime/impls/embassy",
                 (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
+            )
+        )
+    miri_suites = embedded.suite_ids(Lane.MIRI)
+    if miri_suites:
+        gates.append(
+            Gate(
+                "embedded Miri",
+                validation_command(miri_suites),
+                env=(("PRNS_EMBEDDED_MIRI_PROVISIONING", "require-existing"),),
+            )
+        )
+    isa_suites = embedded.suite_ids(Lane.ISA)
+    if isa_suites:
+        gates.append(
+            Gate(
+                "embedded target-ISA",
+                validation_command(isa_suites),
             )
         )
 
@@ -211,20 +349,28 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
         )
     )
     if integration_surface:
-        gates.append(
-            Gate(
-                "validation integration capstones Clippy",
-                (
-                    "cargo",
-                    "clippy",
-                    "--all-targets",
-                    "--locked",
-                    "--",
-                    "-D",
-                    "warnings",
+        gates.extend(
+            (
+                Gate(
+                    "validation integration capstones Clippy",
+                    (
+                        "cargo",
+                        "clippy",
+                        "--all-targets",
+                        "--locked",
+                        "--",
+                        "-D",
+                        "warnings",
+                    ),
+                    ROOT / "validation/integration",
+                    (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
                 ),
-                ROOT / "validation/integration",
-                (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
+                Gate(
+                    "validation integration capstones tests",
+                    ("cargo", "test", "--locked", "--", "--test-threads=1"),
+                    ROOT / "validation/integration",
+                    (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
+                ),
             )
         )
 
@@ -395,6 +541,7 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             Gate(
                 "license policy parity",
                 ("python3", "validation/security/license-policy-parity.py"),
+                phase=GatePhase.PREFLIGHT,
             )
         )
 
@@ -437,10 +584,11 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             Gate(
                 "unsafe dependency inventory",
                 ("python3", "validation/security/unsafe-audit.py"),
+                phase=GatePhase.PREFLIGHT,
             )
         )
 
-    return tuple(gates)
+    return PrePushPlan(tuple(gates), embedded)
 
 
 def changed_paths(updates: Sequence[tuple[str, str]]) -> set[str]:
@@ -476,21 +624,51 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="print selected checks without running them",
     )
+    parser.add_argument(
+        "--phase",
+        choices=("all", *(phase.value for phase in GatePhase)),
+        default="all",
+        help="run only cheap preflights or the remaining verification gates",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     paths = changed_paths(tuple(map(tuple, args.update)))
-    gates = plan_for_paths(paths)
+    plan = plan_for_paths(paths)
+    gates = tuple(
+        gate
+        for gate in plan.gates
+        if args.phase == "all" or gate.phase.value == args.phase
+    )
+    show_assurance = args.phase != GatePhase.PREFLIGHT.value
 
-    if not gates:
+    if not gates and not (show_assurance and plan.assurance.required(Lane.PILOTS)):
         print("[pre-push-ci-parity] no additional CI lanes selected")
         return 0
 
-    print("[pre-push-ci-parity] selected:")
-    for gate in gates:
-        print(f"  - {gate.name}")
+    if gates:
+        print("[pre-push-ci-parity] selected:")
+        for gate in gates:
+            print(f"  - {gate.name}")
+    if show_assurance:
+        for lane in (Lane.RESOURCES, Lane.MIRI, Lane.ISA):
+            selected_suites = plan.assurance.suites(lane)
+            if not selected_suites:
+                continue
+            print(f"[pre-push-ci-parity] selected {lane.value} suites:")
+            for selected in selected_suites:
+                print(f"  - {selected.suite.value}")
+                for path in selected.matched_paths:
+                    print(f"    matched {path}")
+        pilots = plan.assurance.suites(Lane.PILOTS)
+        if pilots:
+            print("[pre-push-ci-parity] deferred scheduled/release pilots:")
+            for selected in pilots:
+                print(f"  - {selected.suite.value}")
+                for path in selected.matched_paths:
+                    print(f"    matched {path}")
     if args.plan:
         return 0
 

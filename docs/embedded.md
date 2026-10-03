@@ -6,6 +6,16 @@ Embedded Prns is the same protocol engine and node-recipe API used by native app
 
 The XIAO ESP32-C6 is the smallest complete reference path. It is headless and uses USB, ESP-NOW, and Bluetooth, so this example punctuates the fact that an embedded node does not need a display or Wi-Fi LAN.
 
+The Heltec WiFi LoRa 32 V3/V3.1 is a qualification target with 8 MiB flash and
+no PSRAM. It uses the SRAM-only runtime with LoRa, Bluetooth Auto, CP2102 UART0
+USB Auto, and the shared OLED/menu/pairing UI. Wi-Fi, ESP-NOW, and TCP are
+disabled. Build with `cargo heltec-v3` from `personal-hopspot/embedded/esp32`
+after loading the ESP toolchain environment. Flash with the board-specific
+`partitions-hopspot-8mb-v3.csv` layout; its RC vault is 4096 bytes at `0x67d000`.
+See [the V3 enrollment guide](../personal-hopspot/README.md#heltec-v3-remote-control-enrollment-qualification)
+for explicit-port flash instructions, Controller compatibility limits, and
+revision-specific hardware evidence.
+
 Install the repository's ESP Rust toolchain once:
 
 ```console
@@ -19,10 +29,9 @@ These commands prepare an ordinary developer workstation. Release builds use the
 ```console
 cd personal-hopspot/embedded/esp32
 cargo c6 --locked
-cargo heltec-v3 --locked
 ```
 
-Those shortcuts expand to release builds for `hopspot-xiao-esp32-c6` on `riscv32imac-unknown-none-elf` and `hopspot-heltec-v3` on `xtensa-esp32s3-none-elf`, including `-Zbuild-std=core,alloc`. The workspace has its own lockfile and selects the `esp` toolchain through `personal-hopspot/embedded/esp32/rust-toolchain.toml`.
+That shortcut expands to the `hopspot-xiao-esp32-c6` release build for `riscv32imac-unknown-none-elf`, including `-Zbuild-std=core,alloc`. The workspace has its own lockfile and selects the `esp` toolchain through `personal-hopspot/embedded/esp32/rust-toolchain.toml`.
 
 ## Follow the recipe through the board
 
@@ -70,6 +79,12 @@ The doctor step is read-only. The final command flashes and opens a serial monit
 
 ## Verify embedded changes
 
+Run the [embedded assurance readiness check](embedded-assurance.md) before resource, Miri, or target-ISA work:
+
+```console
+./tools/prns doctor embedded-assurance
+```
+
 Use the cheapest relevant rung first:
 
 ```console
@@ -85,9 +100,10 @@ installs with Git for Windows.)
 The Linux `embedded-builds` validation suite adds the Embassy interface
 cross-builds, both S140 6.1.1 and 7.3.0 T-Echo firmware layouts, the
 display-equipped Heltec T096 and T114 with Bluetooth Auto and display auto-off,
-and the headless T1000-E and MeshTower V2 developer UF2s. Every embedded
-Hopspot board target restores learned routes and retained self-ratchet history
-from its board-owned flash journal:
+both 5,000 and 10,000 mAh MeshPocket battery profiles with retained e-ink, and
+the headless T1000-E, MeshTower V2, and muzi Base Duo developer UF2s. Every embedded Hopspot
+board target restores learned routes and retained self-ratchet history from its
+board-owned flash journal:
 
 ```console
 python3 validation/run.py run --suite embedded-builds --platform linux

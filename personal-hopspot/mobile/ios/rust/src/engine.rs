@@ -9,19 +9,27 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use personal_hopspot_core::{
     card_label, load_host_ble_identity, load_host_node_identity, CardKind, CardLabel,
-    HopspotDestinationSet, IdentityBootstrap, IdentityPersistence, MobileEngineFailure,
-    MobileEngineState, BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
+    HopspotDestinationSet, IdentityBootstrap, IdentityPersistence, MobileDiscoveryGroupOutcome,
+    MobileDiscoveryInterface, MobileEngineFailure, MobileEngineState, BLE_IDENTITY_STORAGE,
+    NODE_IDENTITY_STORAGE,
 };
 use personal_rns::bluetooth_auto::{AutoBle, BluetoothAutoStatus};
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
-use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
+use personal_rns::interfaces::{
+    DiscoveryGroupApplyOutcome, DiscoveryGroupSet, InterfaceId, InterfaceKind, InterfaceSnapshot,
+    InterfaceStatus,
+};
 use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::node_introspection::NodeIntrospection;
+use personal_rns::remote_control::{
+    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
+};
 use personal_rns::runtime::{
-    Diagnostic, ManuallyAttached, NodeRunError, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    Diagnostic, ManuallyAttached, NodeRunError, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RemoteControlIdentityDirectory,
 };
 use personal_rns::storage::GrowableHeap;
 #[cfg(target_os = "ios")]
@@ -58,6 +66,7 @@ struct EngineRuntime {
     wifi_status: AutoWifiStatus,
     ble_status: Option<BluetoothAutoStatus>,
     node_page_destination: DestinationHash,
+    runtime: tokio::runtime::Handle,
 }
 
 struct Worker {
@@ -430,6 +439,70 @@ pub(crate) fn announce() {
     diagnostic("announce", format_args!("destination=nomadnetwork.node"));
 }
 
+pub(crate) fn discovery_groups(
+    interface: MobileDiscoveryInterface,
+) -> Result<DiscoveryGroupSet, MobileDiscoveryGroupOutcome> {
+    let runtime = supervisor()
+        .runtime()
+        .ok_or(MobileDiscoveryGroupOutcome::EngineUnavailable)?;
+    match interface {
+        MobileDiscoveryInterface::BluetoothAuto => runtime
+            .ble_status
+            .as_ref()
+            .map(BluetoothAutoStatus::discovery_groups)
+            .ok_or(MobileDiscoveryGroupOutcome::Unsupported),
+        MobileDiscoveryInterface::AutoWifi => Ok(runtime.wifi_status.discovery_groups()),
+    }
+}
+
+pub(crate) fn replace_discovery_groups(
+    interface: MobileDiscoveryInterface,
+    groups: DiscoveryGroupSet,
+) -> MobileDiscoveryGroupOutcome {
+    enum Status {
+        Bluetooth(BluetoothAutoStatus),
+        Wifi(AutoWifiStatus),
+    }
+
+    let Some(runtime) = supervisor().runtime() else {
+        return MobileDiscoveryGroupOutcome::EngineUnavailable;
+    };
+    let executor = runtime.runtime.clone();
+    let status = match interface {
+        MobileDiscoveryInterface::BluetoothAuto => {
+            let Some(status) = runtime.ble_status.as_ref().cloned() else {
+                return MobileDiscoveryGroupOutcome::Unsupported;
+            };
+            Status::Bluetooth(status)
+        }
+        MobileDiscoveryInterface::AutoWifi => Status::Wifi(runtime.wifi_status.clone()),
+    };
+    let unchanged = match &status {
+        Status::Bluetooth(status) => status.discovery_groups() == groups,
+        Status::Wifi(status) => status.discovery_groups() == groups,
+    };
+    if unchanged {
+        return MobileDiscoveryGroupOutcome::Unchanged;
+    }
+
+    let (settled_tx, settled_rx) = mpsc::sync_channel(1);
+    executor.spawn(async move {
+        let outcome = match status {
+            Status::Bluetooth(status) => status.replace_discovery_groups(groups).await,
+            Status::Wifi(status) => status.replace_discovery_groups_and_wait(groups).await,
+        };
+        let _ = settled_tx.send(outcome);
+    });
+    match settled_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(DiscoveryGroupApplyOutcome::Applied) => MobileDiscoveryGroupOutcome::Applied,
+        Ok(DiscoveryGroupApplyOutcome::Unchanged) => MobileDiscoveryGroupOutcome::Unchanged,
+        Ok(DiscoveryGroupApplyOutcome::Failed) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+            MobileDiscoveryGroupOutcome::ApplyFailed
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => MobileDiscoveryGroupOutcome::Busy,
+    }
+}
+
 pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
     match id.kind() {
         Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("LAN"))),
@@ -566,51 +639,73 @@ async fn run_engine(
         ),
     );
 
+    let remote_control_bootstrap =
+        match RemoteControlIdentityDirectory::new(storage_directory.join("remote_control"))
+            .load_or_generate()
+        {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => {
+                diagnostic("remote_control", format_args!("state=failed error={error}"));
+                let _ = ready_tx.send(Err(MobileEngineFailure::StorageConfiguration));
+                return;
+            }
+        };
+    let (remote_control_identity_secrets, _) = remote_control_bootstrap.into_parts();
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlInitialControllerGrants::Nobody,
+        RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
+    );
+
     let (persistence_change_tx, persistence_changes) = tokio::sync::mpsc::unbounded_channel::<()>();
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel::<DestinationHash>();
     let timeline_origin = prepared_persistence.timeline_origin();
     let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
+        remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: move |event: PrnsEvent<'_>, _state: &()| match event {
-            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
-                destination,
-                hops,
-                source_interface,
-                app_data: _,
-            }) => {
-                diagnostic(
-                    "route",
-                    format_args!(
-                        "state=accepted destination={} hops={} interface={}",
-                        full_hex(destination.as_bytes()),
+        on_event:
+            move |event: PrnsEvent<'_>,
+                  _state: &personal_rns::runtime::NoRemoteControlHostControls| {
+                match event {
+                    PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
+                        destination,
                         hops,
-                        abbreviated_hex(source_interface.as_bytes())
-                    ),
-                );
-                let _ = persistence_change_tx.send(());
-            }
-            PrnsEvent::Diagnostic(Diagnostic::RouteRemoved { destination, cause }) => {
-                diagnostic(
-                    "route",
-                    format_args!(
-                        "state=removed destination={} cause={cause:?}",
-                        full_hex(destination.as_bytes())
-                    ),
-                );
-                let _ = persistence_change_tx.send(());
-            }
-            PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) => {
-                let _ = rotated_tx.send(destination);
-            }
-            _ => {}
-        },
+                        source_interface,
+                        app_data: _,
+                    }) => {
+                        diagnostic(
+                            "route",
+                            format_args!(
+                                "state=accepted destination={} hops={} interface={}",
+                                full_hex(destination.as_bytes()),
+                                hops,
+                                abbreviated_hex(source_interface.as_bytes())
+                            ),
+                        );
+                        let _ = persistence_change_tx.send(());
+                    }
+                    PrnsEvent::Diagnostic(Diagnostic::RouteRemoved { destination, cause }) => {
+                        diagnostic(
+                            "route",
+                            format_args!(
+                                "state=removed destination={} cause={cause:?}",
+                                full_hex(destination.as_bytes())
+                            ),
+                        );
+                        let _ = persistence_change_tx.send(());
+                    }
+                    PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) => {
+                        let _ = rotated_tx.send(destination);
+                    }
+                    _ => {}
+                }
+            },
     })
     .with_timeline_origin(timeline_origin);
     let restored = prepared_persistence.restore(&mut node);
@@ -664,6 +759,7 @@ async fn run_engine(
         wifi_status: wifi_status.clone(),
         ble_status,
         node_page_destination: destination_hashes.node_page,
+        runtime: tokio::runtime::Handle::current(),
     };
     let mut persistence_task =
         prepared_persistence.start(handle.clone(), persistence_changes, rotated_rx);

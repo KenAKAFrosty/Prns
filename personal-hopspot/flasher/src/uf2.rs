@@ -225,9 +225,18 @@ fn copy_uf2(
             let _ = fs::remove_file(destination);
             return Err(AppError::Cancelled);
         }
-        output
-            .write_all(chunk)
-            .map_err(|error| AppError::uf2_delivery(format!("UF2 copy failed: {error}")))?;
+        if let Err(error) = output.write_all(chunk) {
+            drop(output);
+            return confirm_reboot_after_interruption(
+                mount,
+                board,
+                reporter,
+                "UF2 copy failed",
+                error,
+                REBOOT_TIMEOUT,
+                Duration::from_millis(200),
+            );
+        }
         written += chunk.len();
         reporter.progress(
             Phase::Writing,
@@ -239,7 +248,7 @@ fn copy_uf2(
     let file_sync = output.flush().and_then(|_| output.sync_all());
     drop(output);
     if let Err(error) = file_sync {
-        return confirm_reboot_after_synchronization_interruption(
+        return confirm_reboot_after_interruption(
             mount,
             board,
             reporter,
@@ -250,7 +259,7 @@ fn copy_uf2(
         );
     }
     if let Err(error) = sync_mount_directory(mount) {
-        return confirm_reboot_after_synchronization_interruption(
+        return confirm_reboot_after_interruption(
             mount,
             board,
             reporter,
@@ -263,7 +272,7 @@ fn copy_uf2(
     Ok(Uf2CopyOutcome::Synchronized)
 }
 
-fn confirm_reboot_after_synchronization_interruption(
+fn confirm_reboot_after_interruption(
     mount: &Path,
     board: &CatalogedUf2Board<'_>,
     reporter: Reporter,
@@ -276,7 +285,7 @@ fn confirm_reboot_after_synchronization_interruption(
         Phase::Resetting,
         Some(board.slug()),
         &format!(
-            "UF2 synchronization was interrupted; checking whether {} rebooted…",
+            "UF2 transfer was interrupted; checking whether {} rebooted…",
             board.mount_label()
         ),
     );
@@ -778,7 +787,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
             fs::remove_dir(remover).expect("remove disappearing mount");
         });
-        let outcome = confirm_reboot_after_synchronization_interruption(
+        let outcome = confirm_reboot_after_interruption(
             &disappearing,
             &board,
             Reporter::json_lines(),
@@ -793,7 +802,7 @@ mod tests {
 
         let stuck = temporary_mount("sync-interrupted-stuck");
         fs::create_dir(&stuck).expect("create stuck mount");
-        let result = confirm_reboot_after_synchronization_interruption(
+        let result = confirm_reboot_after_interruption(
             &stuck,
             &board,
             Reporter::json_lines(),

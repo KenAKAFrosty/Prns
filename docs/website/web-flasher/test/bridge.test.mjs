@@ -1627,6 +1627,7 @@ test("UF2 completion reports delivery guidance without claiming device verificat
       softdeviceVersion: "7.3.0",
       fwid: 0x0123,
       applicationBase: 0x27000,
+      applicationEndExclusive: 0xc0000,
       familyId: 0xada52840,
     },
     nrfSerialDfu: null,

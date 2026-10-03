@@ -85,6 +85,10 @@ pub(crate) struct RetainedDisplayRuntime<D> {
 }
 
 impl<D: RetainedDisplayDevice> RetainedDisplayRuntime<D> {
+    pub(crate) const fn is_sleeping(&self) -> bool {
+        matches!(self.controller, ControllerState::Sleeping)
+    }
+
     pub(crate) const fn user_blanking(&self) -> UserBlanking {
         self.coordinator.user_blanking()
     }

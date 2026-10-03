@@ -266,7 +266,13 @@ fn wifi_icon_reads_as_status_arc_glyph() {
 fn lora_icon_reads_as_long_range_radio_glyph() {
     let mut display = MockDisplay::new();
 
-    draw_interface_icon(&mut display, 0, 0, CardKind::LoRa, BinaryColor::On);
+    draw_interface_icon(
+        &mut display,
+        0,
+        0,
+        CardKind::SubG(SubGCardState::AutoLoRa),
+        BinaryColor::On,
+    );
 
     display.assert_pattern(&[
         "#   #   #",

@@ -1,14 +1,14 @@
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use allocator_api2::alloc::{AllocError, Allocator};
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use allocator_api2::boxed::Box;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use allocator_api2::vec::Vec;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use core::alloc::Layout;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use core::mem::MaybeUninit;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use core::ptr::NonNull;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -17,7 +17,7 @@ use personal_hopspot_core::{HOPSPOT_DESTINATION_COUNT, HOPSPOT_IDENTITY_COUNT};
 use personal_rns::remote_control::RemoteControlStorageRequirements;
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use personal_rns::runtime::request_endpoints::RequestEndpointSet;
-#[cfg(all(target_arch = "xtensa", not(feature = "sram-storage")))]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use personal_rns::storage::Esp32S3;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -38,11 +38,7 @@ const NODE_REQUEST_HANDLER_CAPACITY: usize =
 /// The engine's storage recipe: the small coordination shell stays inline in SRAM, while
 /// high-count or bulky columns (including links, routes, announces, history, app-data, and
 /// resource buffers) are placed in PSRAM through `PsramAlloc`.
-#[cfg(target_arch = "xtensa")]
-#[cfg(feature = "sram-storage")]
-pub type EngineStorageType = SramStorage;
-#[cfg(target_arch = "xtensa")]
-#[cfg(not(feature = "sram-storage"))]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub type EngineStorageType = Esp32S3<
     PsramAlloc,
     NODE_REQUEST_HANDLER_CAPACITY,
@@ -50,23 +46,21 @@ pub type EngineStorageType = Esp32S3<
     HELD_IDENTITY_CAPACITY,
 >;
 
-/// Fixed-capacity Hopspot storage for boards that have internal SRAM only.
-///
-/// The ESP32-C6 and Heltec V3 need the same fundamental constraint even though
-/// their radio peripherals differ: their engine state must never allocate from
-/// the ESP32-S3 PSRAM-backed profile used by the V4 boards.
-#[cfg(target_arch = "xtensa")]
-#[allow(
-    unused_imports,
-    reason = "the V4 uses the PSRAM profile; the V3 runtime consumes this export"
-)]
-pub use sram::SramStorage;
 #[cfg(target_arch = "riscv32")]
-pub use sram::SramStorage as C6Storage;
+pub use internal::InternalStorage as C6Storage;
 #[cfg(target_arch = "riscv32")]
-pub type EngineStorageType = C6Storage;
+pub type EngineStorageType = InternalStorage;
 
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+#[cfg(any(
+    target_arch = "riscv32",
+    all(target_arch = "xtensa", feature = "esp32s3fn8")
+))]
+pub use internal::InternalStorage;
+
+#[cfg(any(
+    target_arch = "riscv32",
+    all(target_arch = "xtensa", not(feature = "esp32s3fn8"))
+))]
 const _: () = assert!(
     match <EngineStorageType as personal_rns::storage::StorageLayout>::LIMITS
         .resource_transfer_bytes
@@ -77,17 +71,13 @@ const _: () = assert!(
     }
 );
 
-#[cfg(all(target_arch = "xtensa", not(feature = "sram-storage")))]
-const _: () = assert!(
-    EngineStorageType::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::S3_ARENA_BYTES
-);
-#[cfg(all(target_arch = "xtensa", not(feature = "sram-storage")))]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 const _: () = assert!(
     core::mem::size_of::<
         <EngineStorageType as personal_rns::storage::StorageLayout>::PendingResourceOffers,
     >() == 3 * core::mem::size_of::<usize>()
 );
-#[cfg(all(target_arch = "xtensa", not(feature = "sram-storage")))]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 const _: () = assert!(EngineStorageType::PENDING_RESOURCE_OFFER_ROW_BYTES <= 2 * 1024);
 
 /// A `Default`-able allocator that places allocations in PSRAM.
@@ -95,37 +85,35 @@ const _: () = assert!(EngineStorageType::PENDING_RESOURCE_OFFER_ROW_BYTES <= 2 *
 /// On Heltec V4-R8, `PsramAlloc` owns a private low PSRAM window installed by [`init_private_psram_heap`], while `esp_alloc` owns the disjoint high window.
 /// Ordinary boot and `log` allocations therefore cannot share a freelist with engine construction.
 /// Other S3 boards keep the whole PSRAM window in `esp_alloc`'s global heap, and this allocator forwards to `ExternalMemory`.
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 #[derive(Default, Clone, Copy)]
 pub struct PsramAlloc;
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub fn allocate_psram<T>(value: T) -> &'static mut T {
     Box::leak(Box::new_in(value, PsramAlloc))
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub fn allocate_psram_uninit<T>() -> &'static mut MaybeUninit<T> {
     Box::leak(Box::<T, PsramAlloc>::new_uninit_in(PsramAlloc))
 }
 
 /// Allocate and initialize a slice directly in PSRAM without first materializing the whole
 /// collection on the small core-0 stack.
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub fn allocate_psram_slice<T: Clone + 'static>(len: usize, value: T) -> &'static mut [T] {
     let mut storage = Vec::with_capacity_in(len, PsramAlloc);
     storage.resize(len, value);
     Box::leak(storage.into_boxed_slice())
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use core::cell::RefCell;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use critical_section::Mutex;
-#[cfg(target_arch = "xtensa")]
-use portable_atomic::{AtomicBool, Ordering};
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 struct PsramBump {
     start: *mut u8,
     size: usize,
@@ -133,26 +121,16 @@ struct PsramBump {
 }
 
 // SAFETY: start/offset are only touched under PRIVATE_PSRAM's critical section.
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 unsafe impl Send for PsramBump {}
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 static PRIVATE_PSRAM: Mutex<RefCell<Option<PsramBump>>> = Mutex::new(RefCell::new(None));
-
-/// Set once by an ESP32-S3 board that has no PSRAM, before bounded runtime
-/// queues are created. A firmware image contains one board runtime only.
-#[cfg(target_arch = "xtensa")]
-static INTERNAL_SRAM_ALLOCATIONS: AtomicBool = AtomicBool::new(false);
-
-#[cfg(target_arch = "xtensa")]
-pub fn use_internal_sram_allocations() {
-    INTERNAL_SRAM_ALLOCATIONS.store(true, Ordering::Release);
-}
 
 /// Install a PSRAM bump allocator used only by [`PsramAlloc`]. Do not also register the same
 /// range with `esp_alloc::HEAP`. Deallocate is a no-op (boot/engine construction is allocate-heavy);
 /// call [`reinit_private_psram_heap`] to reclaim.
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub unsafe fn init_private_psram_heap(start: *mut u8, size: usize) {
     critical_section::with(|cs| {
         let mut slot = PRIVATE_PSRAM.borrow_ref_mut(cs);
@@ -167,7 +145,7 @@ pub unsafe fn init_private_psram_heap(start: *mut u8, size: usize) {
 
 /// Reset the private PSRAM bump cursor over the window from [`init_private_psram_heap`].
 /// No-op when this board uses the global `esp_alloc` external region instead.
-#[cfg(all(target_arch = "xtensa", feature = "lora"))]
+#[cfg(all(target_arch = "xtensa", feature = "lora", not(feature = "esp32s3fn8")))]
 pub fn reinit_private_psram_heap() {
     critical_section::with(|cs| {
         if let Some(bump) = PRIVATE_PSRAM.borrow_ref_mut(cs).as_mut() {
@@ -176,7 +154,7 @@ pub fn reinit_private_psram_heap() {
     });
 }
 
-#[cfg(all(target_arch = "xtensa", feature = "lora"))]
+#[cfg(all(target_arch = "xtensa", feature = "lora", not(feature = "esp32s3fn8")))]
 pub fn allocate_lora_tx_queue() -> &'static mut [u8; personal_rns::lora::LORA_TX_QUEUE_BYTES] {
     let mut storage = Vec::with_capacity_in(personal_rns::lora::LORA_TX_QUEUE_BYTES, PsramAlloc);
     storage.resize(personal_rns::lora::LORA_TX_QUEUE_BYTES, 0);
@@ -186,7 +164,7 @@ pub fn allocate_lora_tx_queue() -> &'static mut [u8; personal_rns::lora::LORA_TX
 }
 
 /// Allocate a manifold frame ring in PSRAM after the board has mapped external memory.
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub fn allocate_manifold_outbound<const FRAME: usize>(
     depth: usize,
 ) -> &'static mut [personal_rns::manifold::grant::FrameSlot<FRAME>] {
@@ -219,7 +197,7 @@ pub fn allocate_manifold_outbound<const FRAME: usize>(
     Box::leak(storage.into_boxed_slice())
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 // SAFETY: Private bump returns exclusive slices from the mapped PSRAM window; ExternalMemory
 // fallback preserves esp-alloc's contract. Deallocate is a no-op for the bump path.
 unsafe impl Allocator for PsramAlloc {
@@ -238,22 +216,13 @@ unsafe impl Allocator for PsramAlloc {
                 Ok(NonNull::slice_from_raw_parts(ptr, layout.size()))
             })
         });
-        private_allocation.unwrap_or_else(|| {
-            if INTERNAL_SRAM_ALLOCATIONS.load(Ordering::Acquire) {
-                esp_alloc::InternalMemory.allocate(layout)
-            } else {
-                esp_alloc::ExternalMemory.allocate(layout)
-            }
-        })
+        private_allocation.unwrap_or_else(|| esp_alloc::ExternalMemory.allocate(layout))
     }
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         let private = critical_section::with(|cs| PRIVATE_PSRAM.borrow_ref(cs).is_some());
         if private {
             // Bump: intentional leak until reinit.
             let _ = (ptr, layout);
-        } else if INTERNAL_SRAM_ALLOCATIONS.load(Ordering::Acquire) {
-            // SAFETY: same pointer/layout as prior InternalMemory allocation.
-            unsafe { esp_alloc::InternalMemory.deallocate(ptr, layout) };
         } else {
             // SAFETY: same pointer/layout as a prior ExternalMemory allocate.
             unsafe { esp_alloc::ExternalMemory.deallocate(ptr, layout) };
@@ -261,8 +230,11 @@ unsafe impl Allocator for PsramAlloc {
     }
 }
 
-#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
-mod sram {
+#[cfg(any(
+    target_arch = "riscv32",
+    all(target_arch = "xtensa", feature = "esp32s3fn8")
+))]
+mod internal {
     use personal_rns::crypto::ratchets::FixedSelfRatchetTable;
     use personal_rns::identity::destination_identity::{
         NoDestinationIdentityAppData, NoDestinationIdentityTable,
@@ -309,46 +281,30 @@ mod sram {
     use personal_rns::routing::upstream_app_destinations::FixedUpstreamAppDestinationTable;
     use personal_rns::routing::warmth::FixedDepartedInterfaceTable;
 
-    /// Hopspot's storage profile for targets with internal SRAM only.
-    ///
-    /// The concrete board chooses its interfaces separately. This budget keeps one local app
-    /// identity, favours heard destinations, and bounds links, resources, and channel windows.
-    #[derive(Default)]
-    pub struct SramStorage;
+    pub struct InternalStorage;
 
-    #[allow(
-        dead_code,
-        reason = "the V3 runtime consumes this SRAM budget on Xtensa"
-    )]
-    impl SramStorage {
+    impl InternalStorage {
         // Keep cheap relationships abundant while channels and resource continuations borrow
-        // smaller shared tables. None of these counts constrain the eight-peer BLE controller.
-        pub(crate) const TRACKED_DESTINATIONS: usize =
-            if cfg!(target_arch = "xtensa") { 4 } else { 36 };
+        // smaller shared tables.
+        pub(crate) const TRACKED_DESTINATIONS: usize = 36;
         const UPSTREAM_APP_DESTINATIONS: usize = super::UPSTREAM_APP_DESTINATION_CAPACITY;
         const HELD_IDENTITIES: usize = super::HELD_IDENTITY_CAPACITY;
-        pub const LINK_SESSIONS: usize = if cfg!(target_arch = "xtensa") { 6 } else { 12 };
-        const TRANSPORTED_LINKS: usize = if cfg!(target_arch = "xtensa") { 1 } else { 8 };
-        const CHANNELS: usize = if cfg!(target_arch = "xtensa") { 1 } else { 2 };
+        pub const LINK_SESSIONS: usize = 12;
+        const TRANSPORTED_LINKS: usize = 8;
+        const CHANNELS: usize = 2;
         const RESOURCE_ASSEMBLIES: usize = 1;
-        const PACKET_HASHES: usize = if cfg!(target_arch = "xtensa") { 8 } else { 64 };
-        const BLACKHOLED_IDENTITIES: usize = if cfg!(target_arch = "xtensa") { 2 } else { 16 };
+        const PACKET_HASHES: usize = 64;
+        const BLACKHOLED_IDENTITIES: usize = 16;
         const BLACKHOLE_REASON_BYTES: usize = 64;
         const RESOURCE_TRANSFER_BYTES: usize =
             personal_hopspot_core::node_pages::PAGE_RESPONSE_TRANSFER_BYTES;
-        const HELD_ANNOUNCES: usize = if cfg!(target_arch = "xtensa") { 4 } else { 32 };
-        const HELD_ANNOUNCE_APP_DATA_BYTES: usize = if cfg!(target_arch = "xtensa") {
-            256
-        } else {
-            2048
-        };
         /// The outbound lane capacity needed to retain one complete resource-request reaction.
         pub const MAX_OUTGOING_RESOURCE_REACTION_FRAMES: usize =
             max_outgoing_resource_reaction_frames(Self::RESOURCE_TRANSFER_BYTES);
         const CHANNEL_REORDER_DEPTH: usize = 1;
         const LINK_MTU: usize = EMBEDDED_MAX_LINK_MTU;
         const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
-        pub(super) const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = Self::TRACKED_DESTINATIONS
+        pub(crate) const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = Self::TRACKED_DESTINATIONS
             * (personal_rns::persistence::flash_journal_record_storage_len(
                 personal_rns::persistence::maximum_route_upsert_payload_len(0, 0),
                 4,
@@ -369,13 +325,13 @@ mod sram {
             );
     }
 
-    const _: () = assert!(SramStorage::LINK_SESSIONS > SramStorage::CHANNELS);
-    const _: () = assert!(SramStorage::RESOURCE_ASSEMBLIES == 1);
+    const _: () = assert!(InternalStorage::LINK_SESSIONS > InternalStorage::CHANNELS);
+    const _: () = assert!(InternalStorage::RESOURCE_ASSEMBLIES == 1);
     const _: () = assert!(core::mem::size_of::<NoPendingResourceOfferTable>() == 0);
     const _: () =
         assert!(core::mem::size_of::<PendingResourceOffers<NoPendingResourceOfferTable>>() == 0);
 
-    impl StorageLayout for SramStorage {
+    impl StorageLayout for InternalStorage {
         const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
             tracked_destinations: StorageCapacity::Fixed(Self::TRACKED_DESTINATIONS),
             destination_identities: StorageCapacity::Fixed(0),
@@ -427,9 +383,8 @@ mod sram {
         type InterfacePathRequestLimits = FixedInterfacePathRequestLimitTable<8>;
         type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitTable<8>;
         type DirtyInterfaces = heapless::Vec<personal_rns::interfaces::InterfaceId, 8>;
-        type HeldAnnounces = FixedHeldAnnounceTable<{ Self::HELD_ANNOUNCES }>;
-        type HeldAnnounceAppData =
-            PackedAppDataArena<{ Self::HELD_ANNOUNCE_APP_DATA_BYTES }, { Self::HELD_ANNOUNCES }>;
+        type HeldAnnounces = FixedHeldAnnounceTable<32>;
+        type HeldAnnounceAppData = PackedAppDataArena<2048, 32>;
         type DestinationAnnounceLimits =
             FixedDestinationAnnounceLimitTable<{ Self::TRACKED_DESTINATIONS }>;
         type GroupKeys = FixedGroupKeyTable<{ Self::UPSTREAM_APP_DESTINATIONS }>;
@@ -458,7 +413,3 @@ mod sram {
         >;
     }
 }
-
-#[cfg(target_arch = "riscv32")]
-const _: () =
-    assert!(C6Storage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::C6_ARENA_BYTES);

@@ -26,6 +26,7 @@ pub fn write_remote_control_controller_grants_snapshot(
             .iter()
             .map(|grant| RemoteControlAuthorizationRow {
                 public_keys: grant.controller().public_keys(),
+                authority: grant.authority(),
                 permitted_requests: grant.permitted_requests(),
             }),
         out,
@@ -60,6 +61,7 @@ impl Iterator for PersistedRemoteControlControllerGrants<'_> {
         let row = self.rows.next()?;
         RemoteControlControllerGrant::new(
             RemoteControlControllerIdentity::new(row.public_keys),
+            row.authority,
             row.permitted_requests,
         )
         .ok()
@@ -81,8 +83,8 @@ mod tests {
     };
     use crate::persistence::{SnapshotOpenError, SNAPSHOT_OVERHEAD_LEN};
     use crate::remote_control::{
-        FixedRemoteControlControllerGrantTable, RemoteControlRequestKind, RemoteControlRequestSet,
-        SetRemoteControlControllerGrantOutcome,
+        FixedRemoteControlControllerGrantTable, RemoteControlControllerAuthority,
+        RemoteControlRequestKind, RemoteControlRequestSet, SetRemoteControlControllerGrantOutcome,
     };
     use proptest::prelude::*;
     use std::vec::Vec;
@@ -98,7 +100,12 @@ mod tests {
         fill: u8,
         permitted_requests: RemoteControlRequestSet,
     ) -> RemoteControlControllerGrant {
-        RemoteControlControllerGrant::new(identity(fill), permitted_requests).unwrap()
+        RemoteControlControllerGrant::new(
+            identity(fill),
+            RemoteControlControllerAuthority::Operator,
+            permitted_requests,
+        )
+        .unwrap()
     }
 
     fn table<const N: usize>(
@@ -125,7 +132,12 @@ mod tests {
                 0x43,
                 RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
             ),
-            grant(0x65, RemoteControlRequestSet::all()),
+            RemoteControlControllerGrant::new(
+                identity(0x65),
+                RemoteControlControllerAuthority::Administrator,
+                RemoteControlRequestSet::all(),
+            )
+            .unwrap(),
         ]);
         let mut out = std::vec![
             0u8;
@@ -148,7 +160,7 @@ mod tests {
     #[test]
     fn empty_controller_grants_round_trip() {
         let grants = FixedRemoteControlControllerGrantTable::<0>::default();
-        let mut out = [0u8; SNAPSHOT_OVERHEAD_LEN + super::super::rows::ROW_COUNT_LEN];
+        let mut out = [0u8; remote_control_controller_grants_snapshot_capacity(0)];
         let len = write_remote_control_controller_grants_snapshot(&grants, &mut out).unwrap();
 
         assert_eq!(
@@ -223,7 +235,12 @@ mod tests {
 
     #[test]
     fn a_short_controller_grant_buffer_is_refused() {
-        let grants = table([grant(0xCB, RemoteControlRequestSet::all())]);
+        let grants = table([RemoteControlControllerGrant::new(
+            identity(0xCB),
+            RemoteControlControllerAuthority::Administrator,
+            RemoteControlRequestSet::all(),
+        )
+        .unwrap()]);
         let mut short = std::vec![
             0u8;
             remote_control_controller_grants_snapshot_capacity(grants.len()) - 1

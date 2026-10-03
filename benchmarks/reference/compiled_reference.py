@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load RNS 1.4.2 from a controlled, machine-local Cython object cache."""
+"""Load the historical RNS 1.4.2 Cython benchmark reference."""
 
 from __future__ import annotations
 
@@ -57,14 +57,24 @@ def load_compiled_rns():
     )
     import RNS
 
+    NATIVE_SUFFIXES = {".so", ".pyd", ".dylib"}
+    rns_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if (name == "RNS" or name.startswith("RNS."))
+        and getattr(module, "__file__", "")
+    }
     native_modules = sorted(
         {
             portable_path(Path(module.__file__))
-            for name, module in sys.modules.items()
-            if (name == "RNS" or name.startswith("RNS."))
-            and getattr(module, "__file__", "")
-            and Path(module.__file__).suffix in {".so", ".pyd", ".dylib"}
+            for module in rns_modules.values()
+            if Path(module.__file__).suffix in NATIVE_SUFFIXES
         }
+    )
+    interpreted_modules = sorted(
+        name
+        for name, module in rns_modules.items()
+        if Path(module.__file__).suffix not in NATIVE_SUFFIXES
     )
     version = getattr(RNS, "__version__", None) or getattr(RNS, "VERSION", None)
     compiled = getattr(RNS, "compiled", False) is True
@@ -79,6 +89,10 @@ def load_compiled_rns():
         "rns": str(version),
         "compiled": compiled,
         "native_module": native_modules[0],
+        "native_modules": native_modules,
+        "native_module_count": len(native_modules),
+        "interpreted_modules": interpreted_modules,
+        "interpreted_module_count": len(interpreted_modules),
         "python": sys.version.split()[0],
         "cython": Cython.__version__,
         "compiler": first_line([os.environ.get("CC", "cc"), "--version"]),

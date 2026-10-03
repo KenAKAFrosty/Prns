@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Wake, Waker};
 
 use crate::engine::test_support::{
     fixed_secret_key, personal_node_destination, sealed_single_packet,
@@ -37,7 +37,7 @@ use super::super::super::request_endpoints::{
 use super::super::test_remote_control_service;
 use super::{
     notify_accepted_announce, persistence_restored_diagnostic, run_executor_local_node_tasks,
-    AcceptedAnnounceObserver, NodeRunError, PrnsNode,
+    AcceptedAnnounceObserver, NodeRunError, PrnsNode, RequestTaskWake,
 };
 
 static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -48,6 +48,18 @@ struct PollTrace {
     completes_on: Option<usize>,
     wake_on_pending: bool,
     trace: Arc<Mutex<Vec<u8>>>,
+}
+
+struct WakeCounter(AtomicUsize);
+
+impl Wake for WakeCounter {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl Future for PollTrace {
@@ -268,6 +280,43 @@ async fn executor_local_tasks_pair_the_hot_pipeline_without_repolling_dormant_re
 }
 
 #[test]
+fn concurrent_request_poll_completion_and_wake_do_not_strand_readiness() {
+    const HANDOFFS: usize = 2_048;
+
+    let request_wake = Arc::new(RequestTaskWake::new());
+    let wake_count = Arc::new(WakeCounter(AtomicUsize::new(0)));
+    let parent = Waker::from(wake_count.clone());
+    request_wake.parent.register(&parent);
+    assert!(request_wake.begin_poll());
+    request_wake.finish_poll();
+
+    let start = Arc::new(std::sync::Barrier::new(2));
+    let finished = Arc::new(std::sync::Barrier::new(2));
+    std::thread::scope(|scope| {
+        let thread_request_wake = request_wake.clone();
+        let thread_start = start.clone();
+        let thread_finished = finished.clone();
+        scope.spawn(move || {
+            for _ in 0..HANDOFFS {
+                thread_start.wait();
+                thread_request_wake.wake_by_ref();
+                thread_finished.wait();
+            }
+        });
+
+        for expected_wakes in 1..=HANDOFFS {
+            request_wake.parent.register(&parent);
+            assert!(!request_wake.begin_poll());
+            start.wait();
+            request_wake.finish_poll();
+            finished.wait();
+            assert_eq!(wake_count.0.load(Ordering::Relaxed), expected_wakes);
+            assert!(request_wake.take_ready());
+        }
+    });
+}
+
+#[test]
 fn restore_diagnostics_report_seeded_refused_and_dropped_totals() {
     let report = crate::runtime::PersistenceRestoreReport {
         routes: crate::runtime::RouteSeedReport {
@@ -333,12 +382,12 @@ async fn run_until_returns_when_a_non_persistent_node_is_asked_to_stop() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     });
 
     assert_eq!(node.run_until(async {}).await, Ok(()));
@@ -365,12 +414,12 @@ fn controller_and_target_identities_coexist_without_a_transport_identity() {
         transport_identity: None,
         remote_control,
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     });
 
     assert_eq!(
@@ -414,12 +463,12 @@ async fn run_until_with_proof_decider_reaches_a_prove_if_recipe_destination() {
             maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     });
     let (wire_in, inbound) = tokio::sync::mpsc::unbounded_channel();
     let (outbound, mut wire_out) = tokio::sync::mpsc::unbounded_channel();
@@ -476,12 +525,14 @@ async fn graceful_shutdown_is_observed_after_state_and_ratchet_flushes() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence,
-        on_event: move |event, _state: &()| record_persistence_event(&event_sink, event),
+        on_event: move |event, _state: &crate::runtime::NoRemoteControlHostControls| {
+            record_persistence_event(&event_sink, event)
+        },
     });
 
     let result = node.run_until(async {}).await;
@@ -522,12 +573,14 @@ async fn a_recipe_managed_write_failure_is_observed_before_run_returns() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence,
-        on_event: move |event, _state: &()| record_persistence_event(&event_sink, event),
+        on_event: move |event, _state: &crate::runtime::NoRemoteControlHostControls| {
+            record_persistence_event(&event_sink, event)
+        },
     });
     std::fs::remove_dir_all(&directory).unwrap();
     std::fs::write(&directory, b"persistence path blocked by a file").unwrap();
@@ -551,12 +604,12 @@ async fn a_restore_callback_panic_reports_the_manifold_boundary() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence,
-        on_event: |event, _state: &()| {
+        on_event: |event, _state: &crate::runtime::NoRemoteControlHostControls| {
             if matches!(
                 event,
                 crate::runtime::PrnsEvent::Diagnostic(
@@ -650,27 +703,78 @@ fn host_resource_memory_limits_reach_the_engine_before_run() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     })
     .with_resource_memory_limits(limits);
 
     assert_eq!(prns.node.engine.resource_memory_limits(), limits);
 }
 
+#[tokio::test(start_paused = true)]
+async fn explicit_host_preserves_entropy_position_handle_identity_and_timeline() {
+    use crate::manifold::{driver::TokioHost, Host};
+    use prns_core::entropy::RuntimeEntropy;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&calls);
+    let source = move |output: &mut [u8]| {
+        observed.fetch_add(1, Ordering::Relaxed);
+        output.fill(0x57);
+        Ok::<(), core::convert::Infallible>(())
+    };
+    let mut entropy = RuntimeEntropy::try_new(source).unwrap();
+    let mut reference = RuntimeEntropy::try_new(|output: &mut [u8]| {
+        output.fill(0x57);
+        Ok::<(), core::convert::Infallible>(())
+    })
+    .unwrap();
+    entropy.fill_random(&mut [0; 73]);
+    reference.fill_random(&mut [0; 73]);
+    let host = TokioHost::with_runtime_entropy(InstantMillis(900), entropy);
+    let mut node = PrnsNode::new_with_handle_and_host(
+        |handle| PrnsNodeRecipe {
+            transport_identity: None,
+            remote_control: test_remote_control_service(),
+            pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+            app_state: handle,
+            storage: crate::storage::GrowableHeap,
+            request_endpoints: crate::request_endpoints![],
+            interfaces: ManuallyAttached,
+            persistence: NoPersistence,
+            on_event: |_event, _state: &PrnsNodeHandle| {},
+        },
+        host,
+    )
+    .with_crypto_pool(crate::runtime::CryptoPoolConfig::Inline);
+    assert!(Arc::ptr_eq(&node.handle.ids, &node.node.state.ids));
+    let mut actual = [0; 128];
+    let mut expected = [0; 128];
+    node.host.fill_random(&mut actual);
+    reference.fill_random(&mut expected);
+    assert_eq!(
+        (actual, calls.load(Ordering::Relaxed), node.clock().now()),
+        (expected, 1, InstantMillis(900))
+    );
+    tokio::time::advance(std::time::Duration::from_millis(7)).await;
+    assert_eq!(node.clock().now(), InstantMillis(907));
+    drop(node);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
 #[test]
 fn a_runtime_destination_registers_only_its_selected_route_types() {
     struct First;
-    impl RequestEndpoint<()> for First {
+    impl RequestEndpoint<crate::runtime::NoRemoteControlHostControls> for First {
         const ENDPOINT_ID: &'static str = "/first";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
         async fn handle(
-            _context: RequestContext<'_, ()>,
+            _context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             _node: &impl crate::runtime::PrnsNodeApi,
         ) -> Result<(), Decline> {
             Ok(())
@@ -678,12 +782,12 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
     }
 
     struct Second;
-    impl RequestEndpoint<()> for Second {
+    impl RequestEndpoint<crate::runtime::NoRemoteControlHostControls> for Second {
         const ENDPOINT_ID: &'static str = "/second";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
         async fn handle(
-            _context: RequestContext<'_, ()>,
+            _context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             _node: &impl crate::runtime::PrnsNodeApi,
         ) -> Result<(), Decline> {
             Ok(())
@@ -694,12 +798,12 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![First, Second],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     });
     let destination = prns
         .register_preconfigured_destination(PreConfiguredDestination::Single {

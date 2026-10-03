@@ -9,6 +9,7 @@ pub use prns_core::interfaces::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutboundDropReason {
+    NotConfigured,
     Disabled,
     Disconnected,
     TimedOut,

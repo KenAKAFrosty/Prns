@@ -111,8 +111,13 @@ fn spawn_l2cap_lane(
         }
     };
     tokio::spawn(async move {
-        let Ok(data) = pending.await else {
-            return;
+        let data = tokio::select! {
+            biased;
+            _ = frames.closed() => return,
+            data = pending => match data {
+                Ok(data) => data,
+                Err(_) => return,
+            },
         };
         crate::diagnostic_log::debug!(
             "bluetooth: L2CAP fast lane up — data now rides the channel, GATT stays the floor"
@@ -131,18 +136,7 @@ fn spawn_l2cap_lane(
             _pump: pump.clone(),
         });
         let _read_pump = pump;
-        let mut deframer = StreamDeframer::<{ 2 * L2CAP_SDU_LEN }>::new();
-        let mut frame = std::vec![0u8; 2 * L2CAP_SDU_LEN];
-        'read: while let Some(chunk) = inbound_rx.recv().await {
-            if !deframer.absorb(&chunk) {
-                break;
-            }
-            while let Some(len) = deframer.next_frame(&mut frame) {
-                if frames.send(Box::from(&frame[..len])).await.is_err() {
-                    break 'read;
-                }
-            }
-        }
+        receive_l2cap_frames(&mut inbound_rx, &frames).await;
         match end_action {
             EndAction::RetainGattFloor => {
                 // The detached task continues to own the central-role GATT receive floor.
@@ -166,6 +160,32 @@ fn spawn_l2cap_lane(
     PendingLane {
         write_ready,
         link_end,
+    }
+}
+
+async fn receive_l2cap_frames(
+    inbound_rx: &mut tokio_mpsc::Receiver<Box<[u8]>>,
+    frames: &tokio_mpsc::Sender<Box<[u8]>>,
+) {
+    let mut deframer = StreamDeframer::<{ 2 * L2CAP_SDU_LEN }>::new();
+    let mut frame = std::vec![0u8; 2 * L2CAP_SDU_LEN];
+    'read: loop {
+        let chunk = tokio::select! {
+            biased;
+            _ = frames.closed() => break,
+            chunk = inbound_rx.recv() => match chunk {
+                Some(chunk) => chunk,
+                None => break,
+            },
+        };
+        if !deframer.absorb(&chunk) {
+            break;
+        }
+        while let Some(len) = deframer.next_frame(&mut frame) {
+            if frames.send(Box::from(&frame[..len])).await.is_err() {
+                break 'read;
+            }
+        }
     }
 }
 
@@ -217,5 +237,36 @@ mod tests {
         stop_gatt_merge(Some(gatt_merge)).await;
 
         assert!(gatt_tx.is_closed());
+    }
+
+    #[tokio::test]
+    async fn dropped_link_releases_a_fast_lane_that_never_arrived() {
+        let (mut pending_tx, pending_rx) = oneshot::channel::<DataPlane>();
+        let (frames_tx, frames_rx) = tokio_mpsc::channel(1);
+
+        let lane = spawn_l2cap_lane(pending_rx, frames_tx, None, FailurePolicy::RetainGattFloor);
+        drop(lane);
+        drop(frames_rx);
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), pending_tx.closed())
+            .await
+            .expect("the detached lane must release its pending receiver with the link");
+    }
+
+    #[tokio::test]
+    async fn dropped_link_stops_an_idle_delivered_fast_lane() {
+        let (inbound_tx, mut inbound_rx) = tokio_mpsc::channel::<Box<[u8]>>(1);
+        let (frames_tx, frames_rx) = tokio_mpsc::channel(1);
+
+        let lane = tokio::spawn(async move {
+            receive_l2cap_frames(&mut inbound_rx, &frames_tx).await;
+        });
+        drop(frames_rx);
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), lane)
+            .await
+            .expect("the delivered lane must stop when its owning link is dropped")
+            .expect("the delivered lane task must not panic");
+        assert!(inbound_tx.is_closed());
     }
 }

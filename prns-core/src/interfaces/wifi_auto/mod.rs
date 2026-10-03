@@ -18,16 +18,17 @@ pub use policy::{
     WIFI_BITRATE_GUESS_BPS, WIFI_EMBEDDED_BITRATE_CEILING_BPS, WIFI_HW_MTU_CAP,
     WIFI_LAN_BITRATE_BPS,
 };
-#[cfg(feature = "alloc")]
-pub use protocol::HeapAutoInterfaceProtocol;
 pub use protocol::{
     classify_beacon, classify_beacon_for_group, discovery_group, link_local_from_mac,
     peering_token, peering_token_for_group, AutoInterfaceProtocol, BeaconObservation,
-    BeaconVerdict, DiscoveryScope, FixedAutoInterfaceProtocol, MulticastAddressType, Peer,
-    PeerObservation, PeerStore, PeerTable, PeeringToken, DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT,
-    DISCOVERY_GROUP, GROUP_ID, GROUP_NAME, PEERING_TIMEOUT_MS, PEERING_TOKEN_BYTES,
-    TCP_RENDEZVOUS_PORT, UNICAST_DISCOVERY_PORT,
+    BeaconVerdict, DiscoveryGroupLane, DiscoveryScope, FixedAutoInterfaceProtocol,
+    FixedMultiAutoInterfaceProtocol, GroupBeaconObservation, MultiAutoInterfaceProtocol,
+    MulticastAddressType, Peer, PeerObservation, PeerStore, PeerTable, PeeringToken,
+    DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, DISCOVERY_GROUP, GROUP_ID, GROUP_NAME,
+    PEERING_TIMEOUT_MS, PEERING_TOKEN_BYTES, TCP_RENDEZVOUS_PORT, UNICAST_DISCOVERY_PORT,
 };
+#[cfg(feature = "alloc")]
+pub use protocol::{HeapAutoInterfaceProtocol, HeapMultiAutoInterfaceProtocol};
 pub use service_discovery::{
     DiscoveryTransport, DNS_SD_LOCAL_DOMAIN, EPHEMERAL_DISCOVERY_INSTANCE_PREFIX,
     EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES, TCP_DNS_SD_BASE_SERVICE_TYPE,

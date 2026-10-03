@@ -7,11 +7,11 @@ use crate::engine::{
     RemoteControlControllerPairingFinalization, RemoteControlControllerPairingRequestBuildError,
     RemoteControlControllerPairingRequestFailure,
     RemoteControlControllerPairingRequestFailureCause, RemoteControlPairingResponseDispatchFailure,
-    RemoteControlTargetPairingFinalization, RequestPathFailure, RespondFailure, RouteRemovalCause,
-    SendGroupFailure, SendPlainPacketFailure, SendRequestFailure, SendResourceFailure,
-    SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure,
-    SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure,
-    SettleRemoteControlControllerPairingPersistenceFailure,
+    RemoteControlTargetPairingFinalization, RemoteControlTargetPairingPreparationFailure,
+    RequestPathFailure, RespondFailure, RouteRemovalCause, SendGroupFailure,
+    SendPlainPacketFailure, SendRequestFailure, SendResourceFailure, SendSinglePacketFailure,
+    SendToChannelFailure, SendToLinkFailure, SetRegisteredAnnounceAppDataFailure,
+    SetResourceStrategyFailure, SettleRemoteControlControllerPairingPersistenceFailure,
     SettleRemoteControlTargetPairingAuthorizationFailure, Settlement,
 };
 use crate::identity::held::HoldIdentityError;
@@ -292,9 +292,11 @@ impl ReliabilityMetricsSnapshot {
             | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
             | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
             | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
+            | Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { .. }
             | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
             | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
             | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
+            | Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { .. }
             | Journaled::RemoteControlControllerPairingExpired { .. }
             | Journaled::RemoteControlControllerPairingLinkClosed { .. }
             | Journaled::RemoteControlTargetPairingExpired { .. }
@@ -571,6 +573,7 @@ impl From<&SendRequestFailure> for RuntimeOperationOutcome {
             SendRequestFailure::ResponseTooLarge => Self::ResponseTooLarge,
             SendRequestFailure::ResponseTransferFailed(_) => Self::ResponseTransferFailed,
             SendRequestFailure::ResourceCapacity => Self::Backpressure,
+            SendRequestFailure::RequestTransferFailed(inner) => Self::from(inner),
         }
     }
 }
@@ -677,6 +680,21 @@ impl From<&CloseRemoteControlPairingFailure> for RuntimeOperationOutcome {
 impl From<&ApproveRemoteControlTargetPairingFailure> for RuntimeOperationOutcome {
     fn from(failure: &ApproveRemoteControlTargetPairingFailure) -> Self {
         match failure {
+            ApproveRemoteControlTargetPairingFailure::AuthorizationPreparationFailed {
+                failure,
+            } => match failure {
+                RemoteControlTargetPairingPreparationFailure::TargetSignerUnavailable {
+                    ..
+                }
+                | RemoteControlTargetPairingPreparationFailure::SigningFailed { .. } => {
+                    Self::DependencyFailed
+                }
+                RemoteControlTargetPairingPreparationFailure::DeadlineElapsed => Self::Timeout,
+                RemoteControlTargetPairingPreparationFailure::NoAuthorizationOwed
+                | RemoteControlTargetPairingPreparationFailure::AttemptMismatch { .. } => {
+                    Self::Sequencing
+                }
+            },
             ApproveRemoteControlTargetPairingFailure::Expired { .. }
             | ApproveRemoteControlTargetPairingFailure::CompletionRetentionExpired { .. } => {
                 Self::Timeout
@@ -917,6 +935,60 @@ mod tests {
             RuntimeOperationOutcome::from(&SendRequestFailure::ResourceCapacity),
             RuntimeOperationOutcome::Backpressure,
         );
+    }
+
+    #[test]
+    fn pairing_preparation_failures_preserve_their_metric_category() {
+        use crate::identity::IdentityHash;
+        use crate::remote_control::{
+            RemoteControlPairingAttemptId, RemoteControlPairingCompletionSigningError,
+        };
+
+        let expected = IdentityHash::new([1; 16]);
+        let found = IdentityHash::new([2; 16]);
+        let cases = [
+            (
+                RemoteControlTargetPairingPreparationFailure::TargetSignerUnavailable {
+                    target_identity: expected,
+                },
+                RuntimeOperationOutcome::DependencyFailed,
+            ),
+            (
+                RemoteControlTargetPairingPreparationFailure::SigningFailed {
+                    error: RemoteControlPairingCompletionSigningError::TargetIdentityMismatch {
+                        expected,
+                        found,
+                    },
+                },
+                RuntimeOperationOutcome::DependencyFailed,
+            ),
+            (
+                RemoteControlTargetPairingPreparationFailure::DeadlineElapsed,
+                RuntimeOperationOutcome::Timeout,
+            ),
+            (
+                RemoteControlTargetPairingPreparationFailure::NoAuthorizationOwed,
+                RuntimeOperationOutcome::Sequencing,
+            ),
+            (
+                RemoteControlTargetPairingPreparationFailure::AttemptMismatch {
+                    active: RemoteControlPairingAttemptId::from_test_transcript_digest_bytes(
+                        [3; 32],
+                    ),
+                },
+                RuntimeOperationOutcome::Sequencing,
+            ),
+        ];
+        for (failure, expected) in cases {
+            assert_eq!(
+                RuntimeOperationOutcome::from(
+                    &ApproveRemoteControlTargetPairingFailure::AuthorizationPreparationFailed {
+                        failure,
+                    },
+                ),
+                expected,
+            );
+        }
     }
 
     #[test]

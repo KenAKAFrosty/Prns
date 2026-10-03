@@ -2,7 +2,11 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::{SendResourceFailure, Settlement};
 use crate::manifold::compression;
+#[cfg(feature = "parallel-resource-hash")]
+use crate::manifold::driver::HostResourceDigestPreparation;
 use crate::manifold::driver::{HostCommand, ResourceInbound};
+#[cfg(feature = "parallel-resource-hash")]
+use crate::routing::links::resources::build_outgoing::PARALLEL_RESOURCE_MIN_BYTES;
 use crate::routing::links::resources::{ResourceHash, MAX_EFFICIENT_SIZE};
 use crate::routing::links::LinkId;
 
@@ -82,6 +86,11 @@ async fn a_small_send_resource_is_one_unsplit_segment() {
         let Some(HostCommand::SendResourceSegment(seg)) = command_rx.recv().await else {
             panic!("expected a SendResourceSegment command");
         };
+        #[cfg(feature = "parallel-resource-hash")]
+        assert!(matches!(
+            seg.digest,
+            HostResourceDigestPreparation::Calculate,
+        ));
         let placement = (
             seg.segment_index,
             seg.total_segments,
@@ -100,6 +109,34 @@ async fn a_small_send_resource_is_one_unsplit_segment() {
         (1, 1, 500),
         "a sub-segment payload crosses as one unsplit resource",
     );
+}
+
+#[cfg(feature = "parallel-resource-hash")]
+#[tokio::test]
+async fn a_streamed_segment_carries_its_prepared_digest_to_the_manifold() {
+    let (prns, mut command_rx) = handle();
+    let payload = std::vec![3u8; PARALLEL_RESOURCE_MIN_BYTES];
+    let drainer = tokio::spawn(async move {
+        let Some(HostCommand::SendResourceSegment(seg)) = command_rx.recv().await else {
+            panic!("expected a SendResourceSegment command");
+        };
+        assert!(matches!(
+            seg.digest,
+            HostResourceDigestPreparation::Prepared(_),
+        ));
+        seg.completion
+            .send(Settlement::SendResource(Ok(())))
+            .expect("the awaiter is still parked");
+    });
+    prns.send_resource_with_compression(
+        LINK,
+        payload.len() as u64,
+        &payload[..],
+        SegmentCompression::Never,
+    )
+    .await
+    .expect("the single segment completes");
+    drainer.await.unwrap();
 }
 
 #[tokio::test]

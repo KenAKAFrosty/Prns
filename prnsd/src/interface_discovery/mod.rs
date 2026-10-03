@@ -60,7 +60,7 @@ impl PreparedDiscovery {
                 | PlannedMedium::I2p { .. }
                 | PlannedMedium::Weave { .. }
                 | PlannedMedium::PrnsUsbAuto
-                | PlannedMedium::PrnsBluetoothAuto
+                | PlannedMedium::PrnsBluetoothAuto(_)
                 | PlannedMedium::PrnsWebSocketClient { .. }
                 | PlannedMedium::PrnsWebSocketServer { .. } => {}
             }

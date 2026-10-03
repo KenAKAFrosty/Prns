@@ -53,6 +53,74 @@ fn settle_forwards_a_settlement_nobody_awaits() {
     );
 }
 
+#[test]
+fn failed_split_response_discards_buffered_chunks_and_releases_the_request() {
+    let mut delivery = JournalDelivery::default();
+    let failure = SendRequestFailure::ResponseTransferFailed(
+        crate::routing::links::resources::ResourceFailureCause::TransferCorrupt,
+    );
+    for (id, result) in [
+        (CommandId(7), Err(failure)),
+        (CommandId(8), Ok(delivered(17))),
+    ] {
+        let (completion, mut settled) = oneshot::channel();
+        delivery.register_request(id, completion);
+        assert!(delivery
+            .route(Journaled::ResponseSegmentReceived {
+                command_id: id,
+                link_id: RES_LINK,
+                request_id: crate::routing::links::request::RequestId([0x54; 16]),
+                segment_index: 1,
+                total_segments: 2,
+                data: b"prefix",
+            })
+            .is_none());
+        if result.is_ok() {
+            assert!(delivery
+                .route(Journaled::ResponseSegmentReceived {
+                    command_id: id,
+                    link_id: RES_LINK,
+                    request_id: crate::routing::links::request::RequestId([0x54; 16]),
+                    segment_index: 2,
+                    total_segments: 2,
+                    data: b"!",
+                })
+                .is_none());
+        }
+        assert!(delivery
+            .route(Journaled::CommandSettled {
+                id,
+                settlement: Settlement::SendRequest(result),
+            })
+            .is_none());
+        assert_eq!(
+            settled.try_recv(),
+            Ok(result.map(|receipt| (b"prefix!".to_vec(), receipt.rtt)))
+        );
+        assert!(delivery.requests.is_empty());
+    }
+}
+
+#[test]
+fn controller_pairing_persistence_failure_reaches_the_application_lane() {
+    let mut delivery = JournalDelivery::default();
+    let attempt_id =
+        crate::remote_control::RemoteControlPairingAttemptId::from_test_transcript_digest_bytes(
+            [0xA3; 32],
+        );
+
+    let forwarded = delivery.route(
+        Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { attempt_id },
+    );
+
+    assert!(matches!(
+        forwarded,
+        Some(Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+            attempt_id: observed,
+        }) if observed == attempt_id
+    ));
+}
+
 const RES_LINK: LinkId = LinkId::new([0x44; 16]);
 
 fn resource_delivery() -> (JournalDelivery, mpsc::UnboundedReceiver<ResourceInbound>) {

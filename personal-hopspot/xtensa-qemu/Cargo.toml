@@ -1,0 +1,13 @@
+[package]
+name = "personal-hopspot-xtensa-qemu"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Typed QEMU SIMCALL boundary for Xtensa Personal Hopspot assurance images."
+
+[lints]
+workspace = true

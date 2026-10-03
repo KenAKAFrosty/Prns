@@ -22,6 +22,7 @@ pub struct SharedInstanceIntent {
     pub blackhole_source: prns_core::identity::IdentityHash,
     pub transport_identity: prns_core::identity::IdentityHash,
     pub network_identity: Option<prns_core::identity::IdentityHash>,
+    pub probe_responder: Option<prns_core::wire::DestinationHash>,
     pub blackhole_files: RnsBlackholeFiles,
     pub ports: SharedInstancePorts,
     pub transport: SharedInstanceTransport,
@@ -368,6 +369,7 @@ async fn become_instance(
     }
     .with_transport_identity(instance.transport_identity)
     .with_network_identity(instance.network_identity)
+    .with_probe_responder(instance.probe_responder)
     .bind()
     .await
     .map_err(SharedInstanceActivationError::from_control)?;

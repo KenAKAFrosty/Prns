@@ -53,18 +53,18 @@ const _: () = assert!(matches!(
 
 fn classify_card(
     id: InterfaceId,
+    subg_configuration: Option<SubGConfigurationState>,
     usb_id: InterfaceId,
     wifi_id: Option<InterfaceId>,
     tcp_id: Option<InterfaceId>,
     tcp_client: Option<&HopspotTcpClientConfig>,
     wifi_kind: screen::CardKind,
-    lora_id: Option<InterfaceId>,
     espnow_id: Option<InterfaceId>,
 ) -> Option<(screen::CardKind, screen::CardLabel)> {
     if id == usb_id {
         Some((screen::CardKind::Usb, screen::card_label("USB")))
-    } else if Some(id) == lora_id {
-        Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
+    } else if id.kind() == Some(InterfaceKind::LoRa) {
+        subg_configuration.map(screen::subg_card)
     } else if Some(id) == wifi_id {
         Some((wifi_kind, screen::card_label("LAN")))
     } else if Some(id) == espnow_id {
@@ -129,32 +129,60 @@ pub(super) fn build_snapshots(
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
     let mut entries: HVec<(&dyn InterfaceStatus, Membership), INTERFACE_CAPACITY> = HVec::new();
     if let Some(lora) = lora {
-        let _ = entries.push((lora, Membership::Independent));
+        assert!(
+            entries.push((lora, Membership::Independent)).is_ok(),
+            "interface capacity covers LoRa"
+        );
     }
     {
-        let _ = entries.push((&ble, Membership::Independent));
+        assert!(
+            entries.push((&ble, Membership::Independent)).is_ok(),
+            "interface capacity covers Bluetooth"
+        );
     }
     if let Some(wifi) = wifi {
-        let _ = entries.push((wifi, Membership::Independent));
+        assert!(
+            entries.push((wifi, Membership::Independent)).is_ok(),
+            "interface capacity covers Wi-Fi"
+        );
     }
     if let Some(espnow) = espnow {
-        let _ = entries.push((espnow, Membership::Independent));
+        assert!(
+            entries.push((espnow, Membership::Independent)).is_ok(),
+            "interface capacity covers ESP-NOW"
+        );
     }
     if let Some(tcp) = tcp {
-        let _ = entries.push((tcp, Membership::Independent));
+        assert!(
+            entries.push((tcp, Membership::Independent)).is_ok(),
+            "interface capacity covers TCP"
+        );
     }
-    let _ = entries.push((usb, Membership::Independent));
+    assert!(
+        entries.push((usb, Membership::Independent)).is_ok(),
+        "interface capacity covers USB"
+    );
 
     if let Some(wifi) = wifi {
         let supervisor_id = wifi.id();
         for member in wifi.members() {
-            let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
+            assert!(
+                entries
+                    .push((member, Membership::FleetMember { supervisor_id }))
+                    .is_ok(),
+                "interface capacity covers Wi-Fi members"
+            );
         }
     }
     {
         let supervisor_id = ble.id();
         for member in ble.members() {
-            let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
+            assert!(
+                entries
+                    .push((member, Membership::FleetMember { supervisor_id }))
+                    .is_ok(),
+                "interface capacity covers Bluetooth members"
+            );
         }
     }
     let mut snapshots: HVec<InterfaceSnapshot, INTERFACE_CAPACITY> = HVec::new();
@@ -173,33 +201,40 @@ pub(super) fn build_snapshots(
         } else {
             status.connection()
         };
-        let _ = snapshots.push(InterfaceSnapshot {
-            id,
-            mode: personal_rns::interfaces::InterfaceMode::Full,
-            gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
-            connection,
-            failure_reason: status.failure_reason(),
-            rx_bytes: status.rx_bytes(),
-            tx_bytes: status.tx_bytes(),
-            transfer_rates: status.transfer_rates(),
-            destinations: counts.destinations,
-            links: counts.links,
-            transported_links: counts.transported_links,
-            membership: *membership,
-        });
+        assert!(
+            snapshots
+                .push(InterfaceSnapshot {
+                    id,
+                    mode: personal_rns::interfaces::InterfaceMode::Full,
+                    gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
+                    connection,
+                    failure_reason: status.failure_reason(),
+                    rx_bytes: status.rx_bytes(),
+                    tx_bytes: status.tx_bytes(),
+                    transfer_rates: status.transfer_rates(),
+                    destinations: counts.destinations,
+                    links: counts.links,
+                    transported_links: counts.transported_links,
+                    membership: *membership,
+                    radio: status.radio(),
+                    details: status.details(),
+                })
+                .is_ok(),
+            "snapshot capacity matches interface capacity"
+        );
     }
     snapshots
 }
 
 pub(super) fn build_cards(
     snapshots: &[InterfaceSnapshot],
+    subg_configuration: Option<SubGConfigurationState>,
     usb_id: InterfaceId,
     wifi_id: Option<InterfaceId>,
     tcp_id: Option<InterfaceId>,
     tcp_client: Option<&HopspotTcpClientConfig>,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
     wifi_config: &HopspotWifiConfig,
-    lora_id: Option<InterfaceId>,
     espnow_id: Option<InterfaceId>,
 ) -> HVec<screen::Card, 8> {
     let wifi_kind = if !wifi_config.has_station() {
@@ -211,7 +246,14 @@ pub(super) fn build_cards(
     };
     screen::snapshots_to_cards(snapshots, |id| {
         classify_card(
-            id, usb_id, wifi_id, tcp_id, tcp_client, wifi_kind, lora_id, espnow_id,
+            id,
+            subg_configuration,
+            usb_id,
+            wifi_id,
+            tcp_id,
+            tcp_client,
+            wifi_kind,
+            espnow_id,
         )
     })
 }
@@ -278,7 +320,7 @@ pub(super) fn add_lora_spectrum(
     selected_card: Option<&screen::Card>,
     spectrum: &LoRaSpectrumStatus,
 ) {
-    if !selected_card.is_some_and(|card| card.kind() == screen::CardKind::LoRa) {
+    if !selected_card.is_some_and(|card| matches!(card.kind(), screen::CardKind::SubG(_))) {
         return;
     }
     let snapshot = spectrum.snapshot();

@@ -314,7 +314,7 @@ pub(in crate::screen) fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>
                 color,
             );
         }
-        CardKind::LoRa => {
+        CardKind::SubG(_) => {
             draw_pattern_colored(
                 display,
                 x,

@@ -1,0 +1,1737 @@
+mod memory;
+
+use personal_hopspot_memory::RegionRole;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+pub use memory::{MemoryProfileReference, MemoryProfileReferenceError, ResolvedMemoryProfile};
+
+use crate::{
+    AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, ImmutableArtifactPath,
+    PreparationProfile, ProvisioningFormat, SoftdeviceIdentity, Uf2BoardIdMatch,
+    Uf2BoardIdMatchKind, Uf2MountLabel, UsbVidPid, ValidatedNrfSerialDfuSerialTransport,
+    CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
+};
+
+const CATALOG_JSON: &str = include_str!("../../../release/flash/boards.json");
+const BOARD_CATALOG_SCHEMA: u32 = 5;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardCatalog {
+    #[serde(rename = "schema")]
+    pub schema_version: u32,
+    pub boards: Vec<BoardCatalogEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardCatalogEntry {
+    pub availability: BoardAvailability,
+    pub slug: String,
+    pub display_name: String,
+    pub silicon: String,
+    pub interfaces: Vec<String>,
+    pub icon: String,
+    pub transport: Transport,
+    pub expected_chip: Option<String>,
+    pub flash_size: Option<u32>,
+    pub preparation_profile: String,
+    pub provisioning: Option<ProvisioningDescriptor>,
+    pub build: BoardBuild,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BoardAvailability {
+    Shipping,
+    Qualification,
+}
+
+impl BoardCatalogEntry {
+    pub fn supports_provisioning(&self) -> bool {
+        self.provisioning.is_some()
+    }
+
+    pub fn supports_tcp_client_provisioning(&self) -> bool {
+        self.provisioning
+            .as_ref()
+            .and_then(|slot| slot.tcp_client.as_ref())
+            .is_some()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Transport {
+    EspSerial,
+    Uf2MassStorage,
+    NrfSerialDfu,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProvisioningDescriptor {
+    pub format: String,
+    pub version: u8,
+    pub offset: u32,
+    pub size: u32,
+    pub ssid_max_bytes: usize,
+    pub password_max_bytes: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp_client: Option<TcpClientProvisioningDescriptor>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TcpClientProvisioningDescriptor {
+    pub target_format: String,
+    pub max_clients: u8,
+    pub default_port: u16,
+    pub hostname_max_bytes: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum BoardBuild {
+    Esp(EspBuild),
+    Uf2(Uf2Build),
+    NrfSerialDfu(Box<NrfSerialDfuBuild>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuBuild {
+    pub package: String,
+    pub binary: String,
+    pub rust_target: String,
+    pub memory_profile: MemoryProfileReference,
+    pub cargo_feature: String,
+    pub target_directory: String,
+    pub application_filename: String,
+    pub init_packet_filename: String,
+    pub serial: NrfSerialDfuSerialTransport,
+    pub compatibility: NrfSerialDfuBuildCompatibility,
+    pub recovery: NrfSerialDfuRecoveryBuild,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuSerialTransport {
+    pub touch_application_and_bootloader: NrfSerialDfuTouchApplicationAndBootloader,
+    pub recovery_bootloader: NrfSerialDfuRecoveryBootloader,
+    pub managed_application: NrfSerialDfuControlApplication,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuTouchApplicationAndBootloader {
+    pub usb: UsbVendorProductId,
+    pub touch_baud_rate: u32,
+    pub transfer_baud_rate: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuRecoveryBootloader {
+    pub usb: UsbVendorProductId,
+    pub manufacturer: String,
+    pub product: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuControlApplication {
+    pub usb: UsbVendorProductId,
+    pub manufacturer: String,
+    pub product: String,
+    pub serial_number: String,
+    pub interface_number: u8,
+    pub request: String,
+    pub value: String,
+    pub index: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UsbVendorProductId {
+    pub vendor_id: String,
+    pub product_id: String,
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum NrfSerialDfuSerialTransportError {
+    #[error(
+        "touch application and bootloader USB vendor/product identity is not canonical nonzero hexadecimal"
+    )]
+    InvalidTouchApplicationAndBootloaderUsb,
+    #[error(
+        "managed application USB vendor/product identity is not canonical nonzero hexadecimal"
+    )]
+    InvalidManagedApplicationUsb,
+    #[error(
+        "recovery bootloader USB vendor/product identity is not canonical nonzero hexadecimal"
+    )]
+    InvalidRecoveryBootloaderUsb,
+    #[error("Nordic serial DFU USB identities must be distinct")]
+    IndistinguishableUsbModes,
+    #[error("application bootloader-touch baud rate must be nonzero")]
+    ZeroTouchBaudRate,
+    #[error("bootloader DFU baud rate must be nonzero")]
+    ZeroTransferBaudRate,
+    #[error("managed application bootloader-entry request is not canonical hexadecimal")]
+    InvalidManagedApplicationRequest,
+    #[error("managed application bootloader-entry control value is not canonical hexadecimal")]
+    InvalidManagedApplicationValue,
+    #[error("managed application bootloader-entry control index is not canonical hexadecimal")]
+    InvalidManagedApplicationIndex,
+    #[error("managed application bootloader-entry control contract differs from USB Auto")]
+    ManagedApplicationContractMismatch,
+    #[error("managed application USB strings must be nonempty printable ASCII")]
+    InvalidManagedApplicationStrings,
+    #[error("recovery bootloader USB strings must be nonempty printable ASCII")]
+    InvalidRecoveryBootloaderStrings,
+}
+
+impl NrfSerialDfuSerialTransport {
+    pub fn into_validated(
+        self,
+    ) -> Result<ValidatedNrfSerialDfuSerialTransport, NrfSerialDfuSerialTransportError> {
+        let touch_application_and_bootloader_usb =
+            parse_usb_vendor_product_id(&self.touch_application_and_bootloader.usb)
+                .ok_or(NrfSerialDfuSerialTransportError::InvalidTouchApplicationAndBootloaderUsb)?;
+        let managed_application_usb = parse_usb_vendor_product_id(&self.managed_application.usb)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationUsb)?;
+        let recovery_bootloader_usb = parse_usb_vendor_product_id(&self.recovery_bootloader.usb)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidRecoveryBootloaderUsb)?;
+        if touch_application_and_bootloader_usb == managed_application_usb
+            || touch_application_and_bootloader_usb == recovery_bootloader_usb
+            || managed_application_usb == recovery_bootloader_usb
+        {
+            return Err(NrfSerialDfuSerialTransportError::IndistinguishableUsbModes);
+        }
+        if self.touch_application_and_bootloader.touch_baud_rate == 0 {
+            return Err(NrfSerialDfuSerialTransportError::ZeroTouchBaudRate);
+        }
+        if self.touch_application_and_bootloader.transfer_baud_rate == 0 {
+            return Err(NrfSerialDfuSerialTransportError::ZeroTransferBaudRate);
+        }
+        if !valid_usb_string(&self.managed_application.manufacturer)
+            || !valid_usb_string(&self.managed_application.product)
+            || !valid_usb_string(&self.managed_application.serial_number)
+        {
+            return Err(NrfSerialDfuSerialTransportError::InvalidManagedApplicationStrings);
+        }
+        if !valid_usb_string(&self.recovery_bootloader.manufacturer)
+            || !valid_usb_string(&self.recovery_bootloader.product)
+        {
+            return Err(NrfSerialDfuSerialTransportError::InvalidRecoveryBootloaderStrings);
+        }
+        let request = crate::canonical_hex::parse_u8(&self.managed_application.request)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationRequest)?;
+        let value = crate::canonical_hex::parse_u16(&self.managed_application.value)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationValue)?;
+        let index = crate::canonical_hex::parse_u16(&self.managed_application.index)
+            .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationIndex)?;
+        use prns_core::interfaces::usb_auto::{
+            BOOTLOADER_ENTRY_CONTROL_INDEX, BOOTLOADER_ENTRY_CONTROL_REQUEST,
+            BOOTLOADER_ENTRY_CONTROL_VALUE, WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID,
+        };
+        if managed_application_usb.vendor_id != WEBUSB_VENDOR_ID
+            || managed_application_usb.product_id != WEBUSB_PRODUCT_ID
+            || request != BOOTLOADER_ENTRY_CONTROL_REQUEST
+            || value != BOOTLOADER_ENTRY_CONTROL_VALUE
+            || index != BOOTLOADER_ENTRY_CONTROL_INDEX
+        {
+            return Err(NrfSerialDfuSerialTransportError::ManagedApplicationContractMismatch);
+        }
+        Ok(ValidatedNrfSerialDfuSerialTransport {
+            touch_application_and_bootloader_usb,
+            recovery_bootloader_usb,
+            recovery_bootloader_manufacturer: self.recovery_bootloader.manufacturer,
+            recovery_bootloader_product: self.recovery_bootloader.product,
+            touch_baud_rate: self.touch_application_and_bootloader.touch_baud_rate,
+            managed_application_usb,
+            managed_application_manufacturer: self.managed_application.manufacturer,
+            managed_application_product: self.managed_application.product,
+            managed_application_serial_number: self.managed_application.serial_number,
+            managed_application_interface_number: self.managed_application.interface_number,
+            managed_application_request: request,
+            managed_application_value: value,
+            managed_application_index: index,
+            transfer_baud_rate: self.touch_application_and_bootloader.transfer_baud_rate,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuCompatibility {
+    pub softdevice_family: String,
+    pub softdevice_version: String,
+    pub fwid: String,
+    pub device_type: String,
+    pub device_revision: u16,
+    pub application_version: NrfDfuApplicationVersion,
+    pub application_base: String,
+    pub application_end_exclusive: String,
+    pub bank_layout: NrfDfuBankLayout,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuBuildCompatibility {
+    pub softdevice_family: String,
+    pub softdevice_version: String,
+    pub fwid: String,
+    pub device_type: String,
+    pub device_revision: u16,
+    pub application_version: NrfDfuApplicationVersion,
+    pub bank_layout: NrfDfuBankLayout,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NrfDfuApplicationVersion {
+    NotEnforced,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NrfDfuBankLayout {
+    Single,
+    Dual,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuRecoveryBuild {
+    pub mount_label: String,
+    pub board_identity: Uf2BoardIdentity,
+    pub family_id: String,
+    pub filename: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EspBuild {
+    pub chip: String,
+    pub rust_target: String,
+    pub memory_profile: MemoryProfileReference,
+    pub partition_table: String,
+    pub package: String,
+    pub binary: String,
+    pub flash_size_label: String,
+    pub flash_mode: String,
+    pub flash_frequency: String,
+    pub before_reset: String,
+    pub after_reset: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Uf2Build {
+    pub package: String,
+    pub binary: String,
+    pub board_feature: String,
+    pub rust_target: String,
+    pub mount_label: String,
+    pub board_identity: Uf2BoardIdentity,
+    pub application_usb: Uf2ApplicationUsb,
+    pub variants: Vec<Uf2BuildVariant>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Uf2BoardIdentity {
+    #[serde(rename = "match")]
+    pub match_kind: Uf2BoardIdMatchKind,
+    pub value: String,
+}
+
+impl Uf2BoardIdentity {
+    pub fn validated(&self) -> Result<Uf2BoardIdMatch, crate::DomainValueError> {
+        Uf2BoardIdMatch::parse(self.match_kind, self.value.clone())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Uf2ApplicationUsb {
+    pub usb: UsbVendorProductId,
+    pub manufacturer: String,
+    pub product: String,
+    pub serial_number: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Uf2BuildVariant {
+    pub softdevice_family: String,
+    pub softdevice_version: String,
+    pub fwid: String,
+    pub memory_profile: MemoryProfileReference,
+    pub family_id: String,
+    pub application_link: Uf2ApplicationLink,
+    pub target_directory: String,
+    pub filename: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Uf2ApplicationLink {
+    SoftdeviceS140V6,
+    SoftdeviceS140V7,
+    BareMetal,
+}
+
+impl Uf2ApplicationLink {
+    pub const fn cargo_feature(self) -> Option<&'static str> {
+        match self {
+            Self::SoftdeviceS140V6 => Some("softdevice-s140-v6"),
+            Self::SoftdeviceS140V7 => Some("softdevice-s140-v7"),
+            Self::BareMetal => None,
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum CatalogError {
+    #[error("board catalog is invalid: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("unsupported board catalog schema {0}")]
+    Schema(u32),
+    #[error("duplicate board slug {0:?}")]
+    DuplicateSlug(String),
+    #[error("UF2 Board-ID match rules overlap between {first:?} and {second:?}")]
+    OverlappingUf2BoardIdentities { first: String, second: String },
+    #[error("board {board:?}: {message}")]
+    InvalidBoard { board: String, message: String },
+}
+
+impl BoardCatalog {
+    pub fn from_json(bytes: &[u8]) -> Result<Self, CatalogError> {
+        let catalog: Self = serde_json::from_slice(bytes)?;
+        catalog.validate()?;
+        Ok(catalog)
+    }
+
+    pub fn validate(&self) -> Result<(), CatalogError> {
+        if self.schema_version != BOARD_CATALOG_SCHEMA {
+            return Err(CatalogError::Schema(self.schema_version));
+        }
+        let mut slugs = std::collections::BTreeSet::new();
+        for board in &self.boards {
+            if !slugs.insert(board.slug.as_str()) {
+                return Err(CatalogError::DuplicateSlug(board.slug.clone()));
+            }
+            validate_slug(board)?;
+            validate_transport(board)?;
+            validate_provisioning(board)?;
+        }
+        validate_uf2_board_identities(&self.boards)?;
+        if self.shipping_boards().next().is_none() {
+            return Err(CatalogError::InvalidBoard {
+                board: "catalog".to_string(),
+                message: "at least one shipping board is required".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn board(&self, slug: &str) -> Option<&BoardCatalogEntry> {
+        self.boards.iter().find(|board| board.slug == slug)
+    }
+
+    pub fn shipping_boards(&self) -> impl Iterator<Item = &BoardCatalogEntry> {
+        self.boards
+            .iter()
+            .filter(|board| board.availability == BoardAvailability::Shipping)
+    }
+}
+
+pub fn board_catalog() -> Result<BoardCatalog, CatalogError> {
+    BoardCatalog::from_json(CATALOG_JSON.as_bytes())
+}
+
+fn validate_slug(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
+    if BoardId::parse(board.slug.clone()).is_err() {
+        return Err(invalid(
+            board,
+            "slug must use lowercase ASCII, digits, and hyphens",
+        ));
+    }
+    if board.display_name.trim().is_empty()
+        || board.silicon.trim().is_empty()
+        || board.preparation_profile.trim().is_empty()
+        || board.interfaces.is_empty()
+        || board.interfaces.iter().any(|value| value.trim().is_empty())
+        || board
+            .interfaces
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != board.interfaces.len()
+    {
+        return Err(invalid(
+            board,
+            "display name, silicon, preparation profile, and unique interfaces are required",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
+    match (&board.transport, &board.build) {
+        (Transport::EspSerial, BoardBuild::Esp(build)) => {
+            let expected_flash_size_label = match board.flash_size {
+                Some(4_194_304) => "4mb",
+                Some(8_388_608) => "8mb",
+                Some(16_777_216) => "16mb",
+                _ => {
+                    return Err(invalid(
+                        board,
+                        "ESP chip/build/flash/reset parameters are unsupported or disagree",
+                    ));
+                }
+            };
+            let memory_is_valid = build.memory_layout().is_ok_and(|memory| {
+                memory.architecture().rust_target() == build.rust_target
+                    && board.flash_size == Some(memory.internal_flash_capacity())
+                    && memory.region_for_role(RegionRole::Bootloader).is_ok()
+                    && memory.region_for_role(RegionRole::PartitionTable).is_ok()
+            });
+            if !memory_is_valid
+                || board.expected_chip.as_deref() != Some(build.chip.as_str())
+                || ChipFamily::parse(&build.chip).is_err()
+                || build.flash_size_label != expected_flash_size_label
+                || build.flash_mode != "dio"
+                || build.flash_frequency != "40m"
+                || BeforeResetStrategy::parse(&build.before_reset).is_err()
+                || AfterResetStrategy::parse(&build.after_reset).is_err()
+                || PreparationProfile::parse(&board.preparation_profile)
+                    != Ok(PreparationProfile::EspUsbBoot)
+                || build.package.trim().is_empty()
+                || build.binary.trim().is_empty()
+                || build.partition_table.contains(['/', '\\'])
+                || !build.partition_table.ends_with(".csv")
+                || (build.chip == "esp32s3" && build.rust_target != "xtensa-esp32s3-none-elf")
+                || (build.chip == "esp32c6" && build.rust_target != "riscv32imac-unknown-none-elf")
+            {
+                return Err(invalid(
+                    board,
+                    "ESP chip/build/flash/reset parameters are unsupported or disagree",
+                ));
+            }
+        }
+        (Transport::Uf2MassStorage, BoardBuild::Uf2(build)) => {
+            if board.expected_chip.is_some()
+                || board.flash_size.is_some()
+                || Uf2MountLabel::parse(build.mount_label.clone()).is_err()
+                || build.board_identity.validated().is_err()
+                || build.rust_target != "thumbv7em-none-eabihf"
+                || !valid_uf2_application_usb(&build.application_usb)
+                || !matches_pinned_uf2_recipe(board, build)
+            {
+                return Err(invalid(
+                    board,
+                    "UF2 chip/flash/preparation/mount fields are unsupported or disagree",
+                ));
+            }
+        }
+        (Transport::NrfSerialDfu, BoardBuild::NrfSerialDfu(build)) => {
+            if board.expected_chip.is_some()
+                || board.flash_size.is_some()
+                || PreparationProfile::parse(&board.preparation_profile)
+                    != Ok(PreparationProfile::T1000eNrfDfu)
+                || !valid_nrf_serial_dfu_build(build)
+            {
+                return Err(invalid(
+                    board,
+                    "Nordic serial DFU build and recovery fields are unsupported or disagree",
+                ));
+            }
+        }
+        _ => return Err(invalid(board, "transport and build recipe disagree")),
+    }
+    Ok(())
+}
+
+/// Reject UF2 Board-ID rules whose accepted identities overlap.
+fn validate_uf2_board_identities(boards: &[BoardCatalogEntry]) -> Result<(), CatalogError> {
+    let identities = boards
+        .iter()
+        .filter_map(|board| match &board.build {
+            BoardBuild::Uf2(build) => Some((board.slug.as_str(), &build.board_identity)),
+            BoardBuild::Esp(_) => None,
+            BoardBuild::NrfSerialDfu(build) => {
+                Some((board.slug.as_str(), &build.recovery.board_identity))
+            }
+        })
+        .collect::<Vec<_>>();
+    for (index, (slug, identity)) in identities.iter().enumerate() {
+        let identity = identity
+            .validated()
+            .map_err(|_| CatalogError::InvalidBoard {
+                board: (*slug).to_string(),
+                message: "UF2 Board-ID match rule is invalid".to_string(),
+            })?;
+        for (other_slug, other_identity) in &identities[index + 1..] {
+            let other_identity =
+                other_identity
+                    .validated()
+                    .map_err(|_| CatalogError::InvalidBoard {
+                        board: (*other_slug).to_string(),
+                        message: "UF2 Board-ID match rule is invalid".to_string(),
+                    })?;
+            if identity.overlaps(&other_identity)
+                && !identity.declares_shared_identity_with(&other_identity)
+            {
+                return Err(CatalogError::OverlappingUf2BoardIdentities {
+                    first: (*slug).to_string(),
+                    second: (*other_slug).to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+struct PinnedUf2Recipe {
+    preparation_profile: PreparationProfile,
+    package: &'static str,
+    binary: &'static str,
+    board_feature: &'static str,
+    manufacturer: &'static str,
+    product: &'static str,
+    serial_number: &'static str,
+    variants: &'static [PinnedUf2Variant],
+}
+
+struct PinnedUf2Variant {
+    softdevice_family: &'static str,
+    softdevice_version: &'static str,
+    fwid: &'static str,
+    memory_profile: &'static str,
+    family_id: &'static str,
+    application_link: Uf2ApplicationLink,
+    target_directory: &'static str,
+    filename: &'static str,
+}
+
+const T_ECHO_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::TechoUf2,
+    package: "t-echo",
+    binary: "t-echo",
+    board_feature: "board-t-echo",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (T-Echo)",
+    serial_number: "PERSONAL-RNS-TECHO-HOP",
+    variants: &[
+        PinnedUf2Variant {
+            softdevice_family: "s140",
+            softdevice_version: "6.1.1",
+            fwid: "0x00b6",
+            memory_profile: "t-echo-s140-v6",
+            family_id: "0xada52840",
+            application_link: Uf2ApplicationLink::SoftdeviceS140V6,
+            target_directory: "target/s140-v6",
+            filename: "t-echo-s140-6.1.1.uf2",
+        },
+        PinnedUf2Variant {
+            softdevice_family: "s140",
+            softdevice_version: "7.3.0",
+            fwid: "0x0123",
+            memory_profile: "t-echo-s140-v7",
+            family_id: "0xada52840",
+            application_link: Uf2ApplicationLink::SoftdeviceS140V7,
+            target_directory: "target/s140-v7",
+            filename: "t-echo-s140-7.3.0.uf2",
+        },
+    ],
+};
+
+const T114_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::T114Uf2,
+    package: "t-echo",
+    binary: "heltec-t114",
+    board_feature: "board-t114",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (Heltec T114)",
+    serial_number: "PERSONAL-RNS-T114-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        memory_profile: "t114",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::BareMetal,
+        target_directory: "target/t114",
+        filename: "heltec-t114-s140-6.1.1.uf2",
+    }],
+};
+
+const MESH_POCKET_5000_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::MeshPocketUf2,
+    package: "t-echo",
+    binary: "heltec-mesh-pocket",
+    board_feature: "board-mesh-pocket,mesh-pocket-battery-5000",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (MeshPocket 5000)",
+    serial_number: "PERSONAL-RNS-MSPK5-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        memory_profile: "mesh-pocket-5000",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::BareMetal,
+        target_directory: "target/mesh-pocket-5000",
+        filename: "heltec-mesh-pocket-5000-s140-6.1.1.uf2",
+    }],
+};
+
+const MESH_POCKET_10000_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::MeshPocketUf2,
+    package: "t-echo",
+    binary: "heltec-mesh-pocket",
+    board_feature: "board-mesh-pocket,mesh-pocket-battery-10000",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (MeshPocket 10000)",
+    serial_number: "PERSONAL-RNS-MSPK10-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        memory_profile: "mesh-pocket-10000",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::BareMetal,
+        target_directory: "target/mesh-pocket-10000",
+        filename: "heltec-mesh-pocket-10000-s140-6.1.1.uf2",
+    }],
+};
+
+const T096_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::T096Uf2,
+    package: "t-echo",
+    binary: "t096",
+    board_feature: "board-t096",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (Heltec T096)",
+    serial_number: "PERSONAL-RNS-T096-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        memory_profile: "t096",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::SoftdeviceS140V6,
+        target_directory: "target/t096",
+        filename: "t096-s140-6.1.1.uf2",
+    }],
+};
+
+const MUZI_BASE_DUO_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::MuziBaseDuoUf2,
+    package: "t-echo",
+    binary: "muzi-base-duo",
+    board_feature: "board-muzi-base-duo",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (muzi Base Duo)",
+    serial_number: "PERSONAL-RNS-MBDUO-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        memory_profile: "muzi-base-duo",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::SoftdeviceS140V6,
+        target_directory: "target/muzi-base-duo",
+        filename: "muzi-base-duo-s140-6.1.1.uf2",
+    }],
+};
+
+const RAK4631_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::Rak4631Uf2,
+    package: "t-echo",
+    binary: "rak4631",
+    board_feature: "board-rak4631",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (RAK WisBlock 4631)",
+    serial_number: "PERSONAL-RNS-RAK4631-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        memory_profile: "rak4631",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::SoftdeviceS140V6,
+        target_directory: "target/rak4631",
+        filename: "rak4631-s140-6.1.1.uf2",
+    }],
+};
+
+fn pinned_uf2_recipe(slug: &str) -> Option<&'static PinnedUf2Recipe> {
+    match slug {
+        "t-echo" => Some(&T_ECHO_UF2_RECIPE),
+        "mesh-pocket-5000" => Some(&MESH_POCKET_5000_UF2_RECIPE),
+        "mesh-pocket-10000" => Some(&MESH_POCKET_10000_UF2_RECIPE),
+        "t096" => Some(&T096_UF2_RECIPE),
+        "t114" => Some(&T114_UF2_RECIPE),
+        "muzi-base-duo" => Some(&MUZI_BASE_DUO_UF2_RECIPE),
+        "rak4631" => Some(&RAK4631_UF2_RECIPE),
+        _ => None,
+    }
+}
+
+fn matches_pinned_uf2_recipe(board: &BoardCatalogEntry, build: &Uf2Build) -> bool {
+    let Some(recipe) = pinned_uf2_recipe(&board.slug) else {
+        return false;
+    };
+    PreparationProfile::parse(&board.preparation_profile) == Ok(recipe.preparation_profile)
+        && build.package == recipe.package
+        && build.binary == recipe.binary
+        && build.board_feature == recipe.board_feature
+        && build.application_usb.manufacturer == recipe.manufacturer
+        && build.application_usb.product == recipe.product
+        && build.application_usb.serial_number == recipe.serial_number
+        && build
+            .variants
+            .iter()
+            .map(|variant| {
+                (
+                    variant.softdevice_family.as_str(),
+                    variant.softdevice_version.as_str(),
+                    variant.fwid.as_str(),
+                    variant.memory_profile.as_str(),
+                    variant.family_id.as_str(),
+                    variant.application_link,
+                    variant.target_directory.as_str(),
+                    variant.filename.as_str(),
+                )
+            })
+            .eq(recipe.variants.iter().map(|variant| {
+                (
+                    variant.softdevice_family,
+                    variant.softdevice_version,
+                    variant.fwid,
+                    variant.memory_profile,
+                    variant.family_id,
+                    variant.application_link,
+                    variant.target_directory,
+                    variant.filename,
+                )
+            }))
+        && build.variants.iter().all(|variant| {
+            variant.memory_layout().is_ok_and(|memory| {
+                let application = memory.transport_envelope();
+                memory.architecture().rust_target() == build.rust_target
+                    && application.start().is_multiple_of(0x1000)
+                    && application.end_exclusive().is_multiple_of(0x1000)
+            }) && crate::canonical_hex::parse_u32(&variant.family_id).is_some()
+        })
+}
+
+fn valid_uf2_application_usb(application_usb: &Uf2ApplicationUsb) -> bool {
+    use prns_core::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
+    parse_usb_vendor_product_id(&application_usb.usb)
+        .is_some_and(|usb| usb.vendor_id == WEBUSB_VENDOR_ID && usb.product_id == WEBUSB_PRODUCT_ID)
+        && valid_usb_string(&application_usb.manufacturer)
+        && valid_usb_string(&application_usb.product)
+        && valid_usb_string(&application_usb.serial_number)
+}
+
+fn valid_nrf_serial_dfu_build(build: &NrfSerialDfuBuild) -> bool {
+    let compatibility = &build.compatibility;
+    let recovery = &build.recovery;
+    let application_region_is_valid = build.memory_layout().is_ok_and(|memory| {
+        let application = memory.transport_envelope();
+        memory.architecture().rust_target() == build.rust_target
+            && application.start().is_multiple_of(0x1000)
+            && application.end_exclusive().is_multiple_of(0x1000)
+    });
+    valid_cargo_name(&build.package)
+        && valid_cargo_name(&build.binary)
+        && build.rust_target == "thumbv7em-none-eabihf"
+        && valid_cargo_name(&build.cargo_feature)
+        && ImmutableArtifactPath::parse(build.target_directory.clone()).is_ok()
+        && valid_artifact_filename(&build.application_filename, ".bin")
+        && valid_artifact_filename(&build.init_packet_filename, ".dat")
+        && build.application_filename != build.init_packet_filename
+        && build.serial.clone().into_validated().is_ok()
+        && SoftdeviceIdentity::parse(
+            &compatibility.softdevice_family,
+            compatibility.softdevice_version.clone(),
+        )
+        .is_ok()
+        && crate::canonical_hex::parse_u16(&compatibility.fwid).is_some_and(|fwid| fwid != 0xfffe)
+        && crate::canonical_hex::parse_u16(&compatibility.device_type).is_some()
+        && compatibility.device_revision != 0
+        && application_region_is_valid
+        && Uf2MountLabel::parse(recovery.mount_label.clone()).is_ok()
+        && recovery.board_identity.validated().is_ok()
+        && crate::canonical_hex::parse_u32(&recovery.family_id).is_some()
+        && valid_artifact_filename(&recovery.filename, ".uf2")
+        && recovery.filename != build.application_filename
+        && recovery.filename != build.init_packet_filename
+}
+
+fn parse_usb_vendor_product_id(identity: &UsbVendorProductId) -> Option<UsbVidPid> {
+    let vendor_id =
+        crate::canonical_hex::parse_u16(&identity.vendor_id).filter(|value| *value != 0)?;
+    let product_id =
+        crate::canonical_hex::parse_u16(&identity.product_id).filter(|value| *value != 0)?;
+    Some(UsbVidPid {
+        vendor_id,
+        product_id,
+    })
+}
+
+fn valid_usb_string(value: &str) -> bool {
+    !value.is_empty()
+        && value.trim() == value
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() || byte == b' ')
+}
+
+fn valid_cargo_name(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn valid_artifact_filename(value: &str, extension: &str) -> bool {
+    !value.is_empty()
+        && value.ends_with(extension)
+        && !value.contains(['/', '\\'])
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+}
+
+fn validate_provisioning(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
+    let Some(slot) = &board.provisioning else {
+        return Ok(());
+    };
+    if board.transport != Transport::EspSerial {
+        return Err(invalid(
+            board,
+            "only ESP boards can have a provisioning slot",
+        ));
+    }
+    if ProvisioningFormat::parse(&slot.format) != Ok(ProvisioningFormat::Hspcfg1)
+        || slot.version != CONFIG_VERSION
+        || slot.offset != CONFIG_OFFSET
+        || slot.size != CONFIG_SIZE as u32
+        || slot.ssid_max_bytes != CONFIG_SSID_MAX_BYTES
+        || slot.password_max_bytes != CONFIG_PASSWORD_MAX_BYTES
+    {
+        return Err(invalid(
+            board,
+            "provisioning descriptor disagrees with the wire contract",
+        ));
+    }
+    if let Some(tcp_client) = &slot.tcp_client {
+        if tcp_client.target_format != "ipv4-or-dns"
+            || tcp_client.max_clients != 1
+            || tcp_client.default_port == 0
+            || tcp_client.hostname_max_bytes != crate::CONFIG_TCP_CLIENT_HOSTNAME_MAX_BYTES
+        {
+            return Err(invalid(
+                board,
+                "TCP client provisioning must allow one IPv4 or DNS target",
+            ));
+        }
+        let BoardBuild::Esp(build) = &board.build else {
+            return Err(invalid(
+                board,
+                "TCP client provisioning requires an ESP build",
+            ));
+        };
+        if build.chip != "esp32s3" || !board.interfaces.iter().any(|value| value == "TCP Client") {
+            return Err(invalid(
+                board,
+                "TCP client provisioning requires a capable ESP32-S3 target",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn invalid(board: &BoardCatalogEntry, message: &str) -> CatalogError {
+    CatalogError::InvalidBoard {
+        board: board.slug.clone(),
+        message: message.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_catalog_has_shipping_and_qualification_boards() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        assert_eq!(catalog.schema_version, 5);
+        let slugs = catalog
+            .shipping_boards()
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            slugs,
+            [
+                "heltec-v4",
+                "heltec-v4-r8",
+                "t-beam-supreme",
+                "xiao-esp32-c6",
+                "t-echo",
+                "t114",
+                "t096",
+                "t1000-e"
+            ]
+        );
+        assert!(catalog
+            .boards
+            .iter()
+            .any(|board| board.availability == BoardAvailability::Qualification));
+        Ok(())
+    }
+
+    #[test]
+    fn qualification_boards_are_absent_from_the_shipping_view() -> Result<(), CatalogError> {
+        let mut catalog = board_catalog()?;
+        let expected = catalog
+            .shipping_boards()
+            .skip(1)
+            .map(|board| board.slug.clone())
+            .collect::<Vec<_>>();
+        catalog.boards[0].availability = BoardAvailability::Qualification;
+        let shipping = catalog
+            .shipping_boards()
+            .map(|board| board.slug.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(shipping, expected);
+        assert!(catalog.board("heltec-v4").is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn embedded_catalog_has_exact_physical_flash_contracts() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let contracts = catalog
+            .boards
+            .iter()
+            .map(|board| {
+                let build = match &board.build {
+                    BoardBuild::Esp(build) => Some((
+                        build.partition_table.as_str(),
+                        build.flash_size_label.as_str(),
+                    )),
+                    BoardBuild::Uf2(_) => None,
+                    BoardBuild::NrfSerialDfu(_) => None,
+                };
+                (board.slug.as_str(), board.flash_size, build)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            contracts,
+            [
+                (
+                    "heltec-v4",
+                    Some(16_777_216),
+                    Some(("partitions-hopspot-16mb.csv", "16mb"))
+                ),
+                (
+                    "heltec-v4-r8",
+                    Some(16_777_216),
+                    Some(("partitions-hopspot-16mb.csv", "16mb"))
+                ),
+                (
+                    "heltec-e290",
+                    Some(16_777_216),
+                    Some(("partitions-hopspot-16mb.csv", "16mb"))
+                ),
+                (
+                    "heltec-v3",
+                    Some(8_388_608),
+                    Some(("partitions-hopspot-8mb-v3.csv", "8mb"))
+                ),
+                (
+                    "heltec-wireless-stick-lite-v3",
+                    Some(8_388_608),
+                    Some(("partitions-hopspot-8mb.csv", "8mb"))
+                ),
+                (
+                    "t-beam-supreme",
+                    Some(8_388_608),
+                    Some(("partitions-hopspot-8mb.csv", "8mb"))
+                ),
+                (
+                    "xiao-esp32-c6",
+                    Some(4_194_304),
+                    Some(("partitions-hopspot-4mb.csv", "4mb"))
+                ),
+                ("t-echo", None, None),
+                ("t114", None, None),
+                ("mesh-pocket-5000", None, None),
+                ("mesh-pocket-10000", None, None),
+                ("t096", None, None),
+                ("rak4631", None, None),
+                ("t1000-e", None, None),
+                ("muzi-base-duo", None, None),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn every_catalog_build_resolves_its_canonical_memory_profile(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let mut bindings = Vec::new();
+        for board in &catalog.boards {
+            match &board.build {
+                BoardBuild::Esp(build) => {
+                    let memory = build.memory_layout()?;
+                    bindings.push((
+                        board.slug.as_str(),
+                        build.memory_profile.as_str(),
+                        memory.architecture().rust_target(),
+                    ));
+                }
+                BoardBuild::Uf2(build) => {
+                    for variant in &build.variants {
+                        let memory = variant.memory_layout()?;
+                        bindings.push((
+                            board.slug.as_str(),
+                            variant.memory_profile.as_str(),
+                            memory.architecture().rust_target(),
+                        ));
+                    }
+                }
+                BoardBuild::NrfSerialDfu(build) => {
+                    let memory = build.memory_layout()?;
+                    bindings.push((
+                        board.slug.as_str(),
+                        build.memory_profile.as_str(),
+                        memory.architecture().rust_target(),
+                    ));
+                }
+            }
+        }
+        assert_eq!(
+            bindings,
+            [
+                ("heltec-v4", "heltec-v4", "xtensa-esp32s3-none-elf"),
+                ("heltec-v4-r8", "heltec-v4-r8", "xtensa-esp32s3-none-elf"),
+                ("heltec-e290", "heltec-e290", "xtensa-esp32s3-none-elf"),
+                ("heltec-v3", "heltec-v3", "xtensa-esp32s3-none-elf"),
+                (
+                    "heltec-wireless-stick-lite-v3",
+                    "heltec-wireless-stick-lite-v3",
+                    "xtensa-esp32s3-none-elf"
+                ),
+                (
+                    "t-beam-supreme",
+                    "t-beam-supreme",
+                    "xtensa-esp32s3-none-elf"
+                ),
+                (
+                    "xiao-esp32-c6",
+                    "xiao-esp32-c6",
+                    "riscv32imac-unknown-none-elf"
+                ),
+                ("t-echo", "t-echo-s140-v6", "thumbv7em-none-eabihf"),
+                ("t-echo", "t-echo-s140-v7", "thumbv7em-none-eabihf"),
+                ("t114", "t114", "thumbv7em-none-eabihf"),
+                (
+                    "mesh-pocket-5000",
+                    "mesh-pocket-5000",
+                    "thumbv7em-none-eabihf"
+                ),
+                (
+                    "mesh-pocket-10000",
+                    "mesh-pocket-10000",
+                    "thumbv7em-none-eabihf"
+                ),
+                ("t096", "t096", "thumbv7em-none-eabihf"),
+                ("rak4631", "rak4631", "thumbv7em-none-eabihf"),
+                ("t1000-e", "t1000-e", "thumbv7em-none-eabihf"),
+                ("muzi-base-duo", "muzi-base-duo", "thumbv7em-none-eabihf"),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_memory_profiles_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let mut value = serde_json::to_value(board_catalog()?)?;
+        value["boards"][0]["build"]["memory_profile"] = "unknown-profile".into();
+        assert!(matches!(
+            BoardCatalog::from_json(&serde_json::to_vec(&value)?),
+            Err(CatalogError::InvalidBoard { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn e290_qualification_contract_is_complete_and_not_shipping() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("heltec-e290")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "heltec-e290".to_string(),
+                message: "missing qualification target".to_string(),
+            })?;
+        assert_eq!(board.availability, BoardAvailability::Qualification);
+        assert_eq!(board.display_name, "Heltec Vision Master E290-HF");
+        assert_eq!(board.expected_chip.as_deref(), Some("esp32s3"));
+        assert_eq!(board.flash_size, Some(16_777_216));
+        assert_eq!(board.preparation_profile, "esp-usb-boot");
+        assert_eq!(
+            board.interfaces,
+            [
+                "Wi-Fi Auto",
+                "TCP Client",
+                "BLE Auto",
+                "LoRa",
+                "ESP-NOW",
+                "USB Auto"
+            ]
+        );
+        let BoardBuild::Esp(build) = &board.build else {
+            return Err(invalid(board, "expected an ESP build"));
+        };
+        assert_eq!(build.package, "hopspot-heltec-e290");
+        assert_eq!(build.binary, "hopspot-heltec-e290");
+        assert_eq!(build.rust_target, "xtensa-esp32s3-none-elf");
+        assert_eq!(build.partition_table, "partitions-hopspot-16mb.csv");
+        assert_eq!(build.flash_mode, "dio");
+        assert_eq!(build.flash_frequency, "40m");
+        assert_eq!(build.before_reset, "usb-reset");
+        assert_eq!(build.after_reset, "watchdog-reset");
+        assert!(!catalog
+            .shipping_boards()
+            .any(|entry| entry.slug == board.slug));
+        Ok(())
+    }
+
+    #[test]
+    fn wireless_stick_lite_v3_contract_is_complete() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("heltec-wireless-stick-lite-v3")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "heltec-wireless-stick-lite-v3".to_string(),
+                message: "missing qualification target".to_string(),
+            })?;
+        assert_eq!(board.display_name, "Heltec Wireless Stick Lite V3");
+        assert_eq!(board.expected_chip.as_deref(), Some("esp32s3"));
+        assert_eq!(board.flash_size, Some(8_388_608));
+        assert_eq!(board.interfaces, ["BLE Auto", "LoRa", "USB Auto"]);
+        assert!(!board.supports_provisioning());
+        let BoardBuild::Esp(build) = &board.build else {
+            return Err(invalid(board, "expected an ESP build"));
+        };
+        assert_eq!(build.package, "hopspot-heltec-wireless-stick-lite-v3");
+        assert_eq!(build.binary, "hopspot-heltec-wireless-stick-lite-v3");
+        assert_eq!(build.rust_target, "xtensa-esp32s3-none-elf");
+        assert_eq!(build.partition_table, "partitions-hopspot-8mb.csv");
+        assert_eq!(build.before_reset, "default-reset");
+        assert_eq!(build.after_reset, "hard-reset");
+        Ok(())
+    }
+
+    #[test]
+    fn t096_shipping_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t096")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "t096".to_string(),
+                message: "missing shipping target".to_string(),
+            })?;
+        let BoardBuild::Uf2(build) = &board.build else {
+            return Err(invalid(board, "expected a UF2 build"));
+        };
+
+        assert_eq!(board.availability, BoardAvailability::Shipping);
+        assert_eq!(board.preparation_profile, "t096-uf2");
+        assert_eq!(build.package, "t-echo");
+        assert_eq!(build.binary, "t096");
+        assert_eq!(build.board_feature, "board-t096");
+        assert_eq!(build.rust_target, "thumbv7em-none-eabihf");
+        assert_eq!(build.mount_label, "HT-n5262G");
+        assert_eq!(build.board_identity.match_kind, Uf2BoardIdMatchKind::Exact);
+        assert_eq!(build.board_identity.value, "ht-n5262g");
+        assert_eq!(build.application_usb.usb.vendor_id, "0x1209");
+        assert_eq!(build.application_usb.usb.product_id, "0x0001");
+        assert_eq!(build.application_usb.manufacturer, "Stay Personal");
+        assert_eq!(
+            build.application_usb.product,
+            "Personal Hopspot (Heltec T096)"
+        );
+        assert_eq!(build.application_usb.serial_number, "PERSONAL-RNS-T096-HOP");
+        let [variant] = build.variants.as_slice() else {
+            return Err(invalid(board, "expected exactly one T096 variant"));
+        };
+        assert_eq!(variant.softdevice_family, "s140");
+        assert_eq!(variant.softdevice_version, "6.1.1");
+        assert_eq!(variant.fwid, "0x00b6");
+        assert_eq!(variant.memory_profile.as_str(), "t096");
+        let application = variant
+            .memory_layout()
+            .expect("T096 memory profile")
+            .transport_envelope();
+        assert_eq!(application.start(), 0x0002_6000);
+        assert_eq!(application.end_exclusive(), 0x000e_8000);
+        assert_eq!(variant.family_id, "0xada52840");
+        assert_eq!(
+            variant.application_link,
+            Uf2ApplicationLink::SoftdeviceS140V6
+        );
+        assert_eq!(variant.target_directory, "target/t096");
+        assert_eq!(variant.filename, "t096-s140-6.1.1.uf2");
+        Ok(())
+    }
+
+    #[test]
+    fn rak4631_qualification_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("rak4631")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "rak4631".to_string(),
+                message: "missing qualification target".to_string(),
+            })?;
+        let BoardBuild::Uf2(build) = &board.build else {
+            return Err(invalid(board, "expected a UF2 build"));
+        };
+
+        assert_eq!(board.availability, BoardAvailability::Qualification);
+        assert_eq!(board.preparation_profile, "rak4631-uf2");
+        assert_eq!(build.package, "t-echo");
+        assert_eq!(build.binary, "rak4631");
+        assert_eq!(build.board_feature, "board-rak4631");
+        assert_eq!(build.rust_target, "thumbv7em-none-eabihf");
+        assert_eq!(build.mount_label, "RAK4631");
+        assert_eq!(build.board_identity.match_kind, Uf2BoardIdMatchKind::Exact);
+        assert_eq!(build.board_identity.value, "wisblock-rak4631-board");
+        assert_eq!(build.application_usb.usb.vendor_id, "0x1209");
+        assert_eq!(build.application_usb.usb.product_id, "0x0001");
+        assert_eq!(build.application_usb.manufacturer, "Stay Personal");
+        assert_eq!(
+            build.application_usb.product,
+            "Personal Hopspot (RAK WisBlock 4631)"
+        );
+        assert_eq!(
+            build.application_usb.serial_number,
+            "PERSONAL-RNS-RAK4631-HOP"
+        );
+        let [variant] = build.variants.as_slice() else {
+            return Err(invalid(board, "expected exactly one RAK4631 variant"));
+        };
+        assert_eq!(variant.softdevice_family, "s140");
+        assert_eq!(variant.softdevice_version, "6.1.1");
+        assert_eq!(variant.fwid, "0x00b6");
+        assert_eq!(variant.memory_profile.as_str(), "rak4631");
+        let application = variant
+            .memory_layout()
+            .expect("RAK4631 memory profile")
+            .transport_envelope();
+        assert_eq!(application.start(), 0x0002_6000);
+        assert_eq!(application.end_exclusive(), 0x000e_2000);
+        assert_eq!(variant.family_id, "0xada52840");
+        assert_eq!(
+            variant.application_link,
+            Uf2ApplicationLink::SoftdeviceS140V6
+        );
+        assert_eq!(variant.target_directory, "target/rak4631");
+        assert_eq!(variant.filename, "rak4631-s140-6.1.1.uf2");
+        Ok(())
+    }
+
+    #[test]
+    fn t1000e_shipping_contract_matches_the_recovery_bootloader() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t1000-e")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "t1000-e".to_string(),
+                message: "missing shipping target".to_string(),
+            })?;
+        let BoardBuild::NrfSerialDfu(build) = &board.build else {
+            return Err(invalid(board, "expected Nordic serial DFU build"));
+        };
+        assert_eq!(board.availability, BoardAvailability::Shipping);
+        assert_eq!(build.package, "t-echo");
+        assert_eq!(build.binary, "t1000e");
+        assert_eq!(build.cargo_feature, "board-t1000e");
+        assert_eq!(
+            build.serial.touch_application_and_bootloader.usb.vendor_id,
+            "0x2886"
+        );
+        assert_eq!(
+            build.serial.touch_application_and_bootloader.usb.product_id,
+            "0x0057"
+        );
+        assert_eq!(
+            build
+                .serial
+                .touch_application_and_bootloader
+                .touch_baud_rate,
+            1200
+        );
+        assert_eq!(build.serial.recovery_bootloader.usb.vendor_id, "0x239a");
+        assert_eq!(build.serial.recovery_bootloader.usb.product_id, "0x8029");
+        assert_eq!(
+            build.serial.recovery_bootloader.manufacturer,
+            "Seeed Studio"
+        );
+        assert_eq!(build.serial.recovery_bootloader.product, "T1000-E-BOOT");
+        assert_eq!(build.serial.managed_application.usb.vendor_id, "0x1209");
+        assert_eq!(build.serial.managed_application.usb.product_id, "0x0001");
+        assert_eq!(
+            build.serial.managed_application.manufacturer,
+            "Stay Personal"
+        );
+        assert_eq!(
+            build.serial.managed_application.product,
+            "Personal Hopspot (T1000-E)"
+        );
+        assert_eq!(
+            build.serial.managed_application.serial_number,
+            "PERSONAL-RNS-T1000E-HOP"
+        );
+        assert_eq!(build.serial.managed_application.interface_number, 0);
+        assert_eq!(build.serial.managed_application.request, "0x50");
+        assert_eq!(build.serial.managed_application.value, "0x5052");
+        assert_eq!(build.serial.managed_application.index, "0x4e53");
+        assert_eq!(
+            build
+                .serial
+                .touch_application_and_bootloader
+                .transfer_baud_rate,
+            115200
+        );
+        assert_eq!(build.compatibility.softdevice_family, "s140");
+        assert_eq!(build.compatibility.softdevice_version, "7.3.0");
+        assert_eq!(build.compatibility.fwid, "0x0123");
+        assert_eq!(build.compatibility.device_type, "0x0052");
+        assert_eq!(build.compatibility.device_revision, 52840);
+        assert_eq!(build.memory_profile.as_str(), "t1000-e");
+        let compatibility = build
+            .manifest_compatibility()
+            .expect("T1000-E memory profile");
+        assert_eq!(compatibility.application_base, "0x00027000");
+        assert_eq!(compatibility.application_end_exclusive, "0x000ea000");
+        assert_eq!(build.compatibility.bank_layout, NrfDfuBankLayout::Single);
+        assert_eq!(build.recovery.mount_label, "T1000-E");
+        assert_eq!(
+            build.recovery.board_identity.match_kind,
+            Uf2BoardIdMatchKind::Exact
+        );
+        assert_eq!(build.recovery.board_identity.value, "nrf52840-t1000-e-v1");
+        assert_eq!(build.recovery.family_id, "0xada52840");
+        Ok(())
+    }
+
+    #[test]
+    fn t114_shipping_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t114")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "t114".to_string(),
+                message: "missing shipping target".to_string(),
+            })?;
+        let BoardBuild::Uf2(build) = &board.build else {
+            return Err(invalid(board, "expected a UF2 build"));
+        };
+        assert_eq!(board.availability, BoardAvailability::Shipping);
+        assert_eq!(board.preparation_profile, "t114-uf2");
+        assert_eq!(build.package, "t-echo");
+        assert_eq!(build.binary, "heltec-t114");
+        assert_eq!(build.board_feature, "board-t114");
+        assert_eq!(build.mount_label, "HT-n5262");
+        assert_eq!(
+            build.board_identity.match_kind,
+            Uf2BoardIdMatchKind::ExactShared
+        );
+        assert_eq!(build.board_identity.value, "ht-n5262");
+        assert_eq!(build.application_usb.usb.vendor_id, "0x1209");
+        assert_eq!(build.application_usb.usb.product_id, "0x0001");
+        assert_eq!(build.application_usb.manufacturer, "Stay Personal");
+        assert_eq!(
+            build.application_usb.product,
+            "Personal Hopspot (Heltec T114)"
+        );
+        assert_eq!(build.application_usb.serial_number, "PERSONAL-RNS-T114-HOP");
+        let [variant] = build.variants.as_slice() else {
+            return Err(invalid(board, "expected exactly one T114 variant"));
+        };
+        assert_eq!(variant.softdevice_family, "s140");
+        assert_eq!(variant.softdevice_version, "6.1.1");
+        assert_eq!(variant.fwid, "0x00b6");
+        assert_eq!(variant.memory_profile.as_str(), "t114");
+        let application = variant
+            .memory_layout()
+            .expect("T114 memory profile")
+            .transport_envelope();
+        assert_eq!(application.start(), 0x0002_6000);
+        assert_eq!(application.end_exclusive(), 0x000e_9000);
+        assert_eq!(variant.family_id, "0xada52840");
+        assert_eq!(variant.application_link, Uf2ApplicationLink::BareMetal);
+        assert_eq!(variant.target_directory, "target/t114");
+        assert_eq!(variant.filename, "heltec-t114-s140-6.1.1.uf2");
+        Ok(())
+    }
+
+    #[test]
+    fn nrf_recovery_bootloader_identity_is_distinct_and_exact() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t1000-e")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "t1000-e".to_string(),
+                message: "missing qualification target".to_string(),
+            })?;
+        let BoardBuild::NrfSerialDfu(build) = &board.build else {
+            return Err(invalid(board, "expected Nordic serial DFU build"));
+        };
+
+        let mut colliding = build.serial.clone();
+        colliding.recovery_bootloader.usb = colliding.touch_application_and_bootloader.usb.clone();
+        assert_eq!(
+            colliding.into_validated(),
+            Err(NrfSerialDfuSerialTransportError::IndistinguishableUsbModes)
+        );
+
+        let mut unnamed = build.serial.clone();
+        unnamed.recovery_bootloader.product.clear();
+        assert_eq!(
+            unnamed.into_validated(),
+            Err(NrfSerialDfuSerialTransportError::InvalidRecoveryBootloaderStrings)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn embedded_catalog_limits_tcp_client_provisioning_to_roomy_wifi_boards(
+    ) -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let capable = catalog
+            .boards
+            .iter()
+            .filter(|board| board.supports_tcp_client_provisioning())
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            capable,
+            ["heltec-v4", "heltec-v4-r8", "heltec-e290", "t-beam-supreme"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_catalog_must_retain_a_shipping_board() -> Result<(), Box<dyn std::error::Error>> {
+        let mut value = serde_json::to_value(board_catalog()?)?;
+        value["boards"]
+            .as_array_mut()
+            .ok_or("boards is not an array")?
+            .retain(|board| board["availability"] != "shipping");
+        assert!(matches!(
+            BoardCatalog::from_json(&serde_json::to_vec(&value)?),
+            Err(CatalogError::InvalidBoard { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_uf2_board_is_not_tied_to_one_bootloader_volume() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?;
+        let BoardBuild::Uf2(build) = &mut board.build else {
+            return Err("expected a UF2 build".into());
+        };
+        build.mount_label = "T114BOOT".to_string();
+        build.board_identity = Uf2BoardIdentity {
+            match_kind: Uf2BoardIdMatchKind::RevisionPrefix,
+            value: "nrf52840-heltec-t114-v".to_string(),
+        };
+        catalog.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn uf2_board_id_match_rules_may_not_overlap() -> Result<(), Box<dyn std::error::Error>> {
+        let mut catalog = board_catalog()?;
+        let uf2_prefix = catalog
+            .boards
+            .iter()
+            .find_map(|board| match &board.build {
+                BoardBuild::Uf2(build)
+                    if build.board_identity.match_kind == Uf2BoardIdMatchKind::RevisionPrefix =>
+                {
+                    Some(build.board_identity.value.clone())
+                }
+                BoardBuild::Esp(_) | BoardBuild::NrfSerialDfu(_) => None,
+                BoardBuild::Uf2(_) => None,
+            })
+            .ok_or("expected a UF2 board")?;
+        let recovery = catalog
+            .boards
+            .iter_mut()
+            .find_map(|board| match &mut board.build {
+                BoardBuild::NrfSerialDfu(build) => Some(&mut build.recovery),
+                BoardBuild::Esp(_) | BoardBuild::Uf2(_) => None,
+            })
+            .ok_or("expected a Nordic serial DFU board")?;
+        recovery.board_identity = Uf2BoardIdentity {
+            match_kind: Uf2BoardIdMatchKind::Exact,
+            value: format!("{uf2_prefix}2"),
+        };
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::OverlappingUf2BoardIdentities { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn shared_uf2_identity_requires_every_colliding_target_to_declare_it(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.slug == "mesh-pocket-10000")
+            .ok_or("expected MeshPocket target")?;
+        let BoardBuild::Uf2(build) = &mut board.build else {
+            return Err("expected a UF2 build".into());
+        };
+        build.board_identity.match_kind = Uf2BoardIdMatchKind::Exact;
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::OverlappingUf2BoardIdentities { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn mesh_pocket_capacity_targets_are_distinct_builds_with_shared_recovery_identity(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        for (slug, capacity, serial) in [
+            ("mesh-pocket-5000", "5000", "PERSONAL-RNS-MSPK5-HOP"),
+            ("mesh-pocket-10000", "10000", "PERSONAL-RNS-MSPK10-HOP"),
+        ] {
+            let board = catalog.board(slug).ok_or("expected MeshPocket target")?;
+            assert_eq!(board.availability, BoardAvailability::Qualification);
+            assert_eq!(board.preparation_profile, "mesh-pocket-uf2");
+            let BoardBuild::Uf2(build) = &board.build else {
+                return Err("expected a UF2 build".into());
+            };
+            assert_eq!(build.binary, "heltec-mesh-pocket");
+            assert_eq!(
+                build.board_feature,
+                format!("board-mesh-pocket,mesh-pocket-battery-{capacity}")
+            );
+            assert_eq!(build.mount_label, "HT-n5262");
+            assert_eq!(
+                build.board_identity.match_kind,
+                Uf2BoardIdMatchKind::ExactShared
+            );
+            assert_eq!(build.board_identity.value, "ht-n5262");
+            assert_eq!(build.application_usb.serial_number, serial);
+            let [variant] = build.variants.as_slice() else {
+                return Err("expected one MeshPocket artifact".into());
+            };
+            assert_eq!(variant.memory_profile.as_str(), slug);
+            let firmware = variant.memory_layout()?.firmware_owned();
+            assert_eq!(firmware.start(), 0x0002_6000);
+            assert_eq!(firmware.end_exclusive(), 0x000e_1000);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_uf2_board_outside_the_pinned_recipes_is_rejected() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?;
+        board.slug = "nrf52840-second-board".to_string();
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::InvalidBoard { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn an_unnormalized_uf2_board_id_match_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?;
+        let BoardBuild::Uf2(build) = &mut board.build else {
+            return Err("expected a UF2 build".into());
+        };
+        build.board_identity.value = "nRF52840_TEcho_v".to_string();
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::InvalidBoard { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_malformed_uf2_mount_label_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?;
+        let BoardBuild::Uf2(build) = &mut board.build else {
+            return Err("expected a UF2 build".into());
+        };
+        build.mount_label = "../TECHOBOOT".to_string();
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::InvalidBoard { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_reset_strategy_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let mut catalog = board_catalog()?;
+        let BoardBuild::Esp(build) = &mut catalog.boards[0].build else {
+            return Err("expected ESP test board".into());
+        };
+        build.after_reset = "mystery-reset".to_string();
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::InvalidBoard { .. })
+        ));
+        Ok(())
+    }
+}

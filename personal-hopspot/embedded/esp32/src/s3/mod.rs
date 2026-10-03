@@ -2,11 +2,13 @@ mod board;
 pub mod boards;
 mod entropy;
 mod gnss;
+mod remote_control;
 
 use alloc::string::{String, ToString};
+#[cfg(feature = "remote-control-pairing")]
+use core::cell::RefCell;
 use core::fmt::Write as _;
 use esp_backtrace as _;
-use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::base_mac_address;
 use esp_hal::gpio::Input;
@@ -18,30 +20,33 @@ use esp_hal::rom::spiflash::esp_rom_spiflash_read;
 use esp_hal::spi::master::Spi;
 use esp_hal::system::Stack as CpuStack;
 use esp_hal::time::Duration as HalDuration;
-use esp_hal::uart::{UartRx, UartTx};
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
 use embassy_executor::Spawner;
+#[cfg(feature = "remote-control-pairing")]
+use embassy_futures::select::{select, select5, Either, Either5};
 use embassy_futures::select::{select3, Either3};
-#[cfg(feature = "wifi-auto")]
+#[cfg(not(feature = "remote-control-pairing"))]
+use embassy_futures::select::{select4, Either4};
 use embassy_net::tcp::TcpSocket;
-#[cfg(feature = "wifi-auto")]
 use embassy_net::udp::{PacketMetadata, UdpSocket};
-#[cfg(feature = "wifi-auto")]
 use embassy_net::{
     Config as NetConfig, ConfigV6, DhcpConfig, IpEndpoint, Ipv6Cidr, Runner, Stack, StackResources,
     StaticConfigV6,
 };
-#[cfg(feature = "wifi-auto")]
 use embassy_net::{IpAddress, Ipv4Address, Ipv4Cidr, StaticConfigV4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+#[cfg(feature = "remote-control-pairing")]
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::with_timeout;
 #[cfg(feature = "lora")]
 use embassy_time::Delay;
+#[cfg(feature = "remote-control-pairing")]
+use embassy_time::Instant;
 use embassy_time::{Duration, Ticker, Timer};
 #[cfg(feature = "lora")]
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -50,35 +55,28 @@ use portable_atomic::AtomicBool;
 use portable_atomic::{AtomicU32, AtomicU64, Ordering};
 use static_cell::StaticCell;
 
-#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::ap::AccessPointConfig;
-#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::scan::{ScanConfig, ScanTypeConfig};
-#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::sta::StationConfig;
-#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::{
     AuthenticationMethod, Config as WifiConfig, ControllerConfig, DisconnectReason,
     Interface as WifiStaDevice, PowerSaveMode, WifiController, WifiError,
 };
 
-#[cfg(feature = "esp-now")]
 use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
 use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
-#[cfg(feature = "esp-now")]
 use personal_rns::esp_now::EspNowInterface;
 use personal_rns::interfaces::bluetooth_auto::BLE_HW_MTU;
-#[cfg(feature = "esp-now")]
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
 #[cfg(feature = "lora")]
-use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD};
+use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
+use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::usb_auto::device_descriptor;
-#[cfg(feature = "wifi-auto")]
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::{
@@ -101,13 +99,13 @@ use personal_rns::runtime::{
     EmbassyInterfaceStore, Fleet, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle,
     PrnsNodeRecipe, SharedNorFlash, StaticManifoldLane,
 };
+#[cfg(feature = "remote-control-pairing")]
+use personal_rns::runtime::{Diagnostic, Message, RemoteControlPairingControl};
 use personal_rns::storage::StorageLayout;
-#[cfg(feature = "tcp")]
 use personal_rns::tcp::{
     TcpClient, TcpClientInput, TcpClientTarget, TcpSocketBuffers, TCP_DNS_HOSTNAME_MAX_BYTES,
 };
-use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
-#[cfg(feature = "wifi-auto")]
+use personal_rns::usb_auto::{PhysicalHostPresence, UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::wifi_auto::{
     tcp_rendezvous, AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
     TcpRendezvousBuffers, TcpRendezvousClients, TcpRendezvousServer, TcpRendezvousStorage,
@@ -120,6 +118,10 @@ use personal_rns::wifi_auto::{
 };
 use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_CAPACITY;
 
+#[cfg(feature = "remote-control-pairing")]
+use crate::remote_control_composition::{
+    RemoteControlComposition, RemoteControlCompositionEffects, StableTargetAnnouncementSettlement,
+};
 use crate::station_recovery::{
     AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, DiscoveryScope,
     ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
@@ -138,14 +140,13 @@ pub(crate) use crate::immediate_display::ImmediateDisplayDevice;
 pub(crate) use board::LoraRadio;
 pub(crate) use board::{
     BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
-    S3UsbHardware,
 };
 pub(crate) use entropy::{
     bootstrap_s3_runtime, runtime_entropy, S3EntropySource, S3RuntimeBootstrap, S3RuntimeEntropy,
 };
 pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 
-esp_app_desc!();
+firmware_app_descriptor!();
 
 const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
 const CAPTIVE_PORTAL_HOST: &str = "192.168.4.1";
@@ -187,13 +188,7 @@ const TCP_BITRATE_BPS: BitrateBps = wifi_auto_contract::WIFI_EMBEDDED_BITRATE_CE
 const TCP_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 
 const LANE_COUNT: usize = 5 + cfg!(feature = "lora") as usize;
-// The V3 has no PSRAM. Its fixed storage profile reserves SRAM for the radio
-// drivers and one direct BLE peer instead of the V4's broad manifold.
-const MEMBERS: usize = if cfg!(feature = "sram-storage") {
-    1
-} else {
-    24
-};
+const MEMBERS: usize = 24;
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
 pub const BLE_CONTROLLER_ACTIVITY_CAPACITY: u8 = (BLE_PEER_CAPACITY + 1) as u8;
 // The S3 Wi-Fi blob creates its driver task at priority 29. Keep the BLE controller immediately
@@ -234,13 +229,13 @@ const RENDER_TICKS_PER_BATTERY_SAMPLE: u8 = (BATTERY_SAMPLE_INTERVAL_MS / RENDER
 const RENDER_TICKS_PER_BATTERY_DISPLAY: u8 =
     (BATTERY_DISPLAY_INTERVAL_MS / RENDER_INTERVAL_MS) as u8;
 const NOTICE_MS: u64 = 900;
-const DISPLAY_SLEEP_DELAY_MS: u64 = 2_500;
-
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 type Mtx = CriticalSectionRawMutex;
 type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
+type RemoteControlHandle =
+    screen::HopspotCommandHandle<{ remote_control::REMOTE_CONTROL_COMMAND_DEPTH }>;
 type UsbSeam =
     EmbassyInterfaceSeam<'static, Mtx, S3EntropySource, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 #[cfg(feature = "lora")]
@@ -262,9 +257,9 @@ type InterfaceStore = EmbassyInterfaceStore<
 >;
 /// The fully-spelled node type, so it can ride to core 1 as a concrete `#[task]` argument.
 type S3Node = PrnsNode<
-    (),
+    RemoteControlHandle,
     screen::node_pages::NodePageRoutes,
-    for<'a> fn(PrnsEvent<'a>, &()),
+    for<'a> fn(PrnsEvent<'a>, &RemoteControlHandle),
     EngineStorageType,
     EmbassyHost<Mtx, S3EntropySource>,
     Mtx,
@@ -289,7 +284,7 @@ mod connectivity;
 mod display;
 
 use captive_portal::ap_ssid;
-use configuration::{hopspot_wifi_config, HopspotWifiConfig};
+use configuration::{hopspot_wifi_config, HopspotWifiConfig, HopspotWifiConfigSource};
 use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::{build_tcp, build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
 use display::build_interface_menu_details;
@@ -302,7 +297,7 @@ const BLE_SUPERVISOR_ID: InterfaceId =
 static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
     BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 #[cfg(feature = "lora")]
-static LORA_CONTROL: LoRaControl = LoRaControl::new();
+static LORA_CONTROL: StaticCell<LoRaControl> = StaticCell::new();
 static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
 static TCP_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, 0> =
@@ -329,6 +324,22 @@ static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 const BUTTON_EVENT_CAPACITY: usize = 4;
 static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, BUTTON_EVENT_CAPACITY> = Channel::new();
+#[cfg(feature = "remote-control-pairing")]
+static REMOTE_CONTROL_COMPOSITION: BlockingMutex<
+    Mtx,
+    RefCell<RemoteControlComposition<personal_rns::remote_control::RemoteControlPairingAttemptId>>,
+> = BlockingMutex::new(RefCell::new(RemoteControlComposition::new()));
+#[cfg(feature = "remote-control-pairing")]
+static REMOTE_CONTROL_UI_WAKE: Signal<Mtx, ()> = Signal::new();
+#[cfg(feature = "remote-control-pairing")]
+static STABLE_TARGET_ANNOUNCER_WAKE: Signal<Mtx, ()> = Signal::new();
+#[cfg(feature = "remote-control-pairing")]
+static PAIRING_CLOSE_REQUESTED: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "remote-control-pairing")]
+static PAIRING_CLOSE_WAKE: Signal<Mtx, ()> = Signal::new();
+#[cfg(feature = "remote-control-pairing")]
+static REMOTE_CONTROL_CLOCK: BlockingMutex<Mtx, RefCell<(u64, u64)>> =
+    BlockingMutex::new(RefCell::new((0, 0)));
 /// Per-interface engine counts the manifold (core 1) pushes into and the render task (core 0) reads —
 /// a `CriticalSectionRawMutex` store so the `&'static` shared across cores stays `Sync`. Capacity is a
 /// power of two above the interface ceiling, so a live interface's counts never get dropped.
@@ -341,9 +352,230 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
 static WIFI_STATION_DATA_PATH_DEGRADED: AtomicBool = AtomicBool::new(false);
 static WIFI_DRIVER_RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
+static WIFI_ACTIVE_CREDENTIAL_REVISION: AtomicU32 = AtomicU32::new(0);
+static WIFI_NETWORK_READY_REVISION: AtomicU32 = AtomicU32::new(0);
+static WIFI_CREDENTIALS: screen::HopspotWifiCredentialMailbox =
+    screen::HopspotWifiCredentialMailbox::new();
+static REMOTE_CONTROL_COMMANDS: screen::HopspotCommandMailbox<
+    { remote_control::REMOTE_CONTROL_COMMAND_DEPTH },
+> = screen::HopspotCommandMailbox::new();
 static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 
-fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
+#[cfg(not(feature = "remote-control-pairing"))]
+fn firmware_on_event(_event: PrnsEvent<'_>, _state: &RemoteControlHandle) {}
+
+#[cfg(feature = "remote-control-pairing")]
+fn apply_remote_control_effects(effects: RemoteControlCompositionEffects) {
+    if effects.wake_ui() {
+        REMOTE_CONTROL_UI_WAKE.signal(());
+    }
+    if effects.wake_announcer() {
+        STABLE_TARGET_ANNOUNCER_WAKE.signal(());
+    }
+    if effects.close_pairing() {
+        PAIRING_CLOSE_REQUESTED.store(true, Ordering::Release);
+        PAIRING_CLOSE_WAKE.signal(());
+    }
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn update_remote_control_state(
+    transition: impl FnOnce(
+        &mut screen::RemoteControlTargetPairingState,
+    ) -> screen::RemoteControlTargetPairingUpdate,
+) -> screen::RemoteControlTargetPairingUpdate {
+    let output = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().update_pairing(transition));
+    let (update, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+    update
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn current_remote_control_state() -> screen::RemoteControlTargetPairingState {
+    REMOTE_CONTROL_COMPOSITION.lock(|composition| composition.borrow_mut().take_current_pairing())
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn remote_control_authorization_persisted(
+    attempt_id: personal_rns::remote_control::RemoteControlPairingAttemptId,
+) {
+    let output = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().authorization_persisted(attempt_id));
+    let (_, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn observe_restored_remote_control_grants(restored_count: u32) {
+    let effects = REMOTE_CONTROL_COMPOSITION.lock(|composition| {
+        composition
+            .borrow_mut()
+            .observe_restored_controller_grants(restored_count)
+    });
+    apply_remote_control_effects(effects);
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn firmware_on_event(event: PrnsEvent<'_>, _state: &RemoteControlHandle) {
+    match event {
+        PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(pairing)) => {
+            let confirmation = pairing.confirmation();
+            let attempt_id = confirmation.attempt_id();
+            let confirmation_code = confirmation.confirmation_code().value();
+            let expires_at = pairing.window().expires_at();
+            let _ = update_remote_control_state(|state| {
+                state.confirmation_required(attempt_id, confirmation_code, expires_at)
+            });
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingControllerCommitted {
+            attempt_id,
+        }) => {
+            let _ = update_remote_control_state(|state| state.controller_committed(attempt_id));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationRequired {
+            attempt_id,
+            ..
+        }) => {
+            let _ = update_remote_control_state(|state| state.authorizing(attempt_id));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationPersisted {
+            attempt_id,
+        }) => {
+            remote_control_authorization_persisted(attempt_id);
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingExpiredDuringAuthorization {
+            attempt_id,
+        }) => {
+            let _ = update_remote_control_state(|state| state.expired(Some(attempt_id)));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingExpired { aborted }) => {
+            let attempt_id = aborted.attempt_id();
+            let _ = update_remote_control_state(|state| state.expired(Some(attempt_id)));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingLinkClosed { aborted }) => {
+            let attempt_id = aborted.attempt_id();
+            let _ = update_remote_control_state(|state| state.terminal_link_closed(attempt_id));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingCompletionRetentionExpired {
+            attempt_id,
+        }) => {
+            let _ = update_remote_control_state(|state| state.completion_expired(attempt_id));
+        }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingCompletionLinkClosed {
+            attempt_id,
+        }) => {
+            let _ = update_remote_control_state(|state| state.terminal_link_closed(attempt_id));
+        }
+        PrnsEvent::Diagnostic(Diagnostic::RemoteControlPairingExpired { .. }) => {
+            let _ = update_remote_control_state(|state| state.expired(None));
+        }
+        PrnsEvent::Diagnostic(Diagnostic::RemoteControlPairingExpiryFailed { .. }) => {
+            let _ = update_remote_control_state(|state| {
+                state.operation_failed(
+                    None,
+                    screen::RemoteControlTargetPairingFailure::PairingExpiry,
+                )
+            });
+        }
+        _ => {}
+    }
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn set_remote_control_clock(logical_now: personal_rns::units::InstantMillis) {
+    let raw_now = Instant::now().as_millis();
+    REMOTE_CONTROL_CLOCK.lock(|clock| *clock.borrow_mut() = (raw_now, logical_now.0));
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn remote_control_now() -> personal_rns::units::InstantMillis {
+    let raw_now = Instant::now().as_millis();
+    REMOTE_CONTROL_CLOCK.lock(|clock| {
+        let (raw_start, logical_start) = *clock.borrow();
+        personal_rns::units::InstantMillis(
+            logical_start.saturating_add(raw_now.saturating_sub(raw_start)),
+        )
+    })
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn publish_transmit_egress_ready(ready: bool) {
+    let effects = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().set_transmit_ready(ready));
+    apply_remote_control_effects(effects);
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn request_manual_announcements() {
+    let effects = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().request_manual_announcements());
+    apply_remote_control_effects(effects);
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn poll_stable_target_announcement(
+    now_millis: u64,
+) -> Option<screen::StableTargetAnnouncementAction> {
+    let output = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().poll_announcement(now_millis));
+    let (action, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+    action
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn settle_stable_target_announcement(
+    action: screen::StableTargetAnnouncementAction,
+    succeeded: bool,
+) -> bool {
+    let settlement = if succeeded {
+        StableTargetAnnouncementSettlement::Succeeded
+    } else {
+        StableTargetAnnouncementSettlement::Failed
+    };
+    let output = REMOTE_CONTROL_COMPOSITION.lock(|composition| {
+        composition
+            .borrow_mut()
+            .settle_announcement(action, settlement)
+    });
+    let (settled, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+    settled
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn next_stable_target_announcement_deadline_millis() -> Option<u64> {
+    REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow().next_announcement_deadline_millis())
+}
+
+#[cfg(feature = "remote-control-pairing")]
+pub(crate) fn remote_control_pairing_persistence_failed(
+    failure: personal_rns::runtime::EmbeddedRemoteControlPairingPersistenceFailure,
+) {
+    use personal_rns::runtime::EmbeddedRemoteControlPairingPersistenceFailure as Failure;
+
+    let attempt_id = match failure {
+        Failure::CommittedActivation { attempt_id, .. }
+        | Failure::AuthorizationTransaction { attempt_id, .. }
+        | Failure::Storage { attempt_id, .. }
+        | Failure::TargetSettlement { attempt_id, .. }
+        | Failure::ControllerSettlement { attempt_id, .. }
+        | Failure::UnexpectedTargetFinalization { attempt_id, .. }
+        | Failure::UnexpectedControllerFinalization { attempt_id, .. }
+        | Failure::RollbackSnapshotMismatch { attempt_id }
+        | Failure::SettlementBusy { attempt_id, .. }
+        | Failure::NodeStopped { attempt_id, .. } => attempt_id,
+    };
+    let output = REMOTE_CONTROL_COMPOSITION.lock(|composition| {
+        composition
+            .borrow_mut()
+            .target_persistence_failed(attempt_id)
+    });
+    let (_, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+}
 
 const BOOT_PHASE_MAGIC: u32 = 0x5052_0000;
 
@@ -472,61 +704,10 @@ async fn usb_device_task(
         rx,
         tx,
         status,
-        host_present,
+        bitrate: personal_rns::interfaces::usb_auto::DEVICE_USB_BITRATE_BPS,
+        host_presence: PhysicalHostPresence::new(host_present),
     });
     device.run(seam).await
-}
-
-#[embassy_executor::task]
-async fn usb_uart_device_task(
-    rx: UartRx<'static, Async>,
-    tx: UartTx<'static, Async>,
-    seam: UsbSeam,
-    status: &'static EmbassyInterfaceStatus,
-) {
-    let device = UsbAutoDevice::new(UsbAutoDeviceInput {
-        rx: RecoverableUsbUartRx(rx),
-        tx: RecoverableUsbUartTx(tx),
-        status,
-        // The CP2102 UART exposes no cable-presence signal. Read/write failures
-        // and the USB Auto liveness protocol own disconnect detection instead.
-        host_present: || true,
-    });
-    device.run(seam).await
-}
-
-struct RecoverableUsbUartRx(UartRx<'static, Async>);
-
-impl embedded_io_06::ErrorType for RecoverableUsbUartRx {
-    type Error = embedded_io_06::ErrorKind;
-}
-
-impl embedded_io_async_06::Read for RecoverableUsbUartRx {
-    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Self::Error> {
-        embedded_io_async::Read::read(&mut self.0, buffer)
-            .await
-            .map_err(|_| embedded_io_06::ErrorKind::Interrupted)
-    }
-}
-
-struct RecoverableUsbUartTx(UartTx<'static, Async>);
-
-impl embedded_io_06::ErrorType for RecoverableUsbUartTx {
-    type Error = embedded_io_06::ErrorKind;
-}
-
-impl embedded_io_async_06::Write for RecoverableUsbUartTx {
-    async fn write(&mut self, buffer: &[u8]) -> Result<usize, Self::Error> {
-        embedded_io_async::Write::write(&mut self.0, buffer)
-            .await
-            .map_err(|_| embedded_io_06::ErrorKind::Interrupted)
-    }
-
-    async fn flush(&mut self) -> Result<(), Self::Error> {
-        embedded_io_async::Write::flush(&mut self.0)
-            .await
-            .map_err(|_| embedded_io_06::ErrorKind::Interrupted)
-    }
 }
 
 /// The identical ESP32-S3 early boot every board's `bringup` runs first: allocators (PSRAM +
@@ -537,16 +718,6 @@ impl embedded_io_async_06::Write for RecoverableUsbUartTx {
 /// Heap region order is load-bearing for Wi-Fi boards: PSRAM must register first so capability-free boot allocations land externally and leave the small internal regions for the radio.
 /// Heltec V4-R8 (Octal) passes a custom `PsramConfig` and uses `split_psram_heap`, which gives engine construction a private freelist without starving the rest of the system.
 macro_rules! boot_common {
-    // The Heltec WiFi LoRa 32 V3 has no PSRAM. Do not probe or register an
-    // external heap before the OLED bring-up: the probe faults before a
-    // visible diagnostic can be rendered.
-    ($p:ident, $banner:expr, no_psram) => {{
-        ::esp_println::logger::init_logger_from_env();
-        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
-        ::esp_alloc::heap_allocator!(size: $crate::s3::RADIO_INTERNAL_HEAP_BYTES);
-        $crate::s3::reclaim_dcache_region();
-        $crate::s3::boot_rtos_tail!($p, $banner)
-    }};
     ($p:ident, $banner:expr) => {
         $crate::s3::boot_common!(
             $p,

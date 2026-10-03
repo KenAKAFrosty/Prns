@@ -1,26 +1,26 @@
 use crate::engine::{
     AnnounceVerification, EngineReaction, EngineState, InstantMillis, Journaled,
     OpenedResourceSpan, OwedWork, ProofRequest, ResourceDecompressionCompleted,
-    ResourceOpenCompleted, WakeSchedules,
+    ResourceOpenCompleted, ResourceOpenOwed, ResourceOpenSpanResidence, WakeSchedules,
+    WholeResourceOpenCompleted, WholeResourceOpenOutcome,
 };
 use crate::identity::OpenedToken;
-use crate::interfaces::{FrameAccountingEvent, InterfaceIfac};
+use crate::interfaces::FrameAccountingEvent;
 use crate::manifold::Host;
-use crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP;
-use crate::routing::links::resources::send::{OffloadedStagedSeal, ResourceBuildCompleted};
-use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
+use crate::routing::links::resources::send::{
+    ResourceBuildCompleted, ResourceSealBuffers, ResourceSealCompleted, ResourceSealOutcome,
+};
+use crate::routing::links::resources::table::ResourceBuildTransfer;
 use crate::storage::StorageLayout;
 
-use super::crypto_pool::{
-    CryptoCompletion, CryptoJob, CryptoPool, CryptoResult, OpenedSpanResult, StagedSealJob,
-};
+use super::crypto_pool::{CryptoCompletion, CryptoPool, CryptoResult, OpenedSpanResult};
 use super::egress::{
-    route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
+    route_reaction, route_reaction_with_work, Egress, InterfaceIfacs, InterfacePacers, WireScratch,
 };
 use super::inbound_dispatch::InboundDispatch;
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
-use super::owed_work::PendingOwedWork;
+use super::owed_work::{DeferredTransferOpen, PendingOwedWork, ResourceOpenExecution};
 use crate::remote_control::RemoteControlPairingAvailabilityVerification;
 
 // Completion routing deliberately exposes every borrowed data-plane component;
@@ -29,8 +29,8 @@ use crate::remote_control::RemoteControlPairingAvailabilityVerification;
 fn route_completion_reaction<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     owed_work: &mut PendingOwedWork,
@@ -54,8 +54,8 @@ fn route_completion_reaction<J>(
 fn route_completed_reaction_without_work<J>(
     reaction: EngineReaction<'_>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     now: InstantMillis,
@@ -101,7 +101,11 @@ where
     H: Host,
     J: for<'a> FnMut(Journaled<'a>),
 {
-    pub(super) fn dispatch_staged_seal(self, now: InstantMillis) {
+    fn complete_resource_open(
+        self,
+        completed: ResourceOpenCompleted<'_>,
+        now: InstantMillis,
+    ) -> CryptoCompletionEffect {
         let Self {
             engine,
             host,
@@ -109,54 +113,67 @@ where
             wire_scratch,
             journal,
             crypto_pool,
-            owed_work: _,
-            inbound: _,
+            owed_work,
+            ..
         } = self;
-        let Some(link_id) = engine.owed_staged_seal_link() else {
-            return;
-        };
-        match crypto_pool {
-            Some(pool) => {
-                let Some(view) = engine.staged_seal_job_view(&link_id) else {
-                    return;
-                };
-                let mut seal_iv = [0u8; 16];
-                host.fill_random(&mut seal_iv);
-                let mut salts = [[0u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP];
-                for salt in &mut salts {
-                    host.fill_random(salt);
-                }
-                let job = StagedSealJob {
-                    command_id: view.command_id,
-                    link_id,
-                    key: view.key.cloned(),
-                    sdu: view.sdu,
-                    nonce_prefixed_bytes: view.nonce_prefixed_bytes,
-                    plaintext: view.plaintext.to_vec(),
-                    seal_iv,
-                    salts,
-                };
-                engine.mark_staged_sealing(&link_id);
-                pool.submit(CryptoJob::SealStaged(Box::new(job)));
-            }
-            None => {
-                engine.seal_staged_continuation(
-                    &link_id,
-                    &mut |entropy| host.fill_random(entropy),
-                    &mut |reaction| {
-                        route_reaction(
-                            reaction,
-                            &mut topology.egress,
-                            &topology.ifacs,
-                            &mut topology.pacers,
-                            wire_scratch,
-                            now,
-                            &mut |journaled| journal.route(journaled),
-                        )
+        let mut deferred = None;
+        let wake = engine.resume_resource_open(
+            completed,
+            now,
+            &mut |entropy| host.fill_random(entropy),
+            &mut |reaction| {
+                route_reaction_with_work(
+                    reaction,
+                    &mut topology.egress,
+                    &topology.ifacs,
+                    &mut topology.pacers,
+                    wire_scratch,
+                    now,
+                    &mut |journaled| journal.route(journaled),
+                    &mut |work| {
+                        let OwedWork::ResourceOpen(owed) = work else {
+                            owed_work.push(work, crypto_pool);
+                            return;
+                        };
+                        let ResourceOpenSpanResidence::Transferable(reservation) = owed.residence
+                        else {
+                            owed_work.push_resource_open(owed, crypto_pool);
+                            return;
+                        };
+                        if crypto_pool.is_none()
+                            || deferred.is_some()
+                            || ResourceOpenExecution::for_sealed_byte_len(
+                                owed.state.sealed_byte_len(),
+                            ) == ResourceOpenExecution::Manifold
+                        {
+                            owed_work.push_resource_open(owed, crypto_pool);
+                            return;
+                        }
+                        let ResourceOpenOwed {
+                            link_id,
+                            hash,
+                            span_start,
+                            state,
+                            bytes: _,
+                            residence: _,
+                            other_transfers_in_flight: _,
+                        } = owed;
+                        deferred = Some(DeferredTransferOpen {
+                            link_id,
+                            hash,
+                            span_start,
+                            state,
+                            reservation,
+                        });
                     },
                 );
-            }
+            },
+        );
+        if let Some(deferred) = deferred {
+            let workspace = engine.take_resource_open_workspace(deferred.reservation);
+            owed_work.push_deferred_transfer_open(deferred, workspace);
         }
+        CryptoCompletionEffect::OpenSpanAdvanced(wake)
     }
 
     pub(super) fn complete<P>(
@@ -182,10 +199,15 @@ where
         let CryptoCompletion {
             worker,
             result,
+            class,
             work,
+            timing,
         } = completion;
         if let (Some(pool), Some(worker)) = (crypto_pool, worker) {
-            pool.record_completed(worker, work);
+            pool.record_completed(worker, class, work, &timing);
+            if matches!(&result, CryptoResult::ResourcePartHashed(_)) {
+                pool.resource_part_hash_completed();
+            }
             if result.settles_packet_verdict() {
                 pool.packet_verdict_settled();
             }
@@ -477,7 +499,7 @@ where
             } => CryptoCompletionEffect::WakeSchedules(engine.resume_resource_build(
                 ResourceBuildCompleted {
                     reservation,
-                    transfer: &transfer,
+                    transfer: ResourceBuildTransfer::Owned(transfer),
                     names: &names,
                     request_data: request_data.as_slice(),
                     outcome,
@@ -496,6 +518,32 @@ where
                     )
                 },
             )),
+            CryptoResult::ResourcePartHashed(result) => {
+                let (wake, buffer) = result.complete_with(|completed| {
+                    engine.resume_resource_part_hash(
+                        completed,
+                        now,
+                        &mut |entropy| host.fill_random(entropy),
+                        &mut |reaction| {
+                            route_completion_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                owed_work,
+                                crypto_pool,
+                                now,
+                            )
+                        },
+                    )
+                });
+                if let Some((source, frame)) = buffer.return_target() {
+                    topology.return_inbound_slot(source, frame);
+                }
+                CryptoCompletionEffect::WakeSchedules(wake)
+            }
             CryptoResult::ResourceDecompressed {
                 link_id,
                 hash,
@@ -507,6 +555,7 @@ where
                     plaintext: &plaintext,
                 },
                 now,
+                &mut |entropy| host.fill_random(entropy),
                 &mut |reaction| {
                     route_completion_reaction(
                         reaction,
@@ -522,26 +571,24 @@ where
                 },
             )),
             CryptoResult::StagedSealed {
-                command_id,
-                link_id,
-                stream_nonce,
-                nonce_prefixed_bytes,
+                reservation,
                 transfer,
                 names,
                 outcome,
             } => {
-                let sealed_len = outcome.map_or(0, |sealed| sealed.sealed_transfer_bytes);
-                let names_len = outcome.map_or(0, |sealed| sealed.part_count * MAP_HASH_LEN);
-                engine.apply_offloaded_staged_seal(
-                    OffloadedStagedSeal {
-                        command_id,
-                        link_id,
-                        stream_nonce,
-                        nonce_prefixed_bytes,
-                        sealed_bytes: &transfer[..sealed_len],
-                        names: &names[..names_len],
-                        outcome,
+                engine.resume_resource_seal(
+                    ResourceSealCompleted {
+                        reservation,
+                        outcome: ResourceSealOutcome::Built {
+                            buffers: ResourceSealBuffers::Owned {
+                                sealed: transfer,
+                                names,
+                            },
+                            outcome,
+                        },
                     },
+                    now,
+                    &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
                         route_completion_reaction(
                             reaction,
@@ -556,8 +603,17 @@ where
                         )
                     },
                 );
-                engine.promote_staged_resource(
-                    &link_id,
+                CryptoCompletionEffect::WakeSchedules(WakeSchedules {
+                    resource_deadlines: engine.resource_deadlines_wake(),
+                    ..WakeSchedules::UNCHANGED
+                })
+            }
+            CryptoResult::WholeResourceOpenUnavailable { reservation } => {
+                engine.resume_whole_resource_open(
+                    WholeResourceOpenCompleted {
+                        reservation,
+                        outcome: WholeResourceOpenOutcome::Unavailable,
+                    },
                     now,
                     &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
@@ -638,42 +694,54 @@ where
                     }
                 }
             }
+            #[cfg(test)]
+            CryptoResult::ScheduledTest(_) => CryptoCompletionEffect::NoWakeChange,
             CryptoResult::SpanOpened {
                 link_id,
                 hash,
                 span_start,
                 state,
+                residence,
                 opened,
             } => {
-                let opened = match &opened {
-                    OpenedSpanResult::InPlace { byte_len } => OpenedResourceSpan::InPlace {
-                        byte_len: *byte_len,
-                    },
-                    OpenedSpanResult::Owned(bytes) => OpenedResourceSpan::Returned(bytes),
+                let dispatch = CryptoDispatch {
+                    engine,
+                    host,
+                    topology,
+                    wire_scratch,
+                    journal,
+                    crypto_pool,
+                    owed_work,
+                    inbound,
                 };
-                CryptoCompletionEffect::OpenSpanAdvanced(engine.resume_resource_open(
-                    ResourceOpenCompleted {
-                        link_id,
-                        hash,
-                        span_start,
-                        state,
-                        opened,
-                    },
-                    now,
-                    &mut |reaction| {
-                        route_completion_reaction(
-                            reaction,
-                            &mut topology.egress,
-                            &topology.ifacs,
-                            &mut topology.pacers,
-                            wire_scratch,
-                            journal,
-                            owed_work,
-                            crypto_pool,
-                            now,
-                        )
-                    },
-                ))
+                let completed = |opened| ResourceOpenCompleted {
+                    link_id,
+                    hash,
+                    span_start,
+                    state,
+                    opened,
+                    residence,
+                };
+                match opened {
+                    OpenedSpanResult::InPlace { byte_len } => dispatch.complete_resource_open(
+                        completed(OpenedResourceSpan::InPlace { byte_len }),
+                        now,
+                    ),
+                    OpenedSpanResult::Owned(bytes) => dispatch.complete_resource_open(
+                        completed(OpenedResourceSpan::Returned(&bytes)),
+                        now,
+                    ),
+                    OpenedSpanResult::Transfer {
+                        bytes,
+                        span_byte_len,
+                    } => dispatch.complete_resource_open(
+                        completed(OpenedResourceSpan::ReturnedTransfer {
+                            transfer: bytes,
+                            span_byte_len,
+                        }),
+                        now,
+                    ),
+                }
             }
         }
     }

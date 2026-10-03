@@ -84,3 +84,22 @@ pub trait RemoteControlControllerGrantControl {
         >,
     > + Send;
 }
+
+#[cfg(test)]
+impl RemoteControlControllerGrantControl for () {
+    async fn set_remote_control_controller_grant(
+        &self,
+        _grant: RemoteControlControllerGrant,
+    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantControlError>
+    {
+        Err(SetRemoteControlControllerGrantControlError::NodeStopped)
+    }
+
+    async fn revoke_remote_control_controller(
+        &self,
+        _controller: RemoteControlControllerIdentity,
+    ) -> Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerControlError>
+    {
+        Err(RevokeRemoteControlControllerControlError::NodeStopped)
+    }
+}

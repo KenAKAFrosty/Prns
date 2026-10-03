@@ -66,13 +66,7 @@ COUNT_TOKEN = r"(?P<count>[0-9]+|(?i:" + "|".join(NUMBER_WORDS) + r"))"
 COUNT_CONTRACTS = (
     CountContract(
         "release/acceptance/README.md",
-        "produces ",
-        "physical",
-        " physical rows",
-    ),
-    CountContract(
-        "release/acceptance/README.md",
-        "physical rows, ",
+        "physical row, ",
         "web_serial",
         " Firefox Web Serial rows",
     ),
@@ -90,12 +84,6 @@ COUNT_CONTRACTS = (
     ),
     CountContract(
         "release/acceptance/README.md",
-        "both surfaces: ",
-        "physical",
-        " rows.",
-    ),
-    CountContract(
-        "release/acceptance/README.md",
         "Every row must prove all ",
         "fallback_scenarios",
         " points:",
@@ -108,13 +96,7 @@ COUNT_CONTRACTS = (
     ),
     CountContract(
         "release/acceptance/rosters/README.md",
-        "It must contain ",
-        "physical_assignments",
-        " physical board/surface assignments",
-    ),
-    CountContract(
-        "release/acceptance/rosters/README.md",
-        "physical board/surface assignments, ",
+        "both surfaces, ",
         "web_serial_roster",
         " Firefox Web Serial assignments",
     ),
@@ -144,19 +126,13 @@ COUNT_CONTRACTS = (
     ),
     CountContract(
         "release/flash/README.md",
-        "assign the ",
-        "physical_assignments",
-        " physical",
-    ),
-    CountContract(
-        "release/flash/README.md",
-        "physical, ",
+        "physical slot, ",
         "web_serial_roster",
         " Firefox Web Serial",
     ),
     CountContract(
         "release/flash/README.md",
-        "Firefox Web Serial, ",
+        "Firefox Web Serial slots, ",
         "fallback",
         " Safari fallback",
     ),
@@ -168,13 +144,7 @@ COUNT_CONTRACTS = (
     ),
     CountContract(
         "release/flash/README.md",
-        "validates ",
-        "physical",
-        " full transport-aware physical rows",
-    ),
-    CountContract(
-        "release/flash/README.md",
-        "physical rows, ",
+        "physical row, ",
         "web_serial",
         " Firefox Web Serial smokes",
     ),

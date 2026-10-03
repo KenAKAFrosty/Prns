@@ -171,9 +171,8 @@ impl BleSource for AndroidBleSource {
 
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, AndroidBleError> {
         let frame = self.inbound.recv().await.ok_or(AndroidBleError::Closed)?;
-        let n = frame.len().min(out.len());
-        out[..n].copy_from_slice(&frame[..n]);
-        Ok(n)
+        prns_core::interfaces::bluetooth_auto::copy_received_frame(&frame, out)
+            .map_err(|_| AndroidBleError::FrameTooLarge)
     }
 }
 
@@ -216,5 +215,31 @@ fn queue_error(error: OutboundQueueError) -> AndroidBleError {
     match error {
         OutboundQueueError::Closed => AndroidBleError::Closed,
         OutboundQueueError::ItemTooLarge => AndroidBleError::FrameTooLarge,
+    }
+}
+
+#[cfg(test)]
+mod receive_tests {
+    use super::*;
+    use prns_core::interfaces::bluetooth_auto::BLE_WIRE_FRAME_LEN;
+
+    #[tokio::test]
+    async fn small_receive_buffers_refuse_whole_frames_and_preserve_the_next_frame() {
+        let (sender, inbound) = channel(2);
+        assert!(sender.send(vec![1, 2, 3]).await.is_ok());
+        assert!(sender.send(vec![0x17; BLE_WIRE_FRAME_LEN]).await.is_ok());
+        let mut source = AndroidBleSource { inbound };
+        let mut small = [0xA5; 2];
+        assert!(matches!(
+            source.recv_frame(&mut small).await,
+            Err(AndroidBleError::FrameTooLarge)
+        ));
+        assert_eq!(small, [0xA5; 2]);
+        let mut wire = [0; BLE_WIRE_FRAME_LEN];
+        assert!(matches!(
+            source.recv_frame(&mut wire).await,
+            Ok(BLE_WIRE_FRAME_LEN)
+        ));
+        assert_eq!(wire, [0x17; BLE_WIRE_FRAME_LEN]);
     }
 }

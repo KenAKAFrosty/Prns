@@ -37,7 +37,9 @@ fn policy(cost: u16, sources: Vec<IdentityHash>) -> InterfaceDiscoveryPolicy {
         DiscoverySourcePolicy::from_sources(sources),
         AutoConnectPolicy::from_maximum(0),
         AutoConnectRoutingPolicy {
-            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            gravity: crate::interfaces::InterfaceGravity::from_bitrate(
+                crate::interface_discovery::AUTOCONNECT_BITRATE,
+            ),
             announces_to_internal: false,
         },
     )

@@ -18,12 +18,15 @@ mod tracing_events;
 
 pub use prns_runtime::runtime::*;
 
-pub use crate::manifold::driver::{CryptoPoolConfig, PoolWorkers};
+pub use crate::manifold::driver::{CryptoPoolConfig, CryptoWorkerPlacement, PoolWorkers};
+#[cfg(feature = "scheduler-tuning")]
+pub use crate::manifold::driver::{SchedulerPolicy, SchedulerPolicyError, SchedulerPolicyInput};
 pub(crate) use destination_identity_retention::{
     apply_destination_identity_retention_command, settle_destination_identity_retention,
     DestinationIdentityRetentionHostCommand,
 };
-pub use entropy::{OsEntropyError, OsRuntimeEntropy};
+pub(crate) use entropy::TokioEntropy;
+pub use entropy::{OsEntropyError, OsEntropySource, OsRuntimeEntropy, TokioHandleEntropy};
 pub(crate) use identity_blackhole_commands::{
     apply_identity_blackhole_command, IdentityBlackholeHostCommand,
 };
@@ -38,17 +41,19 @@ pub use node_facade::{
     boot_timeline_origin, wall_clock_timeline_origin, AttachIntent, Attachable, AttachedInterface,
     AttachedSupervisor, BitrateTimingOracle, ByteStreamReader, ByteStreamWriter,
     DefaultLocationError, DestinationIdentitySeedReport, DetachedFleet, Fleet, FlushError,
-    FlushFailurePolicy, FlushMark, FlushReport, InterfaceAttachmentMetadata, InterfaceSupervisor,
-    NodePersistence, NodeRunError, NonRoutingIdentityError, PersistenceEvent,
-    PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport, PersistenceTrigger,
-    PersistenceWorker, PrepareFlushError, PreparedFlush, PreparedResourceReceiver, PrnsNode,
-    PrnsNodeHandle, PrnsNodeLocalHandle, RatchetSeedReport, RegionFlush,
-    RegisterRequestEndpointError, RemoteControlAuthorizationSeedReport, RemoteControlHandle,
-    RemoteControlTargetHandle, RequestOptions, RequestPathError, ResourceAdmissionPeer,
-    ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress, ResourceReceipt,
-    ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
-    RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring, SegmentCompression,
-    SharedInstanceIdentityError, StreamId, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
+    FlushFailurePolicy, FlushMark, FlushReport, InterfaceArbitration, InterfaceAttachmentMetadata,
+    InterfaceEventSource, InterfaceSupervisor, NodePersistence, NodeRunError,
+    NonRoutingIdentityError, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
+    PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PrepareFlushError,
+    PreparedFlush, PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, PrnsNodeLocalHandle,
+    RatchetSeedReport, RegionFlush, RegisterRequestEndpointError,
+    RemoteControlAuthorizationPersistence, RemoteControlAuthorizationSeedReport,
+    RemoteControlHandle, RemoteControlTargetHandle, RequestOptions, RequestPathError,
+    ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress,
+    ResourceReceipt, ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress,
+    RouteSeedReport, RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring,
+    SegmentCompression, SharedInstanceIdentityError, StreamId, TunnelSeedReport,
+    AUTO_COMPRESS_MAX_LEN,
 };
 #[cfg(feature = "rnx")]
 pub use process_commands::ProcessCommands;

@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+
+mod arbitration;
+pub use arbitration::{InterfaceArbitration, InterfaceEventSource};
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
@@ -17,7 +20,8 @@ use crate::interfaces::{
     InterfaceKind, InterfaceOriginKind, InterfaceSnapshot, Membership, ReportsStatus, StatusView,
 };
 use crate::manifold::driver::{
-    tokio_grant_lane, AddInterfaceCommand, HostCommand, TokioInterfaceSeam,
+    tokio_grant_lane, AddInterfaceCommand, HostCommand, ManifoldWakeReceiver, ManifoldWakeSender,
+    TokioInterfaceSeam,
 };
 use crate::manifold::interface_seam::{frame_cap_for, Interface};
 use crate::node_introspection::{
@@ -26,6 +30,14 @@ use crate::node_introspection::{
 
 use super::super::ManuallyAttached;
 use super::PrnsNodeHandle;
+
+mod status_registration;
+use status_registration::StatusRegistration;
+
+struct RunningInterface {
+    stop: oneshot::Sender<()>,
+    registration: StatusRegistration,
+}
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of parts at once (`Resource.WINDOW_MAX_FAST` is 75, plus its flexibility), so a lane carrying a transfer must be deeper than that window or it sheds parts and the transfer stalls; the old byte-budget collapsed a fat-MTU lane to a handful of slots, exactly that failure. Growable slots (`HeapFrameSlot`) cost only the frames actually in flight, so the depth is generous.
 const HOST_LANE_DEPTH: usize = 256;
@@ -163,11 +175,13 @@ impl PrnsNodeHandle {
         let attached = attach_interface(
             &self.commands,
             &self.iface_build,
-            &self.notify_tx,
+            &self.manifold_wake,
+            &self.entropy,
             interface,
             InterfaceWiring {
                 descriptor,
                 placement,
+                registration: StatusRegistration::new(attachment_epoch, view.as_ref()),
                 connection,
                 frame_accounting,
                 ifac: ifac.as_ref().map(|access| access.context.clone()),
@@ -244,6 +258,8 @@ impl PrnsNodeHandle {
                             links: counts.links,
                             transported_links: counts.transported_links,
                             membership: placement.membership,
+                            radio: vitals.radio,
+                            details: vitals.details,
                         },
                         ifac: ifac.clone(),
                     }
@@ -349,17 +365,18 @@ impl PrnsNodeHandle {
             supervisor_id: id,
             commands: self.commands.clone(),
             iface_build: self.iface_build.clone(),
-            notify_tx: self.notify_tx.clone(),
+            manifold_wake: self.manifold_wake.clone(),
             interfaces: self.interfaces.clone(),
             attachment_epochs: self.attachment_epochs.clone(),
             ifac,
-            entropy: self.entropy,
+            entropy: self.entropy.clone(),
         };
         let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
             Box::new(move || Box::pin(supervisor.run(fleet)));
         let _ = self.iface_build.send(DriverMsg::Add {
             id,
             supervisor: None,
+            registration: StatusRegistration::new(attachment_epoch, view.as_ref()),
             build,
         });
         register_status(
@@ -494,6 +511,7 @@ impl AttachedSupervisor {
 struct InterfaceWiring {
     descriptor: crate::interfaces::InterfaceDescriptor,
     placement: InterfacePlacement,
+    registration: StatusRegistration,
     connection: Option<ConnectionView>,
     frame_accounting: Option<FrameAccountingRecorder>,
     ifac: Option<IfacContext>,
@@ -502,7 +520,8 @@ struct InterfaceWiring {
 fn attach_interface<I>(
     commands: &UnboundedSender<HostCommand>,
     iface_build: &UnboundedSender<DriverMsg>,
-    notify_tx: &UnboundedSender<InterfaceId>,
+    manifold_wake: &ManifoldWakeSender,
+    entropy: &crate::manifold::driver::TokioEntropy,
     interface: I,
     wiring: InterfaceWiring,
 ) -> AttachedInterface
@@ -512,6 +531,7 @@ where
     let InterfaceWiring {
         descriptor,
         placement,
+        registration,
         connection,
         frame_accounting,
         ifac,
@@ -526,9 +546,15 @@ where
     let depth = lane_depth_for(slot_cap);
     let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, depth);
     let (out_producer, out_consumer) = tokio_grant_lane(slot_cap, depth);
-    let seam = TokioInterfaceSeam::new(id, in_producer, notify_tx.clone(), out_consumer)
-        .with_origin(placement.origin)
-        .with_commands(commands.clone());
+    let seam = TokioInterfaceSeam::new_with_entropy(
+        id,
+        in_producer,
+        manifold_wake.clone(),
+        out_consumer,
+        entropy.clone(),
+    )
+    .with_origin(placement.origin)
+    .with_commands(commands.clone());
     let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
         Box::new(move || Box::pin(interface.run(seam)));
     let _ = commands.send(HostCommand::AddInterface(Box::new(AddInterfaceCommand {
@@ -543,6 +569,7 @@ where
     let _ = iface_build.send(DriverMsg::Add {
         id,
         supervisor,
+        registration,
         build,
     });
     AttachedInterface {
@@ -557,7 +584,7 @@ pub struct Fleet {
     supervisor_id: InterfaceId,
     commands: UnboundedSender<HostCommand>,
     iface_build: UnboundedSender<DriverMsg>,
-    notify_tx: UnboundedSender<InterfaceId>,
+    manifold_wake: ManifoldWakeSender,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     attachment_epochs: Arc<AtomicU64>,
     ifac: Option<RuntimeIfac>,
@@ -588,11 +615,13 @@ impl Fleet {
         let attached = attach_interface(
             &self.commands,
             &self.iface_build,
-            &self.notify_tx,
+            &self.manifold_wake,
+            &self.entropy,
             interface,
             InterfaceWiring {
                 descriptor,
                 placement,
+                registration: StatusRegistration::new(attachment_epoch, view.as_ref()),
                 connection,
                 frame_accounting,
                 ifac: self.ifac.as_ref().map(|access| access.context.clone()),
@@ -623,21 +652,21 @@ impl Fleet {
     pub fn detached(supervisor_id: InterfaceId) -> (Self, DetachedFleet) {
         let (commands, commands_rx) = mpsc::unbounded_channel();
         let (iface_build, iface_build_rx) = mpsc::unbounded_channel();
-        let (notify_tx, notify_rx) = mpsc::unbounded_channel();
+        let (manifold_wake, manifold_wake_rx) = crate::manifold::driver::manifold_wake();
         let fleet = Fleet {
             supervisor_id,
             commands,
             iface_build,
-            notify_tx,
+            manifold_wake,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             attachment_epochs: Arc::new(AtomicU64::new(0)),
             ifac: None,
-            entropy: crate::manifold::driver::TokioEntropy,
+            entropy: crate::manifold::driver::TokioEntropy::new(),
         };
         let tail = DetachedFleet {
             _commands: commands_rx,
             _iface_build: iface_build_rx,
-            _notify: notify_rx,
+            _manifold_wake: manifold_wake_rx,
         };
         (fleet, tail)
     }
@@ -647,7 +676,7 @@ impl Fleet {
 pub struct DetachedFleet {
     _commands: UnboundedReceiver<HostCommand>,
     _iface_build: UnboundedReceiver<DriverMsg>,
-    _notify: UnboundedReceiver<InterfaceId>,
+    _manifold_wake: ManifoldWakeReceiver,
 }
 
 /// An interface supervisor: a node that owns no wire of its own but runs a discovery loop and stands up a fleet member per validated connection. Attached with [`PrnsNodeHandle::supervise`].
@@ -669,6 +698,7 @@ pub(super) enum DriverMsg {
     Add {
         id: InterfaceId,
         supervisor: Option<InterfaceId>,
+        registration: StatusRegistration,
         build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>,
     },
     Stop {
@@ -677,11 +707,29 @@ pub(super) enum DriverMsg {
 }
 
 /// Drive every interface run future — the recipe's initial set, plus any added through the handle at runtime — on the `run` task. Each runtime-added interface is wrapped with a stop signal so [`PrnsNodeHandle::remove_interface`] can drop it mid-flight; the initial set runs for the node's life.
+#[cfg(test)]
 pub(super) async fn drive_interfaces(
+    initial: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
+    messages: UnboundedReceiver<DriverMsg>,
+    commands: UnboundedSender<HostCommand>,
+    interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
+) {
+    drive_interfaces_with_arbitration(
+        initial,
+        messages,
+        commands,
+        interfaces,
+        InterfaceArbitration::TokioFair,
+    )
+    .await;
+}
+
+pub(super) async fn drive_interfaces_with_arbitration(
     initial: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
     mut messages: UnboundedReceiver<DriverMsg>,
     commands: UnboundedSender<HostCommand>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
+    mut arbitration: InterfaceArbitration,
 ) {
     let mut futures: FuturesUnordered<Pin<Box<dyn Future<Output = Option<InterfaceId>>>>> = initial
         .into_iter()
@@ -694,16 +742,43 @@ pub(super) async fn drive_interfaces(
             },
         )
         .collect();
-    let mut stops: HashMap<InterfaceId, oneshot::Sender<()>> = HashMap::new();
+    let mut stops: HashMap<InterfaceId, RunningInterface> = HashMap::new();
     let mut supervisor_of: HashMap<InterfaceId, InterfaceId> = HashMap::new();
     let mut open = true;
     loop {
         if !open && futures.is_empty() {
             return;
         }
-        tokio::select! {
-            message = messages.recv(), if open => match message {
-                Some(DriverMsg::Add { id, supervisor, build }) => {
+        enum Event {
+            Message(Option<DriverMsg>),
+            Completion(Option<Option<InterfaceId>>),
+        }
+        let event = arbitration
+            .select(
+                async {
+                    if open {
+                        Event::Message(messages.recv().await)
+                    } else {
+                        std::future::pending().await
+                    }
+                },
+                async {
+                    if futures.is_empty() {
+                        std::future::pending().await
+                    } else {
+                        Event::Completion(futures.next().await)
+                    }
+                },
+            )
+            .await;
+        match event {
+            Event::Message(message) => match message {
+                Some(DriverMsg::Add {
+                    id,
+                    supervisor,
+                    registration,
+                    build,
+                }) => {
                     if let Some(supervisor_id) = supervisor {
                         let _ = supervisor_of.insert(id, supervisor_id);
                     }
@@ -720,14 +795,19 @@ pub(super) async fn drive_interfaces(
                         Err(_) => Box::pin(async move { Some(id) }),
                     };
                     futures.push(guarded);
-                    stops.insert(id, stop_tx);
+                    stops.insert(
+                        id,
+                        RunningInterface {
+                            stop: stop_tx,
+                            registration,
+                        },
+                    );
                 }
                 Some(DriverMsg::Stop { id }) => {
-                    let stopped = stop_interface(&mut stops, id);
-                    match supervisor_of.remove(&id) {
-                        Some(supervisor) => retire_member_status(&interfaces, id, supervisor),
-                        None => forget_status(&interfaces, id),
-                    }
+                    let Some(registration) = stop_interface(&mut stops, id) else {
+                        continue;
+                    };
+                    let supervisor = supervisor_of.remove(&id);
                     stop_supervised_members(
                         &mut stops,
                         &mut supervisor_of,
@@ -735,30 +815,23 @@ pub(super) async fn drive_interfaces(
                         &commands,
                         id,
                     );
-                    if stopped {
-                        drain_stopped_interface(
-                            &mut futures,
-                            &mut stops,
-                            &mut supervisor_of,
-                            &interfaces,
-                            &commands,
-                            id,
-                        )
-                        .await;
-                    }
-                }
-                None => open = false,
-            },
-            // An interface whose run future ended on its own (a dropped connection, no reconnect) deregisters itself: its descriptor must not outlive its wire. A future ended by a `Stop` already had its id pulled from `stops`, so the `stops.remove` here is what distinguishes a natural completion from a deliberate one.
-            done = futures.next(), if !futures.is_empty() => {
-                if let Some(Some(id)) = done {
-                    complete_interface(
+                    drain_stopped_interface(
+                        &mut futures,
                         &mut stops,
                         &mut supervisor_of,
                         &interfaces,
                         &commands,
                         id,
-                    );
+                    )
+                    .await;
+                    registration.retire(&interfaces, id, supervisor);
+                }
+                None => open = false,
+            },
+            // An interface whose run future ended on its own (a dropped connection, no reconnect) deregisters itself: its descriptor must not outlive its wire. A future ended by a `Stop` already had its id pulled from `stops`, so the `stops.remove` here is what distinguishes a natural completion from a deliberate one.
+            Event::Completion(done) => {
+                if let Some(Some(id)) = done {
+                    complete_interface(&mut stops, &mut supervisor_of, &interfaces, &commands, id);
                 }
             }
         }
@@ -832,62 +905,18 @@ fn register_status(
     }
 }
 
-fn forget_status(
-    interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
+fn stop_interface(
+    stops: &mut HashMap<InterfaceId, RunningInterface>,
     id: InterfaceId,
-) {
-    if let Ok(mut map) = interfaces.lock() {
-        map.remove(&id);
-    }
-}
-
-fn retire_member_status(
-    interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
-    member: InterfaceId,
-    supervisor: InterfaceId,
-) {
-    let Ok(mut map) = interfaces.lock() else {
-        return;
-    };
-    let Some(departed) = map.remove(&member) else {
-        return;
-    };
-    let vitals = (departed.view)();
-    let mut retired_frames = if vitals.is_empty() {
-        RetiredMemberFrameAccounting::Incomplete
-    } else {
-        RetiredMemberFrameAccounting::Unseen
-    };
-    let (rx, tx) = vitals.into_iter().fold((0u64, 0u64), |(rx, tx), vitals| {
-        retired_frames.include(match vitals.frame_accounting {
-            Some(accounting) => RetiredMemberFrameAccounting::Complete(accounting),
-            None => RetiredMemberFrameAccounting::Incomplete,
-        });
-        (
-            rx.saturating_add(vitals.rx_bytes),
-            tx.saturating_add(vitals.tx_bytes),
-        )
-    });
-    let Some(kept) = map.get_mut(&supervisor) else {
-        return;
-    };
-    kept.retired_member_bytes.rx = kept.retired_member_bytes.rx.saturating_add(rx);
-    kept.retired_member_bytes.tx = kept.retired_member_bytes.tx.saturating_add(tx);
-    kept.retired_member_frame_accounting.include(retired_frames);
-}
-
-fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: InterfaceId) -> bool {
-    if let Some(stop) = stops.remove(&id) {
-        let _ = stop.send(());
-        true
-    } else {
-        false
-    }
+) -> Option<StatusRegistration> {
+    let running = stops.remove(&id)?;
+    let _ = running.stop.send(());
+    Some(running.registration)
 }
 
 async fn drain_stopped_interface(
     futures: &mut FuturesUnordered<Pin<Box<dyn Future<Output = Option<InterfaceId>>>>>,
-    stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>,
+    stops: &mut HashMap<InterfaceId, RunningInterface>,
     supervisor_of: &mut HashMap<InterfaceId, InterfaceId>,
     interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     commands: &UnboundedSender<HostCommand>,
@@ -905,17 +934,16 @@ async fn drain_stopped_interface(
 }
 
 fn complete_interface(
-    stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>,
+    stops: &mut HashMap<InterfaceId, RunningInterface>,
     supervisor_of: &mut HashMap<InterfaceId, InterfaceId>,
     interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     commands: &UnboundedSender<HostCommand>,
     id: InterfaceId,
 ) {
-    if stops.remove(&id).is_some() {
-        match supervisor_of.remove(&id) {
-            Some(supervisor) => retire_member_status(interfaces, id, supervisor),
-            None => forget_status(interfaces, id),
-        }
+    if let Some(running) = stops.remove(&id) {
+        running
+            .registration
+            .retire(interfaces, id, supervisor_of.remove(&id));
         let _ = commands.send(HostCommand::RemoveInterface {
             id,
             departure: Departure::MayReturn,
@@ -925,7 +953,7 @@ fn complete_interface(
 }
 
 fn stop_supervised_members(
-    stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>,
+    stops: &mut HashMap<InterfaceId, RunningInterface>,
     supervisor_of: &mut HashMap<InterfaceId, InterfaceId>,
     interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     commands: &UnboundedSender<HostCommand>,
@@ -937,9 +965,10 @@ fn stop_supervised_members(
         .map(|(member, _)| *member)
         .collect();
     for member in members {
-        let _ = stop_interface(stops, member);
+        if let Some(registration) = stop_interface(stops, member) {
+            registration.retire(interfaces, member, None);
+        }
         supervisor_of.remove(&member);
-        forget_status(interfaces, member);
         let _ = commands.send(HostCommand::RemoveInterface {
             id: member,
             departure: Departure::MayReturn,
@@ -948,4 +977,9 @@ fn stop_supervised_members(
 }
 
 #[cfg(test)]
+mod entropy_tests;
+#[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod replacement_tests;

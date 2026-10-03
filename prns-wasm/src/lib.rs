@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod bluetooth_auto;
+mod browser_work;
 mod command_settlement;
 mod event_projection;
 mod inline_work;
@@ -10,7 +11,6 @@ mod outbound_batch;
 mod packed_snapshot;
 mod parameters;
 mod portable_crypto;
-mod protocol_crypto;
 mod runtime;
 mod usb_auto;
 mod websocket;

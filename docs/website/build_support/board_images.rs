@@ -13,6 +13,7 @@ pub(crate) fn generate() {
             "seeed-card-tracker-t1000-e.webp",
         ),
         ("T114", "t114.webp"),
+        ("MESH_POCKET", "mesh-pocket.webp"),
         ("HELTEC_MESH_NODE_T096", "heltec-mesh-node-t096.webp"),
         ("MESH_TOWER_V2", "mesh-tower-v2.webp"),
     ];

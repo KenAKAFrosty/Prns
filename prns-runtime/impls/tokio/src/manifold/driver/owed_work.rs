@@ -1,27 +1,80 @@
-use crate::engine::{CryptoOwed, OpenedResourceSpan, OwedWork, ResourceOpenOwed};
+use std::collections::VecDeque;
+
+use crate::engine::{
+    CryptoOwed, OpenedResourceSpan, OwedWork, ResourceOpenOwed, ResourceOpenSpanResidence,
+    ResourceOpenWorkspace, StreamedResourceOpenReservation,
+};
 use crate::manifold::Host;
-use crate::routing::links::resources::send::ResourceBuildPlan;
+use crate::routing::links::resources::receive::part_hash::{
+    ResourcePartHashOwed, ResourcePartHashPlan,
+};
+use crate::routing::links::resources::send::{
+    ResourceBuildPlan, ResourceBuildWorkspace, ResourceSealPlan,
+};
 use crate::routing::links::resources::ResourceMetadata;
 
 use super::crypto_pool::{
-    run_crypto_job_inline, CryptoJob, CryptoPool, CryptoResult, OpenSpanJob, OpenedSpanResult,
-    ResourceBuildJob, ResourceDecompressionJob,
+    run_crypto_job_inline, CryptoJob, CryptoPool, CryptoResult, OpenSpanBuffer, OpenSpanJob,
+    OpenedSpanResult, ResourceBuildJob, ResourceDecompressionJob, ResourcePartHashBuffer,
+    ResourcePartHashJob,
 };
-use super::host_protocol::{HostResourceMetadata, HostResourcePayload};
+use super::host_protocol::{
+    HostResourceDigestPreparation, HostResourceMetadata, HostResourcePayload,
+};
+use super::HeapFrameSlot;
+
+const INLINE_RESOURCE_OPEN_MAX_BYTES: usize = 8 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ResourceOpenExecution {
+    Manifold,
+    CryptoWorker,
+}
+
+impl ResourceOpenExecution {
+    pub(super) fn for_sealed_byte_len(sealed_byte_len: usize) -> Self {
+        if sealed_byte_len <= INLINE_RESOURCE_OPEN_MAX_BYTES {
+            Self::Manifold
+        } else {
+            Self::CryptoWorker
+        }
+    }
+}
 
 struct PendingResourceBuild {
     plan: ResourceBuildPlan,
+    workspace: ResourceBuildWorkspace,
     data: HostResourcePayload,
     compressed_candidate: Option<HostResourcePayload>,
     metadata: HostResourceMetadata,
+    digest: HostResourceDigestPreparation,
+}
+
+struct PendingResourceSeal {
+    plan: ResourceSealPlan,
+    plaintext: Vec<u8>,
+}
+
+pub(super) struct DeferredTransferOpen {
+    pub(super) link_id: crate::routing::links::LinkId,
+    pub(super) hash: crate::routing::links::resources::ResourceHash,
+    pub(super) span_start: usize,
+    pub(super) state: crate::routing::links::resources::streamed_open::StreamedOpen,
+    pub(super) reservation: StreamedResourceOpenReservation,
 }
 
 // Keeping completed inline work by value avoids adding an allocation to the zero-copy open path.
 #[allow(clippy::large_enum_variant)]
 enum PendingJob {
     Ready(CryptoJob),
-    Completed(CryptoResult),
     ResourceBuild(PendingResourceBuild),
+    ResourceSeal(PendingResourceSeal),
+}
+
+enum PendingLane {
+    Interactive,
+    Bulk,
+    ResourcePartHash,
 }
 
 /// Runtime-owned work waiting for the current engine call to release its borrows.
@@ -31,18 +84,28 @@ enum PendingJob {
 /// [`push_resource_build`](Self::push_resource_build). Other work-producing entry points provide
 /// their own typed materializers, so this hot resource path never needs a borrowed-data fallback.
 pub(super) struct PendingOwedWork {
-    jobs: std::vec::Vec<PendingJob>,
+    completed: VecDeque<CryptoResult>,
+    interactive: VecDeque<PendingJob>,
+    bulk: VecDeque<PendingJob>,
+    resource_part_hash: VecDeque<PendingJob>,
 }
 
 impl PendingOwedWork {
     pub(super) const fn new() -> Self {
         Self {
-            jobs: std::vec::Vec::new(),
+            completed: VecDeque::new(),
+            interactive: VecDeque::new(),
+            bulk: VecDeque::new(),
+            resource_part_hash: VecDeque::new(),
         }
     }
 
-    pub(super) fn len(&self) -> usize {
-        self.jobs.len()
+    pub(super) fn pool_jobs_len(&self) -> usize {
+        self.interactive.len() + self.bulk.len() + self.resource_part_hash.len()
+    }
+
+    pub(super) fn has_pending(&self) -> bool {
+        !self.completed.is_empty() || self.pool_jobs_len() > 0
     }
 
     pub(super) fn push(&mut self, work: OwedWork<'_>, pool: Option<&CryptoPool>) {
@@ -64,19 +127,40 @@ impl PendingOwedWork {
                     .compressed_candidate
                     .map(|candidate| candidate.to_vec().into());
                 let plan = owed.into_plan();
-                self.push_resource_build(plan, data, compressed_candidate, metadata);
+                self.push_resource_build(
+                    plan,
+                    ResourceBuildWorkspace::Allocate,
+                    data,
+                    compressed_candidate,
+                    metadata,
+                    HostResourceDigestPreparation::Calculate,
+                );
             }
+            OwedWork::ResourceSeal(owed) => {
+                let (plan, plaintext) = owed.into_owned_parts();
+                self.bulk
+                    .push_back(PendingJob::ResourceSeal(PendingResourceSeal {
+                        plan,
+                        plaintext,
+                    }));
+            }
+            OwedWork::ResourcePartHash(owed) => self.push_resource_part_hash(owed),
             OwedWork::ResourceOpen(owed) => self.push_resource_open(owed, pool),
+            OwedWork::WholeResourceOpen(owed) => {
+                self.completed
+                    .push_back(CryptoResult::WholeResourceOpenUnavailable {
+                        reservation: owed.plan().reservation(),
+                    });
+            }
             OwedWork::ResourceDecompression(owed) => {
-                self.jobs
-                    .push(PendingJob::Ready(CryptoJob::DecompressResource(Box::new(
-                        ResourceDecompressionJob {
-                            link_id: owed.link_id,
-                            hash: owed.hash,
-                            stream: owed.stream.to_vec(),
-                            uncompressed_data_bytes: owed.uncompressed_data_bytes,
-                        },
-                    ))));
+                self.push_ready(CryptoJob::DecompressResource(Box::new(
+                    ResourceDecompressionJob {
+                        link_id: owed.link_id,
+                        hash: owed.hash,
+                        stream: owed.stream.to_vec(),
+                        uncompressed_data_bytes: owed.uncompressed_data_bytes,
+                    },
+                )));
             }
         }
     }
@@ -86,62 +170,136 @@ impl PendingOwedWork {
         owed: ResourceOpenOwed<'_>,
         pool: Option<&CryptoPool>,
     ) {
-        let offload =
-            owed.other_transfers_in_flight && pool.is_some_and(|pool| pool.has_queue_capacity(1));
-        if offload {
-            let ResourceOpenOwed {
-                link_id,
-                hash,
-                span_start,
-                state,
-                bytes,
-                other_transfers_in_flight: _,
-            } = owed;
-            self.jobs
-                .push(PendingJob::Ready(CryptoJob::OpenSpan(Box::new(
-                    OpenSpanJob {
-                        link_id,
-                        hash,
-                        span_start,
-                        state,
-                        bytes: bytes.to_vec(),
-                    },
-                ))));
-        } else {
-            let completed = owed.fulfill_inline();
-            let opened = match completed.opened {
-                OpenedResourceSpan::InPlace { byte_len } => OpenedSpanResult::InPlace { byte_len },
-                OpenedResourceSpan::Returned(bytes) => OpenedSpanResult::Owned(bytes.to_vec()),
-            };
-            self.jobs
-                .push(PendingJob::Completed(CryptoResult::SpanOpened {
-                    link_id: completed.link_id,
-                    hash: completed.hash,
-                    span_start: completed.span_start,
-                    state: completed.state,
-                    opened,
-                }));
+        let execution = match pool {
+            Some(_) => ResourceOpenExecution::for_sealed_byte_len(owed.state.sealed_byte_len()),
+            None => ResourceOpenExecution::Manifold,
+        };
+        match execution {
+            ResourceOpenExecution::CryptoWorker => {
+                let ResourceOpenOwed {
+                    link_id,
+                    hash,
+                    span_start,
+                    state,
+                    bytes,
+                    residence,
+                    other_transfers_in_flight: _,
+                } = owed;
+                self.push_ready(CryptoJob::OpenSpan(Box::new(OpenSpanJob {
+                    link_id,
+                    hash,
+                    span_start,
+                    state,
+                    residence,
+                    buffer: OpenSpanBuffer::Span(bytes.to_vec()),
+                })));
+                return;
+            }
+            ResourceOpenExecution::Manifold => {}
         }
+        let completed = owed.fulfill_inline();
+        let opened = match completed.opened {
+            OpenedResourceSpan::InPlace { byte_len } => OpenedSpanResult::InPlace { byte_len },
+            OpenedResourceSpan::Returned(bytes) => OpenedSpanResult::Owned(bytes.to_vec()),
+            OpenedResourceSpan::ReturnedTransfer {
+                transfer,
+                span_byte_len,
+            } => OpenedSpanResult::Transfer {
+                bytes: transfer,
+                span_byte_len,
+            },
+        };
+        self.completed.push_back(CryptoResult::SpanOpened {
+            link_id: completed.link_id,
+            hash: completed.hash,
+            span_start: completed.span_start,
+            state: completed.state,
+            residence: completed.residence,
+            opened,
+        });
+    }
+
+    pub(super) fn push_deferred_transfer_open(
+        &mut self,
+        deferred: DeferredTransferOpen,
+        workspace: ResourceOpenWorkspace,
+    ) {
+        let buffer = match workspace {
+            ResourceOpenWorkspace::CopiedSpan(bytes) => OpenSpanBuffer::Span(bytes),
+            ResourceOpenWorkspace::DetachedTransfer(bytes) => OpenSpanBuffer::Transfer {
+                bytes,
+                span: deferred.reservation.span_start()..deferred.reservation.span_end(),
+            },
+            ResourceOpenWorkspace::Stale => return,
+        };
+        self.push_ready(CryptoJob::OpenSpan(Box::new(OpenSpanJob {
+            link_id: deferred.link_id,
+            hash: deferred.hash,
+            span_start: deferred.span_start,
+            state: deferred.state,
+            residence: ResourceOpenSpanResidence::Transferable(deferred.reservation),
+            buffer,
+        })));
     }
 
     pub(super) fn push_crypto(&mut self, owed: CryptoOwed) {
-        self.jobs
-            .push(PendingJob::Ready(CryptoJob::from_owed(owed)));
+        self.push_ready(CryptoJob::from_owed(owed));
+    }
+
+    fn push_resource_part_hash(&mut self, owed: ResourcePartHashOwed<'_>) {
+        let (plan, part) = owed.into_parts();
+        self.push_resource_part_hash_job(plan, ResourcePartHashBuffer::Copied(part.to_vec()));
+    }
+
+    pub(super) fn push_resource_part_hash_grant_slot(
+        &mut self,
+        plan: ResourcePartHashPlan,
+        source: crate::interfaces::InterfaceId,
+        frame: HeapFrameSlot,
+        part: std::ops::Range<usize>,
+    ) {
+        self.push_resource_part_hash_job(
+            plan,
+            ResourcePartHashBuffer::GrantSlot {
+                source,
+                frame,
+                part,
+            },
+        );
+    }
+
+    pub(super) fn push_resource_part_hash_copy(&mut self, plan: ResourcePartHashPlan, part: &[u8]) {
+        self.push_resource_part_hash_job(plan, ResourcePartHashBuffer::Copied(part.to_vec()));
+    }
+
+    fn push_resource_part_hash_job(
+        &mut self,
+        plan: ResourcePartHashPlan,
+        buffer: ResourcePartHashBuffer,
+    ) {
+        self.resource_part_hash
+            .push_back(PendingJob::Ready(CryptoJob::HashResourcePart(Box::new(
+                ResourcePartHashJob { plan, buffer },
+            ))));
     }
 
     pub(super) fn push_resource_build(
         &mut self,
         plan: ResourceBuildPlan,
+        workspace: ResourceBuildWorkspace,
         data: HostResourcePayload,
         compressed_candidate: Option<HostResourcePayload>,
         metadata: HostResourceMetadata,
+        digest: HostResourceDigestPreparation,
     ) {
-        self.jobs
-            .push(PendingJob::ResourceBuild(PendingResourceBuild {
+        self.bulk
+            .push_back(PendingJob::ResourceBuild(PendingResourceBuild {
                 plan,
+                workspace,
                 data,
                 compressed_candidate,
                 metadata,
+                digest,
             }));
     }
 
@@ -150,17 +308,36 @@ impl PendingOwedWork {
         host: &mut H,
         pool: Option<&CryptoPool>,
         inline: &mut std::vec::Vec<CryptoResult>,
-    ) -> bool {
-        if self.jobs.is_empty() {
-            return false;
-        }
-        for pending in self.jobs.drain(..) {
+        maximum_jobs: usize,
+    ) -> usize {
+        let mut dispatched = 0;
+        while dispatched < maximum_jobs {
+            if let Some(completed) = self.completed.pop_front() {
+                inline.push(completed);
+                dispatched += 1;
+                continue;
+            }
+            if pool.is_some_and(|pool| !pool.has_queue_capacity(1)) {
+                break;
+            }
+            let next = self
+                .interactive
+                .pop_front()
+                .map(|job| (PendingLane::Interactive, job))
+                .or_else(|| self.bulk.pop_front().map(|job| (PendingLane::Bulk, job)))
+                .or_else(|| {
+                    if pool.is_some_and(|pool| !pool.has_resource_part_hash_capacity()) {
+                        return None;
+                    }
+                    self.resource_part_hash
+                        .pop_front()
+                        .map(|job| (PendingLane::ResourcePartHash, job))
+                });
+            let Some((lane, pending)) = next else {
+                break;
+            };
             let job = match pending {
                 PendingJob::Ready(job) => job,
-                PendingJob::Completed(result) => {
-                    inline.push(result);
-                    continue;
-                }
                 PendingJob::ResourceBuild(pending) => {
                     let mut seal_iv = [0u8; 16];
                     host.fill_random(&mut seal_iv);
@@ -171,19 +348,111 @@ impl PendingOwedWork {
                     }
                     CryptoJob::BuildResource(Box::new(ResourceBuildJob {
                         plan: pending.plan,
+                        workspace: pending.workspace,
                         data: pending.data,
                         compressed_candidate: pending.compressed_candidate,
                         metadata: pending.metadata,
+                        digest: pending.digest,
                         seal_iv,
                         nonces,
                     }))
                 }
+                PendingJob::ResourceSeal(pending) => {
+                    let mut seal_iv = [0u8; 16];
+                    host.fill_random(&mut seal_iv);
+                    let mut salts = [[0u8; crate::routing::links::resources::RESOURCE_NONCE_LEN];
+                        crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP];
+                    for salt in &mut salts {
+                        host.fill_random(salt);
+                    }
+                    CryptoJob::SealStaged(Box::new(super::crypto_pool::StagedSealJob {
+                        plan: pending.plan,
+                        plaintext: pending.plaintext,
+                        seal_iv,
+                        salts,
+                    }))
+                }
             };
             match pool {
-                Some(pool) => pool.submit(job),
+                Some(pool) => {
+                    if !pool.has_work_capacity(job.estimated_work()) {
+                        self.push_front(lane, PendingJob::Ready(job));
+                        break;
+                    }
+                    pool.submit(job);
+                }
                 None => inline.push(run_crypto_job_inline(job)),
             }
+            dispatched += 1;
         }
-        true
+        dispatched
+    }
+
+    fn push_ready(&mut self, job: CryptoJob) {
+        let lane = match job.scheduling_class() {
+            super::crypto_pool::CryptoJobClass::Verify
+            | super::crypto_pool::CryptoJobClass::Latency => PendingLane::Interactive,
+            super::crypto_pool::CryptoJobClass::Bulk => PendingLane::Bulk,
+        };
+        self.push_back(lane, PendingJob::Ready(job));
+    }
+
+    fn push_back(&mut self, lane: PendingLane, job: PendingJob) {
+        match lane {
+            PendingLane::Interactive => self.interactive.push_back(job),
+            PendingLane::Bulk => self.bulk.push_back(job),
+            PendingLane::ResourcePartHash => self.resource_part_hash.push_back(job),
+        }
+    }
+
+    fn push_front(&mut self, lane: PendingLane, job: PendingJob) {
+        match lane {
+            PendingLane::Interactive => self.interactive.push_front(job),
+            PendingLane::Bulk => self.bulk.push_front(job),
+            PendingLane::ResourcePartHash => self.resource_part_hash.push_front(job),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifold::driver::crypto_pool::{CryptoJobClass, ScheduledTestJob};
+
+    fn scheduled(id: u8, class: CryptoJobClass) -> CryptoJob {
+        CryptoJob::ScheduledTest(ScheduledTestJob {
+            id,
+            class,
+            started: None,
+            release: None,
+        })
+    }
+
+    #[test]
+    fn interactive_work_has_a_distinct_pending_lane_from_bulk_work() {
+        let mut pending = PendingOwedWork::new();
+        pending.push_ready(scheduled(1, CryptoJobClass::Bulk));
+        pending.push_ready(scheduled(2, CryptoJobClass::Latency));
+
+        assert!(matches!(
+            pending.interactive.front(),
+            Some(PendingJob::Ready(CryptoJob::ScheduledTest(job))) if job.id == 2
+        ));
+        assert!(matches!(
+            pending.bulk.front(),
+            Some(PendingJob::Ready(CryptoJob::ScheduledTest(job))) if job.id == 1
+        ));
+    }
+
+    #[test]
+    fn resource_open_execution_keeps_small_tokens_on_the_manifold() {
+        assert_eq!(
+            ResourceOpenExecution::for_sealed_byte_len(INLINE_RESOURCE_OPEN_MAX_BYTES),
+            ResourceOpenExecution::Manifold
+        );
+        assert_eq!(
+            ResourceOpenExecution::for_sealed_byte_len(INLINE_RESOURCE_OPEN_MAX_BYTES + 1),
+            ResourceOpenExecution::CryptoWorker
+        );
     }
 }

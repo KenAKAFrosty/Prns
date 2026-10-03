@@ -8,7 +8,7 @@ use crate::remote_control::{
     CloseRemoteControlControllerPairingLinkOutcome, CloseRemoteControlTargetPairingLinkOutcome,
 };
 use crate::routing::links::channel::table::ChannelTable;
-use crate::routing::links::resources::send::resource_settlement;
+use crate::routing::links::resources::settlement::resource_failure_settlement;
 use crate::routing::links::resources::ResourceFailureCause;
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
@@ -182,11 +182,24 @@ impl<S: StorageLayout> EngineState<S> {
             self.fail_incoming_resource(link_id, &hash, ResourceFailureCause::LinkVanished, sink);
         }
         while let Some(resource) = self.outgoing_resources.pop_for_link(link_id) {
-            settle(
-                sink,
-                resource.command_id,
-                resource_settlement(resource.correlation, Err(SendResourceFailure::LinkClosed)),
-            );
+            if resource.status.is_off_wire() {
+                settle(
+                    sink,
+                    resource.command_id,
+                    resource_failure_settlement(
+                        resource.correlation,
+                        SendResourceFailure::LinkClosed,
+                    ),
+                );
+            } else {
+                self.settle_advertised_resource(
+                    resource.command_id,
+                    link_id,
+                    resource.correlation,
+                    Err(SendResourceFailure::LinkClosed),
+                    sink,
+                );
+            }
         }
         if let Some(index) = self.channels.index_of(link_id) {
             while self.channels.outstanding_count(index) > 0 {

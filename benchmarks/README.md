@@ -26,7 +26,7 @@ cargo benchmark
 ```
 
 Cells run one at a time. The harness uses `uv` to provision its pinned Python
-and RNS/Cython environment, records the source fingerprint and tool versions,
+and stock interpreted RNS environment, records the source fingerprint and tool versions,
 and retains a run ID. Local output is ignored by Git and is not publishable
 evidence.
 
@@ -82,7 +82,7 @@ Each row belongs to a named scenario and implementation role. Compare:
 - latency only within the same scenario contract;
 - host results only with their captured toolchain and machine provenance.
 
-Default-policy and “unleashed” rows intentionally exercise different interface
+Default-policy and policy-matched rows intentionally exercise different interface
 bitrate/MTU policy. Raw transport rows isolate relay work and exclude endpoint
 crypto. Energy may cover the whole cell rather than one role. Durable details
 and all pass rules remain canonical in

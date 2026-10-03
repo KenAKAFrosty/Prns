@@ -53,7 +53,8 @@ pub use remote_control_pairing::{
     RejectRemoteControlTargetPairing, RejectRemoteControlTargetPairingFailure,
     RemoteControlPairingOpened, RemoteControlTargetPairingApproval,
     RemoteControlTargetPairingAuthorizationPersistence, RemoteControlTargetPairingFinalization,
-    RemoteControlTargetPairingRejection, SettleRemoteControlTargetPairingAuthorization,
+    RemoteControlTargetPairingPreparationFailure, RemoteControlTargetPairingRejection,
+    SettleRemoteControlTargetPairingAuthorization,
     SettleRemoteControlTargetPairingAuthorizationFailure,
 };
 pub use request::{

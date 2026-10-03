@@ -18,7 +18,7 @@ pub use plan::{
     AirtimeLimitCentiPercent, AutoInterfaceDataPort, AutoInterfaceDevicePolicy,
     AutoInterfaceDiscoveryPort, AutoInterfaceDiscoveryScope, AutoInterfaceGroupId,
     AutoInterfaceMulticastAddressType, AutoInterfacePlan, BlackholeExchangePlan,
-    BlackholePublicationPlan, BlackholeSources, BlackholeUpdateInterval,
+    BlackholePublicationPlan, BlackholeSources, BlackholeUpdateInterval, BluetoothAutoPlan,
     ConfiguredInterfaceLifecycle, ConnectTimeoutSeconds, DaemonPlan, DiscoveryAdvertisementPlan,
     DiscoveryAnnouncementPlan, DiscoveryEncryption, DiscoveryIfacPublication,
     DiscoveryLocationPlan, DiscoveryPublicationProblem, I2pPeerPlan, I2pPeersPlan,

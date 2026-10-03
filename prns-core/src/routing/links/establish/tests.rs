@@ -2782,6 +2782,18 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
                             sent.push((target, frame));
                         }
                     }
+                    #[cfg(feature = "movable-frame-forwarding")]
+                    EngineReaction::Directive(Directive::ForwardFrame {
+                        target,
+                        header,
+                        payload,
+                    }) => {
+                        if let Some(frame) =
+                            crate::engine::test_support::forwarded_frame(header, payload)
+                        {
+                            sent.push((target, frame));
+                        }
+                    }
                     EngineReaction::Journaled(Journaled::Delivered(Delivery::Link(link))) => {
                         journaled.push(link.plaintext.to_vec());
                     }
@@ -4004,6 +4016,97 @@ fn a_close_link_command_settles_and_closes_the_peer() {
 }
 
 #[test]
+fn a_close_link_command_refreshes_pending_request_and_channel_schedules() {
+    use crate::engine::{
+        CloseLink, SendRequest, SendRequestData, SendRequestFailure, SendToChannel,
+        SendToChannelBody, SendToChannelFailure,
+    };
+    use crate::routing::links::channel::MessageType;
+    use crate::routing::request_handlers::RequestPathHash;
+
+    let (mut initiator, _, link_id) = established_pair();
+    let interfaces = arrival_interfaces();
+    for (id, command) in [
+        (
+            CommandId(20),
+            PrnsCommand::SendRequest(SendRequest {
+                link_id,
+                path_hash: RequestPathHash::of("/status"),
+                data: SendRequestData::new(),
+                response_timeout: Default::default(),
+                maximum_response_bytes: Default::default(),
+            }),
+        ),
+        (
+            CommandId(21),
+            PrnsCommand::SendToChannel(SendToChannel {
+                link_id,
+                message_type: MessageType(1),
+                body: SendToChannelBody::from_slice(b"pending").unwrap(),
+            }),
+        ),
+    ] {
+        let mut sent = 0;
+        initiator.ingest_command_into(
+            IssuedCommand { id, command },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(2_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0xEA),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    assert!(filled_frame(fill).is_some());
+                    sent += 1;
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { .. }) => {
+                    panic!("the unanswered send must remain pending");
+                }
+                _ => {}
+            },
+        );
+        assert_eq!(sent, 1);
+    }
+    let mut cached = initiator.wake_schedules(AttachedInterfaces::new(&interfaces));
+    assert!(matches!(cached.receipt_timeouts, WakeSchedule::At(_)));
+    assert!(matches!(cached.channel_timeouts, WakeSchedule::At(_)));
+
+    let mut settled = std::vec::Vec::new();
+    let delta = initiator.ingest_command_into(
+        IssuedCommand {
+            id: CommandId(22),
+            command: PrnsCommand::CloseLink(CloseLink { link_id }),
+        },
+        AttachedInterfaces::new(&interfaces),
+        InstantMillis(2_001),
+        &mut |bytes: &mut [u8]| bytes.fill(0xEB),
+        &mut |reaction| {
+            if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
+                reaction
+            {
+                settled.push((id, settlement));
+            }
+        },
+    );
+    assert!(initiator.links.is_empty());
+    assert!(settled.contains(&(
+        CommandId(20),
+        Settlement::SendRequest(Err(SendRequestFailure::LinkClosed)),
+    )));
+    assert!(settled.contains(&(
+        CommandId(21),
+        Settlement::SendToChannel(Err(SendToChannelFailure::LinkClosed)),
+    )));
+    assert!(settled.contains(&(CommandId(22), Settlement::CloseLink(Ok(())))));
+    assert_eq!(settled.len(), 3, "each pending operation settles once");
+
+    cached.merge(delta);
+    assert_eq!(cached.receipt_timeouts, WakeSchedule::Idle);
+    assert_eq!(cached.channel_timeouts, WakeSchedule::Idle);
+    let truth = initiator.wake_schedules(AttachedInterfaces::new(&interfaces));
+    assert_eq!(cached.receipt_timeouts, truth.receipt_timeouts);
+    assert_eq!(cached.channel_timeouts, truth.channel_timeouts);
+}
+
+#[test]
 fn a_valid_peer_close_commits_final_route_evidence_before_removal() {
     use crate::engine::CloseLink;
 
@@ -4248,12 +4351,13 @@ fn a_fat_interface_negotiates_up_to_the_engine_ceiling_and_no_further() {
 #[test]
 fn the_real_usb_descriptors_negotiate_their_declared_ceilings() {
     use crate::interfaces::usb_auto::{
-        device_descriptor, host_descriptor, DEVICE_USB_HW_MTU, HOST_USB_HW_MTU,
+        device_descriptor, host_descriptor, DEVICE_USB_BITRATE_BPS, DEVICE_USB_HW_MTU,
+        HOST_USB_HW_MTU,
     };
     use crate::routing::links::MAX_LINK_MTU;
 
     let host = host_descriptor(arrival());
-    let device = device_descriptor(arrival());
+    let device = device_descriptor(arrival(), DEVICE_USB_BITRATE_BPS);
     assert_eq!(host.hardware_mtu, Some(HOST_USB_HW_MTU));
     assert_eq!(device.hardware_mtu, Some(DEVICE_USB_HW_MTU));
 

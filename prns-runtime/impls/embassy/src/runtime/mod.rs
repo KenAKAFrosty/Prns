@@ -1,3 +1,4 @@
+mod discovery_group_store;
 mod embedded_persistence;
 mod entropy;
 mod interface_store;
@@ -12,10 +13,16 @@ mod shared_flash;
 
 pub use prns_runtime::runtime::*;
 
+pub use discovery_group_store::{
+    restored_discovery_group_configuration, restored_discovery_group_configuration_now,
+    restored_discovery_groups, restored_discovery_groups_now, store_discovery_group_configuration,
+    DiscoveryGroupConfigurationStoreExchange, GlobalDiscoveryGroupStore,
+};
 pub use embedded_persistence::{
-    EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
-    EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
-    EmbeddedPersistenceTarget, FixedRouteSnapshotKeys, RouteSnapshotKeyError, RouteSnapshotKeys,
+    DiscoveryGroupConfigurationChange, EmbeddedCompactionPolicy, EmbeddedFlashPersistence,
+    EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
+    EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget, FixedRouteSnapshotKeys,
+    RouteSnapshotKeyError, RouteSnapshotKeys,
 };
 pub(crate) use embedded_persistence::{ManifoldPersistence, NoManifoldPersistence};
 #[cfg(test)]
@@ -27,6 +34,8 @@ pub use entropy::{EntropyHandle, SharedRuntimeEntropy};
 pub use interface_store::{minimum_interface_store_capacity, EmbassyInterfaceStore};
 pub(crate) use interface_store::{InterfaceInspectionStore, NoInterfaceInspectionStore};
 pub use node_facade::Fleet as EmbassyFleet;
+pub use node_facade::ResourceResponse;
+pub(crate) use node_facade::ResourceResponsePayload;
 pub use node_facade::{
     minimum_manifold_notification_capacity, CompletionPool, Fleet, InboundDeliveryError,
     InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode,

@@ -301,7 +301,7 @@ dependencies = [
  "libc",
  "log",
  "macaddr",
- "nix",
+ "nix 0.29.0",
  "num-derive",
  "num-traits",
  "pin-project",
@@ -1727,6 +1727,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.0",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
 name = "num-bigint"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2146,6 +2158,7 @@ dependencies = [
  "hmac",
  "hybrid-array",
  "md-5",
+ "memchr",
  "prns-macros",
  "rand_core 0.10.1",
  "rmp",
@@ -2161,6 +2174,7 @@ version = "0.3.7"
 dependencies = [
  "cfg-if",
  "dispatch2",
+ "libc",
  "log",
  "objc2 0.6.4",
  "objc2-core-bluetooth 0.3.2",
@@ -2232,6 +2246,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "heapless",
+ "nix 0.31.3",
  "prns-core",
  "prns-runtime",
  "rtrb",
@@ -2479,9 +2494,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.43"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "once_cell",
  "ring",
@@ -2514,9 +2529,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -3747,7 +3762,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "hex",
- "nix",
+ "nix 0.29.0",
  "ordered-stream",
  "rand 0.8.6",
  "serde",

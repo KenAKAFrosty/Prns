@@ -1,7 +1,7 @@
 use crate::routing::announce::{derive_destination_hash, DottedNameHash};
 use crate::wire::DestinationHash;
 
-use super::RemoteControlTargetIdentity;
+use super::{RemoteControlControllerIdentity, RemoteControlTargetIdentity};
 
 pub const REMOTE_CONTROL_APPLICATION_NAME: &str = "reticulum";
 pub(crate) const REMOTE_CONTROL_NAMESPACE_ASPECT: &str = "remote";
@@ -38,6 +38,17 @@ impl From<&RemoteControlTargetIdentity> for RemoteControlEndpoint {
     }
 }
 
+impl From<&RemoteControlControllerIdentity> for RemoteControlEndpoint {
+    fn from(controller_identity: &RemoteControlControllerIdentity) -> Self {
+        Self {
+            destination_hash: derive_destination_hash(
+                &controller_identity.identity_hash(),
+                &REMOTE_CONTROL_DOTTED_NAME_HASH,
+            ),
+        }
+    }
+}
+
 impl From<RemoteControlEndpoint> for DestinationHash {
     fn from(endpoint: RemoteControlEndpoint) -> Self {
         endpoint.destination_hash
@@ -45,6 +56,13 @@ impl From<RemoteControlEndpoint> for DestinationHash {
 }
 
 impl RemoteControlTargetIdentity {
+    #[must_use]
+    pub fn endpoint(&self) -> RemoteControlEndpoint {
+        self.into()
+    }
+}
+
+impl RemoteControlControllerIdentity {
     #[must_use]
     pub fn endpoint(&self) -> RemoteControlEndpoint {
         self.into()
@@ -86,6 +104,24 @@ mod tests {
                 0xb3, 0x6f, 0x62, 0x54, 0x71, 0x3a, 0xf4, 0x56, 0x2e, 0x66, 0x42, 0xb3, 0x90, 0x20,
                 0xf5, 0xb0,
             ]),
+        );
+    }
+
+    #[test]
+    fn controller_identity_derives_its_remote_control_endpoint() {
+        let controller_identity = RemoteControlControllerIdentity::new(IdentityPublicKeys {
+            encryption: IdentityEncryptionPublicKey::new(X25519PublicKey(
+                [0x21; X25519PublicKey::LEN],
+            )),
+            signing: IdentitySigningPublicKey::new(Ed25519PublicKey([0x22; Ed25519PublicKey::LEN])),
+        });
+
+        assert_eq!(
+            controller_identity.endpoint().destination_hash(),
+            derive_destination_hash(
+                &controller_identity.identity_hash(),
+                &REMOTE_CONTROL_DOTTED_NAME_HASH,
+            ),
         );
     }
 }

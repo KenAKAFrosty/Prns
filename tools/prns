@@ -187,6 +187,27 @@ def validate_manifest(manifest: dict, *, check_callers: bool = True) -> list[str
                 errors.append(
                     f"{location} {field} refers to undeclared commands: {sorted(unknown)!r}"
                 )
+        probe = profile.get("probe")
+        if probe is not None and (
+            not isinstance(probe, list)
+            or not probe
+            or not all(isinstance(part, str) and part for part in probe)
+        ):
+            errors.append(f"{location} probe must be a non-empty command array")
+        elif probe is not None:
+            if probe[0] not in requirements:
+                errors.append(f"{location} probe command must be a declared requirement")
+            implementations = [
+                ROOT / part
+                for part in probe
+                if part.startswith(("tools/", "validation/"))
+            ]
+            if len(probe) >= 3 and probe[1] == "-m":
+                module = probe[2]
+                if module.startswith(("tools.", "validation.")):
+                    implementations.append(ROOT / f"{module.replace('.', '/')}.py")
+            if len(implementations) != 1 or not implementations[0].is_file():
+                errors.append(f"{location} probe must name one repository implementation")
 
     registered: set[str] = set()
     for identifier, task in tasks.items():
@@ -466,6 +487,20 @@ def doctor_profile(profile: dict) -> bool:
                 continue
         suffix = f" ({printable_version(version)})" if version is not None else ""
         print(f"[doctor] ready: {command} -> {path}{suffix}")
+    probe = profile.get("probe")
+    if ok and probe is not None:
+        command = list(probe)
+        if command[0] in ("python", "python3"):
+            command[0] = sys.executable
+        environment = os.environ.copy()
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        sys.stdout.flush()
+        sys.stderr.flush()
+        result = subprocess.run(command, cwd=ROOT, env=environment, check=False)
+        if result.returncode != 0:
+            ok = False
+    elif probe is not None:
+        print("[doctor] deep readiness probe skipped until base tools are ready", file=sys.stderr)
     print("TOOLING_DOCTOR_OK" if ok else "TOOLING_DOCTOR_FAILED")
     return ok
 

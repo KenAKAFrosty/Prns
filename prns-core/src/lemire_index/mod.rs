@@ -14,6 +14,8 @@ mod impls;
 mod keys;
 
 pub(crate) use core::buckets_for_two_thirds_load;
+#[cfg(any(feature = "alloc", test))]
+pub(crate) use core::exceeds_two_thirds_load;
 pub use core::{IndexKey, IndexRow};
 pub use impls::LemireIndex;
 

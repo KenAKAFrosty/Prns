@@ -65,8 +65,8 @@ start-section-label = 进入路径
 start-section-title = 你来这里想做什么？
 start-section-lead = 按 Prns 融入你工作的方式选择路径：要烧录的硬件、要运行的基础设施，或要构建的软件。
 
-start-daemon-headline = 运行一个 daemon
-start-daemon-body = 为桌面、LXMF 应用、backbone VPS 等安装一个快速的 Reticulum daemon。
+start-daemon-headline = 用 prnsd 安装 Reticulum
+start-daemon-body = 适用于桌面、LXMF 应用、backbone VPS 等的快速 Reticulum daemon。
 start-daemon-code = 对现有应用即插即用
     读取 ~/.reticulum
     实时编辑接口

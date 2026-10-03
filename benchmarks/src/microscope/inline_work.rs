@@ -4,10 +4,11 @@ use personal_rns::crypto::{
 };
 use personal_rns::engine::{
     ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, Directive, EncryptCompleted,
-    EngineReaction, EngineState, IdentifySignCompleted, IngestIo, InstantMillis,
+    EngineReaction, EngineState, IdentifySignCompleted, IngestIo, InstantMillis, IssuedCommand,
     LinkIdentityVerification, LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted,
     ReceiptProofVerification, ResourceDecompressionCompleted, ResourceOpenCompleted,
-    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification,
+    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification, WholeResourceOpenCompleted,
+    WholeResourceOpenOutcome, WholeResourceOpenReservation,
 };
 use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::{AttachedInterfaces, InboundPacket};
@@ -15,8 +16,14 @@ use personal_rns::remote_control::RemoteControlPairingAvailabilityVerification;
 use personal_rns::routing::ingress::AnnounceVerification;
 use personal_rns::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
 use personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
-use personal_rns::routing::links::resources::send::ResourceBuildCompleted;
-use personal_rns::routing::links::resources::table::ResourceBuildReservation;
+use personal_rns::routing::links::resources::receive::part_hash::ResourcePartHashResult;
+use personal_rns::routing::links::resources::send::{
+    ResourceBuildCompleted, ResourceSealCompleted, ResourceSealOutcome, ResourceSealReservation,
+    UnavailableResourceSeal,
+};
+use personal_rns::routing::links::resources::table::{
+    ResourceBuildReservation, ResourceBuildTransfer,
+};
 use personal_rns::routing::links::resources::ResourceHash;
 use personal_rns::routing::links::LinkId;
 use personal_rns::storage::GrowableHeap;
@@ -24,12 +31,22 @@ use personal_rns::wire::BROADCAST_MTU;
 
 use super::{FeedCapture, Splitmix};
 
+// This two-entry, synchronous test queue deliberately keeps continuation values inline. Boxing
+// them would add allocator traffic to the engine microscope solely to shrink its stack frame.
+#[allow(clippy::large_enum_variant)]
 enum ReadyWork {
     Crypto(CryptoOwed),
     ResourceBuildUnsupported {
         reservation: ResourceBuildReservation,
     },
+    ResourceSealUnsupported {
+        reservation: ResourceSealReservation,
+    },
+    ResourcePartHash(ResourcePartHashResult<Vec<u8>>),
     ResourceOpen(ResourceOpenCompleted<'static>),
+    WholeResourceOpenUnsupported {
+        reservation: WholeResourceOpenReservation,
+    },
     ResourceDecompressionUnsupported {
         link_id: LinkId,
         hash: ResourceHash,
@@ -52,7 +69,17 @@ fn route_or_capture_work(
                 OwedWork::ResourceBuild(owed) => ReadyWork::ResourceBuildUnsupported {
                     reservation: owed.reservation(),
                 },
+                OwedWork::ResourceSeal(owed) => ReadyWork::ResourceSealUnsupported {
+                    reservation: owed.plan().reservation(),
+                },
+                OwedWork::ResourcePartHash(owed) => {
+                    let (plan, source) = owed.into_parts();
+                    ReadyWork::ResourcePartHash(plan.calculate(source.to_vec()))
+                }
                 OwedWork::ResourceOpen(owed) => ReadyWork::ResourceOpen(owed.fulfill_inline()),
+                OwedWork::WholeResourceOpen(owed) => ReadyWork::WholeResourceOpenUnsupported {
+                    reservation: owed.plan().reservation(),
+                },
                 OwedWork::ResourceDecompression(owed) => {
                     ReadyWork::ResourceDecompressionUnsupported {
                         link_id: owed.link_id,
@@ -67,6 +94,32 @@ fn route_or_capture_work(
         }
         other => capture.absorb(other, scratch),
     }
+}
+
+/// Issues one command and drives every continuation it makes immediately ready. This mirrors the
+/// packet-side helper below so microscope setup and measured command paths exercise the same typed
+/// owed-work contract as a production manifold.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn issue_command_inline(
+    engine: &mut EngineState<GrowableHeap>,
+    issued: IssuedCommand,
+    interfaces: AttachedInterfaces<'_>,
+    now: InstantMillis,
+    entropy: &mut Splitmix,
+    capture: &mut FeedCapture,
+    scratch: &mut Vec<u8>,
+) {
+    let mut ready = ReadyWorkQueue::new();
+    engine.ingest_command_into_with_work(
+        issued,
+        interfaces,
+        now,
+        &mut |bytes| entropy.fill(bytes),
+        &mut |reaction| route_or_capture_work(reaction, capture, scratch, &mut ready),
+    );
+    drive_ready_work(
+        engine, interfaces, now, entropy, capture, scratch, &mut ready,
+    );
 }
 
 /// Drives every immediately ready continuation without waiting or recursively re-entering the
@@ -95,6 +148,21 @@ pub(super) fn feed_packet_inline(
         },
     );
 
+    drive_ready_work(
+        engine, interfaces, now, entropy, capture, scratch, &mut ready,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drive_ready_work(
+    engine: &mut EngineState<GrowableHeap>,
+    interfaces: AttachedInterfaces<'_>,
+    now: InstantMillis,
+    entropy: &mut Splitmix,
+    capture: &mut FeedCapture,
+    scratch: &mut Vec<u8>,
+    ready: &mut ReadyWorkQueue,
+) {
     while let Some(work) = ready.pop_front() {
         match work {
             ReadyWork::Crypto(crypto) => match crypto {
@@ -177,9 +245,7 @@ pub(super) fn feed_packet_inline(
                         shared,
                         interfaces,
                         &mut |_| true,
-                        &mut |reaction| {
-                            route_or_capture_work(reaction, capture, scratch, &mut ready)
-                        },
+                        &mut |reaction| route_or_capture_work(reaction, capture, scratch, ready),
                     );
                 }
                 CryptoOwed::RatchetDecrypt(mut owed) => {
@@ -201,7 +267,7 @@ pub(super) fn feed_packet_inline(
                             interfaces,
                             &mut |_| true,
                             &mut |reaction| {
-                                route_or_capture_work(reaction, capture, scratch, &mut ready)
+                                route_or_capture_work(reaction, capture, scratch, ready)
                             },
                         );
                     }
@@ -332,7 +398,7 @@ pub(super) fn feed_packet_inline(
                 engine.resume_resource_build(
                     ResourceBuildCompleted {
                         reservation,
-                        transfer: &[],
+                        transfer: ResourceBuildTransfer::Borrowed(&[]),
                         names: &[],
                         request_data: &[],
                         outcome: Err(BuildOutgoingResourceError::BufferShapeMismatch),
@@ -344,10 +410,47 @@ pub(super) fn feed_packet_inline(
                     },
                 );
             }
-            ReadyWork::ResourceOpen(completed) => {
-                engine.resume_resource_open(completed, now, &mut |reaction| {
-                    route_or_capture_work(reaction, capture, scratch, &mut ready)
+            ReadyWork::ResourceSealUnsupported { reservation } => {
+                engine.resume_resource_seal(
+                    ResourceSealCompleted {
+                        reservation,
+                        outcome: ResourceSealOutcome::Unavailable(
+                            UnavailableResourceSeal::Resident,
+                        ),
+                    },
+                    now,
+                    &mut |bytes| entropy.fill(bytes),
+                    &mut |reaction| route_or_capture_work(reaction, capture, scratch, ready),
+                );
+            }
+            ReadyWork::ResourcePartHash(result) => {
+                let _completion_and_part = result.complete_with(|completed| {
+                    engine.resume_resource_part_hash(
+                        completed,
+                        now,
+                        &mut |bytes| entropy.fill(bytes),
+                        &mut |reaction| route_or_capture_work(reaction, capture, scratch, ready),
+                    );
                 });
+            }
+            ReadyWork::ResourceOpen(completed) => {
+                engine.resume_resource_open(
+                    completed,
+                    now,
+                    &mut |bytes| entropy.fill(bytes),
+                    &mut |reaction| route_or_capture_work(reaction, capture, scratch, ready),
+                );
+            }
+            ReadyWork::WholeResourceOpenUnsupported { reservation } => {
+                engine.resume_whole_resource_open(
+                    WholeResourceOpenCompleted {
+                        reservation,
+                        outcome: WholeResourceOpenOutcome::Unavailable,
+                    },
+                    now,
+                    &mut |bytes| entropy.fill(bytes),
+                    &mut |reaction| route_or_capture_work(reaction, capture, scratch, ready),
+                );
             }
             ReadyWork::ResourceDecompressionUnsupported { link_id, hash } => {
                 engine.resume_resource_decompression(
@@ -357,6 +460,7 @@ pub(super) fn feed_packet_inline(
                         plaintext: &[],
                     },
                     now,
+                    &mut |bytes| entropy.fill(bytes),
                     &mut |reaction: EngineReaction<'_, NoOwedWork>| {
                         capture.absorb(reaction, scratch)
                     },

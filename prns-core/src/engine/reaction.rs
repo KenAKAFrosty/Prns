@@ -17,10 +17,20 @@ use crate::routing::links::establish::EstablishLinkOwed;
 use crate::routing::links::handshake::{LinkProofSignOwed, LinkProofVerifyOwed};
 use crate::routing::links::identify::{IdentifySignOwed, LinkIdentityVerifyOwed};
 use crate::routing::links::request::RequestId;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::receive::part_hash::ResourcePartHashOwed;
 use crate::routing::links::resources::send::ResourceBuildOwed;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::send::ResourceSealOwed;
 use crate::routing::links::resources::streamed_open::StreamedOpen;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::table::ResourceOpenGeneration;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::{ResourceCompression, ResourceProof, SaltNonce};
 use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
 use crate::routing::links::LinkId;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::LinkKey;
 use crate::routing::proof::ChannelAckSignOwed;
 use crate::routing::proof::{LinkReceiptSignOwed, ProofSignOwed, ReceiptProofVerifyOwed};
 use crate::routing::request_handlers::RequestPathHash;
@@ -28,6 +38,8 @@ use crate::routing::tunnel::TunnelSynthesizeVerifyOwed;
 use crate::routing::RouteRemovalCause;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
+#[cfg(feature = "movable-frame-forwarding")]
+use crate::wire::WirePacketHeader;
 
 // repr(C) on this enum, Journaled, and Directive: they cross the dual-core channel; see the layout note on [`PrnsCommand`].
 #[repr(C)]
@@ -72,7 +84,13 @@ impl<'a, Work> EngineReaction<'a, Work> {
 pub enum OwedWork<'a> {
     Crypto(CryptoOwed),
     ResourceBuild(ResourceBuildOwed<'a>),
+    #[cfg(feature = "resource-work-offload")]
+    ResourceSeal(ResourceSealOwed<'a>),
+    #[cfg(feature = "resource-work-offload")]
+    ResourcePartHash(ResourcePartHashOwed<'a>),
     ResourceOpen(ResourceOpenOwed<'a>),
+    #[cfg(feature = "resource-work-offload")]
+    WholeResourceOpen(WholeResourceOpenOwed<'a>),
     ResourceDecompression(ResourceDecompressionOwed<'a>),
 }
 
@@ -110,12 +128,43 @@ impl<'a> From<CryptoOwed> for OwedWork<'a> {
     }
 }
 
+#[cfg(feature = "resource-work-offload")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamedResourceOpenReservation {
+    pub(crate) link_id: LinkId,
+    pub(crate) hash: ResourceHash,
+    pub(crate) span_start: usize,
+    pub(crate) span_end: usize,
+    pub(crate) generation: ResourceOpenGeneration,
+}
+
+#[cfg(feature = "resource-work-offload")]
+impl StreamedResourceOpenReservation {
+    pub fn span_start(&self) -> usize {
+        self.span_start
+    }
+
+    pub fn span_end(&self) -> usize {
+        self.span_end
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceOpenSpanResidence {
+    Resident,
+    #[cfg(feature = "resource-work-offload")]
+    Transferable(StreamedResourceOpenReservation),
+}
+
+#[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+pub enum ResourceOpenWorkspace {
+    CopiedSpan(alloc::vec::Vec<u8>),
+    DetachedTransfer(alloc::vec::Vec<u8>),
+    Stale,
+}
+
 /// One contiguous ciphertext span whose authenticated streamed open can run outside the engine.
-///
-/// The state is moved out of its incoming-resource row while the mutable span remains borrowed
-/// from that row. A worker runtime copies the span into its owning job envelope while this value
-/// is live; an inline runtime may chew the borrowed span directly and return an in-place
-/// completion. `other_transfers_in_flight` describes available overlap, not a scheduling order.
 #[repr(C)]
 pub struct ResourceOpenOwed<'a> {
     pub link_id: LinkId,
@@ -123,6 +172,7 @@ pub struct ResourceOpenOwed<'a> {
     pub span_start: usize,
     pub state: StreamedOpen,
     pub bytes: &'a mut [u8],
+    pub residence: ResourceOpenSpanResidence,
     pub other_transfers_in_flight: bool,
 }
 
@@ -138,6 +188,7 @@ impl ResourceOpenOwed<'_> {
             span_start: self.span_start,
             state: self.state,
             opened: OpenedResourceSpan::InPlace { byte_len },
+            residence: self.residence,
         }
     }
 }
@@ -149,6 +200,11 @@ pub enum OpenedResourceSpan<'a> {
     InPlace { byte_len: usize },
     /// A worker chewed an owning copy which must be landed over the row's ciphertext.
     Returned(&'a [u8]),
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+    ReturnedTransfer {
+        transfer: alloc::vec::Vec<u8>,
+        span_byte_len: usize,
+    },
 }
 
 /// A runtime's completed resource-open span, submitted as a later engine input.
@@ -159,6 +215,110 @@ pub struct ResourceOpenCompleted<'a> {
     pub span_start: usize,
     pub state: StreamedOpen,
     pub opened: OpenedResourceSpan<'a>,
+    pub residence: ResourceOpenSpanResidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "resource-work-offload")]
+pub struct WholeResourceOpenReservation {
+    pub(crate) link_id: LinkId,
+    pub(crate) hash: ResourceHash,
+    pub(crate) generation: ResourceOpenGeneration,
+}
+
+#[cfg(feature = "resource-work-offload")]
+pub struct WholeResourceOpenPlan {
+    pub(crate) reservation: WholeResourceOpenReservation,
+    pub(crate) key: LinkKey,
+    pub(crate) compression: ResourceCompression,
+    pub(crate) salt_nonce: SaltNonce,
+    pub(crate) total_segments: u64,
+}
+
+#[cfg(feature = "resource-work-offload")]
+impl WholeResourceOpenPlan {
+    pub fn reservation(&self) -> WholeResourceOpenReservation {
+        self.reservation
+    }
+
+    pub fn link_id(&self) -> LinkId {
+        self.reservation.link_id
+    }
+
+    pub fn hash(&self) -> ResourceHash {
+        self.reservation.hash
+    }
+
+    pub fn key(&self) -> &LinkKey {
+        &self.key
+    }
+
+    pub fn signing_key_material(&self) -> &[u8; 32] {
+        self.key.token_material_halves().0
+    }
+
+    pub fn encryption_key_material(&self) -> &[u8; 32] {
+        self.key.token_material_halves().1
+    }
+
+    pub fn compression(&self) -> ResourceCompression {
+        self.compression
+    }
+
+    pub fn salt_nonce(&self) -> SaltNonce {
+        self.salt_nonce
+    }
+
+    pub fn total_segments(&self) -> u64 {
+        self.total_segments
+    }
+}
+
+#[cfg(feature = "resource-work-offload")]
+pub struct WholeResourceOpenOwed<'a> {
+    pub(crate) plan: WholeResourceOpenPlan,
+    pub(crate) sealed: &'a [u8],
+}
+
+#[cfg(feature = "resource-work-offload")]
+impl WholeResourceOpenOwed<'_> {
+    pub fn plan(&self) -> &WholeResourceOpenPlan {
+        &self.plan
+    }
+
+    pub fn sealed(&self) -> &[u8] {
+        self.sealed
+    }
+
+    pub fn into_plan(self) -> WholeResourceOpenPlan {
+        self.plan
+    }
+}
+
+#[cfg(feature = "resource-work-offload")]
+pub enum WholeResourceOpenOutcome<'a> {
+    Opened(&'a [u8]),
+    OpenedAndDigested {
+        plaintext: &'a [u8],
+        calculated_hash: ResourceHash,
+        proof: ResourceProof,
+    },
+    Refused,
+    Unavailable,
+}
+
+#[cfg(feature = "resource-work-offload")]
+pub struct WholeResourceOpenCompleted<'a> {
+    pub reservation: WholeResourceOpenReservation,
+    pub outcome: WholeResourceOpenOutcome<'a>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "resource-work-offload")]
+pub enum WholeResourceOpenLanding {
+    Applied,
+    Stale,
+    Invalid,
 }
 
 /// A compressed resource stream the engine has authenticated and asks its runtime to inflate.
@@ -295,6 +455,12 @@ pub enum Journaled<'a> {
         attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
     },
 
+    /// The target pairing attempt crossed its deadline after its authorization was durably stored,
+    /// so that authorization must be rolled back instead of completing the pairing exchange.
+    RemoteControlTargetPairingExpiredDuringAuthorization {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    },
+
     RemoteControlControllerPairingConfirmationRequired(
         crate::remote_control::RemoteControlControllerPairingAttemptView<'a>,
     ),
@@ -304,6 +470,10 @@ pub enum Journaled<'a> {
     ),
 
     RemoteControlControllerPairingAuthorizationPersisted {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    },
+
+    RemoteControlControllerPairingAuthorizationPersistenceFailed {
         attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
     },
 
@@ -362,6 +532,8 @@ pub enum Journaled<'a> {
 
     /// One verified segment of a split response resource; the receive gate refuses out-of-order chains, so these concatenate in arrival order.
     /// The request settles as `Settlement::SendRequest` when the final segment assembles, not through a [`Journaled::ResponseReceived`].
+    /// Chunks are provisional until that settlement succeeds. A later failure invalidates
+    /// the response; consumers must not publish the accumulated prefix as a successful value.
     ResponseSegmentReceived {
         command_id: CommandId,
         link_id: LinkId,
@@ -487,6 +659,12 @@ pub enum Directive<'a, Work = NoOwedWork> {
         size_hint: usize,
         fill: &'a mut dyn FnMut(&mut [u8]) -> Option<usize>,
     },
+    #[cfg(feature = "movable-frame-forwarding")]
+    ForwardFrame {
+        target: InterfaceId,
+        header: WirePacketHeader,
+        payload: &'a [u8],
+    },
 
     #[cfg(feature = "runtime-metrics")]
     SendMeasuredLocalAnnounce {
@@ -562,6 +740,16 @@ impl<'a, Work> Directive<'a, Work> {
                 target,
                 size_hint,
                 fill,
+            },
+            #[cfg(feature = "movable-frame-forwarding")]
+            Self::ForwardFrame {
+                target,
+                header,
+                payload,
+            } => Directive::ForwardFrame {
+                target,
+                header,
+                payload,
             },
             #[cfg(feature = "runtime-metrics")]
             Self::SendMeasuredLocalAnnounce { target, bytes } => {

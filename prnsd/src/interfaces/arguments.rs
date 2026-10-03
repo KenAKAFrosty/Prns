@@ -196,6 +196,8 @@ pub struct InterfaceOptions {
     pub ignore_config_warnings: Option<bool>,
     #[arg(long)]
     pub group_id: Option<String>,
+    #[arg(long, value_delimiter = ',')]
+    pub group_ids: Option<Vec<String>>,
     #[arg(long)]
     pub discovery_scope: Option<String>,
     #[arg(long)]

@@ -68,6 +68,12 @@ pub(super) fn prepare(
 
 pub(super) fn run(sd: &'static Softdevice, runtime: Runtime) -> impl core::future::Future {
     async move {
+        if let Some(groups) =
+            personal_rns::runtime::restored_discovery_groups(BLE_SUPERVISOR_ID).await
+        {
+            let _ = personal_rns::bluetooth_auto::BluetoothAutoStatus::new(&BLE_SHARED)
+                .restore_discovery_groups_before_start(groups);
+        }
         match runtime {
             Some((supervisor, fleet)) => {
                 join3(acceptor(sd, &HUB), scanner(sd, &HUB), supervisor.run(fleet)).await;

@@ -20,6 +20,9 @@ ignore-build-dependencies = false
 [ksni]
 accepted = ["Unlicense"]
 
+[libfuzzer-sys]
+accepted = ["NCSA"]
+
 [nrf-softdevice-s140]
 accepted = ["LicenseRef-Nordic-SoftDevice"]
 

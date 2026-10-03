@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use crate::engine::InstantMillis;
 use crate::routing::links::resources::table::{
     ResourceBuffers, ResourceRowState, ResourceTable, ResourceTableAdmission,
-    ResourceTablePushError,
+    ResourceTablePushError, ResourceTransferDetach, ResourceTransferRestore,
 };
 use crate::routing::links::resources::{
     checked_resource_buffer_bytes, max_part_count, sealed_transfer_bytes, ResourceBufferShape,
@@ -29,6 +29,7 @@ pub struct HeapResourceTable<State: ResourceRowState> {
     part_names: Vec<Vec<[u8; MAP_HASH_LEN]>>,
     part_flags: Vec<Vec<bool>>,
     streamed_opens: Vec<State::StreamedOpenSlot>,
+    detached_transfer_bytes: Vec<usize>,
     active_buffer_bytes: usize,
     memory_limit: usize,
 }
@@ -47,6 +48,7 @@ impl<State: ResourceRowState> Default for HeapResourceTable<State> {
             part_names: Vec::new(),
             part_flags: Vec::new(),
             streamed_opens: Vec::new(),
+            detached_transfer_bytes: Vec::new(),
             active_buffer_bytes: 0,
             memory_limit: DEFAULT_RESOURCE_MEMORY_BYTES,
         }
@@ -135,6 +137,27 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
         (&mut self.transfers[index], &mut self.streamed_opens[index])
     }
 
+    fn detach_transfer(&mut self, index: usize) -> ResourceTransferDetach {
+        if self.detached_transfer_bytes[index] != 0 || self.transfers[index].is_empty() {
+            return ResourceTransferDetach::Unavailable;
+        }
+        let transfer = core::mem::take(&mut self.transfers[index]);
+        self.detached_transfer_bytes[index] = transfer.len();
+        ResourceTransferDetach::Detached(transfer)
+    }
+
+    fn restore_transfer(&mut self, index: usize, transfer: Vec<u8>) -> ResourceTransferRestore {
+        if transfer.len() != self.detached_transfer_bytes[index] {
+            return ResourceTransferRestore::ShapeMismatch(transfer);
+        }
+        if self.detached_transfer_bytes[index] == 0 || !self.transfers[index].is_empty() {
+            return ResourceTransferRestore::Unsupported(transfer);
+        }
+        self.transfers[index] = transfer;
+        self.detached_transfer_bytes[index] = 0;
+        ResourceTransferRestore::Restored
+    }
+
     fn admission_for_shape(&self, shape: ResourceBufferShape) -> ResourceTableAdmission {
         if shape.transfer_bytes() > HEAP_TRANSFER_CAPACITY
             || shape.part_count() > HEAP_PART_CAPACITY
@@ -179,6 +202,7 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
             .push(vec![[0u8; MAP_HASH_LEN]; shape.part_count()]);
         self.part_flags.push(vec![false; shape.part_count()]);
         self.streamed_opens.push(Default::default());
+        self.detached_transfer_bytes.push(0);
         self.active_buffer_bytes += row_bytes;
         Ok(self.link_ids.len() - 1)
     }
@@ -186,7 +210,9 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
     fn swap_remove(&mut self, index: usize) {
         debug_assert_eq!(self.part_names[index].len(), self.part_flags[index].len());
         let Some(row_bytes) = checked_resource_buffer_bytes(
-            self.transfers[index].len(),
+            self.transfers[index]
+                .len()
+                .saturating_add(self.detached_transfer_bytes[index]),
             self.part_names[index].len(),
         ) else {
             unreachable!("stored Resource buffers were validated on insertion")
@@ -196,6 +222,7 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
         self.timeout_ats.swap_remove(index);
         self.states.swap_remove(index);
         self.streamed_opens.swap_remove(index);
+        self.detached_transfer_bytes.swap_remove(index);
         self.transfers.swap_remove(index);
         self.part_names.swap_remove(index);
         self.part_flags.swap_remove(index);
@@ -247,6 +274,41 @@ mod tests {
         assert_eq!(table.active_buffer_bytes, 1_588);
         assert!(!table.part_flags(second).iter().any(|flag| *flag));
         assert_eq!(table.states(), &[22]);
+    }
+
+    #[test]
+    fn detached_transfers_keep_their_reservation_and_restore_the_same_allocation() {
+        let mut table = HeapResourceTable::<u8>::default();
+        let index = table.push(link(1), hash(1), 11, shape(1_568, 464)).unwrap();
+        let allocation = table.transfer(index).as_ptr();
+        let active_buffer_bytes = table.active_buffer_bytes();
+
+        let detached = match table.detach_transfer(index) {
+            ResourceTransferDetach::Detached(transfer) => transfer,
+            ResourceTransferDetach::Unavailable => panic!("heap transfer detaches"),
+        };
+        assert_eq!(detached.as_ptr(), allocation);
+        assert!(table.transfer(index).is_empty());
+        assert_eq!(table.active_buffer_bytes(), active_buffer_bytes);
+        assert!(matches!(
+            table.detach_transfer(index),
+            ResourceTransferDetach::Unavailable
+        ));
+
+        assert!(matches!(
+            table.restore_transfer(index, detached),
+            ResourceTransferRestore::Restored
+        ));
+        assert_eq!(table.transfer(index).as_ptr(), allocation);
+        assert_eq!(table.active_buffer_bytes(), active_buffer_bytes);
+
+        let detached = match table.detach_transfer(index) {
+            ResourceTransferDetach::Detached(transfer) => transfer,
+            ResourceTransferDetach::Unavailable => panic!("restored transfer detaches again"),
+        };
+        table.swap_remove(index);
+        assert_eq!(detached.as_ptr(), allocation);
+        assert_eq!(table.active_buffer_bytes(), 0);
     }
 
     #[test]

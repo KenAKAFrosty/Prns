@@ -2,8 +2,8 @@
 name = "personal-reticulum-suite-benchmarks"
 version = "0.0.0"
 publish = false
-edition = "2021"
 license = "MIT OR Apache-2.0"
+edition = "2021"
 autobins = false
 
 # Standalone, like `validation/fuzz/`: an empty `[workspace]` detaches this from the root so
@@ -21,6 +21,7 @@ parallel-resource-hash = ["personal-rns/parallel-resource-hash"]
 dhat-heap = ["dep:dhat"]
 # Explicit opt-in for the deterministic microscope that needs an installed Valgrind runner.
 callgrind = []
+scheduler-probe = ["personal-rns/runtime-metrics", "personal-rns/scheduler-tuning"]
 
 [lib]
 name = "benchmarks"
@@ -28,7 +29,7 @@ path = "src/lib.rs"
 bench = false
 
 [dependencies]
-personal-rns = { path = "../personal-rns", features = ["tokio-host", "tcp"] }
+personal-rns = { path = "../personal-rns", features = ["tokio-host", "backbone", "tcp"] }
 prns-macros = { path = "../prns-macros" }
 allocator-api2 = { version = "0.3", optional = true }
 dhat = { version = "0.3", optional = true }
@@ -43,6 +44,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 # Fresh per-run identities for the participant nodes (the corpus bins keep fixed ones).
 getrandom = "0.2"
 heapless = "0.8"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 # Cross-platform host spec gathering for `describe_host` (CPU model, cores, RAM, OS) —
 # the per-host reproducibility descriptor that sits beside each host's result rows.
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
@@ -101,6 +103,18 @@ bench = false
 name = "render_results"
 path = "src/bin/render_results.rs"
 bench = false
+
+[[bin]]
+name = "scheduler_hol_probe"
+path = "src/bin/scheduler_hol_probe.rs"
+bench = false
+required-features = ["scheduler-probe"]
+
+[[bin]]
+name = "scheduler_sweep"
+path = "src/bin/scheduler_sweep.rs"
+bench = false
+required-features = ["scheduler-probe"]
 
 # --- Microscope: drive the engine directly, no I/O — the control baseline for crypto work ---
 [[bench]]

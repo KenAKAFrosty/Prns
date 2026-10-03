@@ -3,6 +3,7 @@ use prns_core::interfaces::lora::{
     Modulation as ProfileModulation, RadioProfile, SpreadingFactor as ProfileSpreadingFactor,
 };
 
+use super::config::Lr11xxPart;
 use super::Error;
 
 pub(super) mod op {
@@ -141,7 +142,22 @@ pub(super) struct RadioConfig {
 pub(super) struct FirmwareVersion(pub u16);
 
 impl FirmwareVersion {
-    pub const MODERN_SYNC_WORD_MINIMUM: Self = Self(0x0303);
+    const LR1110_SYNC_WORD_COMMAND_MINIMUM: Self = Self(0x0303);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SyncWordCommand {
+    SetLoraSyncWord,
+    SetLoraPublicNetwork,
+}
+
+pub(super) fn sync_word_command(part: Lr11xxPart, firmware: FirmwareVersion) -> SyncWordCommand {
+    match part {
+        Lr11xxPart::Lr1110 if firmware < FirmwareVersion::LR1110_SYNC_WORD_COMMAND_MINIMUM => {
+            SyncWordCommand::SetLoraPublicNetwork
+        }
+        Lr11xxPart::Lr1110 | Lr11xxPart::Lr1121 => SyncWordCommand::SetLoraSyncWord,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,7 +224,7 @@ pub(super) fn radio_config(profile: RadioProfile) -> RadioConfig {
         spreading_factor,
         bandwidth,
         coding_rate,
-    } = profile.modulation;
+    } = profile.modulation();
     let spreading_factor = match spreading_factor {
         ProfileSpreadingFactor::Sf5 => SpreadingFactor::Sf5,
         ProfileSpreadingFactor::Sf6 => SpreadingFactor::Sf6,
@@ -231,20 +247,20 @@ pub(super) fn radio_config(profile: RadioProfile) -> RadioConfig {
         ProfileCodingRate::Cr48 => CodingRate::Cr4_8,
     };
     RadioConfig {
-        frequency_hz: profile.frequency.hz(),
+        frequency_hz: profile.frequency().hz(),
         modulation: LoraModulation {
             spreading_factor,
             bandwidth,
             coding_rate,
         },
         packet: LoraPacket {
-            preamble_symbols: profile.preamble.count(),
+            preamble_symbols: profile.preamble().count(),
             header: HeaderMode::Explicit,
             crc: PayloadCrc::Enabled,
             invert_iq: InvertIq::Standard,
         },
         network: LoRaNetwork::Reticulum,
-        tx_power_dbm: profile.tx_power.dbm(),
+        tx_power_dbm: profile.tx_power().dbm(),
     }
 }
 

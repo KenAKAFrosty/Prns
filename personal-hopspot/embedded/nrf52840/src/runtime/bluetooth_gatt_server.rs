@@ -8,6 +8,8 @@ use nrf_softdevice::ble::{Connection, DeferredWriteReply, GattError, Uuid};
 use nrf_softdevice::Softdevice;
 
 const GATT_VALUE_CAPACITY: usize = 244;
+const _: () =
+    assert!(personal_rns::interfaces::bluetooth_auto::CONTROL_MAX_LEN <= GATT_VALUE_CAPACITY);
 const SERVICE_UUID: [u8; 16] = [
     0xe3, 0x28, 0xda, 0xc5, 0x42, 0x8f, 0x7f, 0x91, 0x94, 0x4a, 0x2d, 0x44, 0x00, 0x5b, 0x14, 0x37,
 ];
@@ -46,7 +48,7 @@ pub(super) struct ServerWrite {
     target: WriteTarget,
     delivery: WriteDelivery,
     value: WriteValue,
-    reply: DeferredWriteReply,
+    reply: Option<DeferredWriteReply>,
 }
 
 impl ServerWrite {
@@ -63,11 +65,15 @@ impl ServerWrite {
     }
 
     pub(super) fn accept(self) {
-        let _ = self.reply.reply(Ok(&self.value));
+        if let Some(reply) = self.reply {
+            let _ = reply.reply(Ok(&self.value));
+        }
     }
 
     pub(super) fn reject(self, error: GattError) {
-        let _ = self.reply.reply(Err(error));
+        if let Some(reply) = self.reply {
+            let _ = reply.reply(Err(error));
+        }
     }
 }
 
@@ -119,7 +125,7 @@ impl ReticulumService {
             .add_characteristic(
                 Uuid::new_128(&DATA_UUID),
                 writable,
-                Metadata::new(Properties::new().write().notify()),
+                Metadata::new(Properties::new().write().write_without_response().notify()),
             )?
             .build();
         let _ = service.build();
@@ -142,6 +148,53 @@ impl ReticulumService {
         } else {
             None
         }
+    }
+
+    fn ingest_write(
+        &self,
+        handle: u16,
+        op: WriteOp,
+        offset: usize,
+        data: &[u8],
+        mut reply: Option<DeferredWriteReply>,
+    ) -> Option<ServerWrite> {
+        let mut reject = |error: GattError| {
+            if let Some(reply) = reply.take() {
+                let _ = reply.reply(Err(error));
+            }
+        };
+        let Some(target) = self.target(handle) else {
+            reject(GattError::ATTERR_ATTRIBUTE_NOT_FOUND);
+            return None;
+        };
+        if offset != 0 {
+            reject(GattError::ATTERR_INVALID_OFFSET);
+            return None;
+        }
+        let delivery = match op {
+            WriteOp::Request => WriteDelivery::Acknowledged,
+            WriteOp::Command | WriteOp::SignedWriteCommmand => WriteDelivery::Unacknowledged,
+            WriteOp::PrepareWriteRequest
+            | WriteOp::CancelPreparedWrites
+            | WriteOp::ExecutePreparedWrites => {
+                reject(GattError::ATTERR_REQUEST_NOT_SUPPORTED);
+                return None;
+            }
+            _ => {
+                reject(GattError::ATTERR_REQUEST_NOT_SUPPORTED);
+                return None;
+            }
+        };
+        let Ok(value) = WriteValue::from_slice(data) else {
+            reject(GattError::ATTERR_INVALID_ATT_VAL_LENGTH);
+            return None;
+        };
+        Some(ServerWrite {
+            target,
+            delivery,
+            value,
+            reply,
+        })
     }
 }
 
@@ -195,12 +248,13 @@ impl gatt_server::Server for Server {
     fn on_write(
         &self,
         _conn: &Connection,
-        _handle: u16,
-        _op: WriteOp,
-        _offset: usize,
-        _data: &[u8],
+        handle: u16,
+        op: WriteOp,
+        offset: usize,
+        data: &[u8],
     ) -> Option<Self::Event> {
-        None
+        // Write-without-response arrives here on S140; deferred authorization handles requests.
+        self.rns.ingest_write(handle, op, offset, data, None)
     }
 
     fn on_deferred_write(
@@ -211,37 +265,6 @@ impl gatt_server::Server for Server {
         data: &[u8],
         reply: DeferredWriteReply,
     ) -> Option<Self::Event> {
-        let Some(target) = self.rns.target(handle) else {
-            let _ = reply.reply(Err(GattError::ATTERR_ATTRIBUTE_NOT_FOUND));
-            return None;
-        };
-        if offset != 0 {
-            let _ = reply.reply(Err(GattError::ATTERR_INVALID_OFFSET));
-            return None;
-        }
-        let delivery = match op {
-            WriteOp::Request => WriteDelivery::Acknowledged,
-            WriteOp::Command | WriteOp::SignedWriteCommmand => WriteDelivery::Unacknowledged,
-            WriteOp::PrepareWriteRequest
-            | WriteOp::CancelPreparedWrites
-            | WriteOp::ExecutePreparedWrites => {
-                let _ = reply.reply(Err(GattError::ATTERR_REQUEST_NOT_SUPPORTED));
-                return None;
-            }
-            _ => {
-                let _ = reply.reply(Err(GattError::ATTERR_REQUEST_NOT_SUPPORTED));
-                return None;
-            }
-        };
-        let Ok(value) = WriteValue::from_slice(data) else {
-            let _ = reply.reply(Err(GattError::ATTERR_INVALID_ATT_VAL_LENGTH));
-            return None;
-        };
-        Some(ServerWrite {
-            target,
-            delivery,
-            value,
-            reply,
-        })
+        self.rns.ingest_write(handle, op, offset, data, Some(reply))
     }
 }

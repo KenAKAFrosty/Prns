@@ -77,16 +77,22 @@ impl RoleProcess {
         self.stdin.flush().expect("flush stop command");
     }
 
-    pub(super) fn set_collection_target(&mut self, transfers: u64, bytes: u64) {
-        writeln!(self.stdin, "COLLECT {transfers} {bytes}").expect("send collection target");
-        self.stdin.flush().expect("flush collection target");
+    pub(super) fn terminate(&mut self) {
+        let _ = self.child.kill();
     }
 
-    pub(super) fn release_collection(&mut self) {
-        self.stdin
-            .write_all(b"COLLECTED\n")
-            .expect("send collection release");
-        self.stdin.flush().expect("flush collection release");
+    pub(super) fn set_collection_target(
+        &mut self,
+        transfers: u64,
+        bytes: u64,
+    ) -> std::io::Result<()> {
+        writeln!(self.stdin, "COLLECT {transfers} {bytes}")?;
+        self.stdin.flush()
+    }
+
+    pub(super) fn release_collection(&mut self) -> std::io::Result<()> {
+        self.stdin.write_all(b"COLLECTED\n")?;
+        self.stdin.flush()
     }
 
     pub(super) fn mark_measurement_end(&mut self) {
@@ -309,13 +315,68 @@ impl Drop for RoleProcess {
 }
 
 pub(super) fn await_line(process: &RoleProcess, prefix: &str, within: Duration) -> String {
+    try_await_line(process, prefix, within)
+        .unwrap_or_else(|error| panic!("no {prefix:?} line within {within:?}: {error:?}"))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AwaitLineError {
+    Deadline,
+    StreamClosed,
+}
+
+pub(super) fn try_await_line(
+    process: &RoleProcess,
+    prefix: &str,
+    within: Duration,
+) -> Result<String, AwaitLineError> {
+    try_await_matching_line(&process.lines, prefix, within)
+}
+
+fn try_await_matching_line(
+    lines: &std_mpsc::Receiver<String>,
+    prefix: &str,
+    within: Duration,
+) -> Result<String, AwaitLineError> {
     let deadline = std::time::Instant::now() + within;
     loop {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
-        match process.lines.recv_timeout(left) {
-            Ok(line) if line.starts_with(prefix) => return line,
+        match lines.recv_timeout(left) {
+            Ok(line) if line.starts_with(prefix) => return Ok(line),
             Ok(_) => {}
-            Err(_) => panic!("no {prefix:?} line within {within:?}"),
+            Err(std_mpsc::RecvTimeoutError::Timeout) => return Err(AwaitLineError::Deadline),
+            Err(std_mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(AwaitLineError::StreamClosed)
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod line_tests {
+    use super::*;
+
+    #[test]
+    fn matching_line_wait_distinguishes_a_closed_stream() {
+        let (send, lines) = std_mpsc::channel();
+        send.send("NOISE".to_string()).unwrap();
+        drop(send);
+
+        assert_eq!(
+            try_await_matching_line(&lines, "RESULT", Duration::from_secs(1)),
+            Err(AwaitLineError::StreamClosed)
+        );
+    }
+
+    #[test]
+    fn matching_line_wait_returns_the_requested_line() {
+        let (send, lines) = std_mpsc::channel();
+        send.send("NOISE".to_string()).unwrap();
+        send.send("RESULT sent=1".to_string()).unwrap();
+
+        assert_eq!(
+            try_await_matching_line(&lines, "RESULT", Duration::from_secs(1)),
+            Ok("RESULT sent=1".to_string())
+        );
     }
 }
