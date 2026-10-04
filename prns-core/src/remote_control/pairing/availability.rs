@@ -118,6 +118,7 @@ prns_macros::iterable_enum! {
     #[repr(u8)]
     pub enum RemoteControlPairingAvailabilityKind {
         PairingAvailable = 1,
+        DirectPhysicalAvailable = 2,
     }
 }
 
@@ -130,6 +131,7 @@ impl RemoteControlPairingAvailabilityKind {
     const fn from_wire(value: u8) -> Option<Self> {
         match value {
             1 => Some(Self::PairingAvailable),
+            2 => Some(Self::DirectPhysicalAvailable),
             _ => None,
         }
     }
@@ -308,6 +310,7 @@ pub enum RemoteControlPairingAvailabilityWriteError {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlPairingAvailability<'a> {
+    kind: RemoteControlPairingAvailabilityKind,
     announce: Announce<'a>,
     expires_after: RemoteControlPairingExpiresAfter,
     public_app_data: RemoteControlPairingPublicAppData<'a>,
@@ -315,6 +318,7 @@ pub struct RemoteControlPairingAvailability<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlPairingAvailabilityObservation<'a> {
+    kind: RemoteControlPairingAvailabilityKind,
     endpoint: RemoteControlPairingEndpoint,
     observed_at: InstantMillis,
     expires_at: InstantMillis,
@@ -324,6 +328,10 @@ pub struct RemoteControlPairingAvailabilityObservation<'a> {
 }
 
 impl RemoteControlPairingAvailabilityObservation<'_> {
+    pub const fn kind(&self) -> RemoteControlPairingAvailabilityKind {
+        self.kind
+    }
+
     #[must_use]
     pub const fn endpoint(&self) -> RemoteControlPairingEndpoint {
         self.endpoint
@@ -499,6 +507,7 @@ impl<'a> RemoteControlPairingAvailability<'a> {
         let expires_at = self.expires_after.deadline_from(observed_at);
         (
             RemoteControlPairingAvailabilityObservation {
+                kind: self.kind,
                 endpoint,
                 observed_at,
                 expires_at,
@@ -555,6 +564,7 @@ impl<'a> RemoteControlPairingAvailability<'a> {
         let public_app_data = RemoteControlPairingPublicAppData::try_from(public_app_data)
             .map_err(RemoteControlPairingAvailabilityParseError::InvalidPublicAppData)?;
         Ok(Self {
+            kind: signed_kind,
             announce,
             expires_after,
             public_app_data,
@@ -570,6 +580,24 @@ impl<'a> RemoteControlPairingAvailability<'a> {
         signer: &impl IdentitySigner,
         announce_id: AnnounceId,
         expires_after: RemoteControlPairingExpiresAfter,
+        public_app_data: RemoteControlPairingPublicAppData<'_>,
+        output: &mut [u8],
+    ) -> Result<usize, RemoteControlPairingAvailabilityWriteError> {
+        Self::write_signed_kind(
+            signer,
+            announce_id,
+            expires_after,
+            RemoteControlPairingAvailabilityKind::PairingAvailable,
+            public_app_data,
+            output,
+        )
+    }
+
+    pub fn write_signed_kind(
+        signer: &impl IdentitySigner,
+        announce_id: AnnounceId,
+        expires_after: RemoteControlPairingExpiresAfter,
+        kind: RemoteControlPairingAvailabilityKind,
         public_app_data: RemoteControlPairingPublicAppData<'_>,
         output: &mut [u8],
     ) -> Result<usize, RemoteControlPairingAvailabilityWriteError> {
@@ -603,7 +631,7 @@ impl<'a> RemoteControlPairingAvailability<'a> {
         let (expires_after_output, public_app_data_output) =
             signed_body.split_at_mut(PAIRING_AVAILABILITY_EXPIRES_AFTER_LEN);
         *signed_version = RemoteControlPairingAvailabilityProtocolVersion::V2.wire_value();
-        *signed_kind = RemoteControlPairingAvailabilityKind::PairingAvailable.wire_value();
+        *signed_kind = kind.wire_value();
         expires_after_output.copy_from_slice(&expires_after.to_wire());
         public_app_data_output.copy_from_slice(public_app_data.as_bytes());
 
@@ -640,7 +668,7 @@ impl<'a> RemoteControlPairingAvailability<'a> {
                 actual: output.len(),
             });
         };
-        *envelope_kind = RemoteControlPairingAvailabilityKind::PairingAvailable.wire_value();
+        *envelope_kind = kind.wire_value();
         Ok(PAIRING_AVAILABILITY_ENVELOPE_HEADER_LEN.saturating_add(inner_len))
     }
 }
@@ -919,6 +947,35 @@ mod tests {
     }
 
     #[test]
+    fn signed_direct_kind_survives_observation_and_cannot_be_changed_in_the_envelope() {
+        let mut encoded = [0; BROADCAST_MDU];
+        let length = RemoteControlPairingAvailability::write_signed_kind(
+            &signer(),
+            AnnounceId::mint(
+                AnnounceEntropy::new([1; AnnounceEntropy::LEN]),
+                InstantMillis(1),
+            ),
+            expires_after(60_000),
+            RemoteControlPairingAvailabilityKind::DirectPhysicalAvailable,
+            public_app_data(b"USB"),
+            &mut encoded,
+        )
+        .unwrap();
+        let parsed =
+            RemoteControlPairingAvailability::parse(encoded.get(..length).unwrap()).unwrap();
+        let (observation, _) =
+            parsed.into_observation(InstantMillis(10), InterfaceId::new([2; 8]), 0);
+        assert_eq!(
+            observation.kind(),
+            RemoteControlPairingAvailabilityKind::DirectPhysicalAvailable
+        );
+        assert_eq!(observation.public_app_data().as_bytes(), b"USB");
+        *encoded.get_mut(1).unwrap() =
+            RemoteControlPairingAvailabilityKind::PairingAvailable.wire_value();
+        assert!(RemoteControlPairingAvailability::parse(encoded.get(..length).unwrap()).is_err());
+    }
+
+    #[test]
     fn writer_refuses_every_short_output() {
         let data = public_app_data(b"node");
         let required = RemoteControlPairingAvailability::encoded_len(&data);
@@ -956,9 +1013,9 @@ mod tests {
             )),
         );
         assert_eq!(
-            RemoteControlPairingAvailability::parse(&[1, 2]),
+            RemoteControlPairingAvailability::parse(&[1, 3]),
             Err(RemoteControlPairingAvailabilityParseError::EnvelopeHeader(
-                RemoteControlPairingAvailabilityHeaderError::UnknownKind { found: 2 },
+                RemoteControlPairingAvailabilityHeaderError::UnknownKind { found: 3 },
             )),
         );
     }

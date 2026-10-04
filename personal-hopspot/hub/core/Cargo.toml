@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+test-support = []
+
 [dependencies]
 heapless = { version = "0.8", default-features = false }
 pipecircuit = { version = "=0.0.16", default-features = false, features = ["storage"] }

@@ -83,7 +83,7 @@ fn controller_pairing_begin() -> BeginRemoteControlControllerPairing {
                 .endpoint(),
             CONTROLLER_PAIRING_LINK_ID,
         ),
-        invitation_code: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD),
+        admission: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD).into(),
         pairing_expires_at: InstantMillis(10_000),
     }
 }
@@ -136,7 +136,7 @@ fn controller_pairing_initiation_establishes_the_observed_endpoint_before_beginn
     let (result, ()) = block_on(join(
         handle.initiate_remote_control_controller_pairing(InitiateRemoteControlControllerPairing {
             endpoint,
-            invitation_code: begin.invitation_code,
+            admission: begin.admission,
             expires_at: begin.pairing_expires_at,
         }),
         async {

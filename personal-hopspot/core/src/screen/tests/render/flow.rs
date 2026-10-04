@@ -384,6 +384,8 @@ fn every_pairing_screen_draws_inside_the_narrow_display() {
     check(pairing);
     pairing.begin_opening();
     check(pairing);
+    pairing.opened_direct(InstantMillis(MAX_REMOTE_CONTROL_PAIRING_EXPIRES_AFTER.0));
+    check(pairing);
     // Exercise fixed-width code extremes and the largest legal countdown.
     for (code, expires_at) in [
         (0, 0),
@@ -561,4 +563,46 @@ fn failed_interface_menu_draws_failure_reason() {
         has_on_pixel(&display, MENU_REASON_X..WIDTH, reason_top..HEIGHT),
         "failed-card menus should show the failure reason below the actions"
     );
+}
+
+#[test]
+#[cfg(feature = "remote-control-pairing")]
+fn pairing_prompts_display_their_admission_without_overlapping_the_header() {
+    use embedded_graphics::mono_font::iso_8859_1::{FONT_4X6, FONT_5X8};
+    use embedded_graphics::mono_font::MonoTextStyle;
+    use embedded_graphics::text::{Baseline, Text};
+    use personal_rns::units::InstantMillis;
+
+    for (code, heading, value) in [
+        (Some(0x1234_ABCD), "Invitation", "1234ABCD"),
+        (None, "USB setup", "Open Hopspot"),
+    ] {
+        let mut pairing = crate::RemoteControlTargetPairingState::<u8>::new();
+        match code {
+            Some(code) => pairing.opened(code, InstantMillis(60_000)),
+            None => pairing.opened_direct(InstantMillis(60_000)),
+        };
+        let mut display = PanelDisplay::new();
+        draw_remote_control_pairing_content(&mut display, pairing, InstantMillis(0), false);
+        let mut expected = PanelDisplay::new();
+        for (label, top, font) in [
+            (heading, MENU_ITEM_TOP, &FONT_4X6),
+            (value, MENU_ITEM_TOP + 10, &FONT_5X8),
+        ] {
+            Text::with_baseline(
+                label,
+                Point::new(2, top),
+                MonoTextStyle::new(font, BinaryColor::On),
+                Baseline::Top,
+            )
+            .draw(&mut expected)
+            .unwrap();
+        }
+        for y in MENU_ITEM_TOP..MENU_ITEM_TOP + 18 {
+            for x in 0..WIDTH {
+                let point = Point::new(x, y);
+                assert_eq!(display.get_pixel(point), expected.get_pixel(point));
+            }
+        }
+    }
 }

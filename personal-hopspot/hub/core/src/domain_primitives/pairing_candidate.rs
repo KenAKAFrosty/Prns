@@ -1,11 +1,13 @@
 use prns_core::interfaces::InterfaceId;
 use prns_core::remote_control::{
-    RemoteControlPairingAvailabilityObservation, RemoteControlPairingEndpoint,
+    RemoteControlPairingAvailabilityKind, RemoteControlPairingAvailabilityObservation,
+    RemoteControlPairingEndpoint,
 };
 use prns_core::units::InstantMillis;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PairingCandidate {
+    kind: RemoteControlPairingAvailabilityKind,
     endpoint: RemoteControlPairingEndpoint,
     source_interface: InterfaceId,
     observed_at: InstantMillis,
@@ -13,6 +15,10 @@ pub struct PairingCandidate {
 }
 
 impl PairingCandidate {
+    pub const fn kind(self) -> RemoteControlPairingAvailabilityKind {
+        self.kind
+    }
+
     pub const fn endpoint(self) -> RemoteControlPairingEndpoint {
         self.endpoint
     }
@@ -33,6 +39,7 @@ impl PairingCandidate {
 impl From<&RemoteControlPairingAvailabilityObservation<'_>> for PairingCandidate {
     fn from(observation: &RemoteControlPairingAvailabilityObservation<'_>) -> Self {
         Self {
+            kind: observation.kind(),
             endpoint: observation.endpoint(),
             source_interface: observation.source_interface(),
             observed_at: observation.observed_at(),

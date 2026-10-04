@@ -5,7 +5,7 @@ mod behavior;
 mod observe;
 mod query;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 mod time;
 
 use crate::domain_primitives::PairingCandidate;

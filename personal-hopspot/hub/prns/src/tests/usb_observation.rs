@@ -35,7 +35,25 @@ pub(crate) fn with_observation<R>(
     lifetime: u64,
     accept: impl FnOnce(RemoteControlPairingAvailabilityObservation<'_>) -> R,
 ) -> R {
-    let mut wire = availability_wire(seed, observed, lifetime);
+    with_observation_kind(
+        seed,
+        source,
+        observed,
+        lifetime,
+        personal_rns::remote_control::RemoteControlPairingAvailabilityKind::PairingAvailable,
+        accept,
+    )
+}
+
+pub(crate) fn with_observation_kind<R>(
+    seed: u8,
+    source: InterfaceId,
+    observed: u64,
+    lifetime: u64,
+    kind: personal_rns::remote_control::RemoteControlPairingAvailabilityKind,
+    accept: impl FnOnce(RemoteControlPairingAvailabilityObservation<'_>) -> R,
+) -> R {
+    let mut wire = availability_wire_kind(seed, observed, lifetime, kind);
     let mut engine = EngineState::<TestStorageLayout>::default();
     let identity = engine.hold_identity(fixed_secret_key()).unwrap();
     engine.configure_remote_control_pairing(identity).unwrap();
@@ -82,6 +100,20 @@ pub(crate) fn with_observation<R>(
 }
 
 pub(crate) fn availability_wire(seed: u8, observed: u64, lifetime: u64) -> alloc::vec::Vec<u8> {
+    availability_wire_kind(
+        seed,
+        observed,
+        lifetime,
+        personal_rns::remote_control::RemoteControlPairingAvailabilityKind::PairingAvailable,
+    )
+}
+
+fn availability_wire_kind(
+    seed: u8,
+    observed: u64,
+    lifetime: u64,
+    kind: personal_rns::remote_control::RemoteControlPairingAvailabilityKind,
+) -> alloc::vec::Vec<u8> {
     let signer = InMemoryNodeIdentity::from_secret_key_bytes(&[seed; IDENTITY_SECRET_KEY_LEN]);
     let mut wire = [0; BROADCAST_MTU];
     let header = WirePacketHeader {
@@ -98,13 +130,14 @@ pub(crate) fn availability_wire(seed: u8, observed: u64, lifetime: u64) -> alloc
         context: WireContext::None,
     };
     let header_len = header.write(&mut wire).unwrap();
-    let payload_len = RemoteControlPairingAvailability::write_signed(
+    let payload_len = RemoteControlPairingAvailability::write_signed_kind(
         &signer,
         AnnounceId::mint(
             AnnounceEntropy::new([seed; AnnounceEntropy::LEN]),
             InstantMillis(observed),
         ),
         RemoteControlPairingExpiresAfter::try_from(DurationMillis(lifetime)).unwrap(),
+        kind,
         RemoteControlPairingPublicAppData::empty(),
         wire.get_mut(header_len..).unwrap(),
     )

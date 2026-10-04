@@ -44,7 +44,7 @@ fn begin_from(
                 .initiate_remote_control_controller_pairing(
                     InitiateRemoteControlControllerPairing {
                         endpoint: opened.endpoint,
-                        invitation_code: code,
+                        admission: code.into(),
                         expires_at: opened.expires_at,
                     },
                 )
@@ -79,7 +79,7 @@ fn complete_pairing_commits_both_sides_and_restores_pinned_access_across_indepen
             |lab| {
                 lab.restart_node(OUTSIDER, controller_store.clone());
                 let opened = lab.open_pairing();
-                let code = opened.invitation_code.clone();
+                let code = opened.invitation_code.clone().unwrap();
                 assert_eq!(
                     begin(lab, opened, code).effect,
                     RemoteControlControllerPairingResponseEffect::Advanced
@@ -187,8 +187,9 @@ fn invalid_invitation_is_silent_and_does_not_consume_the_pairing_window() {
         Some(Storage::new()),
         |lab| {
             let opened = lab.open_pairing();
-            let wrong =
-                RemoteControlPairingInvitationCode::from_value(opened.invitation_code.value() ^ 1);
+            let wrong = RemoteControlPairingInvitationCode::from_value(
+                opened.invitation_code.as_ref().unwrap().value() ^ 1,
+            );
             let response_count = lab.target_response_count();
             let handle = lab.nodes[OUTSIDER].handle.clone();
             let endpoint = opened.endpoint;
@@ -199,7 +200,7 @@ fn invalid_invitation_is_silent_and_does_not_consume_the_pairing_window() {
                         .initiate_remote_control_controller_pairing(
                             InitiateRemoteControlControllerPairing {
                                 endpoint,
-                                invitation_code: wrong,
+                                admission: wrong.into(),
                                 expires_at,
                             },
                         )
@@ -223,7 +224,7 @@ fn invalid_invitation_is_silent_and_does_not_consume_the_pairing_window() {
                 pairing::PairingEvent::TargetConfirmation(_)
                     | pairing::PairingEvent::ControllerConfirmation(_)
             )));
-            let code = opened.invitation_code.clone();
+            let code = opened.invitation_code.clone().unwrap();
             begin(lab, opened, code);
             let rejection = lab.target_confirmation().rejection();
             let handle = lab.nodes[TARGET].handle.clone();
@@ -265,7 +266,7 @@ fn rejected_and_expired_attempts_never_publish_authority_and_stale_approval_cann
                 lab.restart_node(OUTSIDER, controller_store.clone());
                 let prior = target_store.grants();
                 let opened = lab.open_pairing();
-                let code = opened.invitation_code.clone();
+                let code = opened.invitation_code.clone().unwrap();
                 begin(lab, opened, code);
                 let controller = lab.controller_confirmation(OUTSIDER);
                 let target = lab.target_confirmation();
@@ -352,7 +353,7 @@ fn independently_interrupted_pairing_owners_restore_only_their_published_trust()
                 lab.restart_node(OUTSIDER, controller_store.clone());
                 let prior = target_store.grants();
                 let opened = lab.open_pairing();
-                let code = opened.invitation_code.clone();
+                let code = opened.invitation_code.clone().unwrap();
                 begin(lab, opened, code);
                 let target = lab.target_confirmation();
                 let controller = lab.controller_confirmation(OUTSIDER);

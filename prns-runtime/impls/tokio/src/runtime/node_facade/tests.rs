@@ -68,6 +68,7 @@ fn local_command_ids_reserve_disjoint_ranges_from_shared_producers() {
 
 fn open_pairing() -> OpenRemoteControlPairing {
     OpenRemoteControlPairing {
+        admission: crate::remote_control::RemoteControlPairingAdmissionMode::Invitation,
         target: crate::engine::EgressTarget::AllInterfaces,
         expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(60_000)).unwrap(),
         attempt_timeout: RemoteControlPairingAttemptTimeout::try_from(DurationMillis(30_000))
@@ -89,7 +90,7 @@ fn opened_pairing() -> RemoteControlPairingOpened {
             )),
         ),
         expires_at: InstantMillis(61_000),
-        invitation_code: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD),
+        invitation_code: Some(RemoteControlPairingInvitationCode::from_value(0x1234_ABCD)),
     }
 }
 

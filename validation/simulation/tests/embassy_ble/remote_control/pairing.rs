@@ -50,6 +50,7 @@ pub fn observe(sink: &Rc<RefCell<Vec<Observation>>>, node: usize, event: PrnsEve
 impl Handle {
     pub async fn open_pairing(&self) -> RemoteControlPairingOpened {
         let open = OpenRemoteControlPairing {
+            admission: personal_rns::remote_control::RemoteControlPairingAdmissionMode::Invitation,
             target: EgressTarget::AllInterfaces,
             expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(30_000))
                 .expect("pairing window"),
@@ -79,7 +80,7 @@ impl Handle {
     pub async fn initiate(&self, opened: RemoteControlPairingOpened) {
         let input = InitiateRemoteControlControllerPairing {
             endpoint: opened.endpoint,
-            invitation_code: opened.invitation_code,
+            admission: opened.invitation_code.unwrap().into(),
             expires_at: opened.expires_at,
         };
         match self {

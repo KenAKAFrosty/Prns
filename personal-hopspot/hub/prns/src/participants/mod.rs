@@ -1,9 +1,6 @@
 use hopspot_hub_core::{ConfirmConnection, Connection, InterfacePageRequest, ReceiveInterfacePage};
 use personal_rns::routing::links::LinkId;
-use personal_rns::runtime::{
-    CloseRemoteControlTargetOutcome, ConnectRemoteControlTargetError,
-    RemoteControlTargetOperationError,
-};
+use personal_rns::runtime::{CloseRemoteControlTargetOutcome, RemoteControlTargetOperationError};
 use personal_rns::units::RttMillis;
 use pipecircuit::Participant;
 
@@ -24,7 +21,7 @@ pub enum PrnsDeviceOut {
     },
     ConnectionFailed {
         connection: Connection,
-        source: ConnectRemoteControlTargetError,
+        source: crate::PrnsConnectionError,
     },
     AlreadyConnected {
         connection: Connection,

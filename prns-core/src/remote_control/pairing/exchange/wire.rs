@@ -39,7 +39,14 @@ impl RemoteControlPairingRequest {
     #[must_use]
     pub const fn encoded_len(&self) -> usize {
         match self {
-            Self::Begin(_) => PAIRING_BEGIN_ENCODED_LEN,
+            Self::Begin(begin) => match begin.protocol_version() {
+                RemoteControlPairingProtocolVersion::DirectPhysicalV5 => {
+                    super::PAIRING_MESSAGE_HEADER_ENCODED_LEN + super::PAIRING_IDENTITY_ENCODED_LEN
+                }
+                RemoteControlPairingProtocolVersion::V2
+                | RemoteControlPairingProtocolVersion::V3
+                | RemoteControlPairingProtocolVersion::V4 => PAIRING_BEGIN_ENCODED_LEN,
+            },
             Self::Commit(_) => PAIRING_COMMIT_ENCODED_LEN,
         }
     }
@@ -70,8 +77,14 @@ impl RemoteControlPairingRequest {
                     RemoteControlPairingIdentityRole::Controller,
                     &mut validate_signing_public_key,
                 )?;
-                let invitation_proof =
-                    RemoteControlPairingInvitationProof::from_wire(*reader.take()?);
+                let invitation_proof = match protocol_version {
+                    RemoteControlPairingProtocolVersion::DirectPhysicalV5 => None,
+                    RemoteControlPairingProtocolVersion::V2
+                    | RemoteControlPairingProtocolVersion::V3
+                    | RemoteControlPairingProtocolVersion::V4 => Some(
+                        RemoteControlPairingInvitationProof::from_wire(*reader.take()?),
+                    ),
+                };
                 Self::Begin(RemoteControlPairingBegin::from_wire(
                     protocol_version,
                     RemoteControlControllerIdentity::new(public_keys),
@@ -110,7 +123,9 @@ impl RemoteControlPairingRequest {
         match self {
             Self::Begin(begin) => {
                 writer.write(&begin.controller.public_keys().public_key_bytes())?;
-                writer.write(begin.invitation_proof.as_wire())?;
+                if let Some(proof) = begin.invitation_proof() {
+                    writer.write(proof.as_wire())?;
+                }
             }
             Self::Commit(commit) => writer.write(commit.transcript.as_bytes())?,
         }
@@ -325,7 +340,9 @@ fn read_permissions(
 ) -> Result<RemoteControlPairingPermissions, RemoteControlPairingMessageParseError> {
     let authority = match protocol_version {
         RemoteControlPairingProtocolVersion::V2 => RemoteControlControllerAuthority::Operator,
-        RemoteControlPairingProtocolVersion::V3 | RemoteControlPairingProtocolVersion::V4 => {
+        RemoteControlPairingProtocolVersion::V3
+        | RemoteControlPairingProtocolVersion::V4
+        | RemoteControlPairingProtocolVersion::DirectPhysicalV5 => {
             let &[authority] = reader.take()?;
             RemoteControlControllerAuthority::from_wire(authority).ok_or(
                 RemoteControlPairingMessageParseError::UnknownAuthority { found: authority },
@@ -383,7 +400,9 @@ fn write_permissions(
 ) -> Result<(), RemoteControlPairingMessageWriteError> {
     if matches!(
         protocol_version,
-        RemoteControlPairingProtocolVersion::V3 | RemoteControlPairingProtocolVersion::V4
+        RemoteControlPairingProtocolVersion::V3
+            | RemoteControlPairingProtocolVersion::V4
+            | RemoteControlPairingProtocolVersion::DirectPhysicalV5
     ) {
         writer.write(&[permissions.authority().wire_value()])?;
     }

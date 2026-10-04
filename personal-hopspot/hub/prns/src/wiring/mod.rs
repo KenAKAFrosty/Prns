@@ -8,10 +8,10 @@ mod switchboards;
 
 pub use controller_installation::{ControllerInstallation, ControllerInstallationError};
 pub use fittings::{
-    PrnsDeviceCompletion, PrnsDeviceFitting, PrnsDeviceIncoming, PrnsDeviceOutgoing,
-    PrnsDeviceQueueCapacityError, PrnsDeviceSubmission, PrnsDeviceWork, PrnsDeviceWorker,
-    PrnsDeviceWorkerError, PrnsDeviceWorkerIncoming, PrnsDeviceWorkerOutgoing, PrnsFittingError,
-    PrnsInventoryTransport,
+    PrnsConnectionError, PrnsDeviceCompletion, PrnsDeviceFitting, PrnsDeviceIncoming,
+    PrnsDeviceOutgoing, PrnsDeviceQueueCapacityError, PrnsDeviceSubmission, PrnsDeviceWork,
+    PrnsDeviceWorker, PrnsDeviceWorkerError, PrnsDeviceWorkerIncoming, PrnsDeviceWorkerOutgoing,
+    PrnsFittingError, PrnsInventoryTransport,
 };
 pub use runtime::{NativeHubRuntime, prepare_native_hub};
 pub use switchboards::{
@@ -50,3 +50,15 @@ pub use device_store::{
 };
 
 pub use device_store::{PersistEnrollmentError, PersistEnrollmentOutcome};
+
+mod enrollment_coordinator;
+pub use enrollment_coordinator::{
+    EnrollmentCoordinator, EnrollmentCoordinatorError, EnrollmentCoordinatorOutcome,
+};
+
+mod usb_enrollment;
+pub use usb_enrollment::{
+    EnrollmentEvent, EnrollmentEvents, EnrollmentEventsFailure, NativeUsbEnrollmentRuntime,
+    UsbEnrollmentExit, UsbEnrollmentFailure, UsbEnrollmentOutcome, UsbEnrollmentWork,
+    prepare_native_usb_enrollment,
+};

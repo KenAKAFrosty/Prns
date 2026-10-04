@@ -4,8 +4,7 @@ use crate::units::InstantMillis;
 
 use super::super::{
     RemoteControlPairingAttemptId, RemoteControlPairingBegin, RemoteControlPairingCompleted,
-    RemoteControlPairingContext, RemoteControlPairingInvitationCode, RemoteControlPairingOffer,
-    RemoteControlPairingTranscript,
+    RemoteControlPairingContext, RemoteControlPairingOffer, RemoteControlPairingTranscript,
 };
 use super::model::*;
 
@@ -17,6 +16,7 @@ enum RemoteControlControllerPairingPhase {
         context: RemoteControlPairingContext,
         controller: RemoteControlControllerIdentity,
         window: RemoteControlControllerPairingWindow,
+        protocol_version: super::super::RemoteControlPairingProtocolVersion,
     },
     AwaitingApproval {
         transcript: RemoteControlPairingTranscript,
@@ -47,6 +47,7 @@ impl RemoteControlControllerPairingState {
                 context,
                 controller,
                 window,
+                protocol_version: _,
             } => RemoteControlControllerPairingView::AwaitingOffer(
                 RemoteControlControllerPairingBeginView {
                     context: *context,
@@ -88,7 +89,7 @@ impl RemoteControlControllerPairingState {
         &mut self,
         controller: RemoteControlControllerIdentity,
         context: RemoteControlPairingContext,
-        invitation_code: RemoteControlPairingInvitationCode,
+        admission: impl Into<super::super::RemoteControlPairingAdmission>,
         started_at: InstantMillis,
         pairing_expires_at: InstantMillis,
     ) -> BeginRemoteControlControllerPairingOutcome {
@@ -102,11 +103,19 @@ impl RemoteControlControllerPairingState {
                 return BeginRemoteControlControllerPairingOutcome::PairingUnavailable { reason }
             }
         };
-        let begin = RemoteControlPairingBegin::new(controller, context.endpoint(), invitation_code);
+        let begin = match admission.into() {
+            super::super::RemoteControlPairingAdmission::InvitationCode(code) => {
+                RemoteControlPairingBegin::new(controller, context.endpoint(), code)
+            }
+            super::super::RemoteControlPairingAdmission::DirectPhysical => {
+                RemoteControlPairingBegin::direct_physical(controller)
+            }
+        };
         self.phase = RemoteControlControllerPairingPhase::AwaitingOffer {
             context,
             controller,
             window,
+            protocol_version: begin.protocol_version(),
         };
         BeginRemoteControlControllerPairingOutcome::BeginOwed {
             begin,
@@ -129,7 +138,21 @@ impl RemoteControlControllerPairingState {
                 context,
                 controller,
                 window,
+                protocol_version,
             } => {
+                if offer.protocol_version() != protocol_version {
+                    self.phase = RemoteControlControllerPairingPhase::AwaitingOffer {
+                        context,
+                        controller,
+                        window,
+                        protocol_version,
+                    };
+                    return ReceiveRemoteControlControllerPairingOfferOutcome::Rejected {
+                        reason: super::super::RemoteControlPairingOfferVerificationError::ProtocolVersionMismatch {
+                            begin: protocol_version, offer: offer.protocol_version(),
+                        },
+                    };
+                }
                 let transcript = match offer.verify_controller(context, &controller) {
                     Ok(transcript) => transcript,
                     Err(reason) => {
@@ -137,6 +160,7 @@ impl RemoteControlControllerPairingState {
                             context,
                             controller,
                             window,
+                            protocol_version,
                         };
                         return ReceiveRemoteControlControllerPairingOfferOutcome::Rejected {
                             reason,
@@ -197,11 +221,13 @@ impl RemoteControlControllerPairingState {
                 context,
                 controller,
                 window,
+                protocol_version,
             } => {
                 self.phase = RemoteControlControllerPairingPhase::AwaitingOffer {
                     context,
                     controller,
                     window,
+                    protocol_version,
                 };
                 ApproveRemoteControlControllerPairingOutcome::OfferNotReceived
             }
@@ -265,11 +291,13 @@ impl RemoteControlControllerPairingState {
                 context,
                 controller,
                 window,
+                protocol_version,
             } => {
                 self.phase = RemoteControlControllerPairingPhase::AwaitingOffer {
                     context,
                     controller,
                     window,
+                    protocol_version,
                 };
                 RejectRemoteControlControllerPairingOutcome::OfferNotReceived
             }
@@ -322,11 +350,13 @@ impl RemoteControlControllerPairingState {
                 context,
                 controller,
                 window,
+                protocol_version,
             } => {
                 self.phase = RemoteControlControllerPairingPhase::AwaitingOffer {
                     context,
                     controller,
                     window,
+                    protocol_version,
                 };
                 ReceiveRemoteControlControllerPairingCompletedOutcome::OfferNotReceived
             }

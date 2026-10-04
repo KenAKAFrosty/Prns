@@ -1260,6 +1260,7 @@ mod tests {
             IssuedCommand {
                 id: CommandId(1),
                 command: PrnsCommand::OpenRemoteControlPairing(OpenRemoteControlPairing {
+                    admission: crate::remote_control::RemoteControlPairingAdmissionMode::Invitation,
                     target: EgressTarget::AllInterfaces,
                     expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(
                         60_000,

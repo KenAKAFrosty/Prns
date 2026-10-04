@@ -186,6 +186,21 @@ where
         self.changed()
     }
 
+    pub fn opened_direct(&mut self, expires_at: InstantMillis) -> RemoteControlTargetPairingUpdate {
+        if self.phase.is_terminal() {
+            return RemoteControlTargetPairingUpdate::PreservedTerminal;
+        }
+        if self.attempt_id.is_some() {
+            return RemoteControlTargetPairingUpdate::StaleAttempt;
+        }
+        self.phase = RemoteControlTargetPairingPhase::Invitation;
+        self.invitation_code = None;
+        self.controller_committed = false;
+        self.expires_at = Some(expires_at);
+        self.failure = None;
+        self.changed()
+    }
+
     pub fn confirmation_required(
         &mut self,
         attempt_id: Attempt,
@@ -613,6 +628,36 @@ impl Default for StableTargetAnnouncer {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn direct_open_has_no_code_and_late_open_cannot_overwrite_confirmation_or_terminal_state() {
+        use super::*;
+        let mut state = RemoteControlTargetPairingState::<u8>::new();
+        assert_eq!(
+            state.opened_direct(InstantMillis(100)),
+            RemoteControlTargetPairingUpdate::Changed
+        );
+        assert_eq!(state.phase(), RemoteControlTargetPairingPhase::Invitation);
+        assert_eq!(state.invitation_code(), None);
+        assert_eq!(state.expires_at(), Some(InstantMillis(100)));
+        assert_eq!(
+            state.confirmation_required(1, 123456, InstantMillis(90)),
+            RemoteControlTargetPairingUpdate::Changed
+        );
+        let confirming = state;
+        assert_eq!(
+            state.opened_direct(InstantMillis(200)),
+            RemoteControlTargetPairingUpdate::StaleAttempt
+        );
+        assert_eq!(state, confirming);
+        let _ = state.cancelled();
+        let cancelled = state;
+        assert_eq!(
+            state.opened_direct(InstantMillis(200)),
+            RemoteControlTargetPairingUpdate::PreservedTerminal
+        );
+        assert_eq!(state, cancelled);
+    }
+
     use super::*;
     use personal_rns::remote_control::RemoteControlRequestKind;
 

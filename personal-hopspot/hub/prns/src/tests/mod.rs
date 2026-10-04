@@ -83,6 +83,7 @@ pub(crate) fn fixture() -> (DeviceRegistry, Connection, Mock) {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Call {
+    Discover(DestinationHash),
     Resolve(IdentityHash),
     Establish(DestinationHash),
     Identify(LinkId, IdentityHash),
@@ -93,6 +94,9 @@ pub(crate) enum Call {
 #[derive(Clone, Copy)]
 pub(crate) enum Failure {
     None,
+    Discover,
+    Path,
+    StillNoRoute,
     Resolve,
     Establish,
     Identify,
@@ -192,7 +196,21 @@ impl RemoteControlTargetConnectionTransport for Mock {
         &self,
         destination: DestinationHash,
     ) -> Result<LinkId, SendError<EstablishLinkFailure>> {
+        let discovered = self
+            .shared
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|call| matches!(call, Call::Discover(_)));
         self.record(Call::Establish(destination));
+        if matches!(self.failure, Failure::Path | Failure::StillNoRoute)
+            || matches!(self.failure, Failure::Discover) && !discovered
+        {
+            return Err(SendError::Failed(EstablishLinkFailure::Rejected(
+                personal_rns::engine::EstablishLinkRejection::NoRouteToDestination,
+            )));
+        }
         if matches!(self.failure, Failure::Establish) {
             return Err(SendError::Busy);
         }
@@ -221,6 +239,16 @@ impl RemoteControlTargetConnectionTransport for Mock {
 }
 
 impl PrnsInventoryTransport for Mock {
+    async fn discover_target(&self, destination: DestinationHash) -> Result<(), RequestPathError> {
+        self.record(Call::Discover(destination));
+        if matches!(self.failure, Failure::Path) {
+            return Err(RequestPathError::Failed(
+                personal_rns::engine::RequestPathFailure::Timeout,
+            ));
+        }
+        Ok(())
+    }
+
     async fn inventory_interfaces(
         &self,
         link: LinkId,

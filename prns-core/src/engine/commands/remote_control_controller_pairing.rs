@@ -11,7 +11,7 @@ use crate::remote_control::{
     FailRemoteControlControllerPairingRequestOutcome, PersistRemoteControlControllerPairingOutcome,
     RejectRemoteControlControllerPairingOutcome, RemoteControlControllerPairingAborted,
     RemoteControlControllerPairingActivity, RemoteControlControllerPairingWindowError,
-    RemoteControlPairingAttemptId, RemoteControlPairingContext, RemoteControlPairingInvitationCode,
+    RemoteControlPairingAttemptId, RemoteControlPairingContext,
     RemoteControlPairingMessageWriteError, RemoteControlPairingRequest,
     RemoteControlPairingResponse, RemoteControlTargetAccess,
     REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
@@ -47,7 +47,7 @@ const _: () =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BeginRemoteControlControllerPairing {
     pub context: RemoteControlPairingContext,
-    pub invitation_code: RemoteControlPairingInvitationCode,
+    pub admission: crate::remote_control::RemoteControlPairingAdmission,
     pub pairing_expires_at: InstantMillis,
 }
 
@@ -543,7 +543,7 @@ impl<S: StorageLayout> EngineState<S> {
         match self.remote_control_controller_pairing.begin(
             controller,
             command.context,
-            command.invitation_code,
+            command.admission,
             now,
             command.pairing_expires_at,
         ) {
@@ -822,6 +822,7 @@ impl<S: StorageLayout> EngineState<S> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::panic, clippy::unwrap_used)]
+    use crate::remote_control::RemoteControlPairingInvitationCode;
 
     use super::*;
     use crate::engine::test_support::{filled_frame, routable_descriptor, TestStorageLayout};
@@ -1001,7 +1002,7 @@ mod tests {
             engine,
             PrnsCommand::BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing {
                 context: context(),
-                invitation_code: invitation_code(),
+                admission: invitation_code().into(),
                 pairing_expires_at: PAIRING_EXPIRES_AT,
             }),
             STARTED_AT,
@@ -1152,7 +1153,7 @@ mod tests {
             &mut engine,
             PrnsCommand::BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing {
                 context: context(),
-                invitation_code: invitation_code(),
+                admission: invitation_code().into(),
                 pairing_expires_at: PAIRING_EXPIRES_AT,
             }),
             STARTED_AT,
@@ -1905,7 +1906,7 @@ mod tests {
             &mut engine,
             PrnsCommand::BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing {
                 context: context(),
-                invitation_code: invitation_code(),
+                admission: invitation_code().into(),
                 pairing_expires_at: PAIRING_EXPIRES_AT,
             }),
             PAIRING_EXPIRES_AT,
@@ -1935,7 +1936,7 @@ mod tests {
             &mut engine,
             PrnsCommand::BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing {
                 context: context(),
-                invitation_code: invitation_code(),
+                admission: invitation_code().into(),
                 pairing_expires_at: PAIRING_EXPIRES_AT,
             }),
             STARTED_AT,
@@ -1980,7 +1981,7 @@ mod tests {
             &mut engine,
             PrnsCommand::BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing {
                 context: context(),
-                invitation_code: invitation_code(),
+                admission: invitation_code().into(),
                 pairing_expires_at: PAIRING_EXPIRES_AT,
             }),
             STARTED_AT,

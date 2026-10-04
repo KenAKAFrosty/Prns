@@ -4,7 +4,8 @@ use alloc::sync::Arc;
 use hopspot_hub_core::{ConfirmConnection, Connection, ReceiveInterfacePage};
 use personal_rns::remote_control::RemoteControlRequestKind;
 use personal_rns::runtime::{
-    RemoteControlTargetConnectionControl, RemoteControlTargetOperationError,
+    ConnectRemoteControlTargetError, RemoteControlTargetConnectionControl,
+    RemoteControlTargetOperationError, SendError,
 };
 
 pub struct PrnsDeviceWork<'fitting, Backend: PrnsInventoryTransport> {
@@ -96,9 +97,23 @@ impl<Backend: PrnsInventoryTransport> PrnsDeviceFitting<Backend> {
         let backend = Arc::clone(&self.backend);
         let expected = connection.target().identity_hash();
         let task = tokio::spawn(async move {
-            backend
-                .establish_remote_control_target(expected)
-                .await
+            let mut result = backend.establish_remote_control_target(expected).await;
+            if matches!(
+                result,
+                Err(ConnectRemoteControlTargetError::EstablishLink(
+                    SendError::Failed(personal_rns::engine::EstablishLinkFailure::Rejected(
+                        personal_rns::engine::EstablishLinkRejection::NoRouteToDestination
+                    ))
+                ))
+            ) {
+                backend
+                    .discover_target(connection.target().endpoint().destination_hash())
+                    .await
+                    .map_err(crate::PrnsConnectionError::Path)?;
+                result = backend.establish_remote_control_target(expected).await;
+            }
+            result
+                .map_err(crate::PrnsConnectionError::Target)
                 .map(|remote| PrnsLinkLease::new(Arc::clone(&backend), remote))
         });
         let lease = match task

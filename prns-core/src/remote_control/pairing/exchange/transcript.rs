@@ -86,7 +86,7 @@ impl RemoteControlPairingContext {
 pub struct RemoteControlPairingBegin {
     pub(super) protocol_version: RemoteControlPairingProtocolVersion,
     pub(super) controller: RemoteControlControllerIdentity,
-    pub(super) invitation_proof: RemoteControlPairingInvitationProof,
+    pub(super) invitation_proof: Option<RemoteControlPairingInvitationProof>,
 }
 
 impl RemoteControlPairingBegin {
@@ -100,14 +100,22 @@ impl RemoteControlPairingBegin {
         Self {
             protocol_version: RemoteControlPairingProtocolVersion::V4,
             controller,
-            invitation_proof,
+            invitation_proof: Some(invitation_proof),
+        }
+    }
+
+    pub fn direct_physical(controller: RemoteControlControllerIdentity) -> Self {
+        Self {
+            protocol_version: RemoteControlPairingProtocolVersion::DirectPhysicalV5,
+            controller,
+            invitation_proof: None,
         }
     }
 
     pub(super) const fn from_wire(
         protocol_version: RemoteControlPairingProtocolVersion,
         controller: RemoteControlControllerIdentity,
-        invitation_proof: RemoteControlPairingInvitationProof,
+        invitation_proof: Option<RemoteControlPairingInvitationProof>,
     ) -> Self {
         Self {
             protocol_version,
@@ -122,8 +130,8 @@ impl RemoteControlPairingBegin {
     }
 
     #[must_use]
-    pub const fn invitation_proof(&self) -> &RemoteControlPairingInvitationProof {
-        &self.invitation_proof
+    pub const fn invitation_proof(&self) -> Option<&RemoteControlPairingInvitationProof> {
+        self.invitation_proof.as_ref()
     }
 
     #[must_use]
@@ -376,6 +384,7 @@ impl RemoteControlPairingOffer {
                     self.protocol_version,
                     RemoteControlPairingProtocolVersion::V3
                         | RemoteControlPairingProtocolVersion::V4
+                        | RemoteControlPairingProtocolVersion::DirectPhysicalV5
                 ) {
                     super::PAIRING_AUTHORITY_ENCODED_LEN
                 } else {
@@ -663,7 +672,8 @@ fn pairing_transcript_digest(
                 &attempt_timeout,
             ])
         }
-        RemoteControlPairingProtocolVersion::V4 => {
+        RemoteControlPairingProtocolVersion::V4
+        | RemoteControlPairingProtocolVersion::DirectPhysicalV5 => {
             let (permission_bytes, permission_bytes_len) = transcript_permission_bytes(permissions);
             let permission_bytes = permission_bytes
                 .get(..permission_bytes_len)

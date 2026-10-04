@@ -41,3 +41,17 @@ pub use device_registry::{
 };
 
 pub use device_registry::{PrepareEnrollmentCompletion, PrepareEnrollmentCompletionOutcome};
+
+mod enrollment_settlement;
+pub use enrollment_settlement::{
+    EnrollmentProtocolResult, EnrollmentSettlement, EnrollmentSettlementSnapshot,
+    EnrollmentSettlementStatus, ObserveEnrollmentResult, ObserveEnrollmentResultOutcome,
+    ReadEnrollmentSettlement, RecordEnrollmentPersistence, RecordEnrollmentPersistenceOutcome,
+    RetryEnrollmentPersistence, RetryEnrollmentPersistenceOutcome,
+};
+
+mod usb_enrollment_approval;
+pub use usb_enrollment_approval::{
+    ReviewUsbEnrollmentOffer, ReviewUsbEnrollmentOfferError, ReviewUsbEnrollmentOfferOutcome,
+    UsbEnrollmentApproval,
+};

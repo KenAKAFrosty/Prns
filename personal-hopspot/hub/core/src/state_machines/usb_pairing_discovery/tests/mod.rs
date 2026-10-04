@@ -35,6 +35,24 @@ fn with_observation<R>(
     lifetime: u64,
     accept: impl FnOnce(RemoteControlPairingAvailabilityObservation<'_>) -> R,
 ) -> R {
+    with_observation_kind(
+        seed,
+        source,
+        observed,
+        lifetime,
+        prns_core::remote_control::RemoteControlPairingAvailabilityKind::PairingAvailable,
+        accept,
+    )
+}
+
+pub(crate) fn with_observation_kind<R>(
+    seed: u8,
+    source: InterfaceId,
+    observed: u64,
+    lifetime: u64,
+    kind: prns_core::remote_control::RemoteControlPairingAvailabilityKind,
+    accept: impl FnOnce(RemoteControlPairingAvailabilityObservation<'_>) -> R,
+) -> R {
     let signer = InMemoryNodeIdentity::from_secret_key_bytes(&[seed; IDENTITY_SECRET_KEY_LEN]);
     let mut wire = [0; BROADCAST_MTU];
     let header = WirePacketHeader {
@@ -51,13 +69,14 @@ fn with_observation<R>(
         context: WireContext::None,
     };
     let header_len = header.write(&mut wire).unwrap();
-    let payload_len = RemoteControlPairingAvailability::write_signed(
+    let payload_len = RemoteControlPairingAvailability::write_signed_kind(
         &signer,
         AnnounceId::mint(
             AnnounceEntropy::new([seed; AnnounceEntropy::LEN]),
             InstantMillis(observed),
         ),
         RemoteControlPairingExpiresAfter::try_from(DurationMillis(lifetime)).unwrap(),
+        kind,
         RemoteControlPairingPublicAppData::empty(),
         wire.get_mut(header_len..).unwrap(),
     )

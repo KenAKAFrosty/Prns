@@ -3,6 +3,8 @@ pub mod boards;
 mod entropy;
 mod gnss;
 mod remote_control;
+#[cfg(feature = "remote-control-pairing")]
+mod wiring;
 
 use alloc::string::{String, ToString};
 #[cfg(feature = "remote-control-pairing")]
@@ -422,6 +424,7 @@ fn firmware_on_event(event: PrnsEvent<'_>, _state: &RemoteControlHandle) {
             let attempt_id = confirmation.attempt_id();
             let confirmation_code = confirmation.confirmation_code().value();
             let expires_at = pairing.window().expires_at();
+            wiring::usb_first_owner::confirmation(confirmation.context().endpoint(), attempt_id);
             let _ = update_remote_control_state(|state| {
                 state.confirmation_required(attempt_id, confirmation_code, expires_at)
             });

@@ -827,3 +827,71 @@ fn real_wire_messages_drive_both_reducers_to_the_same_durable_pairing() {
             if attempt.attempt_id() == target_attempt_id
     ));
 }
+
+#[test]
+fn controller_binds_the_signed_offer_to_the_requested_admission_version() {
+    use crate::remote_control::{
+        RemoteControlPairingAdmission, RemoteControlPairingOfferVerificationError,
+    };
+    let fixture = PairingFixture::new();
+    for direct in [true, false] {
+        let mut state = RemoteControlControllerPairingState::default();
+        let admission = if direct {
+            RemoteControlPairingAdmission::DirectPhysical
+        } else {
+            RemoteControlPairingInvitationCode::from_value(0x1234_ABCD).into()
+        };
+        let BeginRemoteControlControllerPairingOutcome::BeginOwed { begin, .. } = state.begin(
+            fixture.controller,
+            fixture.context(),
+            admission,
+            CONTROLLER_STARTED_AT,
+            PAIRING_EXPIRES_AT,
+        ) else {
+            panic!("begin");
+        };
+        let (_, premature_transcript) = fixture.prepared(&begin).into_parts();
+        let premature_attempt = (&premature_transcript).into();
+        assert_eq!(
+            state.approve(premature_attempt, CONTROLLER_STARTED_AT),
+            ApproveRemoteControlControllerPairingOutcome::OfferNotReceived
+        );
+        assert_eq!(
+            state.reject(premature_attempt, CONTROLLER_STARTED_AT),
+            RejectRemoteControlControllerPairingOutcome::OfferNotReceived
+        );
+        let premature_completion =
+            RemoteControlPairingCompleted::signed_by(&fixture.target_signer, &premature_transcript)
+                .unwrap();
+        assert_eq!(
+            state.receive_completed(premature_completion, CONTROLLER_STARTED_AT),
+            ReceiveRemoteControlControllerPairingCompletedOutcome::OfferNotReceived
+        );
+        let other = if direct {
+            RemoteControlPairingBegin::new(
+                fixture.controller,
+                fixture.context().endpoint(),
+                RemoteControlPairingInvitationCode::from_value(0x1234_ABCD),
+            )
+        } else {
+            RemoteControlPairingBegin::direct_physical(fixture.controller)
+        };
+        let (offer, _) = fixture.prepared(&other).into_parts();
+        assert_eq!(
+            state.receive_offer(offer, OFFER_RECEIVED_AT),
+            ReceiveRemoteControlControllerPairingOfferOutcome::Rejected {
+                reason: RemoteControlPairingOfferVerificationError::ProtocolVersionMismatch {
+                    begin: begin.protocol_version(),
+                    offer: other.protocol_version()
+                }
+            }
+        );
+        let (offer, transcript) = fixture.prepared(&begin).into_parts();
+        assert_eq!(
+            state.receive_offer(offer, OFFER_RECEIVED_AT),
+            ReceiveRemoteControlControllerPairingOfferOutcome::ConfirmationRequired {
+                attempt_id: (&transcript).into()
+            }
+        );
+    }
+}

@@ -807,6 +807,13 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                     },
                 )
             }
+            RemoteControlPairingView::Closed
+                if open.admission
+                    == crate::remote_control::RemoteControlPairingAdmissionMode::DirectPhysical
+                    && open.target == EgressTarget::AllInterfaces =>
+            {
+                Some(OpenRemoteControlPairingRejection::DirectPhysicalRequiresInterface)
+            }
             RemoteControlPairingView::Closed => match open.target {
                 EgressTarget::AllInterfaces
                     if !interfaces
@@ -862,19 +869,29 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         let identity_hash = signer.identity_hash();
         let identity = RemoteControlPairingIdentity::new(identity_hash);
         let endpoint = identity.endpoint();
-        let mut invitation_entropy = [0u8; RemoteControlPairingInvitationCode::ENTROPY_LEN];
-        fill_random(&mut invitation_entropy);
-        let invitation_code = RemoteControlPairingInvitationCode::from_entropy(invitation_entropy);
-        let invitation_verifier = invitation_code.verifier();
+        let invitation_code = match open.admission {
+            crate::remote_control::RemoteControlPairingAdmissionMode::Invitation => {
+                let mut invitation_entropy = [0u8; RemoteControlPairingInvitationCode::ENTROPY_LEN];
+                fill_random(&mut invitation_entropy);
+                Some(RemoteControlPairingInvitationCode::from_entropy(
+                    invitation_entropy,
+                ))
+            }
+            crate::remote_control::RemoteControlPairingAdmissionMode::DirectPhysical => None,
+        };
 
         let mut announce_entropy = [0u8; AnnounceEntropy::LEN];
         fill_random(&mut announce_entropy);
         let announce_id = AnnounceId::mint(AnnounceEntropy::new(announce_entropy), now);
         let mut availability = [0u8; BROADCAST_MDU];
-        let availability_len = RemoteControlPairingAvailability::write_signed(
+        let availability_len = RemoteControlPairingAvailability::write_signed_kind(
             &signer,
             announce_id,
             open.expires_after,
+            match open.admission {
+                crate::remote_control::RemoteControlPairingAdmissionMode::Invitation => crate::remote_control::RemoteControlPairingAvailabilityKind::PairingAvailable,
+                crate::remote_control::RemoteControlPairingAdmissionMode::DirectPhysical => crate::remote_control::RemoteControlPairingAvailabilityKind::DirectPhysicalAvailable,
+            },
             open.public_app_data.as_borrowed(),
             &mut availability,
         )
@@ -932,13 +949,21 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             ));
         }
 
-        let session = RemoteControlPairingSession::new(
-            identity,
-            window,
-            open.permissions,
-            open.attempt_timeout,
-            invitation_verifier,
-        );
+        let session = match &invitation_code {
+            Some(code) => RemoteControlPairingSession::new(
+                identity,
+                window,
+                open.permissions,
+                open.attempt_timeout,
+                code.verifier(),
+            ),
+            None => RemoteControlPairingSession::direct_physical(
+                identity,
+                window,
+                open.permissions,
+                open.attempt_timeout,
+            ),
+        };
         let rejected = match self.remote_control_pairing.open(session, now) {
             PairingStateOpenOutcome::Opened => None,
             PairingStateOpenOutcome::Unavailable { unopened } => {
@@ -1326,6 +1351,7 @@ mod tests {
 
     fn open(target: EgressTarget) -> OpenRemoteControlPairing {
         OpenRemoteControlPairing {
+            admission: crate::remote_control::RemoteControlPairingAdmissionMode::Invitation,
             target,
             expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(60_000))
                 .unwrap(),
@@ -1884,7 +1910,9 @@ mod tests {
                 Settlement::OpenRemoteControlPairing(Ok(RemoteControlPairingOpened {
                     endpoint,
                     expires_at: InstantMillis(61_000),
-                    invitation_code: RemoteControlPairingInvitationCode::from_value(0xC3C3_C3C3),
+                    invitation_code: Some(RemoteControlPairingInvitationCode::from_value(
+                        0xC3C3_C3C3
+                    )),
                 })),
             )),
         );
@@ -4358,6 +4386,70 @@ mod tests {
             engine.remote_control_pairing_wake(),
             crate::engine::WakeSchedule::At(InstantMillis(61_000)),
         );
+    }
+
+    #[test]
+    fn direct_physical_open_requires_one_interface_and_never_mints_an_invitation() {
+        use crate::remote_control::RemoteControlPairingAdmissionMode;
+        let interface = InterfaceId::new([0x93; 8]);
+        let interfaces = [routable_descriptor(interface)];
+        let mut engine = crate::engine::EngineState::<TestStorageLayout>::default();
+        configure_pairing(&mut engine).unwrap();
+        let mut command = open(EgressTarget::AllInterfaces);
+        command.admission = RemoteControlPairingAdmissionMode::DirectPhysical;
+        let mut settlement = None;
+        engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(99),
+                command: PrnsCommand::OpenRemoteControlPairing(command.clone()),
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(1_000),
+            &mut |_| panic!("rejection must not draw entropy"),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::CommandSettled {
+                    settlement: observed,
+                    ..
+                }) = reaction
+                {
+                    settlement = Some(observed);
+                }
+            },
+        );
+        assert_eq!(
+            settlement,
+            Some(Settlement::OpenRemoteControlPairing(Err(
+                OpenRemoteControlPairingFailure::Rejected(
+                    OpenRemoteControlPairingRejection::DirectPhysicalRequiresInterface
+                )
+            )))
+        );
+        command.target = EgressTarget::Interface(interface);
+        let opened = engine
+            .open_remote_control_pairing_into(
+                command,
+                AttachedInterfaces::new(&interfaces),
+                InstantMillis(1_000),
+                &mut |bytes| {
+                    assert_ne!(bytes.len(), RemoteControlPairingInvitationCode::ENTROPY_LEN);
+                    fill_pairing_entropy(bytes);
+                },
+                &mut |_| {},
+            )
+            .unwrap();
+        assert_eq!(opened.invitation_code, None);
+        let RemoteControlPairingView::Open(session) = engine.remote_control_pairing_view() else {
+            panic!("not open");
+        };
+        assert_eq!(
+            session.verify_admission(&RemoteControlPairingBegin::direct_physical(
+                controller_identity()
+            )),
+            Ok(())
+        );
+        assert!(session
+            .verify_admission(&invited_begin(controller_identity(), opened.endpoint))
+            .is_err());
     }
 
     #[test]

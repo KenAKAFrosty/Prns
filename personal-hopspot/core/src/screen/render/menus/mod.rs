@@ -355,10 +355,15 @@ pub(in crate::screen) fn draw_remote_control_pairing_content<
             draw_small(display, MENU_ITEM_TOP + 16, "hold cancel");
         }
         RemoteControlTargetPairingPhase::Invitation => {
-            draw_small(display, MENU_ITEM_TOP, "Invitation");
-            let mut code: HString<12> = HString::new();
-            let _ = write!(code, "{:08X}", pairing.invitation_code().unwrap_or(0));
-            draw_body(display, MENU_ITEM_TOP + 10, &code);
+            if let Some(invitation) = pairing.invitation_code() {
+                draw_small(display, MENU_ITEM_TOP, "Invitation");
+                let mut code: HString<12> = HString::new();
+                let _ = write!(code, "{invitation:08X}");
+                draw_body(display, MENU_ITEM_TOP + 10, &code);
+            } else {
+                draw_small(display, MENU_ITEM_TOP, "USB setup");
+                draw_body(display, MENU_ITEM_TOP + 10, "Open Hopspot");
+            }
             let mut expiry: HString<20> = HString::new();
             let remaining = pairing
                 .expires_at()

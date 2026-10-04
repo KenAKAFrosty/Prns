@@ -186,7 +186,7 @@ pub struct RemoteControlPairingSession {
     window: RemoteControlPairingWindow,
     permissions: RemoteControlPairingPermissions,
     attempt_timeout: RemoteControlPairingAttemptTimeout,
-    invitation_verifier: RemoteControlPairingInvitationVerifier,
+    admission: RemoteControlPairingSessionAdmission,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,7 +221,7 @@ impl RemoteControlPairingSession {
             window,
             permissions,
             attempt_timeout,
-            invitation_verifier,
+            admission: RemoteControlPairingSessionAdmission::Invitation(invitation_verifier),
         }
     }
 
@@ -250,9 +250,35 @@ impl RemoteControlPairingSession {
         self.attempt_timeout
     }
 
-    #[must_use]
-    pub const fn invitation_verifier(&self) -> &RemoteControlPairingInvitationVerifier {
-        &self.invitation_verifier
+    pub fn direct_physical(
+        identity: RemoteControlPairingIdentity,
+        window: RemoteControlPairingWindow,
+        permissions: RemoteControlPairingPermissions,
+        attempt_timeout: RemoteControlPairingAttemptTimeout,
+    ) -> Self {
+        Self {
+            identity,
+            window,
+            permissions,
+            attempt_timeout,
+            admission: RemoteControlPairingSessionAdmission::DirectPhysical,
+        }
+    }
+
+    pub fn verify_admission(
+        &self,
+        begin: &RemoteControlPairingBegin,
+    ) -> Result<(), RemoteControlPairingInvitationProofInvalid> {
+        match (&self.admission, begin.invitation_proof()) {
+            (RemoteControlPairingSessionAdmission::Invitation(verifier), Some(proof)) => {
+                verifier.verify(self.endpoint(), begin.controller(), proof)
+            }
+            (RemoteControlPairingSessionAdmission::DirectPhysical, None) => Ok(()),
+            (RemoteControlPairingSessionAdmission::Invitation(_), None)
+            | (RemoteControlPairingSessionAdmission::DirectPhysical, Some(_)) => {
+                Err(RemoteControlPairingInvitationProofInvalid)
+            }
+        }
     }
 
     #[must_use]
@@ -263,16 +289,22 @@ impl RemoteControlPairingSession {
         RemoteControlPairingWindow,
         RemoteControlPairingPermissions,
         RemoteControlPairingAttemptTimeout,
-        RemoteControlPairingInvitationVerifier,
+        RemoteControlPairingSessionAdmission,
     ) {
         (
             self.identity,
             self.window,
             self.permissions,
             self.attempt_timeout,
-            self.invitation_verifier,
+            self.admission,
         )
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RemoteControlPairingSessionAdmission {
+    Invitation(RemoteControlPairingInvitationVerifier),
+    DirectPhysical,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]

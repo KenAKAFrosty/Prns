@@ -118,6 +118,7 @@ fn pairing_exchange_discriminants_and_bounds_are_stable() {
             RemoteControlPairingProtocolVersion::V2,
             RemoteControlPairingProtocolVersion::V3,
             RemoteControlPairingProtocolVersion::V4,
+            RemoteControlPairingProtocolVersion::DirectPhysicalV5,
         ],
     );
     assert_eq!(
@@ -277,7 +278,7 @@ fn the_v3_transcript_vector_is_stable_after_new_request_kinds_are_added() {
     let begin = RemoteControlPairingBegin::from_wire(
         RemoteControlPairingProtocolVersion::V3,
         controller,
-        invitation_code().into_proof(context.endpoint(), &controller),
+        Some(invitation_code().into_proof(context.endpoint(), &controller)),
     );
     let target_signer = signer(0x52);
     let prepared = RemoteControlPairingPreparedOffer::new(
@@ -309,7 +310,7 @@ fn legacy_pairing_versions_refuse_request_kinds_their_peers_cannot_parse() {
     let begin = RemoteControlPairingBegin::from_wire(
         RemoteControlPairingProtocolVersion::V3,
         controller,
-        invitation_code().into_proof(context.endpoint(), &controller),
+        Some(invitation_code().into_proof(context.endpoint(), &controller)),
     );
     let request = RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups;
     let permissions = permissions(RemoteControlRequestSet::only(request));
@@ -746,4 +747,57 @@ proptest! {
             prop_assert_eq!(RemoteControlPairingResponse::parse(&encoded), Ok(response));
         }
     }
+}
+
+#[test]
+fn direct_physical_begin_and_signed_offer_roundtrip_without_an_invitation() {
+    let mut fixture = PairingFixture::new();
+    fixture.begin = RemoteControlPairingBegin::direct_physical(controller(0x31));
+    let request = RemoteControlPairingRequest::Begin(fixture.begin);
+    let bytes = encoded_request(&request);
+    assert_eq!(
+        bytes.len(),
+        PAIRING_MESSAGE_HEADER_ENCODED_LEN + PAIRING_IDENTITY_ENCODED_LEN
+    );
+    assert_eq!(bytes[0], 5);
+    assert_eq!(RemoteControlPairingRequest::parse(&bytes).unwrap(), request);
+    let RemoteControlPairingRequest::Begin(begin) = request else {
+        panic!("begin expected")
+    };
+    assert_eq!(begin.invitation_proof(), None);
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(RemoteControlPairingRequest::parse(&trailing).is_err());
+    let mut downgraded = bytes;
+    downgraded[0] = 4;
+    assert!(RemoteControlPairingRequest::parse(&downgraded).is_err());
+    fixture.begin = begin;
+    let prepared = fixture.prepared_offer();
+    let (offer, _) = prepared.into_parts();
+    let response = RemoteControlPairingResponse::Offer(offer);
+    assert_eq!(
+        RemoteControlPairingResponse::parse(&encoded_response(&response)).unwrap(),
+        response
+    );
+}
+
+#[test]
+fn inconsistent_internal_begin_length_fails_without_writing_past_the_output() {
+    let controller = controller(0x31);
+    let code = RemoteControlPairingInvitationCode::from_value(0x1234_ABCD);
+    let begin =
+        RemoteControlPairingBegin::new(controller, PairingFixture::new().context.endpoint(), code);
+    let inconsistent = RemoteControlPairingBegin::from_wire(
+        RemoteControlPairingProtocolVersion::DirectPhysicalV5,
+        controller,
+        begin.invitation_proof,
+    );
+    let request = RemoteControlPairingRequest::Begin(inconsistent);
+    let mut output = [0xA5; PAIRING_BEGIN_ENCODED_LEN + 1];
+    assert!(request
+        .write_into(&mut output[..request.encoded_len()])
+        .is_err());
+    assert!(output[request.encoded_len()..]
+        .iter()
+        .all(|byte| *byte == 0xA5));
 }

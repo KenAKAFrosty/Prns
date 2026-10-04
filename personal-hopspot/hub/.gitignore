@@ -1,2 +1,3 @@
 /target/
 /verification/kani/target/
+/local-state/

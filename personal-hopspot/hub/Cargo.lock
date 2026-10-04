@@ -1000,6 +1000,7 @@ dependencies = [
  "embedded-storage-async",
  "heapless 0.8.0",
  "personal-rns",
+ "pipecircuit",
  "prns-core",
  "prns-macros",
  "sha2",

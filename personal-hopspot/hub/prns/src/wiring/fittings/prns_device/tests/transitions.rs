@@ -248,7 +248,7 @@ async fn upstream_failures_remain_typed_and_identification_failure_closes_once()
             perform(&mut fitting, PrnsDeviceIn::Connect { connection }).await,
             PrnsDeviceOut::ConnectionFailed {
                 connection,
-                source: expected
+                source: crate::PrnsConnectionError::Target(expected)
             }
         );
         assert_eq!(
@@ -393,4 +393,51 @@ async fn abandoned_connect_finishes_identification_and_releases_its_link() {
             Call::Close(LINK)
         ]
     );
+}
+
+#[test]
+fn absent_management_routes_are_discovered_once_and_failures_keep_their_stage() {
+    within_runtime(async {
+        for failure in [Failure::Discover, Failure::Path, Failure::StillNoRoute] {
+            let (_, connection, mut backend) = fixture();
+            backend.failure = failure;
+            let shared = Arc::clone(&backend.shared);
+            let mut fitting = PrnsDeviceFitting::new(connection.device(), backend);
+            let outcome = perform(&mut fitting, PrnsDeviceIn::Connect { connection }).await;
+            match failure {
+                Failure::Discover => assert!(matches!(outcome, PrnsDeviceOut::Connected { .. })),
+                Failure::Path => assert_eq!(outcome, PrnsDeviceOut::ConnectionFailed {
+                    connection,
+                    source: crate::PrnsConnectionError::Path(RequestPathError::Failed(personal_rns::engine::RequestPathFailure::Timeout)),
+                }),
+                Failure::StillNoRoute => assert_eq!(outcome, PrnsDeviceOut::ConnectionFailed {
+                    connection,
+                    source: crate::PrnsConnectionError::Target(ConnectRemoteControlTargetError::EstablishLink(SendError::Failed(EstablishLinkFailure::Rejected(personal_rns::engine::EstablishLinkRejection::NoRouteToDestination)))),
+                }),
+                Failure::None | Failure::Resolve | Failure::Establish | Failure::Identify | Failure::Inventory | Failure::Panic => unreachable!(),
+            }
+            let calls = shared.calls.lock().unwrap();
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|call| matches!(call, Call::Discover(_)))
+                    .count(),
+                1
+            );
+            assert!(calls.contains(&Call::Discover(
+                connection.target().endpoint().destination_hash()
+            )));
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|call| matches!(call, Call::Establish(_)))
+                    .count(),
+                if matches!(failure, Failure::Path) {
+                    1
+                } else {
+                    2
+                }
+            );
+        }
+    });
 }

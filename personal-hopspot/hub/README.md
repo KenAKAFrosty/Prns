@@ -192,6 +192,56 @@ refusals, restart, write failure and retry, publication uncertainty, and invaria
 translation. These PRNS-dependent checks use proptest; the existing bounded
 label proof remains the Kani lane.
 
+## Coordinating enrollment results
+
+`state_machines/enrollment_settlement` owns one pending completion and its
+settlement phase. `ObserveEnrollmentResult` matches the PRNS attempt ID before
+changing state. Authorization success moves to `AwaitingPersistence` and emits
+the completion command with its original Hub generation. Protocol failure emits
+`FailEnrollment` with the exact reason and becomes terminal. Other attempts are
+returned unchanged. `ReadEnrollmentSettlement` exposes the phase and bound token.
+
+Once authorization succeeds, duplicate success, expiry, link loss, and protocol
+persistence-failure callbacks return `AwaitingPersistence` without issuing more
+work. `RetryEnrollmentPersistence` explicitly requests another attempt using the
+same completion command. Only `RecordEnrollmentPersistence` after durable Hub
+completion enters `Recorded`. Premature acknowledgment is refused; terminal
+acknowledgments and retries do not reopen enrollment. Protocol-result and
+acknowledgment inputs are trusted in-process contracts, not proof objects.
+
+`wiring/enrollment_coordinator` binds this machine to `DeviceStore` and the
+registry. Construct one `EnrollmentCoordinator` from the exact `Enrollment`
+returned by `BeginEnrollment` and its authenticated expected target. Route
+controller authorization-persisted, authorization-persistence-failed, expired,
+and link-closed PRNS messages through `receive::<CAPACITY>`. Target-side messages
+and aborts before an attempt ID exists return `Unhandled`; discovery, pairing
+initiation, and approval remain the caller's responsibility. The borrowed message
+remains available for other consumers. Unrelated attempts never touch storage.
+
+The coordinator persists before reporting `Recorded` and acknowledges its core
+machine only after registry completion. It retains `AwaitingPersistence` on
+storage errors and ordinary registry refusals. Call `retry::<CAPACITY>` after
+resolving the cause. This includes the previous slice's published-but-unconfirmed
+case: later link-close callbacks cannot discard an already authorized retry.
+`inspect()` delegates to the core query step. Stale generations, forgotten
+records, mismatched targets, duplicates, and snapshot capacity remain precise
+flat outcomes. I/O and impossible acknowledgment failures retain typed errors.
+
+The coordinator does not own the entire registry or install itself into the
+native event loop. The eventual application owner must serialize registry/store
+access, route authenticated events from its own PRNS node, and run these
+synchronous writes on its blocking-work lane. It must preserve the coordinator
+while resolving a pending write; unrelated saves or manual cancellation still
+require reconciliation after uncertain publication. Enrollment tokens and
+coordinators remain scoped to the originating registry lifetime.
+
+Tests route actual PRNS message variants through real file storage, verify
+saved records, isolate a second pending device, retry write and capacity failures,
+and reject retired Hub generations even with a deliberately reused test attempt
+ID. A property test compares arbitrary event, retry, query, and acknowledgment
+histories with an independent phase model. The PRNS type graph still prevents a
+new whole-machine Kani proof; the bounded label harness remains the formal lane.
+
 ## Remembered-device connections
 
 `BeginConnection` only accepts paired records. Its `Connect` outcome gives the
@@ -792,7 +842,7 @@ cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
 cargo build --locked -p hopspot-hub-core --lib --no-default-features
 cargo llvm-cov clean --workspace
 cargo hub-coverage
-CARGO_INCREMENTAL=0 cargo hub-mutants --file 'core/src/state_machines/device_registry/**' --file 'prns/src/wiring/device_store/**' --output target/hub-mutants/enrollment-persistence
+CARGO_INCREMENTAL=0 cargo hub-mutants --output target/hub-mutants/usb-enrollment
 cargo kani --manifest-path verification/kani/Cargo.toml --lib --output-format terse
 ```
 
@@ -809,15 +859,59 @@ denominator; no production source is excluded. This is source coverage, not
 exhaustive branch or application verification. The unfiltered mutation alias covers both
 workspace crates except proof bodies. For incremental candidates, filter to
 changed and new production owners plus affected existing owners; the command
-above shows this slice's scope. File filters include untracked source that a Git
+above runs this broader candidate without filters. File filters include untracked source that a Git
 diff would omit. Every selected mutation still runs the full workspace test
 suite. Report the scope and prior full baseline explicitly. Run the unfiltered
 `cargo hub-mutants` for changes with broad impact on contracts, dependencies,
 or test infrastructure, or when requested. Require zero missed or timed-out mutants and report caught and
 unviable counts separately.
 
-The enrollment-persistence candidate passes 155 tests and covers all 213
-production functions, 2,044 lines, and 2,314 regions. The two filters above cover
+The USB-enrollment candidate passes 181 Hub tests, with the hardware test run
+separately. Its coverage report reaches 100% across 253 functions, 2,487 lines,
+and 2,770 regions, conservatively including the test-support counter fixture.
+The full workspace mutation sweep resolves all 304 mutants: 138 caught and 166
+unviable, with zero survivors, timeouts or unclassified outcomes. Compiler
+rejections comprise 141 missing-Default errors, 21 unsupported-constructor
+errors and four invalid generated let-chain expressions. The report is
+`target/hub-mutants/usb-enrollment/mutants.out`. This is the new full mutation
+baseline for subsequent scoped candidates. Native protocol integration, both
+runtime implementations, 44 controlled-time simulations, production no_std,
+Clippy and the isolated label Kani proof also pass.
+
+The shared MCU policy covers all six functions, 74 lines and 61 regions. Changed
+pairing admission/state/wire regions and both invitation/USB rendering paths
+are covered by the combined PRNS-core and device-core LLVM run: 2,155 PRNS tests
+and 226 device-core tests pass, with three preexisting ignored PRNS tests.
+The MCU mutation scope includes the entire new first-owner source plus changed
+pairing-state and rendering code, explicitly adding the untracked owner to the
+diff. All 20 mutants are classified: 15 caught and five unviable. An initial
+surviving invitation-layout mutant prompted stronger pixel assertions for both
+admission modes; the complete scope passed on rerun. The changed upstream
+protocol scope classifies all 48 mutants: 25 caught and 23 unviable. Every MCU
+mutant runs the complete device-core unit suite; every protocol mutant runs the
+complete PRNS-core unit suite. Neither final run has survivors or timeouts. All 28 upstream unviable
+mutants are missing-Default compiler rejections. Generated first-owner and
+approval regression seeds are retained without comments and replayed against
+the restored source.
+Reports are rooted at `../../target/hopspot-mcu-mutants-final/mutants.out` and
+`../../target/hopspot-protocol-mutants/mutants.out`; shared-code coverage is
+`../../target/hopspot-protocol-core-coverage.json`. These are scoped upstream
+audits, separate from the unfiltered Hub workspace sweep.
+
+
+The preceding enrollment-coordinator candidate passed 167 tests and covers all 230
+production functions, 2,227 lines, and 2,468 regions. Its four scoped filters covered
+the new settlement and coordinator owners plus the affected registry and store
+owners. They resolve 100 mutants: 49 caught and 51 unviable, with no survivors,
+timeouts, or unclassified results. All unviable outcomes are audited compiler
+rejections: 49 missing Default implementations and two generated syntax errors.
+The report is `target/hub-mutants/enrollment-coordinator/mutants.out`. The new
+settlement property regression seed is preserved without comments and replayed
+against restored source. Formatting, Clippy, production `no_std`, and the bounded
+label Kani proof pass. No broader PRNS-dependent proof is claimed.
+
+The enrollment-persistence baseline `7ddb891af` passed 155 tests and covered all 213
+production functions, 2,044 lines, and 2,314 regions. Its two filters covered
 all registry and device-store production operations, including new untracked
 source. They resolve 79 mutants: 42 caught and 37 unviable, with no survivors,
 timeouts, or unclassified results. The compiler rejects 35 generated missing
@@ -825,7 +919,7 @@ Default implementations and two invalid generated syntax cases. The run is
 recorded in `target/hub-mutants/enrollment-persistence/mutants.out`. The generated
 preparation regression seed is preserved without comments and replayed against
 the restored source. Formatting, Clippy, production `no_std`, and the bounded
-label Kani proof also pass. The prior full baseline remains `d0e688246`.
+label Kani proof also pass. At that checkpoint, the prior full baseline was `d0e688246`.
 
 The remembered-device baseline `c813367d0` passed 148 tests and covered all 206
 production functions, 1,946 lines, and 2,206 regions. Its six file filters resolved
@@ -900,24 +994,61 @@ compilation failure in its request-set proof (a `u32` shift by 32); the main cor
 crate's Kani lane is not claimed to pass.
 
 Both workspaces retain lockfiles. The native integration test requires localhost
-socket access. No physical device or non-host platform is qualified by these
-checks.
+socket access. The portable checks do not qualify other hardware or operating systems. The
+separate T-Beam USB enrollment and post-reboot evidence is recorded below.
+
+## USB first-owner enrollment
+
+The T-Beam Supreme now enables remote-control pairing and a code-free USB
+first-owner window. After provisioning is restored, only a confirmed unowned
+device opens the two-minute window on its USB interface. Existing ownership,
+uncertain restoration, expiry, and a consumed attempt keep it closed. The shared
+Pipecircuit owner correlates the endpoint and attempt before granting approval.
+
+PRNS DirectPhysicalV5 uses a distinct signed availability kind and binds the
+admission version into its signed exchange. It carries no invitation code.
+Invitation pairing remains separate; requests cannot switch admission modes.
+The target admits first-owner traffic only directly on the selected interface.
+
+`prepare_native_usb_enrollment` captures verified pairing events in a bounded
+inbox. `UsbEnrollmentWork` initiates and approves the selected direct candidate,
+checks identity, authority and deadlines, and drives `EnrollmentCoordinator` to
+durable recording before returning `Ready`. Filesystem settlement runs outside
+the node event loop. Exits return the registry, store, coordinator and event inbox
+for recovery. Overflow and protocol refusals are ordinary outcomes; exhausted
+identifiers, invalid clock sequences and persistence errors remain typed failures.
+
+The existing device-session driver accepts the returned registry and device.
+When its management route is absent, it requests the stable endpoint's path and
+retries connection once. This also supports a remembered device without requiring
+an unsolicited announcement. Path-discovery errors retain their own failure stage.
+Automatic retry scheduling across a not-yet-attached USB device remains a separate
+reconnect-policy boundary.
+
+The shipping T-Beam target uses silent logging because its USB serial/JTAG
+peripheral also carries protocol frames. Text logging on that peripheral was
+observed interleaving with signed binary packets. The physical board completed
+USB enrollment and a subsequent Hub restart restored its identity, authenticated,
+and read all five live interfaces. Replacing the application firmware and
+rebooting the board also preserved authorization and passed the same inventory
+check. The ignored hardware test uses `local-state/`
+to retain the enrolled controller and device record across runs; that directory
+is private, ignored installation state and must be retained for this pairing.
+The test allows five seconds for USB Auto attachment before starting management.
+
+```console
+cargo test --locked -p hopspot-hub-prns --lib attached_tbeam_enrolls_and_reports_live_interfaces -- --ignored --nocapture
+```
+
+First-owner timing and offer approval use property tests over their time and
+correlation boundaries. A test-support feature provides an exhausted registry
+counter for exercising the wiring's invariant propagation without weakening the
+normal constructor. Existing bounded label Kani proofs remain applicable.
 
 ## Next boundaries
 
-Native USB discovery now routes verified observations and exposes current
-inspection and selection; runtime pairing dispatch
-still requires that user intent. Remembered devices will
-reconnect automatically without replaying configuration commands. Headless
-first enrollment will use an unowned boot window, direct-only admission,
-code-free automatic approval, and owner authority. Network-driven interface
-status and power controls follow; a change affecting the requesting controller's management
-interface will need a device-owned confirmation deadline and rollback.
-
-Per-installation identity, native USB bootstrap, and bounded physical work are
-in place, together with automatic per-device dispatch, cancellation, and native
-shutdown supervision and live verified discovery. Next, implement headless
-enrollment and connect it to the session driver and explicit device-record
-persistence, then add reconnect/deadline policy. Controller sharing, explicit
-device replacement, firmware installation, clusters, and relationship views
-remain later capabilities.
+Add automatic reconnect/deadline policy and network-driven interface status and
+power controls. A change affecting the requesting controller's management
+interface needs a device-owned confirmation deadline and rollback. Controller
+sharing, explicit device replacement, firmware installation, clusters and
+relationship views remain later capabilities.

@@ -10,10 +10,10 @@ mod participants;
 
 pub use participants::{PrnsDevice, PrnsDeviceIn, PrnsDeviceOut};
 pub use wiring::{
-    PrnsDeviceCompletion, PrnsDeviceFitting, PrnsDeviceIncoming, PrnsDeviceOutgoing,
-    PrnsDeviceQueueCapacityError, PrnsDeviceSubmission, PrnsDeviceWork, PrnsDeviceWorker,
-    PrnsDeviceWorkerError, PrnsDeviceWorkerIncoming, PrnsDeviceWorkerOutgoing, PrnsFittingError,
-    PrnsInventoryTransport,
+    PrnsConnectionError, PrnsDeviceCompletion, PrnsDeviceFitting, PrnsDeviceIncoming,
+    PrnsDeviceOutgoing, PrnsDeviceQueueCapacityError, PrnsDeviceSubmission, PrnsDeviceWork,
+    PrnsDeviceWorker, PrnsDeviceWorkerError, PrnsDeviceWorkerIncoming, PrnsDeviceWorkerOutgoing,
+    PrnsFittingError, PrnsInventoryTransport,
 };
 
 pub use wiring::{
@@ -52,3 +52,11 @@ pub use wiring::{
 };
 
 pub use wiring::{PersistEnrollmentError, PersistEnrollmentOutcome};
+
+pub use wiring::{EnrollmentCoordinator, EnrollmentCoordinatorError, EnrollmentCoordinatorOutcome};
+
+pub use wiring::{
+    EnrollmentEvent, EnrollmentEvents, EnrollmentEventsFailure, NativeUsbEnrollmentRuntime,
+    UsbEnrollmentExit, UsbEnrollmentFailure, UsbEnrollmentOutcome, UsbEnrollmentWork,
+    prepare_native_usb_enrollment,
+};

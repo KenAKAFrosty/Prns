@@ -17,6 +17,7 @@ use super::{EgressTarget, EgressTargetRejection, PrnsCommand, Settleable, Settle
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenRemoteControlPairing {
+    pub admission: crate::remote_control::RemoteControlPairingAdmissionMode,
     pub target: EgressTarget,
     pub expires_after: RemoteControlPairingExpiresAfter,
     pub attempt_timeout: RemoteControlPairingAttemptTimeout,
@@ -28,7 +29,7 @@ pub struct OpenRemoteControlPairing {
 pub struct RemoteControlPairingOpened {
     pub endpoint: RemoteControlPairingEndpoint,
     pub expires_at: InstantMillis,
-    pub invitation_code: RemoteControlPairingInvitationCode,
+    pub invitation_code: Option<RemoteControlPairingInvitationCode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +37,7 @@ pub enum OpenRemoteControlPairingRejection {
     Unavailable,
     AlreadyOpen,
     NoTransmittingInterfaces,
+    DirectPhysicalRequiresInterface,
     EgressTarget(EgressTargetRejection),
     AttemptTimeoutExceedsWindow {
         attempt_timeout: RemoteControlPairingAttemptTimeout,

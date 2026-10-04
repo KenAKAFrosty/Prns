@@ -5,7 +5,7 @@ use hopspot_hub_core::{
     ReadDeviceInterfacesOutcome, ReadDeviceOutcome, ReceiveInterfacePageOutcome,
     RefreshInterfacesError, RefreshInterfacesOutcome,
 };
-use personal_rns::runtime::{ConnectRemoteControlTargetError, RemoteControlTargetOperationError};
+use personal_rns::runtime::RemoteControlTargetOperationError;
 use personal_rns::units::RttMillis;
 
 #[expect(clippy::large_enum_variant)]
@@ -48,7 +48,7 @@ pub enum DeviceSessionEvent {
     },
     ConnectionFailed {
         connection: Connection,
-        source: ConnectRemoteControlTargetError,
+        source: crate::PrnsConnectionError,
         outcome: EndConnectionOutcome,
     },
     RefreshRequested {

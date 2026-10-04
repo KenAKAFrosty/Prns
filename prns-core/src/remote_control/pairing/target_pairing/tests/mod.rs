@@ -1202,3 +1202,39 @@ fn finalization_is_irrevocable_under_expiry_rejection_and_link_loss() {
             if attempt.attempt_id() == attempt_id
     ));
 }
+
+#[test]
+fn direct_physical_admission_and_invitation_admission_cannot_substitute_for_each_other() {
+    let fixture = TargetPairingFixture::new();
+    let direct = RemoteControlPairingSession::direct_physical(
+        RemoteControlPairingIdentity::new(fixture.session.identity().identity_hash()),
+        RemoteControlPairingWindow::new(PAIRING_OPENED_AT, PAIRING_EXPIRES_AT).unwrap(),
+        permissions(),
+        fixture.attempt_timeout(),
+    );
+    let begin = RemoteControlPairingBegin::direct_physical(*fixture.begin.controller());
+    assert_eq!(direct.verify_admission(&begin), Ok(()));
+    assert_eq!(
+        fixture.session.verify_admission(&begin),
+        Err(crate::remote_control::RemoteControlPairingInvitationProofInvalid)
+    );
+    assert_eq!(
+        direct.verify_admission(&fixture.begin),
+        Err(crate::remote_control::RemoteControlPairingInvitationProofInvalid)
+    );
+    let arrival = RemoteControlTargetPairingBeginArrival::new(
+        begin,
+        responder(fixture.link_id, 1),
+        fixture.begin.controller().identity_hash(),
+    );
+    let mut state = RemoteControlTargetPairingState::default();
+    assert!(matches!(
+        state.begin(
+            &fixture.target_signer,
+            &direct,
+            &arrival,
+            ATTEMPT_STARTED_AT
+        ),
+        BeginRemoteControlTargetPairingOutcome::OfferPrepared { .. }
+    ));
+}

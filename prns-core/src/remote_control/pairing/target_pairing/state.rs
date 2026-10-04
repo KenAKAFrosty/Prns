@@ -135,11 +135,7 @@ impl RemoteControlTargetPairingState {
                 },
             };
         }
-        match session.invitation_verifier().verify(
-            session.endpoint(),
-            arrival.begin.controller(),
-            arrival.begin.invitation_proof(),
-        ) {
+        match session.verify_admission(&arrival.begin) {
             Ok(()) => {}
             Err(RemoteControlPairingInvitationProofInvalid) => {
                 return BeginRemoteControlTargetPairingOutcome::Rejected {

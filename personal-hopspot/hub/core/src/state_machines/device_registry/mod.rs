@@ -87,3 +87,6 @@ pub use remembered::{
 };
 
 pub use enrollment::{PrepareEnrollmentCompletion, PrepareEnrollmentCompletionOutcome};
+
+#[cfg(feature = "test-support")]
+mod support;

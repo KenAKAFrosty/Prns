@@ -181,7 +181,7 @@ mod tests {
                 RemoteControlPairingIdentity::new(IdentityHash::new([0x51; 16])).endpoint(),
                 LINK_ID,
             ),
-            invitation_code: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD),
+            admission: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD).into(),
             pairing_expires_at: InstantMillis(10_000),
         }
     }

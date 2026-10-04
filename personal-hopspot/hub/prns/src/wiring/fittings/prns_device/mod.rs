@@ -13,7 +13,7 @@ use lease::PrnsLinkLease;
 use personal_rns::identity::IdentityHash;
 use personal_rns::runtime::PrnsNodeHandle;
 
-pub use backend::PrnsInventoryTransport;
+pub use backend::{PrnsConnectionError, PrnsInventoryTransport};
 pub use transport::{PrnsDeviceIncoming, PrnsDeviceOutgoing};
 pub use work::PrnsDeviceWork;
 

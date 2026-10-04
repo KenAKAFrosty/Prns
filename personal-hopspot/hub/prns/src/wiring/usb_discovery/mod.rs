@@ -40,7 +40,7 @@ pub fn prepare_native_usb_discovery<const CAPACITY: usize>(
     )
 }
 
-fn prepare_discovery<const CAPACITY: usize>(
+pub(super) fn prepare_discovery<const CAPACITY: usize>(
     installation: ControllerInstallation,
     attach_usb: impl FnOnce(&PrnsNodeHandle) -> AttachedInterface,
     rescan: Arc<Notify>,

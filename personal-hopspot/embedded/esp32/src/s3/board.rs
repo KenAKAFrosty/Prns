@@ -40,7 +40,7 @@ pub(crate) struct S3BoardHardware<D, B, G> {
 }
 
 #[allow(async_fn_in_trait)]
-pub(crate) trait Esp32S3Board {
+pub(crate) trait Esp32S3Board: 'static {
     const ANNOUNCE_APP_DATA: &'static [u8];
     const NODE_ANNOUNCE_APP_DATA: &'static [u8];
     const BOOT_BANNER: &'static str;
@@ -48,6 +48,8 @@ pub(crate) trait Esp32S3Board {
     const MEMORY_PROFILE: &'static MemoryProfile;
     #[cfg(feature = "remote-control-pairing")]
     const REMOTE_CONTROL_PAIRING: bool = false;
+    #[cfg(feature = "remote-control-pairing")]
+    const USB_FIRST_OWNER: bool = false;
     type Display: crate::display_runtime::S3BoardDisplay;
     type Battery: screen::BatterySource;
     type Gnss: GnssProvider;

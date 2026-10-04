@@ -465,7 +465,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         EXECUTOR
             .init(esp_rtos::embassy::Executor::new())
             .run(|spawner| {
-                let run = crate::storage::allocate_psram(manifold_run(node, persistence));
+                let run = crate::storage::allocate_psram(manifold_run::<B>(node, persistence));
                 let run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>> =
                     // SAFETY: `allocate_psram` leaks this allocation, so it cannot move or be freed.
                     unsafe { core::pin::Pin::new_unchecked(run) };
@@ -511,6 +511,19 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 .expect("stable target announcer task fits"),
         );
         spawner.spawn(pairing_close_task(handle).expect("pairing close task fits"));
+    }
+
+    #[cfg(feature = "remote-control-pairing")]
+    if B::USB_FIRST_OWNER {
+        spawner.spawn(
+            wiring::usb_first_owner::run(
+                handle,
+                usb_status,
+                remote_control_pairing_permissions.clone(),
+                remote_control_pairing_public_app_data.clone(),
+            )
+            .expect("USB first owner task fits"),
+        );
     }
 
     let wifi_status = wifi.as_ref().map(|(interface, _)| interface.status());
@@ -1037,6 +1050,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                         screen::RemoteControlTargetPairingState::begin_opening,
                                     );
                                     let open = OpenRemoteControlPairing {
+                                        admission: personal_rns::remote_control::RemoteControlPairingAdmissionMode::Invitation,
                                         target: AnnounceTarget::AllInterfaces,
                                         expires_after: RemoteControlPairingExpiresAfter::try_from(
                                             personal_rns::units::DurationMillis(
@@ -1062,7 +1076,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                                 opened.endpoint.destination_hash(),
                                                 opened.expires_at.0
                                             );
-                                            let invitation_code = opened.invitation_code.value();
+                                            let invitation_code = opened.invitation_code.expect("invitation pairing returns a code").value();
                                             let expires_at = opened.expires_at;
                                             let _ = update_remote_control_state(|state| {
                                                 state.opened(invitation_code, expires_at)
@@ -1520,7 +1534,7 @@ async fn manifold_task(run: core::pin::Pin<&'static mut dyn core::future::Future
     run.await
 }
 
-async fn manifold_run(
+async fn manifold_run<B: Esp32S3Board>(
     node: &'static mut S3Node,
     persistence: &'static mut crate::persistence::S3Persistence,
 ) {
@@ -1532,6 +1546,9 @@ async fn manifold_run(
     #[cfg(feature = "remote-control-pairing")]
     {
         set_remote_control_clock(report.logical_start);
+        if B::USB_FIRST_OWNER {
+            wiring::usb_first_owner::restored(B::USB_INTERFACE_ID, report);
+        }
     }
     boot_stage(BootPhase::PersistenceRestoreComplete);
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)

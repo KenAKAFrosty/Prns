@@ -93,6 +93,7 @@ impl super::Lab<'_> {
         let handle = self.nodes[super::TARGET].handle.clone();
         let task = self.insert(async move {
             let opened = handle.open_remote_control_pairing(personal_rns::engine::OpenRemoteControlPairing {
+                admission: personal_rns::remote_control::RemoteControlPairingAdmissionMode::Invitation,
                 target: personal_rns::engine::EgressTarget::AllInterfaces,
                 expires_after: personal_rns::remote_control::RemoteControlPairingExpiresAfter::try_from(personal_rns::units::DurationMillis(30_000)).expect("window"),
                 attempt_timeout: personal_rns::remote_control::RemoteControlPairingAttemptTimeout::try_from(personal_rns::units::DurationMillis(10_000)).expect("attempt"),

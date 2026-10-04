@@ -5,6 +5,7 @@ use pipecircuit_visualization::{BehaviorError, BehaviorInventory};
 fn behavior_remains_reviewable() -> Result<(), BehaviorError> {
     expect![[r#"
         - Abandoned connect finishes identification and releases its link
+        - Absent management routes are discovered once and failures keep their stage
         - Admission and exchange failures preserve request and link ownership
         - Arbitrary commands match single link ownership
         - Connected pages preserve tokens cursors status and rtt

@@ -146,6 +146,24 @@ pub struct RemoteControlPairingInvitationProofInvalid;
 pub(super) const PAIRING_INVITATION_PROOF_ENCODED_LEN: usize =
     REMOTE_CONTROL_PAIRING_INVITATION_PROOF_LEN;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteControlPairingAdmission {
+    InvitationCode(RemoteControlPairingInvitationCode),
+    DirectPhysical,
+}
+
+impl From<RemoteControlPairingInvitationCode> for RemoteControlPairingAdmission {
+    fn from(code: RemoteControlPairingInvitationCode) -> Self {
+        Self::InvitationCode(code)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlPairingAdmissionMode {
+    Invitation,
+    DirectPhysical,
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]

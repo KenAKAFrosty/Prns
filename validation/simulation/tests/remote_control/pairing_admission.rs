@@ -96,7 +96,7 @@ fn identity_mismatch_replayed_begin_and_competing_controller_stay_silent_without
             let wrong = RemoteControlPairingRequest::Begin(RemoteControlPairingBegin::new(
                 lab.nodes[OPERATOR].identity,
                 opened.endpoint,
-                opened.invitation_code.clone(),
+                opened.invitation_code.clone().unwrap(),
             ));
             let before = lab.target_response_count();
             assert_eq!(
@@ -107,7 +107,7 @@ fn identity_mismatch_replayed_begin_and_competing_controller_stay_silent_without
             let begin = RemoteControlPairingBegin::new(
                 lab.nodes[OUTSIDER].identity,
                 opened.endpoint,
-                opened.invitation_code.clone(),
+                opened.invitation_code.clone().unwrap(),
             );
             assert!(matches!(
                 exchange(
@@ -122,7 +122,7 @@ fn identity_mismatch_replayed_begin_and_competing_controller_stay_silent_without
             let replay = RemoteControlPairingRequest::Begin(RemoteControlPairingBegin::new(
                 lab.nodes[OUTSIDER].identity,
                 opened.endpoint,
-                opened.invitation_code.clone(),
+                opened.invitation_code.clone().unwrap(),
             ));
             let before = lab.target_response_count();
             for (controller, link, request) in
@@ -166,7 +166,7 @@ fn complete(
     let begin = RemoteControlPairingBegin::new(
         lab.nodes[OUTSIDER].identity,
         opened.endpoint,
-        opened.invitation_code.clone(),
+        opened.invitation_code.clone().unwrap(),
     );
     let RemoteControlPairingResponse::Offer(offer) = exchange(
         lab,
@@ -175,7 +175,7 @@ fn complete(
         &RemoteControlPairingRequest::Begin(RemoteControlPairingBegin::new(
             lab.nodes[OUTSIDER].identity,
             opened.endpoint,
-            opened.invitation_code,
+            opened.invitation_code.unwrap(),
         )),
     )
     .expect("offer") else {

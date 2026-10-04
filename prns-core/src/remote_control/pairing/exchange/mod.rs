@@ -62,6 +62,7 @@ prns_macros::iterable_enum! {
         V2 = 2,
         V3 = 3,
         V4 = 4,
+        DirectPhysicalV5 = 5,
     }
 }
 
@@ -76,6 +77,7 @@ impl RemoteControlPairingProtocolVersion {
             2 => Some(Self::V2),
             3 => Some(Self::V3),
             4 => Some(Self::V4),
+            5 => Some(Self::DirectPhysicalV5),
             _ => None,
         }
     }

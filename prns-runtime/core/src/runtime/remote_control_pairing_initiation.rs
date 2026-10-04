@@ -18,7 +18,7 @@ use super::{
 #[derive(Debug, PartialEq, Eq)]
 pub struct InitiateRemoteControlControllerPairing {
     pub endpoint: RemoteControlPairingEndpoint,
-    pub invitation_code: RemoteControlPairingInvitationCode,
+    pub admission: crate::remote_control::RemoteControlPairingAdmission,
     pub expires_at: InstantMillis,
 }
 
@@ -30,7 +30,7 @@ impl InitiateRemoteControlControllerPairing {
     ) -> Self {
         Self {
             endpoint: observation.endpoint(),
-            invitation_code,
+            admission: invitation_code.into(),
             expires_at: observation.expires_at(),
         }
     }
@@ -86,7 +86,7 @@ pub trait RemoteControlControllerPairingInitiationControl:
             let result = self
                 .begin_remote_control_controller_pairing(BeginRemoteControlControllerPairing {
                     context: RemoteControlPairingContext::new(initiate.endpoint, link_id),
-                    invitation_code: initiate.invitation_code,
+                    admission: initiate.admission,
                     pairing_expires_at: initiate.expires_at,
                 })
                 .await;
@@ -313,7 +313,7 @@ mod tests {
     fn initiate() -> InitiateRemoteControlControllerPairing {
         InitiateRemoteControlControllerPairing {
             endpoint: endpoint(),
-            invitation_code: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD),
+            admission: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD).into(),
             expires_at: PAIRING_EXPIRES_AT,
         }
     }
@@ -321,7 +321,7 @@ mod tests {
     fn expected_begin() -> BeginRemoteControlControllerPairing {
         BeginRemoteControlControllerPairing {
             context: RemoteControlPairingContext::new(endpoint(), LINK_ID),
-            invitation_code: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD),
+            admission: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD).into(),
             pairing_expires_at: PAIRING_EXPIRES_AT,
         }
     }

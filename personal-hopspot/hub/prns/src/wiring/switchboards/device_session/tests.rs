@@ -431,18 +431,18 @@ fn typed_failures_settle_the_core_without_erasing_last_complete_inventory() {
         &mut registry,
         DeviceSessionMessage::Prns(PrnsDeviceOut::ConnectionFailed {
             connection,
-            source: ConnectRemoteControlTargetError::Resolve(
+            source: crate::PrnsConnectionError::Target(ConnectRemoteControlTargetError::Resolve(
                 ResolveRemoteControlTargetControlError::Busy,
-            ),
+            )),
         }),
     );
     assert_eq!(
         failed.event,
         DeviceSessionEvent::ConnectionFailed {
             connection,
-            source: ConnectRemoteControlTargetError::Resolve(
+            source: crate::PrnsConnectionError::Target(ConnectRemoteControlTargetError::Resolve(
                 ResolveRemoteControlTargetControlError::Busy
-            ),
+            )),
             outcome: EndConnectionOutcome::AttemptEnded {
                 connection,
                 reason: DisconnectionReason::ConnectionFailed
@@ -634,9 +634,9 @@ fn mismatched_targets_are_closed_and_foreign_callbacks_preserve_both_devices() {
         },
         PrnsDeviceOut::ConnectionFailed {
             connection: foreign,
-            source: ConnectRemoteControlTargetError::Resolve(
+            source: crate::PrnsConnectionError::Target(ConnectRemoteControlTargetError::Resolve(
                 ResolveRemoteControlTargetControlError::Busy,
-            ),
+            )),
         },
         page(request),
         PrnsDeviceOut::InterfacesFailed {

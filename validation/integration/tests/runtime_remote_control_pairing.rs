@@ -168,6 +168,7 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
         let opened = open_pairing_when_attached(
             &target_handle,
             OpenRemoteControlPairing {
+                admission: personal_rns::remote_control::RemoteControlPairingAdmissionMode::Invitation,
                 target: EgressTarget::AllInterfaces,
                 expires_after: RemoteControlPairingExpiresAfter::try_from(PAIRING_WINDOW)
                     .expect("the pairing window is valid"),
@@ -197,7 +198,7 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
         let _offered = controller_handle
             .initiate_remote_control_controller_pairing(InitiateRemoteControlControllerPairing {
                 endpoint: availability.endpoint,
-                invitation_code: opened.invitation_code,
+                admission: opened.invitation_code.unwrap().into(),
                 expires_at: availability.expires_at,
             })
             .await
@@ -430,6 +431,7 @@ async fn target_rejection_retires_the_exchange_without_authorizing_either_node()
         let opened = open_pairing_when_attached(
             &target_handle,
             OpenRemoteControlPairing {
+                admission: personal_rns::remote_control::RemoteControlPairingAdmissionMode::Invitation,
                 target: EgressTarget::AllInterfaces,
                 expires_after: RemoteControlPairingExpiresAfter::try_from(PAIRING_WINDOW)
                     .expect("the pairing window is valid"),
@@ -455,7 +457,7 @@ async fn target_rejection_retires_the_exchange_without_authorizing_either_node()
         let _offered = controller_handle
             .initiate_remote_control_controller_pairing(InitiateRemoteControlControllerPairing {
                 endpoint: availability.endpoint,
-                invitation_code: opened.invitation_code,
+                admission: opened.invitation_code.unwrap().into(),
                 expires_at: availability.expires_at,
             })
             .await

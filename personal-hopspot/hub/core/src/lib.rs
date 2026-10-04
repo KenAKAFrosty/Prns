@@ -36,3 +36,15 @@ pub use state_machines::{
 };
 
 pub use state_machines::{PrepareEnrollmentCompletion, PrepareEnrollmentCompletionOutcome};
+
+pub use state_machines::{
+    EnrollmentProtocolResult, EnrollmentSettlement, EnrollmentSettlementSnapshot,
+    EnrollmentSettlementStatus, ObserveEnrollmentResult, ObserveEnrollmentResultOutcome,
+    ReadEnrollmentSettlement, RecordEnrollmentPersistence, RecordEnrollmentPersistenceOutcome,
+    RetryEnrollmentPersistence, RetryEnrollmentPersistenceOutcome,
+};
+
+pub use state_machines::{
+    ReviewUsbEnrollmentOffer, ReviewUsbEnrollmentOfferError, ReviewUsbEnrollmentOfferOutcome,
+    UsbEnrollmentApproval,
+};

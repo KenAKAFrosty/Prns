@@ -491,3 +491,11 @@ mod tests {
         assert_eq!(disconnected.as_slice()[0].text(), "Peers 0");
     }
 }
+
+mod state_machines;
+pub use state_machines::{
+    ApproveUsbFirstOwner, ApproveUsbFirstOwnerOutcome, BindUsbFirstOwnerWindow,
+    BindUsbFirstOwnerWindowOutcome, PrepareUsbFirstOwnerWindow, PrepareUsbFirstOwnerWindowOutcome,
+    ReadUsbFirstOwner, UsbFirstOwner, UsbFirstOwnerClockError, UsbFirstOwnerSnapshot,
+    UsbFirstOwnerStatus, UsbOwnershipRestore,
+};
