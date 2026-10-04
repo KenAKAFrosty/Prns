@@ -48,3 +48,5 @@ mod device_store;
 pub use device_store::{
     DeviceArchiveError, DeviceStore, DeviceStoreError, LoadDevicesOutcome, SaveDevicesOutcome,
 };
+
+pub use device_store::{PersistEnrollmentError, PersistEnrollmentOutcome};

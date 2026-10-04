@@ -50,3 +50,5 @@ pub use wiring::{
 pub use wiring::{
     DeviceArchiveError, DeviceStore, DeviceStoreError, LoadDevicesOutcome, SaveDevicesOutcome,
 };
+
+pub use wiring::{PersistEnrollmentError, PersistEnrollmentOutcome};

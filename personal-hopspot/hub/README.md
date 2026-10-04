@@ -157,6 +157,41 @@ corruption. The registry architecture and behavior expectations include both new
 steps; the physical store has a behavior inventory. The PRNS type graph still
 precludes expanding the existing isolated Kani harness here.
 
+## Persisting enrollment completion
+
+`PrepareEnrollmentCompletion::<CAPACITY>` validates a completion command against
+its exact pending token, expected target, and existing paired targets. It returns
+an owned prospective snapshot in which only that pending record becomes paired.
+It leaves the live registry unchanged. Missing records, retired tokens, target
+mismatches, duplicate targets, and insufficient snapshot capacity are flat
+outcomes preserving the rejected completion command. Other pending records stay
+unpaired in the snapshot.
+
+`DeviceStore::persist_enrollment::<CAPACITY>` prepares that snapshot, persists it,
+and only then applies `CompleteEnrollment`. It keeps exclusive mutable registry
+access throughout the synchronous operation. Preparation refusals never write;
+write failures return the completion command and precise store error while
+leaving the live enrollment pending. An unexpected post-write completion refusal
+is an invariant error, preserving the actual core outcome.
+
+On `PublishedDurabilityUnconfirmed`, disk may already contain the paired record
+while memory remains pending. The coordinator must retry the returned completion
+or reconcile storage before cancellation, another save, or reporting success.
+The API does not lock future registry operations across calls or roll back a
+published file. A process restart loads the published snapshot if it survived.
+Successful retry confirms storage before activating the live record.
+
+This operation consumes an already authenticated completion after PRNS
+controller authorization persistence succeeds. It does not initiate pairing,
+authenticate the completion input, or make the PRNS and Hub files a transaction.
+The upstream invitation-code protocol remains a separate integration boundary.
+
+Property tests compare prospective snapshots with completed exports over varied
+labels, targets, and neighboring pending states. Deterministic tests cover all
+refusals, restart, write failure and retry, publication uncertainty, and invariant
+translation. These PRNS-dependent checks use proptest; the existing bounded
+label proof remains the Kani lane.
+
 ## Remembered-device connections
 
 `BeginConnection` only accepts paired records. Its `Connect` outcome gives the
@@ -757,7 +792,7 @@ cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
 cargo build --locked -p hopspot-hub-core --lib --no-default-features
 cargo llvm-cov clean --workspace
 cargo hub-coverage
-CARGO_INCREMENTAL=0 cargo hub-mutants --file 'core/src/state_machines/device_registry/**' --file 'core/src/domain_primitives/remembered_device.rs' --file 'prns/src/wiring/device_store/**' --file 'prns/src/wiring/controller_installation/**' --file 'prns/src/wiring/runtime/**' --file 'prns/src/wiring/usb_discovery/**'
+CARGO_INCREMENTAL=0 cargo hub-mutants --file 'core/src/state_machines/device_registry/**' --file 'prns/src/wiring/device_store/**' --output target/hub-mutants/enrollment-persistence
 cargo kani --manifest-path verification/kani/Cargo.toml --lib --output-format terse
 ```
 
@@ -781,8 +816,19 @@ suite. Report the scope and prior full baseline explicitly. Run the unfiltered
 or test infrastructure, or when requested. Require zero missed or timed-out mutants and report caught and
 unviable counts separately.
 
-The remembered-device candidate passes 148 tests and covers all 206 production
-functions, 1,946 lines, and 2,206 regions. The six file filters above resolve
+The enrollment-persistence candidate passes 155 tests and covers all 213
+production functions, 2,044 lines, and 2,314 regions. The two filters above cover
+all registry and device-store production operations, including new untracked
+source. They resolve 79 mutants: 42 caught and 37 unviable, with no survivors,
+timeouts, or unclassified results. The compiler rejects 35 generated missing
+Default implementations and two invalid generated syntax cases. The run is
+recorded in `target/hub-mutants/enrollment-persistence/mutants.out`. The generated
+preparation regression seed is preserved without comments and replayed against
+the restored source. Formatting, Clippy, production `no_std`, and the bounded
+label Kani proof also pass. The prior full baseline remains `d0e688246`.
+
+The remembered-device baseline `c813367d0` passed 148 tests and covered all 206
+production functions, 1,946 lines, and 2,206 regions. Its six file filters resolved
 89 mutants: 41 caught and 48 unviable, with no survivors or timeouts. Unviable
 results are 35 missing-Default errors, 11 unsupported-constructor errors, and two
 invalid generated syntax cases. This scope includes all registry operations,

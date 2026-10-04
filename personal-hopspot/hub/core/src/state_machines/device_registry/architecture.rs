@@ -78,6 +78,14 @@ fn architecture_remains_reviewable() -> Result<(), ArchitectureError> {
         │   └── ◆ ListDevicesOutcome
         │       ├── Listed
         │       └── InsufficientCapacity
+        ├── ▸ PrepareEnrollmentCompletion
+        │   └── ◆ PrepareEnrollmentCompletionOutcome
+        │       ├── Prepared
+        │       ├── MissingDevice
+        │       ├── StaleEnrollment
+        │       ├── TargetMismatch
+        │       ├── TargetAlreadyPaired
+        │       └── InsufficientCapacity
         ├── ▸ ReadDevice
         │   └── ◆ ReadDeviceOutcome
         │       ├── Found

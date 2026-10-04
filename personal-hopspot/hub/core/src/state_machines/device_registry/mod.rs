@@ -85,3 +85,5 @@ pub use remembered::{
     ReadRememberedDevices, ReadRememberedDevicesOutcome, RestoreRememberedDevice,
     RestoreRememberedDeviceError, RestoreRememberedDeviceOutcome,
 };
+
+pub use enrollment::{PrepareEnrollmentCompletion, PrepareEnrollmentCompletionOutcome};

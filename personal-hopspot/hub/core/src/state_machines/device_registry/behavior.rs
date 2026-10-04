@@ -18,6 +18,8 @@ fn behavior_remains_reviewable() -> Result<(), BehaviorError> {
         - Forgetting invalidates every enrollment step even after row reuse
         - Forgetting returns pending or live connection and invalidates late results
         - Only paired devices connect and confirmation binds the expected target
+        - Preparation preserves exact refusals and does not change pending records
+        - Prospective records equal completed export without activating enrollment
         - Query steps own snapshots and refuse incomplete lists
         - Remembered records preserve labels and pairings without live state
         - Restore exhaustion retains the complete rejected record

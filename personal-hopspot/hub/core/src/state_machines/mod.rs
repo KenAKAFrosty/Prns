@@ -39,3 +39,5 @@ pub use device_registry::{
     ReadRememberedDevices, ReadRememberedDevicesOutcome, RestoreRememberedDevice,
     RestoreRememberedDeviceError, RestoreRememberedDeviceOutcome,
 };
+
+pub use device_registry::{PrepareEnrollmentCompletion, PrepareEnrollmentCompletionOutcome};

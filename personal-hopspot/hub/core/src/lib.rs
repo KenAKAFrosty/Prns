@@ -34,3 +34,5 @@ pub use state_machines::{
     ReadRememberedDevices, ReadRememberedDevicesOutcome, RestoreRememberedDevice,
     RestoreRememberedDeviceError, RestoreRememberedDeviceOutcome,
 };
+
+pub use state_machines::{PrepareEnrollmentCompletion, PrepareEnrollmentCompletionOutcome};

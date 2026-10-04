@@ -23,3 +23,6 @@ impl EnrollmentState {
         }
     }
 }
+
+mod prepare;
+pub use prepare::{PrepareEnrollmentCompletion, PrepareEnrollmentCompletionOutcome};

@@ -131,7 +131,7 @@ impl DeviceRegistry {
 }
 
 impl EnrollmentState {
-    fn remembered(&self) -> RememberedPairing {
+    pub(super) fn remembered(&self) -> RememberedPairing {
         match self {
             Self::Planned | Self::Pairing { .. } => RememberedPairing::Unpaired,
             Self::Paired { target } => RememberedPairing::Paired { target: *target },

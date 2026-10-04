@@ -77,3 +77,5 @@ fn complete(enrollment: Enrollment, seed: u8) -> CompleteEnrollment {
 }
 
 mod remembered;
+
+mod preparation;

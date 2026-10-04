@@ -36,17 +36,7 @@ impl StepInputOf<DeviceRegistry> for CompleteEnrollment {
     type Outcome = CompleteEnrollmentOutcome;
 
     fn step(self, registry: &mut DeviceRegistry) -> Self::Outcome {
-        let already_paired = registry
-            .devices
-            .rows()
-            .find_map(|row| match row.enrollment {
-                EnrollmentState::Paired { target } if target == self.target.public_keys() => {
-                    Some(DeviceId(row.id.value()))
-                }
-                EnrollmentState::Paired { .. }
-                | EnrollmentState::Pairing { .. }
-                | EnrollmentState::Planned => None,
-            });
+        let already_paired = registry.paired_target(&self.target);
         match registry.devices.update_with(
             WarpId::new(self.enrollment.device.0),
             self,
@@ -66,23 +56,66 @@ impl EnrollmentState {
         input: CompleteEnrollment,
         already_paired: Option<DeviceId>,
     ) -> CompleteEnrollmentOutcome {
-        let Some(expected_target) = self.pending_target(input.enrollment) else {
-            return CompleteEnrollmentOutcome::StaleEnrollment { rejected: input };
+        match self.check_completion(&input, already_paired) {
+            CompletionCheck::Ready { target } => {
+                *self = Self::Paired { target };
+                CompleteEnrollmentOutcome::Recorded {
+                    enrollment: input.enrollment,
+                }
+            }
+            CompletionCheck::Stale => {
+                CompleteEnrollmentOutcome::StaleEnrollment { rejected: input }
+            }
+            CompletionCheck::Mismatch => {
+                CompleteEnrollmentOutcome::TargetMismatch { rejected: input }
+            }
+            CompletionCheck::Duplicate { device } => {
+                CompleteEnrollmentOutcome::TargetAlreadyPaired {
+                    rejected: input,
+                    device,
+                }
+            }
+        }
+    }
+
+    pub(super) fn check_completion(
+        &self,
+        input: &CompleteEnrollment,
+        already_paired: Option<DeviceId>,
+    ) -> CompletionCheck {
+        let Some(target) = self.pending_target(input.enrollment) else {
+            return CompletionCheck::Stale;
         };
-        if input.target.public_keys() != &expected_target {
-            return CompleteEnrollmentOutcome::TargetMismatch { rejected: input };
+        if input.target.public_keys() != &target {
+            return CompletionCheck::Mismatch;
         }
         if let Some(device) = already_paired {
-            return CompleteEnrollmentOutcome::TargetAlreadyPaired {
-                rejected: input,
-                device,
-            };
+            return CompletionCheck::Duplicate { device };
         }
-        *self = Self::Paired {
-            target: expected_target,
-        };
-        CompleteEnrollmentOutcome::Recorded {
-            enrollment: input.enrollment,
-        }
+        CompletionCheck::Ready { target }
+    }
+}
+
+pub(super) enum CompletionCheck {
+    Ready {
+        target: prns_core::identity::IdentityPublicKeys,
+    },
+    Stale,
+    Mismatch,
+    Duplicate {
+        device: DeviceId,
+    },
+}
+
+impl DeviceRegistry {
+    pub(super) fn paired_target(&self, identity: &RemoteControlTargetIdentity) -> Option<DeviceId> {
+        self.devices.rows().find_map(|row| match row.enrollment {
+            EnrollmentState::Paired { target } if target == identity.public_keys() => {
+                Some(DeviceId(row.id.value()))
+            }
+            EnrollmentState::Paired { .. }
+            | EnrollmentState::Pairing { .. }
+            | EnrollmentState::Planned => None,
+        })
     }
 }

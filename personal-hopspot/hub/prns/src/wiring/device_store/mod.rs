@@ -105,12 +105,16 @@ impl DeviceStore {
                 return Ok(SaveDevicesOutcome::InsufficientCapacity { required });
             }
         };
-        let bytes = codec::encode(&devices);
+        self.save_records(&devices)
+            .map(|()| SaveDevicesOutcome::Saved)
+    }
+
+    fn save_records(&mut self, devices: &[RememberedDevice]) -> Result<(), DeviceStoreError> {
+        let bytes = codec::encode(devices);
         let mut staged = NamedTempFile::new_in(&self.directory)?;
         stage_snapshot(staged.as_file_mut(), &bytes, File::sync_all)
             .map_err(DeviceStoreError::Io)
             .and_then(|()| self.publish(staged, confirm_directory))
-            .map(|()| SaveDevicesOutcome::Saved)
     }
 
     fn publish(
@@ -163,3 +167,6 @@ fn stage_snapshot(
     file.write_all(bytes)?;
     sync(file)
 }
+
+mod enrollment;
+pub use enrollment::{PersistEnrollmentError, PersistEnrollmentOutcome};
