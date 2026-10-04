@@ -168,7 +168,8 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
         let opened = open_pairing_when_attached(
             &target_handle,
             OpenRemoteControlPairing {
-                admission: personal_rns::remote_control::RemoteControlPairingAdmissionMode::Invitation,
+                admission:
+                    personal_rns::remote_control::RemoteControlPairingAdmissionMode::Invitation,
                 target: EgressTarget::AllInterfaces,
                 expires_after: RemoteControlPairingExpiresAfter::try_from(PAIRING_WINDOW)
                     .expect("the pairing window is valid"),
@@ -431,7 +432,8 @@ async fn target_rejection_retires_the_exchange_without_authorizing_either_node()
         let opened = open_pairing_when_attached(
             &target_handle,
             OpenRemoteControlPairing {
-                admission: personal_rns::remote_control::RemoteControlPairingAdmissionMode::Invitation,
+                admission:
+                    personal_rns::remote_control::RemoteControlPairingAdmissionMode::Invitation,
                 target: EgressTarget::AllInterfaces,
                 expires_after: RemoteControlPairingExpiresAfter::try_from(PAIRING_WINDOW)
                     .expect("the pairing window is valid"),

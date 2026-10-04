@@ -41,6 +41,8 @@ cargo_lock_workspaces = [
     "personal-hopspot/embedded/esp32",
     "personal-hopspot/embedded/nrf52840",
     "personal-hopspot/headless",
+    "personal-hopspot/hub",
+    "personal-hopspot/hub/verification/kani",
     "personal-hopspot/mobile/android/rust",
     "personal-hopspot/mobile/ios/rust",
     "prns-config",
@@ -97,6 +99,10 @@ cargo_manifests = [
     "personal-hopspot/flasher/Cargo.toml",
     "personal-hopspot/appliance/Cargo.toml",
     "personal-hopspot/headless/Cargo.toml",
+    "personal-hopspot/hub/Cargo.toml",
+    "personal-hopspot/hub/core/Cargo.toml",
+    "personal-hopspot/hub/prns/Cargo.toml",
+    "personal-hopspot/hub/verification/kani/Cargo.toml",
     "personal-hopspot/memory/Cargo.toml",
     "personal-hopspot/mobile/android/rust/Cargo.toml",
     "personal-hopspot/mobile/ios/rust/Cargo.toml",
@@ -141,6 +147,8 @@ format_manifests = [
     "personal-hopspot/embedded/esp32/Cargo.toml",
     "personal-hopspot/embedded/nrf52840/Cargo.toml",
     "personal-hopspot/headless/Cargo.toml",
+    "personal-hopspot/hub/Cargo.toml",
+    "personal-hopspot/hub/verification/kani/Cargo.toml",
     "personal-hopspot/mobile/android/rust/Cargo.toml",
     "personal-hopspot/mobile/ios/rust/Cargo.toml",
     "prns-config/Cargo.toml",
@@ -174,9 +182,36 @@ workspace = "personal-hopspot/embedded/nrf52840"
 suite = "embedded-builds"
 reason = "The complete Nordic board and SoftDevice matrix is compiled for thumbv7em-none-eabihf by its PR suite."
 
+[[registry.cargo_check_delegations]]
+workspace = "personal-hopspot/hub/verification/kani"
+suite = "hopspot-hub-kani"
+reason = "The isolated proof workspace imports production primitives for Kani; the dedicated proof lane owns verification without importing their ordinary test harness."
+
 [[registry.asset_exemptions]]
 path = "prns-wasm/smoke/smoke.ts"
 reason = "Interactive browser-and-device smoke page; the automatable TypeScript smokes are registered suites."
+
+[[suite]]
+id = "hopspot-hub"
+domain = "core"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--manifest-path", "personal-hopspot/hub/Cargo.toml", "--locked", "--workspace", "--all-features", "--all-targets"]
+inputs = ["personal-hopspot/hub/core", "personal-hopspot/hub/prns", "personal-hopspot/hub/Cargo.toml", "personal-hopspot/hub/Cargo.lock"]
+artifacts = "validation-artifacts/results/hopspot-hub"
+
+[[suite]]
+id = "hopspot-hub-kani"
+domain = "core"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "kani"
+timeout_seconds = 600
+command = ["cargo", "kani", "--manifest-path", "personal-hopspot/hub/verification/kani/Cargo.toml", "--lib", "--output-format", "terse"]
+inputs = ["personal-hopspot/hub/core/src/domain_primitives/device", "personal-hopspot/hub/verification/kani"]
+artifacts = "validation-artifacts/results/hopspot-hub-kani"
 
 [[suite]]
 id = "cargo-locks"

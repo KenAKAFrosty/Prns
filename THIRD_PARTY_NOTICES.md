@@ -2,7 +2,7 @@
 
 This checked bundle covers the shipped and qualification Rust, JavaScript, and Android product graphs.
 It was generated with `cargo-about 0.9.1` by `./tools/prns repo notices generate`.
-Notice input fingerprint: `sha256:7d006523178922405d83a08d591fefe4bc5fd8726a431a48512837c5f4b6a544`.
+Notice input fingerprint: `sha256:ad5284f754e013c0e48c320046eb2073f1fa95653b312b0a7541ca7c71d93186`.
 Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before cargo-about reads its target-filtered packaged license material offline.
 Entries are deduplicated by SPDX identifier and canonical notice text; line endings, trailing space, and repeated blank lines are normalized without changing legal words.
 
@@ -10380,6 +10380,38 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+### MIT (f6d6ad197bbd)
+
+License: MIT License
+
+Used by: `pipecircuit 0.0.16`
+
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 Heltec Wireless Stick Lite V3, ESP32-S3 T-Beam, HaLoW headless, WASM, desktop Linux, desktop Windows, desktop macOS, engine, iOS, nRF52840
+
+```text
+MIT License
+
+Copyright (c) 2026 Pipecircuit contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ### MIT (f9b2e2e5feca)

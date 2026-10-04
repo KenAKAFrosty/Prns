@@ -2,6 +2,9 @@
 members = ["core", "prns"]
 resolver = "3"
 
+[workspace.package]
+license = "MIT OR Apache-2.0"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unnameable_types = "deny"
