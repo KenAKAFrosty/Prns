@@ -3,6 +3,7 @@ use pipecircuit_visualization::{BehaviorError, BehaviorInventory};
 #[test]
 fn behavior_remains_reviewable() -> Result<(), BehaviorError> {
     expect![[r#"
+        - Attached tbeam display controls are acknowledged over usb [ignored]
         - Attached tbeam enrolls and reports live interfaces [ignored]
         - Direct enrollment persists both authorizations and hands off to live interface inventory
         - Exhausted enrollment identifiers preserve the rejected offer and close its link

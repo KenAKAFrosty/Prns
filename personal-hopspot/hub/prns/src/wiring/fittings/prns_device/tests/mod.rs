@@ -5,3 +5,5 @@ mod properties;
 mod transitions;
 
 use crate::tests::*;
+
+mod controls;

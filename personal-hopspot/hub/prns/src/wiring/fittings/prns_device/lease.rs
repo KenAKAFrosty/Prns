@@ -1,4 +1,4 @@
-use super::PrnsInventoryTransport;
+use super::PrnsDeviceTransport;
 use alloc::sync::Arc;
 use personal_rns::runtime::{CloseRemoteControlTargetOutcome, RemoteControlTargetConnection};
 
@@ -7,13 +7,13 @@ enum LinkRelease {
     AlreadyReleased,
 }
 
-pub(super) struct PrnsLinkLease<Backend: PrnsInventoryTransport> {
+pub(super) struct PrnsLinkLease<Backend: PrnsDeviceTransport> {
     pub(super) remote: RemoteControlTargetConnection,
     backend: Arc<Backend>,
     release: LinkRelease,
 }
 
-impl<Backend: PrnsInventoryTransport> PrnsLinkLease<Backend> {
+impl<Backend: PrnsDeviceTransport> PrnsLinkLease<Backend> {
     pub(super) fn new(backend: Arc<Backend>, remote: RemoteControlTargetConnection) -> Self {
         Self {
             remote,
@@ -29,7 +29,7 @@ impl<Backend: PrnsInventoryTransport> PrnsLinkLease<Backend> {
     }
 }
 
-impl<Backend: PrnsInventoryTransport> Drop for PrnsLinkLease<Backend> {
+impl<Backend: PrnsDeviceTransport> Drop for PrnsLinkLease<Backend> {
     fn drop(&mut self) {
         match self.release {
             LinkRelease::OnDrop => {

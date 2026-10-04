@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::panic)]
 
 pub(crate) use crate::{
-    PrnsDevice, PrnsDeviceFitting, PrnsDeviceIn, PrnsDeviceOut, PrnsFittingError,
-    PrnsInventoryTransport,
+    PrnsDevice, PrnsDeviceFitting, PrnsDeviceIn, PrnsDeviceOut, PrnsDeviceTransport,
+    PrnsFittingError,
 };
 pub(crate) use alloc::sync::Arc;
 pub(crate) use core::num::NonZeroU32;
@@ -88,6 +88,7 @@ pub(crate) enum Call {
     Establish(DestinationHash),
     Identify(LinkId, IdentityHash),
     Inventory(LinkId, RemoteControlInterfacePage),
+    Control(LinkId, DeviceControlCommand),
     Close(LinkId),
 }
 
@@ -101,6 +102,7 @@ pub(crate) enum Failure {
     Establish,
     Identify,
     Inventory,
+    Control,
     Panic,
 }
 
@@ -109,6 +111,8 @@ pub(crate) struct Shared {
     pub(crate) identified: Notify,
     pub(crate) release: Notify,
     pub(crate) closed: Notify,
+    pub(crate) control_started: Notify,
+    pub(crate) control_release: Notify,
     pub(crate) inventory_started: Notify,
     pub(crate) inventory_release: Notify,
 }
@@ -119,6 +123,8 @@ pub(crate) struct Mock {
     pub(crate) permitted: RemoteControlRequestSet,
     pub(crate) settlement: CloseRemoteControlTargetOutcome,
     pub(crate) block: bool,
+    pub(crate) block_control: bool,
+    pub(crate) control_outcome: RemoteControlApplyOutcome,
     pub(crate) block_inventory: bool,
     pub(crate) shared: Arc<Shared>,
 }
@@ -131,12 +137,16 @@ impl Mock {
             permitted: RemoteControlRequestSet::only(RemoteControlRequestKind::InventoryInterfaces),
             settlement: CloseRemoteControlTargetOutcome::Queued,
             block: false,
+            block_control: false,
+            control_outcome: RemoteControlApplyOutcome::Applied,
             block_inventory: false,
             shared: Arc::new(Shared {
                 calls: Mutex::new(alloc::vec::Vec::new()),
                 identified: Notify::new(),
                 release: Notify::new(),
                 closed: Notify::new(),
+                control_started: Notify::new(),
+                control_release: Notify::new(),
                 inventory_started: Notify::new(),
                 inventory_release: Notify::new(),
             }),
@@ -238,7 +248,23 @@ impl RemoteControlTargetConnectionTransport for Mock {
     }
 }
 
-impl PrnsInventoryTransport for Mock {
+impl PrnsDeviceTransport for Mock {
+    async fn control(
+        &self,
+        link: LinkId,
+        command: DeviceControlCommand,
+    ) -> Result<(RemoteControlApplyOutcome, RttMillis), RemoteControlError> {
+        self.record(Call::Control(link, command));
+        self.shared.control_started.notify_one();
+        if self.block_control {
+            self.shared.control_release.notified().await;
+        }
+        if matches!(self.failure, Failure::Control) {
+            return Err(RemoteControlError::Request(SendError::NodeStopped));
+        }
+        Ok((self.control_outcome, RttMillis::new(43)))
+    }
+
     async fn discover_target(&self, destination: DestinationHash) -> Result<(), RequestPathError> {
         self.record(Call::Discover(destination));
         if matches!(self.failure, Failure::Path) {
@@ -291,7 +317,7 @@ impl PrnsInventoryTransport for Mock {
     }
 }
 
-pub(crate) async fn perform<B: PrnsInventoryTransport>(
+pub(crate) async fn perform<B: PrnsDeviceTransport>(
     fitting: &mut PrnsDeviceFitting<B>,
     input: PrnsDeviceIn,
 ) -> PrnsDeviceOut {
@@ -304,7 +330,7 @@ pub(crate) async fn perform<B: PrnsInventoryTransport>(
     output
 }
 
-pub(crate) async fn connect<B: PrnsInventoryTransport>(
+pub(crate) async fn connect<B: PrnsDeviceTransport>(
     fitting: &mut PrnsDeviceFitting<B>,
     connection: Connection,
 ) -> ConfirmConnection {
@@ -336,3 +362,23 @@ pub(crate) fn within_runtime(future: impl core::future::Future<Output = ()>) {
 }
 
 pub(crate) mod usb_observation;
+
+pub(crate) fn control_request(
+    registry: &mut DeviceRegistry,
+    connection: Connection,
+    command: DeviceControlCommand,
+) -> DeviceControlRequest {
+    let _confirmed = registry.step(ConfirmConnection {
+        connection,
+        target: connection.target(),
+        link: LINK,
+    });
+    let mut control = DeviceControls::new(connection.device());
+    let _cancelled = control.step(SynchronizeDeviceControls { registry });
+    let RequestDeviceControlOutcome::Requested { request } =
+        control.step(RequestDeviceControl { command }).unwrap()
+    else {
+        panic!("control unavailable")
+    };
+    request
+}

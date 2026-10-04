@@ -344,7 +344,7 @@ async fn fitting_invariants_and_peer_failures_keep_their_original_types() {
                     Failure::None => assert!(matches!(result, Ok(PrnsDeviceOut::Connected { .. }))),
                     Failure::Resolve => assert!(matches!(result, Ok(PrnsDeviceOut::ConnectionFailed { source: crate::PrnsConnectionError::Target(ConnectRemoteControlTargetError::Resolve(ResolveRemoteControlTargetControlError::TargetNotAuthorized)), .. }))),
                     Failure::Panic => assert!(matches!(result, Err(PrnsDeviceWorkerError::Fitting(PrnsFittingError::WorkerStopped { .. })))),
-                    Failure::Discover | Failure::Path | Failure::StillNoRoute | Failure::Establish | Failure::Identify | Failure::Inventory => panic!("unsupported scenario"),
+                    Failure::Discover | Failure::Path | Failure::StillNoRoute | Failure::Establish | Failure::Identify | Failure::Inventory | Failure::Control => panic!("unsupported scenario"),
                 }
                 drop(worker);
             });

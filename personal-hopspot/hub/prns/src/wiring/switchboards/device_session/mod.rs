@@ -13,6 +13,7 @@ pub use protocol::{
 };
 
 pub struct DeviceSessionSwitchboard<const CAPACITY: usize> {
+    controls: hopspot_hub_core::DeviceControls,
     device: DeviceId,
     interfaces: DeviceInterfaces<CAPACITY>,
 }
@@ -20,6 +21,7 @@ pub struct DeviceSessionSwitchboard<const CAPACITY: usize> {
 impl<const CAPACITY: usize> DeviceSessionSwitchboard<CAPACITY> {
     pub fn new(device: DeviceId) -> Self {
         Self {
+            controls: hopspot_hub_core::DeviceControls::new(device),
             device,
             interfaces: DeviceInterfaces::new(device),
         }

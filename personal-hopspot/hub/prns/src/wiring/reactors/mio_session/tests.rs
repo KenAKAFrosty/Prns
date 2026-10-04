@@ -36,6 +36,7 @@ fn tag(message: DeviceSessionMessage) -> bool {
         DeviceSessionMessage::Disconnect => false,
         DeviceSessionMessage::Connect
         | DeviceSessionMessage::Refresh
+        | DeviceSessionMessage::Control(_)
         | DeviceSessionMessage::Prns(_) => panic!("unexpected message"),
     }
 }

@@ -48,3 +48,10 @@ pub use state_machines::{
     ReviewUsbEnrollmentOffer, ReviewUsbEnrollmentOfferError, ReviewUsbEnrollmentOfferOutcome,
     UsbEnrollmentApproval,
 };
+
+pub use domain_primitives::{DeviceControlCommand, DeviceControlRequest};
+pub use state_machines::{
+    DeviceControls, DeviceControlsSnapshot, ReadDeviceControls, RequestDeviceControl,
+    RequestDeviceControlError, RequestDeviceControlOutcome, SettleDeviceControl,
+    SettleDeviceControlOutcome, SynchronizeDeviceControls,
+};

@@ -12,3 +12,6 @@ pub use pairing_candidate::PairingCandidate;
 
 mod remembered_device;
 pub use remembered_device::{RememberedDevice, RememberedPairing};
+
+mod device_controls;
+pub use device_controls::{DeviceControlCommand, DeviceControlRequest};

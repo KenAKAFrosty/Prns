@@ -13,7 +13,7 @@ use lease::PrnsLinkLease;
 use personal_rns::identity::IdentityHash;
 use personal_rns::runtime::PrnsNodeHandle;
 
-pub use backend::{PrnsConnectionError, PrnsInventoryTransport};
+pub use backend::{PrnsConnectionError, PrnsDeviceTransport};
 pub use transport::{PrnsDeviceIncoming, PrnsDeviceOutgoing};
 pub use work::PrnsDeviceWork;
 
@@ -32,13 +32,13 @@ pub enum PrnsFittingError {
     },
 }
 
-pub struct PrnsDeviceFitting<Backend: PrnsInventoryTransport = PrnsNodeHandle> {
+pub struct PrnsDeviceFitting<Backend: PrnsDeviceTransport = PrnsNodeHandle> {
     device: DeviceId,
     backend: Arc<Backend>,
     active: Option<(Connection, PrnsLinkLease<Backend>)>,
 }
 
-impl<Backend: PrnsInventoryTransport> PrnsDeviceFitting<Backend> {
+impl<Backend: PrnsDeviceTransport> PrnsDeviceFitting<Backend> {
     pub(super) fn release_unaccepted_connection(&mut self) {
         drop(self.active.take());
     }

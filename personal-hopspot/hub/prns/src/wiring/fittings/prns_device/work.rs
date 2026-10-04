@@ -1,4 +1,4 @@
-use super::{PrnsDeviceFitting, PrnsFittingError, PrnsInventoryTransport, PrnsLinkLease};
+use super::{PrnsDeviceFitting, PrnsDeviceTransport, PrnsFittingError, PrnsLinkLease};
 use crate::{PrnsDeviceIn, PrnsDeviceOut};
 use alloc::sync::Arc;
 use hopspot_hub_core::{ConfirmConnection, Connection, ReceiveInterfacePage};
@@ -8,18 +8,19 @@ use personal_rns::runtime::{
     RemoteControlTargetOperationError, SendError,
 };
 
-pub struct PrnsDeviceWork<'fitting, Backend: PrnsInventoryTransport> {
+pub struct PrnsDeviceWork<'fitting, Backend: PrnsDeviceTransport> {
     pub(super) fitting: &'fitting mut PrnsDeviceFitting<Backend>,
     pub(super) input: PrnsDeviceIn,
 }
 
-impl<Backend: PrnsInventoryTransport> PrnsDeviceWork<'_, Backend> {
+impl<Backend: PrnsDeviceTransport> PrnsDeviceWork<'_, Backend> {
     pub async fn complete(self) -> Result<PrnsDeviceOut, PrnsFittingError> {
         let connection = match &self.input {
             PrnsDeviceIn::Connect { connection } | PrnsDeviceIn::Close { connection } => {
                 *connection
             }
             PrnsDeviceIn::Inventory { request } => request.connection(),
+            PrnsDeviceIn::Control { request } => request.connection(),
         };
         if connection.device() != self.fitting.device {
             return Err(PrnsFittingError::WrongDevice {
@@ -28,6 +29,33 @@ impl<Backend: PrnsInventoryTransport> PrnsDeviceWork<'_, Backend> {
             });
         }
         match self.input {
+            PrnsDeviceIn::Control { request } => {
+                let Some((active, lease)) = &self.fitting.active else {
+                    return Ok(PrnsDeviceOut::StaleControl { request });
+                };
+                if *active != connection {
+                    return Ok(PrnsDeviceOut::StaleControl { request });
+                }
+                if let Err(source) = lease.remote.admit(request.command().request_kind()) {
+                    return Ok(PrnsDeviceOut::ControlUnconfirmed { request, source });
+                }
+                match self
+                    .fitting
+                    .backend
+                    .control(lease.remote.link_id(), request.command())
+                    .await
+                {
+                    Ok((outcome, rtt)) => Ok(PrnsDeviceOut::ControlAcknowledged {
+                        request,
+                        outcome,
+                        rtt,
+                    }),
+                    Err(source) => Ok(PrnsDeviceOut::ControlUnconfirmed {
+                        request,
+                        source: RemoteControlTargetOperationError::Exchange(source),
+                    }),
+                }
+            }
             PrnsDeviceIn::Connect { connection } => self.fitting.connect(connection).await,
             PrnsDeviceIn::Inventory { request } => {
                 let Some((active, lease)) = &self.fitting.active else {
@@ -79,7 +107,7 @@ impl<Backend: PrnsInventoryTransport> PrnsDeviceWork<'_, Backend> {
     }
 }
 
-impl<Backend: PrnsInventoryTransport> PrnsDeviceFitting<Backend> {
+impl<Backend: PrnsDeviceTransport> PrnsDeviceFitting<Backend> {
     async fn connect(&mut self, connection: Connection) -> Result<PrnsDeviceOut, PrnsFittingError> {
         if let Some((active, lease)) = &self.active {
             return Ok(if *active == connection {

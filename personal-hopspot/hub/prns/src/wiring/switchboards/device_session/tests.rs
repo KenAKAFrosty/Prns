@@ -417,6 +417,8 @@ fn synchronization_can_start_inventory_without_duplicating_or_dispatching_cancel
             | DeviceSessionEvent::InterfacesReceived { .. }
             | DeviceSessionEvent::InterfacesFailed { .. }
             | DeviceSessionEvent::Unavailable
+            | DeviceSessionEvent::ControlRequested { .. }
+            | DeviceSessionEvent::ControlSettled { .. }
             | DeviceSessionEvent::TransportSettled { .. }) => panic!("unexpected {other:?}"),
         }
     }
@@ -829,3 +831,5 @@ fn already_settled_initial_inventory_is_not_dispatched_again() {
         }
     );
 }
+
+mod controls;

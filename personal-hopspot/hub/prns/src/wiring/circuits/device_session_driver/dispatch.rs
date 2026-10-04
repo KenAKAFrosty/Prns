@@ -6,6 +6,17 @@ impl<Physical> DeviceSessionDriver<Physical> {
         &mut self,
         route: &DeviceSessionRoute<CAPACITY>,
     ) -> Result<(), DeviceDriverFailure> {
+        for request in route.cancelled_controls.iter().flatten() {
+            if self.reactor.active.as_ref().is_some_and(|active| matches!(active.input, PrnsDeviceIn::Control { request: active } if active == *request)) {
+                self.reactor.active = None;
+            }
+            for pending in &mut self.queued {
+                if matches!(pending, Some(PrnsDeviceIn::Control { request: pending }) if pending == request)
+                {
+                    *pending = None;
+                }
+            }
+        }
         for request in route.cancelled.iter().flatten() {
             if self.reactor.active.as_ref().is_some_and(|active| matches!(active.input, PrnsDeviceIn::Inventory { request: active } if active == *request)) {
                 self.reactor.active = None;
@@ -63,12 +74,14 @@ fn cancels(input: &PrnsDeviceIn, closed: Connection) -> bool {
     match input {
         PrnsDeviceIn::Connect { connection } => *connection == closed,
         PrnsDeviceIn::Inventory { request } => request.connection() == closed,
+        PrnsDeviceIn::Control { request } => request.connection() == closed,
         PrnsDeviceIn::Close { .. } => false,
     }
 }
 
 pub(super) fn duplicate(input: &PrnsDeviceIn) -> PrnsDeviceIn {
     match input {
+        PrnsDeviceIn::Control { request } => PrnsDeviceIn::Control { request: *request },
         PrnsDeviceIn::Connect { connection } => PrnsDeviceIn::Connect {
             connection: *connection,
         },

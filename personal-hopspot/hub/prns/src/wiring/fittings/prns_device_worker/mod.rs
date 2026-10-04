@@ -1,4 +1,4 @@
-use super::{PrnsDeviceFitting, PrnsFittingError, PrnsInventoryTransport};
+use super::{PrnsDeviceFitting, PrnsDeviceTransport, PrnsFittingError};
 use crate::{PrnsDevice, PrnsDeviceIn, PrnsDeviceOut};
 use core::{future::Future, num::NonZeroUsize};
 use hopspot_hub_core::DeviceId;
@@ -51,7 +51,7 @@ struct Job {
 impl PrnsDeviceWorker {
     pub fn try_new(
         device: DeviceId,
-        backend: impl PrnsInventoryTransport,
+        backend: impl PrnsDeviceTransport,
         queue_capacity: NonZeroUsize,
     ) -> Result<(Self, impl Future<Output = ()>), PrnsDeviceQueueCapacityError> {
         if queue_capacity.get() > tokio::sync::Semaphore::MAX_PERMITS {
@@ -67,14 +67,14 @@ impl PrnsDeviceWorker {
 impl PrnsDeviceWorker {
     pub(crate) fn with_single_slot(
         device: DeviceId,
-        backend: impl PrnsInventoryTransport,
+        backend: impl PrnsDeviceTransport,
     ) -> (Self, impl Future<Output = ()>) {
         Self::with_capacity(device, backend, NonZeroUsize::MIN)
     }
 
     fn with_capacity(
         device: DeviceId,
-        backend: impl PrnsInventoryTransport,
+        backend: impl PrnsDeviceTransport,
         queue_capacity: NonZeroUsize,
     ) -> (Self, impl Future<Output = ()>) {
         let (commands, jobs) = mpsc::channel(queue_capacity.get());
@@ -123,7 +123,7 @@ impl PrnsDeviceCompletion {
 }
 
 async fn run(
-    mut fitting: PrnsDeviceFitting<impl PrnsInventoryTransport>,
+    mut fitting: PrnsDeviceFitting<impl PrnsDeviceTransport>,
     mut jobs: mpsc::Receiver<Job>,
 ) {
     while let Some(Job {

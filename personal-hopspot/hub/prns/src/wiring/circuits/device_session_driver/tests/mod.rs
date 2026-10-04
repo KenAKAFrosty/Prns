@@ -416,3 +416,5 @@ fn abandoning_a_running_idle_session_stops_admission_and_releases_its_link() {
         shared.closed.notified().await;
     });
 }
+
+mod controls;

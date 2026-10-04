@@ -10,16 +10,19 @@ fn behavior_remains_reviewable() -> Result<(), BehaviorError> {
         - Automatic connection pages refresh and shutdown preserve the registry
         - Cancellations remove only matching work and preserve close order
         - Close cancels connect and inventory but never another close or connection
+        - Closing another connection preserves active and queued controls
         - Command backlog defers intents and last sender closure still drains pending work
         - Command capacity invariants propagate out of the circuit
         - Disconnect interrupts inventory and another connection can then start
         - Dropping an unpolled runtime stops admission without executing device work
         - Execution preserves success and invariant settlement through the same observer
+        - Explicit cancellations and close remove only the matching control
         - Idle mio poll is woken by last handle drop stop guard and owned future waker
         - Mailbox capacity stop and disconnection preserve rejected intents
         - Observer panics drain the worker and return the join error
         - Readiness is retained and interrupted or spurious polls retry without losing failures
         - Ready work is not starved by intents and shutdown preempts both
+        - Running controls drain before disconnect and are never automatically retried
         - Stale reactions and foreign completions do not mutate the registry
         - Worker invariants terminate conduction and return registry ownership
     "#]]

@@ -1,8 +1,19 @@
 use super::*;
+use crate::{DeviceSessionEvent, PrnsDeviceOut};
 
 #[test]
 #[ignore = "requires the explicitly selected T-Beam Supreme over USB"]
 fn attached_tbeam_enrolls_and_reports_live_interfaces() {
+    exercise_attached_tbeam(false);
+}
+
+#[test]
+#[ignore = "requires the selected T-Beam; briefly hides its display and restores visibility"]
+fn attached_tbeam_display_controls_are_acknowledged_over_usb() {
+    exercise_attached_tbeam(true);
+}
+
+fn exercise_attached_tbeam(controls: bool) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -149,6 +160,7 @@ fn attached_tbeam_enrolls_and_reports_live_interfaces() {
                 DeviceSessionSubmission::Submitted
             );
             let inspect = async {
+                let mut inventory_ready = false;
                 while let Some(update) = received.recv().await {
                     eprintln!("Session event: {:?}", update.event);
                     if let ReadDeviceInterfacesOutcome::Found { inventory, .. } =
@@ -158,11 +170,64 @@ fn attached_tbeam_enrolls_and_reports_live_interfaces() {
                         let interfaces = inventory.interfaces.unwrap();
                         eprintln!("Live T-Beam interfaces: {interfaces:#?}");
                         assert!(!interfaces.is_empty());
-                        session.handle.shutdown().unwrap();
-                        return;
+                        inventory_ready = true;
+                        break;
                     }
                 }
-                panic!("session stopped before inventory");
+                assert!(inventory_ready, "session stopped before inventory");
+                if controls {
+                    for visibility in [
+                        RemoteControlDisplayVisibility::Hidden,
+                        RemoteControlDisplayVisibility::Visible,
+                        RemoteControlDisplayVisibility::Visible,
+                    ] {
+                        let command = DeviceControlCommand::DisplayVisibility(visibility);
+                        eprintln!("Control requested: {command:?}");
+                        assert_eq!(
+                            session
+                                .handle
+                                .submit(DeviceSessionIntent::Control(RequestDeviceControl {
+                                    command
+                                }))
+                                .unwrap(),
+                            DeviceSessionSubmission::Submitted
+                        );
+                        loop {
+                            let update = received.recv().await.unwrap();
+                            eprintln!("Session event: {:?}", update.event);
+                            if let DeviceSessionEvent::ControlSettled { settlement, output } =
+                                update.event
+                            {
+                                let PrnsDeviceOut::ControlAcknowledged {
+                                    request,
+                                    outcome,
+                                    rtt,
+                                } = output
+                                else {
+                                    panic!("control unconfirmed: {output:?}")
+                                };
+                                assert_eq!(request.command(), command);
+                                assert_eq!(
+                                    settlement,
+                                    SettleDeviceControlOutcome::Settled { request }
+                                );
+                                assert!(matches!(
+                                    outcome,
+                                    RemoteControlApplyOutcome::Applied
+                                        | RemoteControlApplyOutcome::Unchanged
+                                ));
+                                eprintln!(
+                                    "T-Beam acknowledged {command:?}: {outcome:?}, RTT {rtt:?}"
+                                );
+                                break;
+                            }
+                        }
+                        if visibility == RemoteControlDisplayVisibility::Hidden {
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                        }
+                    }
+                }
+                session.handle.shutdown().unwrap();
             };
             let (exit, ()) = tokio::join!(session.run, inspect);
             assert!(exit.unwrap().settlement.is_ok());

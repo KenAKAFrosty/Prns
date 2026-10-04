@@ -19,11 +19,13 @@ impl<const CAPACITY: usize> Switchboard for DeviceSessionSwitchboard<CAPACITY> {
             }
         }
         let registry = input.registry;
+        let controls_before = self.controls.step(SynchronizeDeviceControls { registry });
         let before = self
             .interfaces
             .step(SynchronizeDeviceInterfaces { registry });
         let (initial_before, cancelled_before) = synchronization(before);
         let routed = match input.message {
+            DeviceSessionMessage::Control(request) => control_route(self.controls.step(request)),
             DeviceSessionMessage::Connect => connection_route(registry.step(BeginConnection {
                 device: self.device,
             })),
@@ -57,11 +59,14 @@ impl<const CAPACITY: usize> Switchboard for DeviceSessionSwitchboard<CAPACITY> {
             matches!(&interfaces, ReadDeviceInterfacesOutcome::Found { inventory, .. } if inventory.status == InterfaceInventoryStatus::Receiving { pending: *request })
         }).map(|request| PrnsDeviceIn::Inventory { request });
         let initial = if initial == command { None } else { initial };
+        let controls_after = self.controls.step(SynchronizeDeviceControls { registry });
         DeviceSessionRoute {
+            cancelled_controls: [controls_before, controls_after],
             event,
             commands: [command, initial],
             cancelled: [cancelled_before, cancelled_after],
             snapshot: DeviceSessionSnapshot {
+                controls: self.controls.step(ReadDeviceControls),
                 device: registry.step(ReadDevice {
                     device: self.device,
                 }),
@@ -79,6 +84,15 @@ impl<const CAPACITY: usize> DeviceSessionSwitchboard<CAPACITY> {
         output: PrnsDeviceOut,
     ) -> (DeviceSessionEvent, Option<PrnsDeviceIn>) {
         match output {
+            output @ (PrnsDeviceOut::ControlAcknowledged { request, .. }
+            | PrnsDeviceOut::ControlUnconfirmed { request, .. }
+            | PrnsDeviceOut::StaleControl { request }) => {
+                let settlement = self.controls.step(SettleDeviceControl { request });
+                (
+                    DeviceSessionEvent::ControlSettled { settlement, output },
+                    None,
+                )
+            }
             PrnsDeviceOut::Connected { confirmation } => self.confirm(registry, confirmation),
             PrnsDeviceOut::AlreadyConnected { connection, link } => self.confirm(
                 registry,
@@ -225,6 +239,9 @@ fn current_connection(registry: &mut DeviceRegistry, device: DeviceId) -> Option
 
 fn output_connections(output: &PrnsDeviceOut) -> [Option<Connection>; 2] {
     match output {
+        PrnsDeviceOut::ControlAcknowledged { request, .. }
+        | PrnsDeviceOut::ControlUnconfirmed { request, .. }
+        | PrnsDeviceOut::StaleControl { request } => [Some(request.connection()), None],
         PrnsDeviceOut::Connected { confirmation } => [Some(confirmation.connection), None],
         PrnsDeviceOut::ConnectionFailed { connection, .. }
         | PrnsDeviceOut::AlreadyConnected { connection, .. }
@@ -272,4 +289,21 @@ pub(super) fn refresh_route(
             (DeviceSessionEvent::RefreshRequested { outcome }, command)
         })
         .map_err(DeviceSessionRoutingError::from)
+}
+
+pub(super) fn control_route(
+    result: Result<RequestDeviceControlOutcome, RequestDeviceControlError>,
+) -> Result<(DeviceSessionEvent, Option<PrnsDeviceIn>), DeviceSessionRoutingError> {
+    result
+        .map(|outcome| {
+            let command = match outcome {
+                RequestDeviceControlOutcome::Requested { request } => {
+                    Some(PrnsDeviceIn::Control { request })
+                }
+                RequestDeviceControlOutcome::Busy { .. }
+                | RequestDeviceControlOutcome::NotConnected => None,
+            };
+            (DeviceSessionEvent::ControlRequested { outcome }, command)
+        })
+        .map_err(DeviceSessionRoutingError::DeviceControls)
 }

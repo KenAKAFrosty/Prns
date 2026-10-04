@@ -1,7 +1,7 @@
 use crate::{
     DeviceSessionEvent, DeviceSessionInput, DeviceSessionMessage, DeviceSessionRoute,
     DeviceSessionRoutingError, DeviceSessionSnapshot, DeviceSessionSwitchboard, MioSessionPoll,
-    PrnsDeviceIn, PrnsDeviceWorker, PrnsInventoryTransport,
+    PrnsDeviceIn, PrnsDeviceTransport, PrnsDeviceWorker,
 };
 use alloc::{boxed::Box, sync::Arc};
 use core::{future::Future, sync::atomic::AtomicBool};
@@ -27,6 +27,7 @@ const INTENT_CAPACITY: usize = 1;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum DeviceSessionIntent {
+    Control(hopspot_hub_core::RequestDeviceControl),
     Connect,
     Refresh,
     Disconnect,
@@ -36,6 +37,7 @@ pub enum DeviceSessionIntent {
 impl DeviceSessionIntent {
     fn into_message(self) -> DeviceSessionMessage {
         match self {
+            Self::Control(request) => DeviceSessionMessage::Control(request),
             Self::Connect => DeviceSessionMessage::Connect,
             Self::Refresh => DeviceSessionMessage::Refresh,
             Self::Disconnect => DeviceSessionMessage::Disconnect,
@@ -83,7 +85,7 @@ pub struct DeviceSessionDriver<Physical = MioSessionPoll> {
 pub fn prepare_device_session<const CAPACITY: usize>(
     registry: DeviceRegistry,
     device: DeviceId,
-    backend: impl PrnsInventoryTransport,
+    backend: impl PrnsDeviceTransport,
     mut on_update: impl FnMut(DeviceSessionUpdate<CAPACITY>) + Send + 'static,
 ) -> Result<
     DeviceSessionRuntime<impl Future<Output = Result<DeviceSessionExit, JoinError>>>,

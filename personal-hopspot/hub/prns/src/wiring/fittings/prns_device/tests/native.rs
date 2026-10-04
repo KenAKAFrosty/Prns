@@ -19,7 +19,7 @@ fn secrets(controller: u8, target: u8) -> RemoteControlNodeIdentitySecrets {
 }
 
 #[test]
-fn native_nodes_authenticate_and_publish_interface_status_through_supervised_execution() {
+fn native_tcp_nodes_authenticate_report_inventory_and_execute_controls() {
     within_runtime(async {
         let target_secrets = secrets(0xD0, 0xD1);
         let target_identity =
@@ -27,8 +27,7 @@ fn native_nodes_authenticate_and_publish_interface_status_through_supervised_exe
         let target_destination = target_identity.endpoint().destination_hash();
         let controller_secrets = secrets(0xD2, 0xD3);
         let controller_identity = *controller_secrets.identities().controller();
-        let permitted =
-            RemoteControlRequestSet::only(RemoteControlRequestKind::InventoryInterfaces);
+        let permitted = control_permissions();
         let grants = [RemoteControlControllerGrant::new(
             controller_identity,
             RemoteControlControllerAuthority::Operator,
@@ -42,7 +41,9 @@ fn native_nodes_authenticate_and_publish_interface_status_through_supervised_exe
             ),
             RemoteControlSelfAnnouncement::Unavailable,
             RemoteControlCapabilities::describe_only()
-                .with_request(RemoteControlRequestKind::InventoryInterfaces),
+                .with_request(RemoteControlRequestKind::InventoryInterfaces)
+                .with_request(RemoteControlRequestKind::SetDisplayVisibility)
+                .with_request(RemoteControlRequestKind::SetGnssPower),
         );
         let controller_service = RemoteControlService::new(
             controller_secrets,
@@ -51,10 +52,16 @@ fn native_nodes_authenticate_and_publish_interface_status_through_supervised_exe
         );
         let server = TcpServer::bind("127.0.0.1:0").await.unwrap();
         let address = server.local_addr().unwrap().to_string();
+        let commands = Arc::new(Mutex::new(alloc::vec::Vec::new()));
+        let recorded = commands.clone();
         let target_node = PrnsNode::new_with_handle(|handle| PrnsNodeRecipe {
             transport_identity: None,
-            remote_control: RemoteControlNodeSetup::new(target_service)
-                .with_controls(InventoryHost(handle)),
+            remote_control: RemoteControlNodeSetup::new(target_service).with_controls(
+                InventoryHost {
+                    handle,
+                    commands: recorded,
+                },
+            ),
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: NoRemoteControlHostControls,
             storage: GrowableHeap,
@@ -158,6 +165,40 @@ fn native_nodes_authenticate_and_publish_interface_status_through_supervised_exe
                     break;
                 }
             }
+            for command in [
+                DeviceControlCommand::DisplayVisibility(RemoteControlDisplayVisibility::Hidden),
+                DeviceControlCommand::DisplayVisibility(RemoteControlDisplayVisibility::Visible),
+                DeviceControlCommand::GnssPower(RemoteControlGnssPower::On),
+                DeviceControlCommand::GnssPower(RemoteControlGnssPower::Off),
+            ] {
+                assert_eq!(
+                    session_handle
+                        .submit(DeviceSessionIntent::Control(RequestDeviceControl {
+                            command
+                        }))
+                        .unwrap(),
+                    DeviceSessionSubmission::Submitted
+                );
+                loop {
+                    let update = observed.recv().await.unwrap();
+                    if let DeviceSessionEvent::ControlSettled { settlement, output } = update.event
+                    {
+                        let PrnsDeviceOut::ControlAcknowledged {
+                            request, outcome, ..
+                        } = output
+                        else {
+                            panic!("control not acknowledged: {output:?}")
+                        };
+                        assert_eq!(request.command(), command);
+                        assert_eq!(outcome, RemoteControlApplyOutcome::Applied);
+                        assert_eq!(settlement, SettleDeviceControlOutcome::Settled { request });
+                        assert_eq!(commands.lock().unwrap().last(), Some(&command));
+                        assert_eq!(update.snapshot.controls.pending, None);
+                        break;
+                    }
+                }
+            }
+            assert_eq!(commands.lock().unwrap().len(), 4);
         };
         let supervised = supervise_device_session(
             session,
@@ -184,22 +225,72 @@ fn native_nodes_authenticate_and_publish_interface_status_through_supervised_exe
     });
 }
 
-struct InventoryHost(PrnsNodeHandle);
+struct InventoryHost {
+    handle: PrnsNodeHandle,
+    commands: Arc<Mutex<alloc::vec::Vec<DeviceControlCommand>>>,
+}
 
 impl RemoteControlHostControls for InventoryHost {
     fn supported_requests(&self) -> RemoteControlRequestSet {
-        RemoteControlRequestSet::only(RemoteControlRequestKind::InventoryInterfaces)
+        control_permissions()
     }
 
     async fn execute_remote_control(
         &self,
         command: RemoteControlHostCommand,
     ) -> Result<RemoteControlHostResponse, RemoteControlHostCommandError> {
-        let RemoteControlHostCommand::InventoryInterfaces { page } = command else {
-            return Err(RemoteControlHostCommandError::Unsupported);
-        };
-        personal_hopspot_core::remote_control_inventory_from_snapshots(&self.0.interfaces(), page)
-            .map(RemoteControlHostResponse::InventoryInterfaces)
-            .map_err(|_| RemoteControlHostCommandError::ApplyFailed)
+        match command {
+            RemoteControlHostCommand::InventoryInterfaces { page } => {
+                personal_hopspot_core::remote_control_inventory_from_snapshots(
+                    &self.handle.interfaces(),
+                    page,
+                )
+                .map(RemoteControlHostResponse::InventoryInterfaces)
+                .map_err(|_| RemoteControlHostCommandError::ApplyFailed)
+            }
+            RemoteControlHostCommand::SetDisplayVisibility { visibility } => {
+                self.commands
+                    .lock()
+                    .unwrap()
+                    .push(DeviceControlCommand::DisplayVisibility(visibility));
+                Ok(RemoteControlHostResponse::SetDisplayVisibility(
+                    RemoteControlApplyOutcome::Applied,
+                ))
+            }
+            RemoteControlHostCommand::SetGnssPower { power } => {
+                self.commands
+                    .lock()
+                    .unwrap()
+                    .push(DeviceControlCommand::GnssPower(power));
+                Ok(RemoteControlHostResponse::SetGnssPower(
+                    RemoteControlApplyOutcome::Applied,
+                ))
+            }
+            RemoteControlHostCommand::SetInterfacePower { .. }
+            | RemoteControlHostCommand::SetInterfaceMode { .. }
+            | RemoteControlHostCommand::SetInterfaceGroup { .. }
+            | RemoteControlHostCommand::InventoryInterfaceDiscoveryGroups { .. }
+            | RemoteControlHostCommand::ReplaceInterfaceDiscoveryGroups { .. }
+            | RemoteControlHostCommand::InventoryInterfacePeers { .. }
+            | RemoteControlHostCommand::InventoryInterfaceConfig { .. }
+            | RemoteControlHostCommand::SetInterfaceLoRaProfile { .. }
+            | RemoteControlHostCommand::DescribeBuild
+            | RemoteControlHostCommand::DescribePower
+            | RemoteControlHostCommand::SleepRadios
+            | RemoteControlHostCommand::WakeRadios
+            | RemoteControlHostCommand::SetSystemPower { .. }
+            | RemoteControlHostCommand::SetDisplayAutoOff { .. }
+            | RemoteControlHostCommand::SetEspRadioMode { .. } => {
+                Err(RemoteControlHostCommandError::Unsupported)
+            }
+        }
     }
+}
+
+fn control_permissions() -> RemoteControlRequestSet {
+    let mut permitted =
+        RemoteControlRequestSet::only(RemoteControlRequestKind::InventoryInterfaces);
+    assert!(permitted.insert(RemoteControlRequestKind::SetDisplayVisibility));
+    assert!(permitted.insert(RemoteControlRequestKind::SetGnssPower));
+    permitted
 }

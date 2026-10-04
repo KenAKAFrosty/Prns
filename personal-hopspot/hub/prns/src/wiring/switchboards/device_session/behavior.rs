@@ -6,8 +6,10 @@ fn behavior_remains_reviewable() -> Result<(), BehaviorError> {
     expect![[r#"
         - Already settled initial inventory is not dispatched again
         - Arbitrary sessions match connection ownership and reject retired callbacks
+        - Commands settle once without claiming observed device state
         - Connect and disconnect attempts preserve tokens and duplicate confirmations preserve inventory
         - Connect drives pages to a complete snapshot and refresh reuses the link
+        - Disconnected and replaced sessions cancel pending controls and reject late results
         - Exhausted generation errors remain precise invariants
         - Late confirmations close only the old token and schedule new inventory after cleanup
         - Malformed and oversized pages stop dispatch and wrong target duplicates are not accepted

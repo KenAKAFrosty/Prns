@@ -1,14 +1,14 @@
-use super::{PrnsDeviceFitting, PrnsDeviceWork, PrnsFittingError, PrnsInventoryTransport};
+use super::{PrnsDeviceFitting, PrnsDeviceTransport, PrnsDeviceWork, PrnsFittingError};
 use crate::{PrnsDevice, PrnsDeviceIn, PrnsDeviceOut};
 use pipecircuit::{DuplexFitting, ReceiveFromOutcome, TransportFrom, TransportTo};
 
 pub struct PrnsDeviceIncoming;
 
-pub struct PrnsDeviceOutgoing<'fitting, Backend: PrnsInventoryTransport> {
+pub struct PrnsDeviceOutgoing<'fitting, Backend: PrnsDeviceTransport> {
     fitting: &'fitting mut PrnsDeviceFitting<Backend>,
 }
 
-impl<Backend: PrnsInventoryTransport> DuplexFitting<PrnsDevice> for PrnsDeviceFitting<Backend> {
+impl<Backend: PrnsDeviceTransport> DuplexFitting<PrnsDevice> for PrnsDeviceFitting<Backend> {
     type Incoming<'fitting>
         = PrnsDeviceIncoming
     where
@@ -23,7 +23,7 @@ impl<Backend: PrnsInventoryTransport> DuplexFitting<PrnsDevice> for PrnsDeviceFi
     }
 }
 
-impl<Backend: PrnsInventoryTransport> TransportTo<PrnsDevice> for PrnsDeviceOutgoing<'_, Backend> {
+impl<Backend: PrnsDeviceTransport> TransportTo<PrnsDevice> for PrnsDeviceOutgoing<'_, Backend> {
     type Outcome<'transport, 'message>
         = PrnsDeviceWork<'transport, Backend>
     where

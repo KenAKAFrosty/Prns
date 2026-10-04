@@ -9,9 +9,9 @@ mod switchboards;
 pub use controller_installation::{ControllerInstallation, ControllerInstallationError};
 pub use fittings::{
     PrnsConnectionError, PrnsDeviceCompletion, PrnsDeviceFitting, PrnsDeviceIncoming,
-    PrnsDeviceOutgoing, PrnsDeviceQueueCapacityError, PrnsDeviceSubmission, PrnsDeviceWork,
-    PrnsDeviceWorker, PrnsDeviceWorkerError, PrnsDeviceWorkerIncoming, PrnsDeviceWorkerOutgoing,
-    PrnsFittingError, PrnsInventoryTransport,
+    PrnsDeviceOutgoing, PrnsDeviceQueueCapacityError, PrnsDeviceSubmission, PrnsDeviceTransport,
+    PrnsDeviceWork, PrnsDeviceWorker, PrnsDeviceWorkerError, PrnsDeviceWorkerIncoming,
+    PrnsDeviceWorkerOutgoing, PrnsFittingError,
 };
 pub use runtime::{NativeHubRuntime, prepare_native_hub};
 pub use switchboards::{

@@ -55,3 +55,11 @@ pub use usb_enrollment_approval::{
     ReviewUsbEnrollmentOffer, ReviewUsbEnrollmentOfferError, ReviewUsbEnrollmentOfferOutcome,
     UsbEnrollmentApproval,
 };
+
+mod device_controls;
+
+pub use device_controls::{
+    DeviceControls, DeviceControlsSnapshot, ReadDeviceControls, RequestDeviceControl,
+    RequestDeviceControlError, RequestDeviceControlOutcome, SettleDeviceControl,
+    SettleDeviceControlOutcome, SynchronizeDeviceControls,
+};

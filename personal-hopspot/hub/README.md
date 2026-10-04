@@ -457,7 +457,7 @@ lane here; the existing bounded label Kani proof remains unchanged.
 PRNS calls. The deterministic machines remain in the core ownership lanes.
 Create one `PrnsDeviceFitting::new(device, node_handle)` per local device in
 its originating registry. Its default backend is the actual `PrnsNodeHandle`;
-`PrnsInventoryTransport` adds the existing paged inventory operation to PRNS's
+`PrnsDeviceTransport` adds the existing paged inventory operation to PRNS's
 connection transport contract and permits deterministic transport fixtures.
 
 The supplied node must already have its controller identity, authorized target
@@ -866,6 +866,25 @@ suite. Report the scope and prior full baseline explicitly. Run the unfiltered
 or test infrastructure, or when requested. Require zero missed or timed-out mutants and report caught and
 unviable counts separately.
 
+The device-controls candidate passes 194 Hub tests, with two physical tests
+ignored by the normal suite. Production coverage is 100% across 266 functions,
+2,634 lines and 2,950 regions. The scoped mutation audit classifies all 94
+mutants: 46 caught, 48 unviable, with zero survivors, timeouts or unclassified
+outcomes. Compiler rejections comprise 42 missing-Default errors, four unavailable
+constructors and two invalid generated let-chain expressions. Its report is
+`target/hub-mutants/device-controls/mutants.out`. Coverage and physical logs are
+`target/controls-coverage.log` and `target/controls-hardware.log`.
+
+The mutation filters include the new control primitive and every operation in
+`device_controls`, the participant contract, and the complete affected PRNS
+fitting, worker, session switchboard and session driver owners. New untracked
+source is included explicitly; every selected mutant runs the full Hub workspace
+suite. The prior full baseline is the USB-enrollment commit `ef691d577` and its
+304-mutant sweep below. No upstream protocol or firmware changes are needed in
+this candidate. Formatting, Clippy, production no_std and the isolated Kani
+label proof pass. The real TCP test executes both display and GNSS controls;
+the physical USB test exercises display visibility only.
+
 The USB-enrollment candidate passes 181 Hub tests, with the hardware test run
 separately. Its coverage report reaches 100% across 253 functions, 2,487 lines,
 and 2,770 regions, conservatively including the test-support counter fixture.
@@ -1045,10 +1064,77 @@ correlation boundaries. A test-support feature provides an exhausted registry
 counter for exercising the wiring's invariant propagation without weakening the
 normal constructor. Existing bounded label Kani proofs remain applicable.
 
+## Device controls
+
+`DeviceControlCommand` currently exposes display visibility and GNSS power.
+`DeviceControls` owns request correlation for one device. Its explicit request,
+synchronize, settle and read steps admit one pending command on a confirmed
+connection. Generations never wrap and survive reconnects within the owner;
+late responses cannot settle a newer command. Identifier exhaustion is the
+only request invariant error. Disconnected and busy are ordinary outcomes.
+
+Submit `DeviceSessionIntent::Control(RequestDeviceControl { command })` through
+the existing session handle. `ControlRequested` records admission, while
+`ControlSettled` retains both correlation settlement and the exact transport
+output. `ControlAcknowledged` preserves the device's Applied, Unchanged or
+Scheduled acknowledgment and RTT. It is not a fresh observation of physical
+hardware state. `ControlUnconfirmed` retains the permission or exchange error;
+a lost reply does not establish that the device did nothing. Commands are not
+automatically retried.
+
+The native fitting now implements `PrnsDeviceTransport`, formerly named
+`PrnsInventoryTransport`. Commands use the same authenticated PRNS link as
+inventory. The Hub does not select a USB interface for remote control. PRNS
+routes to the remembered device identity over its available path. Direct USB
+remains the initial enrollment workflow, and a real TCP integration test
+executes both controls through the same session API.
+
+Disconnect invalidates pending local observations and removes queued commands.
+An already running control exchange drains before the worker closes the link;
+local cancellation cannot undo a side effect already sent to the device.
+Snapshots expose pending requests without inventing a confirmed display/GNSS
+state. The existing interface inventory remains independent.
+
+The physical display demonstration prints the live inventory and each device
+acknowledgment, requests a hidden display for two seconds, requests visibility,
+and requests visibility again to exercise an unchanged acknowledgment. It uses
+the saved controller installation and does not flash firmware or change radio
+configuration. Run only one hardware command at a time:
+
+```console
+cargo test --locked -p hopspot-hub-prns --lib attached_tbeam_display_controls_are_acknowledged_over_usb -- --ignored --nocapture
+```
+
+The recorded hardware run returned Hidden/Unchanged (already hidden),
+Visible/Applied, and Visible/Unchanged, with RTTs of 18, 47 and 48 ms. The user
+was not watching that run, so it establishes firmware acknowledgments without
+an independent visual observation.
+
+These are debug test harnesses. The repository's root Cargo configuration supplies
+`RUST_MIN_STACK=268435456`; launching the compiled test executable directly must
+supply that environment variable too. An attempted direct launch without it
+overflowed the default test-thread stack. Inspection of the coverage binary found
+approximately 455 KiB in the hardware helper's stack frame and 950 KiB in its
+outer async poll frame, before runtime wrappers. This is an unresolved startup
+footprint concern, not a measured requirement of an optimized application.
+Heap placement of large futures/state at the native wiring boundary needs its
+own measurements before a normal desktop/mobile launcher is qualified.
+
+Stateful property tests cover up to 79 arbitrary request, settlement and
+reconnection operations, checking the pending request and all retired tokens
+against an independent model. The existing isolated Kani label proof remains
+the formal lane; importing PRNS-dependent command types retains the documented
+wider Kani compilation blocker.
+
 ## Next boundaries
 
-Add automatic reconnect/deadline policy and network-driven interface status and
-power controls. A change affecting the requesting controller's management
-interface needs a device-owned confirmation deadline and rollback. Controller
-sharing, explicit device replacement, firmware installation, clusters and
-relationship views remain later capabilities.
+Changes that may interrupt the current management route, including interface
+power-off, require device-owned confirmation and automatic rollback. This
+policy applies to every transport, including USB. An acknowledgment sent before
+power-off is insufficient: the target must restore its prior state if the Hub
+cannot confirm continued reachability. These disruptive controls are not exposed
+by the current command type.
+
+Add that transactional device policy, automatic reconnect/deadline policy and
+network-driven status updates. Controller sharing, explicit device replacement,
+firmware installation, clusters and relationship views remain later capabilities.

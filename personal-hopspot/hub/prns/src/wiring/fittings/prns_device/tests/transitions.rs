@@ -414,7 +414,7 @@ fn absent_management_routes_are_discovered_once_and_failures_keep_their_stage() 
                     connection,
                     source: crate::PrnsConnectionError::Target(ConnectRemoteControlTargetError::EstablishLink(SendError::Failed(EstablishLinkFailure::Rejected(personal_rns::engine::EstablishLinkRejection::NoRouteToDestination)))),
                 }),
-                Failure::None | Failure::Resolve | Failure::Establish | Failure::Identify | Failure::Inventory | Failure::Panic => unreachable!(),
+                Failure::None | Failure::Resolve | Failure::Establish | Failure::Identify | Failure::Inventory | Failure::Control | Failure::Panic => unreachable!(),
             }
             let calls = shared.calls.lock().unwrap();
             assert_eq!(

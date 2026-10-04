@@ -14,7 +14,16 @@ use personal_rns::runtime::{
 };
 use personal_rns::units::RttMillis;
 
-pub trait PrnsInventoryTransport: RemoteControlTargetConnectionTransport + Send + 'static {
+use hopspot_hub_core::DeviceControlCommand;
+use personal_rns::remote_control::RemoteControlApplyOutcome;
+
+pub trait PrnsDeviceTransport: RemoteControlTargetConnectionTransport + Send + 'static {
+    fn control(
+        &self,
+        link: LinkId,
+        command: DeviceControlCommand,
+    ) -> impl Future<Output = Result<(RemoteControlApplyOutcome, RttMillis), RemoteControlError>> + Send;
+
     fn discover_target(
         &self,
         destination: DestinationHash,
@@ -29,7 +38,21 @@ pub trait PrnsInventoryTransport: RemoteControlTargetConnectionTransport + Send 
     > + Send;
 }
 
-impl PrnsInventoryTransport for PrnsNodeHandle {
+impl PrnsDeviceTransport for PrnsNodeHandle {
+    async fn control(
+        &self,
+        link: LinkId,
+        command: DeviceControlCommand,
+    ) -> Result<(RemoteControlApplyOutcome, RttMillis), RemoteControlError> {
+        let remote = self.remote_control(link);
+        match command {
+            DeviceControlCommand::DisplayVisibility(visibility) => {
+                remote.set_display_visibility(visibility).await
+            }
+            DeviceControlCommand::GnssPower(power) => remote.set_gnss_power(power).await,
+        }
+    }
+
     async fn discover_target(&self, destination: DestinationHash) -> Result<(), RequestPathError> {
         self.request_path(destination).await.map(|_| ())
     }

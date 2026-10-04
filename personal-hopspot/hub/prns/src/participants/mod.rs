@@ -8,14 +8,35 @@ pub struct PrnsDevice;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PrnsDeviceIn {
-    Connect { connection: Connection },
-    Inventory { request: InterfacePageRequest },
-    Close { connection: Connection },
+    Control {
+        request: hopspot_hub_core::DeviceControlRequest,
+    },
+    Connect {
+        connection: Connection,
+    },
+    Inventory {
+        request: InterfacePageRequest,
+    },
+    Close {
+        connection: Connection,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
 #[must_use]
 pub enum PrnsDeviceOut {
+    ControlAcknowledged {
+        request: hopspot_hub_core::DeviceControlRequest,
+        outcome: personal_rns::remote_control::RemoteControlApplyOutcome,
+        rtt: RttMillis,
+    },
+    ControlUnconfirmed {
+        request: hopspot_hub_core::DeviceControlRequest,
+        source: RemoteControlTargetOperationError,
+    },
+    StaleControl {
+        request: hopspot_hub_core::DeviceControlRequest,
+    },
     Connected {
         confirmation: ConfirmConnection,
     },
