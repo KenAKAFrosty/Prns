@@ -46,3 +46,7 @@ pub use wiring::{
     NativeUsbDiscoveryEvent, NativeUsbDiscoveryRuntime, UsbDiscoveryFailure, UsbDiscoveryHandle,
     prepare_native_usb_discovery,
 };
+
+pub use wiring::{
+    DeviceArchiveError, DeviceStore, DeviceStoreError, LoadDevicesOutcome, SaveDevicesOutcome,
+};

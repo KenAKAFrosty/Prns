@@ -75,3 +75,5 @@ fn complete(enrollment: Enrollment, seed: u8) -> CompleteEnrollment {
         target: target(seed),
     }
 }
+
+mod remembered;

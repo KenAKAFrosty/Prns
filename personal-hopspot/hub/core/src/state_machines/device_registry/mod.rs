@@ -79,3 +79,9 @@ impl DeviceRegistry {
 }
 
 impl StateMachine for DeviceRegistry {}
+
+mod remembered;
+pub use remembered::{
+    ReadRememberedDevices, ReadRememberedDevicesOutcome, RestoreRememberedDevice,
+    RestoreRememberedDeviceError, RestoreRememberedDeviceOutcome,
+};

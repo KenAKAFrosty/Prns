@@ -7,6 +7,7 @@ fn behavior_remains_reviewable() -> Result<(), BehaviorError> {
         - Arbitrary cancel retry sequences never accept superseded results
         - Arbitrary labels and removals agree with an independent record model
         - Arbitrary reconnect histories isolate sessions and preserve pairing
+        - Arbitrary remembered labels and targets roundtrip with duplicate refusal
         - Architecture remains reviewable
         - Bounded records support duplicate labels and stable ids after removal
         - Cancellation and failure preserve reasons and reject old generations
@@ -18,6 +19,9 @@ fn behavior_remains_reviewable() -> Result<(), BehaviorError> {
         - Forgetting returns pending or live connection and invalidates late results
         - Only paired devices connect and confirmation binds the expected target
         - Query steps own snapshots and refuse incomplete lists
+        - Remembered records preserve labels and pairings without live state
+        - Restore exhaustion retains the complete rejected record
+        - Restore refuses duplicates and capacity without changing either record
         - Retries preserve failure reasons and reject superseded callbacks
         - Two devices pair independently and reject replacement
         - Wrong target and duplicate binding leave attempts unchanged

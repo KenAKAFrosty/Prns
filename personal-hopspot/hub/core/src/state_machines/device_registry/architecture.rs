@@ -82,10 +82,24 @@ fn architecture_remains_reviewable() -> Result<(), ArchitectureError> {
         │   └── ◆ ReadDeviceOutcome
         │       ├── Found
         │       └── MissingDevice
-        └── ▸ RenameDevice
-            └── ◆ RenameDeviceOutcome
-                ├── Renamed
-                └── MissingDevice
+        ├── ▸ ReadRememberedDevices
+        │   └── ◆ ReadRememberedDevicesOutcome
+        │       ├── Read
+        │       └── InsufficientCapacity
+        ├── ▸ RenameDevice
+        │   └── ◆ RenameDeviceOutcome
+        │       ├── Renamed
+        │       └── MissingDevice
+        └── ▸ RestoreRememberedDevice
+            └── ◆ Result
+                ├── Ok
+                │   └── RestoreRememberedDeviceOutcome
+                │       ├── Restored
+                │       ├── TargetAlreadyPaired
+                │       └── AtCapacity
+                └── Err
+                    └── RestoreRememberedDeviceError
+                        └── IdentifiersExhausted
     "#]]
     .assert_eq(&registry.render(DiagramTarget::TextTree));
     Ok(())

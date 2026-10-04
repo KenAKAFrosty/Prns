@@ -68,8 +68,15 @@ async fn native_preparation_attaches_usb_without_running_and_owns_the_lock() {
     );
     assert_locked(directory.path());
     drop(runtime.run);
+    assert_locked(directory.path());
+    drop(runtime.devices);
     let reopened = ControllerInstallation::open(directory.path()).unwrap();
     assert_eq!(reopened.identity.secrets().identities(), expected);
+    let runtime = prepare_native_hub(reopened, |_, _| {}, core::future::pending());
+    drop(runtime.devices);
+    assert_locked(directory.path());
+    drop(runtime.run);
+    assert!(ControllerInstallation::open(directory.path()).is_ok());
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -95,7 +102,7 @@ async fn usb_rescans_and_persisted_authorization_survive_a_graceful_restart() {
         let observed = events.clone();
         let path = directory.path();
         let (stop, stopped) = oneshot::channel();
-        let runtime = prepare_hub(
+        let mut runtime = prepare_hub(
             installation,
             move |handle| attach_controlled_usb(handle, usb_rescan, scan_tx),
             rescan.clone(),
@@ -167,6 +174,39 @@ async fn usb_rescans_and_persisted_authorization_survive_a_graceful_restart() {
                     Ok(SetRemoteControlTargetAccessOutcome::Added)
                 );
             }
+            use hopspot_hub_core::{
+                BeginConnection, BeginConnectionOutcome, DeviceRegistry, ListDevices,
+                ListDevicesOutcome,
+            };
+            use pipecircuit::StateMachine;
+            let mut records = if restart {
+                let crate::LoadDevicesOutcome::Loaded { registry } =
+                    runtime.devices.load(core::num::NonZeroU32::MIN).unwrap()
+                else {
+                    panic!("remembered device missing after restart")
+                };
+                registry
+            } else {
+                let mut records = DeviceRegistry::try_new(core::num::NonZeroU32::MIN).unwrap();
+                crate::tests::paired(&mut records, crate::tests::target(72));
+                assert_eq!(
+                    runtime.devices.save::<1>(&mut records).unwrap(),
+                    crate::SaveDevicesOutcome::Saved
+                );
+                records
+            };
+            let ListDevicesOutcome::Listed { devices } = records.step(ListDevices::<1>) else {
+                panic!("record listing refused")
+            };
+            let BeginConnectionOutcome::Connect { connection } = records
+                .step(BeginConnection {
+                    device: *devices.first().unwrap(),
+                })
+                .unwrap()
+            else {
+                panic!("remembered device cannot connect")
+            };
+            assert_eq!(connection.target().identity_hash(), target_hash);
             let resolved = runtime
                 .handle
                 .resolve_remote_control_target(target_hash)
@@ -194,6 +234,8 @@ async fn usb_rescans_and_persisted_authorization_survive_a_graceful_restart() {
         .await
         .unwrap();
         assert_eq!(result, Ok(()));
+        assert_locked(directory.path());
+        drop(runtime.devices);
         assert_eq!(events.borrow().first(), Some(&Event::Restored));
         assert!(
             events
@@ -238,6 +280,8 @@ async fn terminal_persistence_failure_is_reported_before_releasing_the_lock() {
         .await
         .unwrap();
     assert_eq!(result, Err(NodeRunError::PersistenceFailed));
+    assert_locked(directory.path());
+    drop(runtime.devices);
     assert!(events.borrow().contains(&Event::Failed));
     std::fs::remove_file(directory.path().join("retained")).unwrap();
     assert!(ControllerInstallation::open(directory.path()).is_ok());

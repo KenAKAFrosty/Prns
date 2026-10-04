@@ -12,6 +12,7 @@ mod behavior;
 mod tests;
 
 pub struct NativeHubRuntime<Run> {
+    pub devices: crate::DeviceStore,
     pub handle: PrnsNodeHandle,
     pub clock: TokioClock,
     pub identities: RemoteControlNodeIdentities,
@@ -46,6 +47,7 @@ pub(super) fn prepare_hub(
 ) -> NativeHubRuntime<impl Future<Output = Result<(), NodeRunError>>> {
     let ControllerInstallation {
         state_lock,
+        devices,
         identity,
         persistence,
     } = installation;
@@ -70,6 +72,7 @@ pub(super) fn prepare_hub(
     let handle = node.handle();
     let usb_interface = attach_usb(&handle);
     NativeHubRuntime {
+        devices,
         clock: node.clock(),
         handle,
         identities,

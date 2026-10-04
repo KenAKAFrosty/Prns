@@ -28,3 +28,9 @@ pub use state_machines::{
     SelectUsbPairingCandidateOutcome, SynchronizeDeviceInterfaces,
     SynchronizeDeviceInterfacesOutcome, UsbPairingCandidatesSnapshot, UsbPairingDiscovery,
 };
+
+pub use domain_primitives::{RememberedDevice, RememberedPairing};
+pub use state_machines::{
+    ReadRememberedDevices, ReadRememberedDevicesOutcome, RestoreRememberedDevice,
+    RestoreRememberedDeviceError, RestoreRememberedDeviceOutcome,
+};

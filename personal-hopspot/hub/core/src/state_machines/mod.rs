@@ -34,3 +34,8 @@ pub use device_interfaces::{
     DeviceInterfaces, ReadDeviceInterfaces, ReadDeviceInterfacesOutcome,
     SynchronizeDeviceInterfaces, SynchronizeDeviceInterfacesOutcome,
 };
+
+pub use device_registry::{
+    ReadRememberedDevices, ReadRememberedDevicesOutcome, RestoreRememberedDevice,
+    RestoreRememberedDeviceError, RestoreRememberedDeviceOutcome,
+};

@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+tempfile = "=3.27.0"
 hopspot-hub-core = { path = "../core" }
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host", "usb"] }
 pipecircuit = { version = "=0.0.16", default-features = false }
@@ -12,7 +13,6 @@ mio = { version = "=1.2.3", features = ["os-poll"] }
 tokio = { version = "1", features = ["macros", "rt", "sync"] }
 
 [dev-dependencies]
-tempfile = "=3.27.0"
 proptest = "=1.11.0"
 personal-hopspot-core = { path = "../../core", default-features = false }
 expect-test = "=1.5.1"

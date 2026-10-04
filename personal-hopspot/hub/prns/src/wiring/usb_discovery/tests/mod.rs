@@ -30,6 +30,7 @@ fn native_preparation_initializes_discovery_from_the_attached_usb_and_persisted_
     assert!(inspected.snapshot.as_of > InstantMillis(1_000_000));
     assert!(inspected.snapshot.as_of <= runtime.native.clock.now());
     drop(runtime.native.run);
+    drop(runtime.native.devices);
     assert!(ControllerInstallation::open(directory.path()).is_ok());
 }
 
@@ -116,6 +117,7 @@ fn signed_native_ingress_routes_discovery_and_callbacks_can_inspect_without_dead
         };
         let (result, ()) = tokio::join!(runtime.native.run, exercise);
         assert_eq!(result, Ok(()));
+        drop(runtime.native.devices);
         assert!(ControllerInstallation::open(directory.path()).is_ok());
     });
 }

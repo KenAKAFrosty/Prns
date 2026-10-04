@@ -50,7 +50,8 @@ character, and preserve the supplied text. Labels may be duplicated.
 Each operation has its own `StepInputOf<DeviceRegistry>` implementation and
 exact outcome: `CreateDevice`, `RenameDevice`, `ForgetDevice`, `ReadDevice`,
 `ListDevices`, `BeginEnrollment`, `CancelEnrollment`, `FailEnrollment`,
-`CompleteEnrollment`, `BeginConnection`, `ConfirmConnection`, and `EndConnection`.
+`CompleteEnrollment`, `BeginConnection`, `ConfirmConnection`, `EndConnection`,
+`ReadRememberedDevices`, and `RestoreRememberedDevice`.
 Invoke them through `StateMachine::step`. The `hopspot-hub-prns` crate owns
 the participant and physical transport contracts described below.
 
@@ -91,6 +92,70 @@ The caller remains responsible for cancelling physical work and closing links.
 It neither revokes target permissions nor erases a controller identity.
 Replacement of an existing pairing is deliberately refused until an explicit
 replacement operation is designed.
+
+## Remembered-device persistence
+
+`RememberedDevice` contains a validated label and either `Unpaired` or the paired
+target's public keys. `ReadRememberedDevices::<CAPACITY>` exports every record
+through a registry step, returning `InsufficientCapacity` rather than a partial
+snapshot. Planned and pending-enrollment records export as unpaired. Completed
+pairings retain their target, regardless of current connection state. Export
+neither changes the registry nor persists local IDs, attempts, generations,
+links, inventory, or failure history.
+
+`RestoreRememberedDevice` inserts one trusted saved record through its own step.
+It issues a fresh registry-local ID and starts with `NotConnected`. Paired target
+duplicates and capacity refusal preserve the rejected record as ordinary
+outcomes; identifier exhaustion is the step's invariant error. Restoration does
+not create PRNS authorization, authenticate a peer, or resume an enrollment.
+Existing registry lifetime rules still apply: discard old callbacks on restart,
+even if newly issued IDs happen to contain the same numeric values.
+
+`wiring/device_store` owns `DeviceStore`, available as `installation.devices`
+and then `native.devices`. `load(maximum_devices)` distinguishes a missing file
+from a validated, fully reconstructed new registry. Invalid archives return a
+typed error without exposing a partially restored registry or rewriting disk.
+The caller chooses what to do with a missing file and explicitly installs a
+successfully loaded registry. `save::<CAPACITY>(&mut registry)` takes a complete
+owned snapshot and replaces the stored archive. Insufficient snapshot capacity
+leaves the previous file untouched. Saving an empty registry persists forgetting
+the last device.
+
+The `devices.hopspot` format starts with `HOPDEV01`, a little-endian u32 record
+count, then records containing a one-byte UTF-8 label length, label bytes, and a
+pairing tag. Tag zero is unpaired; tag one adds the target's 32-byte encryption
+and 32-byte signing public keys. A SHA-256 checksum covers the preceding bytes.
+The reader enforces the configured device limit, the maximum archive length,
+label validation, exact tags, complete consumption, and unique paired targets.
+The checksum detects corruption; the archive is local metadata, not an
+independent authorization credential. Unknown formats are refused unchanged.
+
+Writes use `tempfile` staging in the installation directory, sync file contents,
+then replace the destination. Unix confirms the containing directory and its
+ancestor entries, including a newly created installation path. A failure after
+replacement returns `PublishedDurabilityUnconfirmed`: the new bytes may already
+be installed and must not be treated as an untouched old file. Other platforms
+retain file-sync-and-replacement semantics. New and replacement files are 0600
+on Unix. The existing PRNS file store supplies the staged-write and directory
+confirmation pattern; its fixed region vocabulary is not reused for Hub records.
+
+The store owns a shared installation lease and requires exclusive mutable access
+for saving. It remains usable after node shutdown, so the installation stays
+locked until both the native run owner and the store are released. A dropped
+store cannot unlock a still-running node. File operations are synchronous;
+application wiring should execute them on its blocking-work lane. This slice
+does not add automatic saves, shutdown saves, or a cross-file transaction with
+PRNS authorization. Enrollment coordination must settle both persistence owners
+before reporting completion.
+
+Tests cover durable restart, labels, pairing retention, renaming, forgetting,
+capacity boundaries, malformed files, staged-write and sync failures, replacement
+uncertainty, and lease lifetime. The native restart test restores both PRNS access
+and the Hub record before issuing a matching connection intent. Property tests
+exercise duplicate targets, Unicode record roundtrips, and single-byte archive
+corruption. The registry architecture and behavior expectations include both new
+steps; the physical store has a behavior inventory. The PRNS type graph still
+precludes expanding the existing isolated Kani harness here.
 
 ## Remembered-device connections
 
@@ -518,7 +583,7 @@ I/O constructor, not a core machine step.
 Call it inside a Tokio runtime with the installation, a PRNS event callback,
 and a shutdown future. It returns `NativeHubRuntime` with the native node
 handle, public identities and their origins, attached USB interface, rescan
-signal, and a future to drive. Preparation queues the existing `AutoUsb` with
+signal, device-record store, node clock, and a future to drive. Preparation queues the existing `AutoUsb` with
 its upstream interface ID, baud, and policy. Scanning starts when the returned
 run future is polled. The handle can supply the existing per-device fitting;
 its interface snapshots expose the local USB status. Event callbacks retain
@@ -528,11 +593,12 @@ introducing a second event representation or an unbounded event queue.
 The node starts with no inbound controller grants, no host controls, and no
 self-announcement. PRNS restores retained authorization when the run future
 starts. Resolve the supplied shutdown future and await `run` to let PRNS flush
-state and ratchets before releasing the installation lock. Keep the run future
-alive while settling outstanding fitting work first. Dropping an unpolled run
-future releases the lease; cancelling a running future does not promise a final
-flush. This bootstrap does not coordinate session cancellation or persist the
-Hub registry's labels and local device IDs.
+state and ratchets before releasing the run owner's installation lease. Keep the
+run future alive while settling outstanding fitting work first. Dropping an
+unpolled run future releases its lease; cancelling a running future does not
+promise a final flush. The device store retains a separate lease until dropped.
+This bootstrap does not coordinate session cancellation or automatically save
+Hub records; use the explicit store operations above.
 
 Tests cover native USB preparation without polling its hardware scanner, then
 drive the same assembly with an empty controlled `UsbAutoHost` scanner. They
@@ -691,7 +757,7 @@ cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
 cargo build --locked -p hopspot-hub-core --lib --no-default-features
 cargo llvm-cov clean --workspace
 cargo hub-coverage
-CARGO_INCREMENTAL=0 cargo hub-mutants --file 'prns/src/wiring/switchboards/usb_discovery/**' --file 'prns/src/wiring/usb_discovery/**' --file 'prns/src/wiring/runtime/**' --file 'core/src/state_machines/usb_pairing_discovery/**' --file 'core/src/domain_primitives/pairing_candidate.rs'
+CARGO_INCREMENTAL=0 cargo hub-mutants --file 'core/src/state_machines/device_registry/**' --file 'core/src/domain_primitives/remembered_device.rs' --file 'prns/src/wiring/device_store/**' --file 'prns/src/wiring/controller_installation/**' --file 'prns/src/wiring/runtime/**' --file 'prns/src/wiring/usb_discovery/**'
 cargo kani --manifest-path verification/kani/Cargo.toml --lib --output-format terse
 ```
 
@@ -715,8 +781,17 @@ suite. Report the scope and prior full baseline explicitly. Run the unfiltered
 or test infrastructure, or when requested. Require zero missed or timed-out mutants and report caught and
 unviable counts separately.
 
-The live-discovery candidate passes 133 tests and covers all 182 production
-functions, 1,706 lines, and 1,880 regions. The five file filters above resolve
+The remembered-device candidate passes 148 tests and covers all 206 production
+functions, 1,946 lines, and 2,206 regions. The six file filters above resolve
+89 mutants: 41 caught and 48 unviable, with no survivors or timeouts. Unviable
+results are 35 missing-Default errors, 11 unsupported-constructor errors, and two
+invalid generated syntax cases. This scope includes all registry operations,
+the remembered-record primitive, file store, installation, native runtime, and
+USB discovery wiring. `tempfile` 3.27.0 moves from test-only to production use
+without changing the resolved lockfile or other dependency versions.
+
+The committed live-discovery baseline `3be2f7946` passed 133 tests and covers all 182 production
+functions, 1,706 lines, and 1,880 regions. Its discovery-only scope resolved
 41 mutants: 14 caught and 27 unviable, with no survivors or timeouts. All unviable
 results are compiler rejections of generated defaults or constructors
 (16 E0277, 11 E0599). The previous full baseline is `d0e688246`: 71 caught and
@@ -796,7 +871,7 @@ interface will need a device-owned confirmation deadline and rollback.
 Per-installation identity, native USB bootstrap, and bounded physical work are
 in place, together with automatic per-device dispatch, cancellation, and native
 shutdown supervision and live verified discovery. Next, implement headless
-enrollment and connect it to the session driver, persist Hub device records,
-and add reconnect/deadline policy. Controller sharing, explicit
+enrollment and connect it to the session driver and explicit device-record
+persistence, then add reconnect/deadline policy. Controller sharing, explicit
 device replacement, firmware installation, clusters, and relationship views
 remain later capabilities.

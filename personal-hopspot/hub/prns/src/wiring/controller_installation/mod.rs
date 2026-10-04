@@ -1,3 +1,5 @@
+use crate::DeviceStore;
+use alloc::sync::Arc;
 use personal_rns::prelude::{
     RemoteControlFileIdentityBootstrapError, RemoteControlIdentityDirectory,
     RemoteControlNodeIdentityBootstrap,
@@ -21,7 +23,8 @@ pub enum ControllerInstallationError {
 }
 
 pub struct ControllerInstallation {
-    pub(crate) state_lock: InstallationLock,
+    pub(crate) state_lock: Arc<InstallationLock>,
+    pub devices: DeviceStore,
     pub(crate) identity: RemoteControlNodeIdentityBootstrap,
     pub(crate) persistence: NodePersistence,
 }
@@ -50,13 +53,14 @@ impl ControllerInstallation {
         state_lock
             .try_lock()
             .map_err(ControllerInstallationError::Lock)?;
-        let state_lock = InstallationLock(state_lock);
+        let state_lock = Arc::new(InstallationLock(state_lock));
         let identity = RemoteControlIdentityDirectory::new(directory.join("remote_control"))
             .load_or_generate()
             .map_err(ControllerInstallationError::Identity)?;
         let persistence = NodePersistence::custom_dir(directory.join("retained"))
             .map_err(ControllerInstallationError::Persistence)?;
         Ok(Self {
+            devices: DeviceStore::new(directory.to_path_buf(), state_lock.clone()),
             state_lock,
             identity,
             persistence,

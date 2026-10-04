@@ -43,3 +43,8 @@ pub use usb_discovery::{
     NativeUsbDiscoveryEvent, NativeUsbDiscoveryRuntime, UsbDiscoveryFailure, UsbDiscoveryHandle,
     prepare_native_usb_discovery,
 };
+
+mod device_store;
+pub use device_store::{
+    DeviceArchiveError, DeviceStore, DeviceStoreError, LoadDevicesOutcome, SaveDevicesOutcome,
+};
