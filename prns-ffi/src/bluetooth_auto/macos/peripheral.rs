@@ -1,5 +1,5 @@
 use core::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -48,6 +48,41 @@ pub(super) enum AdvertisingOp {
     Start,
     Stop,
     None,
+}
+
+/// CoreBluetooth accepts one failed `updateValue` and then requires
+/// `peripheralManagerIsReadyToUpdateSubscribers` before another attempt. Hold that many
+/// notifications locally so a full transmit queue waits instead of dropping a fragment.
+pub(super) const NOTIFY_OUTBOX_CAP: usize = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NotifyAdmit {
+    Transmit,
+    Hold,
+    Full,
+}
+
+pub(super) const fn notify_admit(awaiting_ready: bool, queued: usize) -> NotifyAdmit {
+    if awaiting_ready || queued > 0 {
+        if queued >= NOTIFY_OUTBOX_CAP {
+            NotifyAdmit::Full
+        } else {
+            NotifyAdmit::Hold
+        }
+    } else {
+        NotifyAdmit::Transmit
+    }
+}
+
+struct PendingNotify {
+    peer_id: CoreBluetoothPeerId,
+    target: ListenerCharacteristic,
+    bytes: Box<[u8]>,
+}
+
+struct NotifyOutbox {
+    pending: VecDeque<PendingNotify>,
+    awaiting_ready: bool,
 }
 
 pub(super) const fn advertising_op(enabled: bool, is_advertising: bool) -> AdvertisingOp {
@@ -206,6 +241,7 @@ pub(super) struct PeripheralDelegateIvars {
     pending_l2cap_capacity: usize,
     sessions: RefCell<HashMap<CoreBluetoothPeerId, PeripheralPeerSession>>,
     pending_l2cap: RefCell<HashMap<CoreBluetoothPeerId, PendingL2cap>>,
+    notify_outbox: RefCell<NotifyOutbox>,
 }
 
 define_class!(
@@ -575,10 +611,11 @@ define_class!(
         }
 
         #[unsafe(method(peripheralManagerIsReadyToUpdateSubscribers:))]
-        fn is_ready_to_update(&self, _peripheral: &CBPeripheralManager) {
+        fn is_ready_to_update(&self, peripheral: &CBPeripheralManager) {
             crate::diagnostic_log::debug!(
                 "bluetooth: notify queue drained — ready to update subscribers"
             );
+            self.flush_notify_outbox(peripheral);
         }
     }
 );
@@ -678,6 +715,10 @@ impl PeripheralDelegate {
             pending_l2cap_capacity: pending_l2cap_capacity(max_peers),
             sessions: RefCell::new(HashMap::new()),
             pending_l2cap: RefCell::new(HashMap::new()),
+            notify_outbox: RefCell::new(NotifyOutbox {
+                pending: VecDeque::new(),
+                awaiting_ready: false,
+            }),
         });
         // SAFETY: `this` is a freshly allocated PeripheralDelegate with fully initialized ivars;
         // forwarding to NSObject's designated initializer preserves its allocation identity.
@@ -739,37 +780,10 @@ impl PeripheralDelegate {
             else {
                 return;
             };
-            let Some((central, protocol)) = this
-                .0
-                .ivars()
-                .sessions
-                .borrow()
-                .get(&peer_id)
-                .map(|session| (session.central.clone(), session.protocol))
-            else {
-                return;
-            };
-            let characteristic = match (protocol, target) {
-                (PeerProtocol::Native, ListenerCharacteristic::Control) => {
-                    this.0.ivars().characteristic.borrow()
-                }
-                (PeerProtocol::Native, ListenerCharacteristic::Data) => {
-                    this.0.ivars().data_characteristic.borrow()
-                }
-                (PeerProtocol::Columba, _) => this.0.ivars().columba_tx_characteristic.borrow(),
-            };
-            let data = NSData::with_bytes(&bytes);
-            let centrals = NSArray::from_slice(&[&*central]);
-            // SAFETY: the retained mutable characteristic was published by this retained manager;
-            // CoreBluetooth receives retained data and an exact live subscribed central.
-            let accepted = unsafe {
-                manager.updateValue_forCharacteristic_onSubscribedCentrals(
-                    &data,
-                    &characteristic,
-                    Some(&centrals),
-                )
-            };
-            result.store(accepted, Ordering::Release);
+            result.store(
+                this.0.submit_notify(&manager, peer_id, target, bytes),
+                Ordering::Release,
+            );
         });
         sent.load(Ordering::Acquire)
     }
@@ -872,6 +886,9 @@ impl PeripheralDelegate {
         }
         self.ivars().sessions.borrow_mut().clear();
         self.ivars().pending_l2cap.borrow_mut().clear();
+        let mut outbox = self.ivars().notify_outbox.borrow_mut();
+        outbox.pending.clear();
+        outbox.awaiting_ready = false;
     }
 
     /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
@@ -888,6 +905,29 @@ impl PeripheralDelegate {
         // delivered channel is independently known closed; never use the synthetic address as an
         // identity substitute.
         reap_stale_pending_l2cap(&mut pending);
+        drop(sessions);
+        drop(pending);
+        let stale: Vec<CoreBluetoothPeerId> = self
+            .ivars()
+            .notify_outbox
+            .borrow()
+            .pending
+            .iter()
+            .map(|item| item.peer_id)
+            .filter(|peer_id| !has_session_for_peer(&self.ivars().sessions.borrow(), *peer_id))
+            .collect();
+        for peer_id in stale {
+            self.discard_notify_outbox(peer_id);
+        }
+        if let Some(manager) = self
+            .ivars()
+            .manager
+            .borrow()
+            .as_ref()
+            .map(|manager| manager.0.clone())
+        {
+            self.flush_notify_outbox(&manager);
+        }
     }
 
     /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
@@ -907,6 +947,16 @@ impl PeripheralDelegate {
     fn clear_peer_on_queue(&self, peer_id: CoreBluetoothPeerId) {
         self.ivars().sessions.borrow_mut().remove(&peer_id);
         self.ivars().pending_l2cap.borrow_mut().remove(&peer_id);
+        self.discard_notify_outbox(peer_id);
+        if let Some(manager) = self
+            .ivars()
+            .manager
+            .borrow()
+            .as_ref()
+            .map(|manager| manager.0.clone())
+        {
+            self.flush_notify_outbox(&manager);
+        }
     }
 
     pub(super) fn clear_closed_peer(&self, address: BleAddress) {
@@ -916,5 +966,117 @@ impl PeripheralDelegate {
             let this = this;
             this.0.clear_closed_peer_on_queue(address);
         });
+    }
+
+    /// Queue-confined. `updateValue` returning false means the transmit queue is full; the value
+    /// stays queued until CoreBluetooth reports that subscribers can be updated again.
+    fn submit_notify(
+        &self,
+        manager: &CBPeripheralManager,
+        peer_id: CoreBluetoothPeerId,
+        target: ListenerCharacteristic,
+        bytes: Box<[u8]>,
+    ) -> bool {
+        let decision = {
+            let outbox = self.ivars().notify_outbox.borrow();
+            notify_admit(outbox.awaiting_ready, outbox.pending.len())
+        };
+        match decision {
+            NotifyAdmit::Full => false,
+            NotifyAdmit::Hold => {
+                self.ivars()
+                    .notify_outbox
+                    .borrow_mut()
+                    .pending
+                    .push_back(PendingNotify {
+                        peer_id,
+                        target,
+                        bytes,
+                    });
+                true
+            }
+            NotifyAdmit::Transmit => {
+                if self.write_notify(manager, peer_id, target, &bytes) {
+                    true
+                } else if !has_session_for_peer(&self.ivars().sessions.borrow(), peer_id) {
+                    false
+                } else {
+                    let mut outbox = self.ivars().notify_outbox.borrow_mut();
+                    outbox.awaiting_ready = true;
+                    outbox.pending.push_back(PendingNotify {
+                        peer_id,
+                        target,
+                        bytes,
+                    });
+                    true
+                }
+            }
+        }
+    }
+
+    /// Queue-confined. Sends queued notifications until one is rejected or the outbox is empty.
+    fn flush_notify_outbox(&self, manager: &CBPeripheralManager) {
+        let mut outbox = self.ivars().notify_outbox.borrow_mut();
+        outbox.awaiting_ready = false;
+        while !outbox.pending.is_empty() {
+            let Some(next) = outbox.pending.pop_front() else {
+                break;
+            };
+            if !has_session_for_peer(&self.ivars().sessions.borrow(), next.peer_id) {
+                continue;
+            }
+            if self.write_notify(manager, next.peer_id, next.target, &next.bytes) {
+                continue;
+            }
+            outbox.awaiting_ready = true;
+            outbox.pending.push_front(next);
+            break;
+        }
+    }
+
+    fn discard_notify_outbox(&self, peer_id: CoreBluetoothPeerId) {
+        let mut outbox = self.ivars().notify_outbox.borrow_mut();
+        outbox.pending.retain(|item| item.peer_id != peer_id);
+        if outbox.pending.is_empty() {
+            outbox.awaiting_ready = false;
+        }
+    }
+
+    fn write_notify(
+        &self,
+        manager: &CBPeripheralManager,
+        peer_id: CoreBluetoothPeerId,
+        target: ListenerCharacteristic,
+        bytes: &[u8],
+    ) -> bool {
+        let Some((central, protocol)) = self
+            .ivars()
+            .sessions
+            .borrow()
+            .get(&peer_id)
+            .map(|session| (session.central.clone(), session.protocol))
+        else {
+            return false;
+        };
+        let characteristic = match (protocol, target) {
+            (PeerProtocol::Native, ListenerCharacteristic::Control) => {
+                self.ivars().characteristic.borrow()
+            }
+            (PeerProtocol::Native, ListenerCharacteristic::Data) => {
+                self.ivars().data_characteristic.borrow()
+            }
+            (PeerProtocol::Columba, _) => self.ivars().columba_tx_characteristic.borrow(),
+        };
+        let data = NSData::with_bytes(bytes);
+        let centrals = NSArray::from_slice(&[&*central]);
+        // SAFETY: the retained mutable characteristic was published by this manager; CoreBluetooth
+        // receives retained data and an exact live subscribed central.
+        unsafe {
+            manager.updateValue_forCharacteristic_onSubscribedCentrals(
+                &data,
+                &characteristic,
+                Some(&centrals),
+            )
+        }
     }
 }
