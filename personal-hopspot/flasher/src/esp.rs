@@ -188,7 +188,7 @@ fn validate_rc_vault(board: &BoardCatalogEntry, vault: &RcVaultWrite) -> Result<
     if u64::from(vault.offset) != region.range.start()
         || vault.bytes.len() != 4096
         || region.range.byte_len() != 4096
-        || vault.offset % 4096 != 0
+        || !vault.offset.is_multiple_of(4096)
     {
         return Err(AppError::configuration(
             "RC vault must match the board's 4096-byte identity partition",
