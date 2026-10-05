@@ -442,6 +442,54 @@ mod tests {
         RuntimeEntropy::try_new(TestEntropySource(seed)).unwrap()
     }
 
+    #[test]
+    fn enrolled_page_restores_target_and_operator_grant_across_bootstrap() {
+        use crate::identity::in_memory::InMemoryNodeIdentity;
+        use crate::identity::IdentitySigner;
+        use crate::remote_control::{
+            encode_remote_control_vault_page, load_factory_controller_grant,
+        };
+        let operator = InMemoryNodeIdentity::from_secret_key_bytes(&[0x31; 64]);
+        let operator_keys = crate::identity::IdentityPublicKeys {
+            encryption: operator.encryption_public_key(),
+            signing: operator.signing_public_key(),
+        };
+        let target_secret = [0x62; 64];
+        let page = encode_remote_control_vault_page(&target_secret, &operator_keys).unwrap();
+        let mut flash = FakeFlash::<4096>::new();
+        flash.bytes.copy_from_slice(&page);
+        let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(flash, 0);
+        let mut entropy = runtime_entropy(0x93);
+        let bootstrap = RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+            &mut vault,
+            &mut entropy,
+        )
+        .unwrap();
+        assert_eq!(bootstrap.origins().target(), IdentityOrigin::Loaded);
+        assert_eq!(
+            &*vault.load(&label("target")).unwrap().unwrap(),
+            &target_secret
+        );
+        let grant = load_factory_controller_grant(&vault).unwrap().unwrap();
+        assert_eq!(grant.controller().public_keys(), &operator_keys);
+        let flash = vault.release();
+        assert_eq!(flash.erase_count, 0);
+        let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(flash, 0);
+        let next = RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+            &mut vault,
+            &mut entropy,
+        )
+        .unwrap();
+        assert_eq!(
+            next.secrets().identities(),
+            bootstrap.secrets().identities()
+        );
+        assert_eq!(
+            load_factory_controller_grant(&vault).unwrap().unwrap(),
+            grant
+        );
+    }
+
     struct FakeFlash<const CAP: usize, const READ: usize = 1> {
         bytes: [u8; CAP],
         erase_count: usize,

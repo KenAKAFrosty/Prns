@@ -92,6 +92,11 @@
       "target": "xtensa-esp32s3-none-elf"
     },
     {
+      "manifest": "personal-hopspot/embedded/esp32/boards/heltec-v3/Cargo.toml",
+      "name": "esp32-s3-heltec-v3",
+      "target": "xtensa-esp32s3-none-elf"
+    },
+    {
       "manifest": "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
       "name": "esp32-s3-tbeam",
       "target": "xtensa-esp32s3-none-elf"
@@ -155,6 +160,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -264,6 +270,9 @@
           "alloc"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -511,6 +520,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -541,6 +551,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "ios": [],
@@ -589,6 +600,10 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "std"
         ],
@@ -707,6 +722,9 @@
           "alloc"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -829,6 +847,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -849,6 +868,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -888,6 +908,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -952,6 +973,9 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "std"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -1042,6 +1066,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -1097,6 +1122,9 @@
         "esp32-s3-heltec-r8": [
           "zeroize"
         ],
+        "esp32-s3-heltec-v3": [
+          "zeroize"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "zeroize"
         ],
@@ -1147,6 +1175,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -1323,6 +1352,9 @@
         "esp32-s3-heltec-r8": [
           "uuid"
         ],
+        "esp32-s3-heltec-v3": [
+          "uuid"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "uuid"
         ],
@@ -1431,6 +1463,9 @@
         "esp32-s3-heltec-r8": [
           "uuid"
         ],
+        "esp32-s3-heltec-v3": [
+          "uuid"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "uuid"
         ],
@@ -1474,6 +1509,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -1503,6 +1539,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -1553,6 +1590,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -1667,6 +1705,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default",
           "std"
@@ -1755,6 +1797,9 @@
         "esp32-s3-heltec-r8": [
           "default"
         ],
+        "esp32-s3-heltec-v3": [
+          "default"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default"
         ],
@@ -1827,6 +1872,9 @@
           "block-padding"
         ],
         "esp32-s3-heltec-r8": [
+          "block-padding"
+        ],
+        "esp32-s3-heltec-v3": [
           "block-padding"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -1951,6 +1999,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -2056,6 +2105,10 @@
           "rng",
           "zeroize"
         ],
+        "esp32-s3-heltec-v3": [
+          "rng",
+          "zeroize"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "rng",
           "zeroize"
@@ -2136,6 +2189,9 @@
           "block-padding"
         ],
         "esp32-s3-heltec-r8": [
+          "block-padding"
+        ],
+        "esp32-s3-heltec-v3": [
           "block-padding"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -2327,6 +2383,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -2411,6 +2468,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -2439,6 +2497,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -2471,6 +2530,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -2500,6 +2560,10 @@
           "no-cache-pad"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "no-cache-pad"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "no-cache-pad"
         ],
@@ -2783,6 +2847,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default",
           "std"
@@ -2850,6 +2918,9 @@
           "restore-state-u32"
         ],
         "esp32-s3-heltec-r8": [
+          "restore-state-u32"
+        ],
+        "esp32-s3-heltec-v3": [
           "restore-state-u32"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -3133,6 +3204,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [
@@ -3197,6 +3269,9 @@
         "esp32-s3-heltec-r8": [
           "rand_core"
         ],
+        "esp32-s3-heltec-v3": [
+          "rand_core"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "rand_core"
         ],
@@ -3245,6 +3320,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -3369,6 +3445,13 @@
           "zeroize"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc",
           "digest",
           "precomputed-tables",
@@ -3560,6 +3643,10 @@
           "default",
           "suggestions"
         ],
+        "esp32-s3-heltec-v3": [
+          "default",
+          "suggestions"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default",
           "suggestions"
@@ -3594,6 +3681,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -3623,6 +3711,10 @@
           "suggestions"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "suggestions"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "suggestions"
         ],
@@ -3710,6 +3802,10 @@
           "strsim",
           "suggestions"
         ],
+        "esp32-s3-heltec-v3": [
+          "strsim",
+          "suggestions"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "strsim",
           "suggestions"
@@ -3744,6 +3840,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -3773,6 +3870,10 @@
           "suggestions"
         ],
         "esp32-s3-heltec-r8": [
+          "strsim",
+          "suggestions"
+        ],
+        "esp32-s3-heltec-v3": [
           "strsim",
           "suggestions"
         ],
@@ -3824,6 +3925,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -3846,6 +3948,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -3866,6 +3969,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -4029,6 +4133,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -4101,6 +4206,11 @@
           "zeroize"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc",
           "oid",
           "zeroize"
@@ -4217,6 +4327,10 @@
           "core-api"
         ],
         "esp32-s3-heltec-r8": [
+          "block-buffer",
+          "core-api"
+        ],
+        "esp32-s3-heltec-v3": [
           "block-buffer",
           "core-api"
         ],
@@ -4343,6 +4457,13 @@
           "zeroize"
         ],
         "esp32-s3-heltec-r8": [
+          "block-api",
+          "default",
+          "mac",
+          "rand_core",
+          "zeroize"
+        ],
+        "esp32-s3-heltec-v3": [
           "block-api",
           "default",
           "mac",
@@ -4488,6 +4609,9 @@
         "esp32-s3-heltec-r8": [
           "default"
         ],
+        "esp32-s3-heltec-v3": [
+          "default"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default"
         ],
@@ -4511,6 +4635,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -4530,6 +4655,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -4599,6 +4725,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -4619,6 +4746,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -4656,6 +4784,9 @@
         "desktop-windows": [
           "default"
         ],
+        "engine": [
+          "default"
+        ],
         "esp32-c6": [
           "default"
         ],
@@ -4666,6 +4797,9 @@
           "default"
         ],
         "esp32-s3-heltec-r8": [
+          "default"
+        ],
+        "esp32-s3-heltec-v3": [
           "default"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -4767,6 +4901,9 @@
           "alloc"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -4905,6 +5042,15 @@
           "zeroize"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc",
           "batch",
           "fast",
@@ -5055,6 +5201,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "nrf52840": [
@@ -5078,6 +5225,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "nrf52840": [
@@ -5103,6 +5251,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -5120,6 +5269,9 @@
     },
     {
       "graphs": {
+        "engine": [
+          "timer-item-size-6-words"
+        ],
         "esp32-c6": [
           "timer-item-size-6-words"
         ],
@@ -5130,6 +5282,9 @@
           "timer-item-size-6-words"
         ],
         "esp32-s3-heltec-r8": [
+          "timer-item-size-6-words"
+        ],
+        "esp32-s3-heltec-v3": [
           "timer-item-size-6-words"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -5167,6 +5322,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5192,6 +5348,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -5323,6 +5480,16 @@
           "tcp",
           "udp"
         ],
+        "esp32-s3-heltec-v3": [
+          "dhcpv4",
+          "dns",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "dhcpv4",
           "dns",
@@ -5400,6 +5567,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5432,6 +5600,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5482,6 +5651,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -5509,6 +5679,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -5532,10 +5703,12 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5564,10 +5737,15 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [
+          "generic-queue-64",
+          "tick-hz-1_000_000"
+        ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5596,6 +5774,9 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [
+          "tick-hz-1_000_000"
+        ],
         "esp32-c6": [
           "tick-hz-1_000_000"
         ],
@@ -5606,6 +5787,9 @@
           "tick-hz-1_000_000"
         ],
         "esp32-s3-heltec-r8": [
+          "tick-hz-1_000_000"
+        ],
+        "esp32-s3-heltec-v3": [
           "tick-hz-1_000_000"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -5635,10 +5819,15 @@
     },
     {
       "graphs": {
+        "engine": [
+          "_generic-queue",
+          "generic-queue-64"
+        ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -5667,6 +5856,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5701,6 +5891,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5733,6 +5924,9 @@
         "esp32-s3-heltec-r8": [
           "default"
         ],
+        "esp32-s3-heltec-v3": [
+          "default"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default"
         ],
@@ -5757,6 +5951,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -5798,6 +5993,9 @@
           "default"
         ],
         "esp32-s3-heltec-r8": [
+          "default"
+        ],
+        "esp32-s3-heltec-v3": [
           "default"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -5851,6 +6049,9 @@
           "default"
         ],
         "esp32-s3-heltec-r8": [
+          "default"
+        ],
+        "esp32-s3-heltec-v3": [
           "default"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -5918,6 +6119,7 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [
           "unproven"
         ],
@@ -5928,6 +6130,9 @@
           "unproven"
         ],
         "esp32-s3-heltec-r8": [
+          "unproven"
+        ],
+        "esp32-s3-heltec-v3": [
           "unproven"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -5964,10 +6169,12 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5996,10 +6203,12 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -6028,6 +6237,9 @@
           "async"
         ],
         "esp32-s3-heltec-r8": [
+          "async"
+        ],
+        "esp32-s3-heltec-v3": [
           "async"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -6064,6 +6276,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -6091,10 +6304,12 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -6127,6 +6342,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -6154,10 +6370,12 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -6190,6 +6408,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -6221,6 +6440,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -6253,6 +6473,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -6287,6 +6508,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -6386,6 +6608,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -6406,6 +6629,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -6467,6 +6691,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-macos": []
@@ -6556,6 +6781,12 @@
           "global-allocator",
           "internal-heap-stats"
         ],
+        "esp32-s3-heltec-v3": [
+          "compat",
+          "default",
+          "global-allocator",
+          "internal-heap-stats"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "compat",
           "default",
@@ -6604,6 +6835,13 @@
           "println"
         ],
         "esp32-s3-heltec-r8": [
+          "esp32c6",
+          "esp32s3",
+          "panic-handler",
+          "print-float-registers",
+          "println"
+        ],
+        "esp32-s3-heltec-v3": [
           "esp32c6",
           "esp32s3",
           "panic-handler",
@@ -6666,6 +6904,13 @@
           "esp32s3",
           "validation"
         ],
+        "esp32-s3-heltec-v3": [
+          "default",
+          "esp-rom-sys",
+          "esp32c6",
+          "esp32s3",
+          "validation"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default",
           "esp-rom-sys",
@@ -6704,6 +6949,9 @@
           "build"
         ],
         "esp32-s3-heltec-r8": [
+          "build"
+        ],
+        "esp32-s3-heltec-v3": [
           "build"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -6766,6 +7014,19 @@
           "unstable"
         ],
         "esp32-s3-heltec-r8": [
+          "__bluetooth",
+          "__usb_otg",
+          "critical-section",
+          "default",
+          "esp32c6",
+          "esp32s3",
+          "exception-handler",
+          "float-save-restore",
+          "requires-unstable",
+          "rt",
+          "unstable"
+        ],
+        "esp32-s3-heltec-v3": [
           "__bluetooth",
           "__usb_otg",
           "critical-section",
@@ -6846,6 +7107,13 @@
           "rtc-fast",
           "rtc-slow"
         ],
+        "esp32-s3-heltec-v3": [
+          "__esp_idf_bootloader",
+          "has-lp-core",
+          "has-ulp-core",
+          "rtc-fast",
+          "rtc-slow"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "__esp_idf_bootloader",
           "has-lp-core",
@@ -6898,6 +7166,12 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-v3": [
+          "_device-selected",
+          "build-script",
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "_device-selected",
           "build-script",
@@ -6937,6 +7211,10 @@
           "esp32s3"
         ],
         "esp32-s3-heltec-r8": [
+          "esp32c6",
+          "esp32s3"
+        ],
+        "esp32-s3-heltec-v3": [
           "esp32c6",
           "esp32s3"
         ],
@@ -6984,6 +7262,13 @@
           "no-op"
         ],
         "esp32-s3-heltec-r8": [
+          "esp32c6",
+          "esp32s3",
+          "jtag-serial",
+          "log-04",
+          "no-op"
+        ],
+        "esp32-s3-heltec-v3": [
           "esp32c6",
           "esp32s3",
           "jtag-serial",
@@ -7066,6 +7351,18 @@
           "wifi",
           "xtensa-lx-rt"
         ],
+        "esp32-s3-heltec-v3": [
+          "__has_unstable_feature_enabled",
+          "ble",
+          "coex",
+          "esp-alloc",
+          "esp-now",
+          "esp32c6",
+          "esp32s3",
+          "unstable",
+          "wifi",
+          "xtensa-lx-rt"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "__has_unstable_feature_enabled",
           "ble",
@@ -7123,6 +7420,12 @@
           "ipc-implementations"
         ],
         "esp32-s3-heltec-r8": [
+          "esp-sync",
+          "esp32c6",
+          "esp32s3",
+          "ipc-implementations"
+        ],
+        "esp32-s3-heltec-v3": [
           "esp-sync",
           "esp32c6",
           "esp32s3",
@@ -7187,6 +7490,10 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-v3": [
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "esp32c6",
           "esp32s3"
@@ -7241,6 +7548,14 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "default",
+          "embassy",
+          "esp-radio",
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
           "default",
@@ -7287,6 +7602,10 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-v3": [
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "esp32c6",
           "esp32s3"
@@ -7325,6 +7644,10 @@
           "esp32sx",
           "fs"
         ],
+        "esp32-s3-heltec-v3": [
+          "esp32sx",
+          "fs"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "esp32sx",
           "fs"
@@ -7359,6 +7682,9 @@
         "esp32-s3-heltec-r8": [
           "default"
         ],
+        "esp32-s3-heltec-v3": [
+          "default"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default"
         ],
@@ -7389,6 +7715,9 @@
           "default"
         ],
         "esp32-s3-heltec-r8": [
+          "default"
+        ],
+        "esp32-s3-heltec-v3": [
           "default"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -7427,6 +7756,11 @@
           "rt"
         ],
         "esp32-s3-heltec-r8": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-v3": [
           "critical-section",
           "default",
           "rt"
@@ -7475,6 +7809,11 @@
           "default",
           "rt"
         ],
+        "esp32-s3-heltec-v3": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "critical-section",
           "default",
@@ -7515,6 +7854,11 @@
           "rt"
         ],
         "esp32-s3-heltec-r8": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-v3": [
           "critical-section",
           "default",
           "rt"
@@ -7563,6 +7907,11 @@
           "default",
           "rt"
         ],
+        "esp32-s3-heltec-v3": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "critical-section",
           "default",
@@ -7603,6 +7952,11 @@
           "rt"
         ],
         "esp32-s3-heltec-r8": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-v3": [
           "critical-section",
           "default",
           "rt"
@@ -7651,6 +8005,11 @@
           "default",
           "rt"
         ],
+        "esp32-s3-heltec-v3": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "critical-section",
           "default",
@@ -7691,6 +8050,11 @@
           "rt"
         ],
         "esp32-s3-heltec-r8": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-v3": [
           "critical-section",
           "default",
           "rt"
@@ -7977,6 +8341,11 @@
           "num-traits",
           "ratio"
         ],
+        "esp32-s3-heltec-v3": [
+          "default",
+          "num-traits",
+          "ratio"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default",
           "num-traits",
@@ -8085,6 +8454,10 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "std"
         ],
@@ -8206,6 +8579,9 @@
         "esp32-s3-heltec-r8": [
           "default"
         ],
+        "esp32-s3-heltec-v3": [
+          "default"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default"
         ],
@@ -8314,6 +8690,14 @@
           "futures-executor",
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
           "async-await",
@@ -8461,6 +8845,13 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc",
           "default",
           "futures-sink",
@@ -8600,6 +8991,11 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc",
           "default",
           "std"
@@ -8708,6 +9104,9 @@
         "esp32-s3-heltec-r8": [
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "std"
         ],
@@ -8765,6 +9164,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -8822,6 +9222,9 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "std"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -8913,6 +9316,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "ios": [],
@@ -8994,6 +9398,10 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc",
           "std"
         ],
@@ -9101,6 +9509,10 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc",
           "std"
         ],
@@ -9363,6 +9775,21 @@
           "slab",
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
           "async-await",
@@ -9505,6 +9932,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -9555,6 +9983,9 @@
           "more_lengths"
         ],
         "esp32-s3-heltec-r8": [
+          "more_lengths"
+        ],
+        "esp32-s3-heltec-v3": [
           "more_lengths"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -9621,6 +10052,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -9709,6 +10141,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -9757,6 +10190,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -9839,6 +10273,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-macos": []
@@ -9868,6 +10303,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -9897,10 +10333,12 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -9953,6 +10391,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": []
@@ -10011,6 +10450,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -10067,6 +10507,9 @@
           "zeroize"
         ],
         "esp32-s3-heltec-r8": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec-v3": [
           "zeroize"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -10133,6 +10576,23 @@
       },
       "name": "hopspot-heltec-e290",
       "source": "personal-hopspot/embedded/esp32/boards/heltec-e290",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "esp32-s3-heltec-v3": [
+          "default"
+        ]
+      },
+      "name": "hopspot-heltec-v3",
+      "source": "personal-hopspot/embedded/esp32/boards/heltec-v3",
       "unsafe": {
         "blocks": 0,
         "externs": 0,
@@ -10342,6 +10802,9 @@
           "zeroize"
         ],
         "esp32-s3-heltec-r8": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec-v3": [
           "zeroize"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -10559,6 +11022,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -10640,6 +11104,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -10742,6 +11207,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default",
           "std"
@@ -10772,6 +11241,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -10824,6 +11294,9 @@
         "esp32-s3-heltec-r8": [
           "block-padding"
         ],
+        "esp32-s3-heltec-v3": [
+          "block-padding"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "block-padding"
         ],
@@ -10866,6 +11339,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -10940,6 +11414,10 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "std"
         ],
@@ -11054,6 +11532,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -11086,6 +11565,10 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc",
           "std"
         ],
@@ -11223,6 +11706,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -11360,6 +11844,9 @@
         "esp32-s3-heltec-r8": [
           "rust-allocator"
         ],
+        "esp32-s3-heltec-v3": [
+          "rust-allocator"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "rust-allocator"
         ],
@@ -11449,6 +11936,11 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "extra_traits",
           "std"
@@ -11561,6 +12053,9 @@
           "const_mut_refs"
         ],
         "esp32-s3-heltec-r8": [
+          "const_mut_refs"
+        ],
+        "esp32-s3-heltec-v3": [
           "const_mut_refs"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -11679,10 +12174,12 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -11748,6 +12245,10 @@
           "atomic_usize",
           "default"
         ],
+        "esp32-s3-heltec-v3": [
+          "atomic_usize",
+          "default"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "atomic_usize",
           "default"
@@ -11795,6 +12296,10 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "release_max_level_info",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "release_max_level_info",
           "std"
         ],
@@ -11925,6 +12430,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default",
           "std"
@@ -12041,6 +12550,9 @@
         "esp32-s3-heltec-r8": [
           "map"
         ],
+        "esp32-s3-heltec-v3": [
+          "map"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "map"
         ],
@@ -12094,6 +12606,13 @@
           "syn1",
           "syn2"
         ],
+        "esp32-s3-heltec-v3": [
+          "default",
+          "macros",
+          "syn",
+          "syn1",
+          "syn2"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default",
           "macros",
@@ -12125,6 +12644,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -12172,6 +12692,11 @@
           "pulldown-cmark"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "doctests",
+          "pulldown-cmark"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "doctests",
           "pulldown-cmark"
@@ -12312,6 +12837,11 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
           "default",
@@ -12417,6 +12947,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "ios": [],
@@ -12530,6 +13061,11 @@
           "os-poll"
         ],
         "esp32-s3-heltec-r8": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "esp32-s3-heltec-v3": [
           "net",
           "os-ext",
           "os-poll"
@@ -12684,6 +13220,7 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [
           "unstable"
         ],
@@ -12694,6 +13231,9 @@
           "unstable"
         ],
         "esp32-s3-heltec-r8": [
+          "unstable"
+        ],
+        "esp32-s3-heltec-v3": [
           "unstable"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -12730,10 +13270,12 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -12831,6 +13373,12 @@
           "gateway"
         ],
         "esp32-s3-heltec-r8": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "esp32-s3-heltec-v3": [
           "android-extra",
           "apple-system-configuration-extra",
           "default",
@@ -13189,6 +13737,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": []
@@ -13300,6 +13849,10 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "std"
         ],
@@ -15185,6 +15738,10 @@
           "elf",
           "read_core"
         ],
+        "esp32-s3-heltec-v3": [
+          "elf",
+          "read_core"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "elf",
           "read_core"
@@ -15456,6 +16013,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": []
@@ -15573,6 +16131,11 @@
           "embedded",
           "remote-control-pairing"
         ],
+        "esp32-s3-heltec-v3": [
+          "display",
+          "embedded",
+          "remote-control-pairing"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "display",
           "embedded",
@@ -15636,6 +16199,7 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "heltec-v3",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
@@ -15650,6 +16214,7 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "heltec-v3",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
@@ -15664,6 +16229,7 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "heltec-v3",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
@@ -15678,6 +16244,22 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "heltec-v3",
+          "jtag-logging",
+          "lora",
+          "remote-control-pairing",
+          "silent-logging",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "esp32-s3-heltec-v3": [
+          "bluetooth-auto",
+          "default",
+          "display",
+          "esp-now",
+          "esp32s3fn8",
+          "heltec-v3",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
@@ -15692,6 +16274,7 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "heltec-v3",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
@@ -15706,6 +16289,7 @@
           "display",
           "esp-now",
           "esp32s3fn8",
+          "heltec-v3",
           "jtag-logging",
           "lora",
           "remote-control-pairing",
@@ -15749,6 +16333,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -15773,6 +16358,7 @@
           "log",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "shared-instance",
           "std",
           "tokio-host",
@@ -15796,6 +16382,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "pipe",
+          "remote-control-path-table",
           "rnode",
           "rnx",
           "serial",
@@ -15827,6 +16414,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "pipe",
+          "remote-control-path-table",
           "rnode",
           "rnx",
           "serial",
@@ -15858,6 +16446,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "pipe",
+          "remote-control-path-table",
           "rnode",
           "rnx",
           "serial",
@@ -15881,6 +16470,7 @@
           "log",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "serial",
           "shared-instance",
           "std",
@@ -15898,6 +16488,7 @@
           "log",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "serial",
           "shared-instance",
           "std",
@@ -15915,6 +16506,7 @@
           "log",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "serial",
           "shared-instance",
           "std",
@@ -15929,6 +16521,7 @@
           "alloc",
           "default",
           "flash",
+          "remote-control-path-table",
           "resource-work-offload",
           "std",
           "std-sync-host",
@@ -15943,6 +16536,7 @@
           "flash",
           "log",
           "lora",
+          "remote-control-path-table",
           "tcp",
           "tcp-dns",
           "usb",
@@ -15957,6 +16551,7 @@
           "flash",
           "log",
           "lora",
+          "remote-control-path-table",
           "tcp",
           "tcp-dns",
           "usb",
@@ -15971,6 +16566,7 @@
           "flash",
           "log",
           "lora",
+          "remote-control-path-table",
           "tcp",
           "tcp-dns",
           "usb",
@@ -15985,6 +16581,22 @@
           "flash",
           "log",
           "lora",
+          "remote-control-path-table",
+          "tcp",
+          "tcp-dns",
+          "usb",
+          "wifi-auto"
+        ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "bluetooth-auto",
+          "embassy-host",
+          "esp-now",
+          "external-alloc",
+          "flash",
+          "log",
+          "lora",
+          "remote-control-path-table",
           "tcp",
           "tcp-dns",
           "usb",
@@ -15999,6 +16611,7 @@
           "flash",
           "log",
           "lora",
+          "remote-control-path-table",
           "tcp",
           "tcp-dns",
           "usb",
@@ -16013,6 +16626,7 @@
           "flash",
           "log",
           "lora",
+          "remote-control-path-table",
           "tcp",
           "tcp-dns",
           "usb",
@@ -16030,6 +16644,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "pipe",
+          "remote-control-path-table",
           "rnode",
           "serial",
           "std",
@@ -16053,6 +16668,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "pipe",
+          "remote-control-path-table",
           "rnode",
           "serial",
           "std",
@@ -16076,6 +16692,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "pipe",
+          "remote-control-path-table",
           "rnode",
           "serial",
           "std",
@@ -16093,6 +16710,7 @@
           "flash",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "std",
           "tcp",
           "tokio-host",
@@ -16173,6 +16791,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -16229,6 +16848,9 @@
           "alloc"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -16364,6 +16986,11 @@
           "default",
           "fallback"
         ],
+        "engine": [
+          "critical-section",
+          "default",
+          "fallback"
+        ],
         "esp32-c6": [
           "critical-section",
           "default",
@@ -16386,6 +17013,13 @@
           "unsafe-assume-single-core"
         ],
         "esp32-s3-heltec-r8": [
+          "critical-section",
+          "default",
+          "fallback",
+          "require-cas",
+          "unsafe-assume-single-core"
+        ],
+        "esp32-s3-heltec-v3": [
           "critical-section",
           "default",
           "fallback",
@@ -16471,6 +17105,9 @@
         "esp32-s3-heltec-r8": [
           "portable-atomic"
         ],
+        "esp32-s3-heltec-v3": [
+          "portable-atomic"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "portable-atomic"
         ],
@@ -16495,6 +17132,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -16623,6 +17261,7 @@
           "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "shared-instance-rpc",
@@ -16640,6 +17279,7 @@
           "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "rnx",
@@ -16659,6 +17299,7 @@
           "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "rnx",
@@ -16678,6 +17319,7 @@
           "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "rnx",
@@ -16694,6 +17336,7 @@
           "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "shared-instance-rpc",
@@ -16708,6 +17351,7 @@
           "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "shared-instance-rpc",
@@ -16722,6 +17366,7 @@
           "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "shared-instance-rpc",
@@ -16736,6 +17381,7 @@
           "flash",
           "large-static-responses",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16750,6 +17396,7 @@
           "external-alloc",
           "flash",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16762,6 +17409,7 @@
           "external-alloc",
           "flash",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16774,6 +17422,7 @@
           "external-alloc",
           "flash",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16786,6 +17435,20 @@
           "external-alloc",
           "flash",
           "movable-frame-forwarding",
+          "remote-control-path-table",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "tokio-host"
+        ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "ed25519-batch",
+          "embassy-host",
+          "external-alloc",
+          "flash",
+          "movable-frame-forwarding",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16798,6 +17461,7 @@
           "external-alloc",
           "flash",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16810,6 +17474,7 @@
           "external-alloc",
           "flash",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16825,6 +17490,7 @@
           "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16840,6 +17506,7 @@
           "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16855,6 +17522,7 @@
           "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16868,6 +17536,7 @@
           "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16879,6 +17548,7 @@
           "embassy-host",
           "flash",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std",
@@ -16887,6 +17557,7 @@
         "wasm": [
           "alloc",
           "flash",
+          "remote-control-path-table",
           "resource-work-offload",
           "rns-management-wire",
           "std"
@@ -17105,6 +17776,17 @@
           "wifi-auto"
         ],
         "esp32-s3-heltec-r8": [
+          "bluetooth-auto",
+          "bluetooth-auto-trouble",
+          "esp-now",
+          "log",
+          "lora",
+          "tcp",
+          "tcp-dns",
+          "usb",
+          "wifi-auto"
+        ],
+        "esp32-s3-heltec-v3": [
           "bluetooth-auto",
           "bluetooth-auto-trouble",
           "esp-now",
@@ -17349,6 +18031,16 @@
           "usb",
           "wifi-auto"
         ],
+        "esp32-s3-heltec-v3": [
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "log",
+          "network-device-selection",
+          "serial",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "bluetooth-auto",
           "bluetooth-auto-runtime",
@@ -17470,6 +18162,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -17525,6 +18218,7 @@
         "android": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
@@ -17535,6 +18229,7 @@
           "interface-discovery",
           "interface-discovery-archive",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
@@ -17546,6 +18241,7 @@
           "interface-discovery",
           "interface-discovery-archive",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
@@ -17557,6 +18253,7 @@
           "interface-discovery",
           "interface-discovery-archive",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
@@ -17566,6 +18263,7 @@
         "desktop-linux": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
@@ -17574,6 +18272,7 @@
         "desktop-macos": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
@@ -17582,6 +18281,7 @@
         "desktop-windows": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
@@ -17591,6 +18291,7 @@
           "alloc",
           "default",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "resource-bzip2",
           "std"
         ],
@@ -17598,6 +18299,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "std"
@@ -17606,6 +18308,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "std"
@@ -17614,6 +18317,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "std"
@@ -17622,6 +18326,16 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
+          "remote-control-wifi-host",
+          "resource-bzip2",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "external-alloc",
+          "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "std"
@@ -17630,6 +18344,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "std"
@@ -17638,6 +18353,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "std"
@@ -17646,6 +18362,7 @@
           "alloc",
           "interface-discovery",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "std"
@@ -17654,6 +18371,7 @@
           "alloc",
           "interface-discovery",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "std"
@@ -17662,6 +18380,7 @@
           "alloc",
           "interface-discovery",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "std"
@@ -17669,6 +18388,7 @@
         "ios": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "remote-control-wifi-host",
           "resource-bzip2",
           "std"
@@ -17676,11 +18396,13 @@
         "nrf52840": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-path-table",
           "resource-bzip2",
           "std"
         ],
         "wasm": [
           "alloc",
+          "remote-control-path-table",
           "resource-bzip2",
           "std"
         ]
@@ -17699,60 +18421,90 @@
     {
       "graphs": {
         "android": [
-          "log"
+          "log",
+          "remote-control-path-table"
         ],
         "daemon-linux": [
           "alloc",
           "log",
+          "remote-control-path-table",
           "rnx"
         ],
         "daemon-macos": [
           "alloc",
           "log",
+          "remote-control-path-table",
           "rnx"
         ],
         "daemon-windows": [
           "alloc",
           "log",
+          "remote-control-path-table",
           "rnx"
         ],
         "desktop-linux": [
-          "log"
+          "log",
+          "remote-control-path-table"
         ],
         "desktop-macos": [
-          "log"
+          "log",
+          "remote-control-path-table"
         ],
         "desktop-windows": [
-          "log"
+          "log",
+          "remote-control-path-table"
+        ],
+        "engine": [
+          "large-static-responses",
+          "remote-control-path-table"
         ],
         "esp32-c6": [
           "alloc",
-          "log"
+          "log",
+          "remote-control-path-table"
         ],
         "esp32-s3-heltec": [
           "alloc",
-          "log"
+          "log",
+          "remote-control-path-table"
         ],
         "esp32-s3-heltec-e290": [
           "alloc",
-          "log"
+          "log",
+          "remote-control-path-table"
         ],
         "esp32-s3-heltec-r8": [
           "alloc",
-          "log"
+          "log",
+          "remote-control-path-table"
+        ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "log",
+          "remote-control-path-table"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
-          "log"
+          "log",
+          "remote-control-path-table"
         ],
         "esp32-s3-tbeam": [
           "alloc",
-          "log"
+          "log",
+          "remote-control-path-table"
         ],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
+        "host-c-linux": [
+          "remote-control-path-table"
+        ],
+        "host-c-macos": [
+          "remote-control-path-table"
+        ],
+        "host-c-windows": [
+          "remote-control-path-table"
+        ],
+        "ios": [
+          "remote-control-path-table"
+        ],
         "nrf52840": []
       },
       "name": "prns-runtime-embassy",
@@ -17771,12 +18523,14 @@
         "android": [
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "rns-management"
         ],
         "daemon-linux": [
           "interface-discovery",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "rns-management",
           "rnx",
           "tracing"
@@ -17785,6 +18539,7 @@
           "interface-discovery",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "rns-management",
           "rnx",
           "tracing"
@@ -17793,6 +18548,7 @@
           "interface-discovery",
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "rns-management",
           "rnx",
           "tracing"
@@ -17800,46 +18556,70 @@
         "desktop-linux": [
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "rns-management",
           "tracing"
         ],
         "desktop-macos": [
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "rns-management",
           "tracing"
         ],
         "desktop-windows": [
           "parallel-persistence",
           "parallel-resource-hash",
+          "remote-control-path-table",
           "rns-management",
           "tracing"
         ],
-        "engine": [],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-e290": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-heltec-wireless-stick-lite-v3": [],
-        "esp32-s3-tbeam": [],
+        "engine": [
+          "remote-control-path-table"
+        ],
+        "esp32-c6": [
+          "remote-control-path-table"
+        ],
+        "esp32-s3-heltec": [
+          "remote-control-path-table"
+        ],
+        "esp32-s3-heltec-e290": [
+          "remote-control-path-table"
+        ],
+        "esp32-s3-heltec-r8": [
+          "remote-control-path-table"
+        ],
+        "esp32-s3-heltec-v3": [
+          "remote-control-path-table"
+        ],
+        "esp32-s3-heltec-wireless-stick-lite-v3": [
+          "remote-control-path-table"
+        ],
+        "esp32-s3-tbeam": [
+          "remote-control-path-table"
+        ],
         "host-c-linux": [
           "interface-discovery",
           "parallel-persistence",
-          "parallel-resource-hash"
+          "parallel-resource-hash",
+          "remote-control-path-table"
         ],
         "host-c-macos": [
           "interface-discovery",
           "parallel-persistence",
-          "parallel-resource-hash"
+          "parallel-resource-hash",
+          "remote-control-path-table"
         ],
         "host-c-windows": [
           "interface-discovery",
           "parallel-persistence",
-          "parallel-resource-hash"
+          "parallel-resource-hash",
+          "remote-control-path-table"
         ],
         "ios": [
           "parallel-persistence",
-          "parallel-resource-hash"
+          "parallel-resource-hash",
+          "remote-control-path-table"
         ],
         "nrf52840": []
       },
@@ -17937,6 +18717,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -17970,6 +18751,14 @@
           "smallvec"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "parser",
+          "proc-macro",
+          "proc-macro2",
+          "quote",
+          "smallvec"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "parser",
           "proc-macro",
@@ -18052,6 +18841,10 @@
           "proc-macro"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "proc-macro"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "proc-macro"
         ],
@@ -18175,6 +18968,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -18282,6 +19076,10 @@
           "default",
           "proc-macro"
         ],
+        "esp32-s3-heltec-v3": [
+          "default",
+          "proc-macro"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default",
           "proc-macro"
@@ -18376,6 +19174,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -18526,6 +19325,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -18563,6 +19363,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -18600,6 +19401,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [
@@ -19029,6 +19831,9 @@
         "esp32-s3-heltec-r8": [
           "unstable"
         ],
+        "esp32-s3-heltec-v3": [
+          "unstable"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "unstable"
         ],
@@ -19104,6 +19909,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -19138,6 +19944,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -19186,6 +19993,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -19459,6 +20267,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -19501,6 +20310,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -19559,6 +20369,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -19702,6 +20513,9 @@
         "esp32-s3-heltec-r8": [
           "openocd-semihosting"
         ],
+        "esp32-s3-heltec-v3": [
+          "openocd-semihosting"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "openocd-semihosting"
         ],
@@ -19784,6 +20598,10 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "std"
         ],
@@ -19926,6 +20744,13 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc",
           "default",
           "derive",
@@ -20107,6 +20932,11 @@
           "result",
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "result",
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
           "result",
@@ -20204,6 +21034,9 @@
           "default"
         ],
         "esp32-s3-heltec-r8": [
+          "default"
+        ],
+        "esp32-s3-heltec-v3": [
           "default"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -20356,6 +21189,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -20383,6 +21217,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -20414,6 +21249,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -20535,6 +21371,9 @@
           "zeroize"
         ],
         "esp32-s3-heltec-r8": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec-v3": [
           "zeroize"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -20752,6 +21591,10 @@
           "alloc",
           "rand_core"
         ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "rand_core"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
           "rand_core"
@@ -20891,6 +21734,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "default",
           "std"
@@ -20942,6 +21789,9 @@
           "const_generics"
         ],
         "esp32-s3-heltec-r8": [
+          "const_generics"
+        ],
+        "esp32-s3-heltec-v3": [
           "const_generics"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -21138,6 +21988,20 @@
           "socket-tcp",
           "socket-udp"
         ],
+        "esp32-s3-heltec-v3": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-dhcpv4",
+          "proto-dns",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-dhcpv4",
+          "socket-dns",
+          "socket-tcp",
+          "socket-udp"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "async",
           "medium-ethernet",
@@ -21270,6 +22134,9 @@
         "esp32-s3-heltec-r8": [
           "all"
         ],
+        "esp32-s3-heltec-v3": [
+          "all"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "all"
         ],
@@ -21323,6 +22190,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -21343,6 +22211,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -21442,6 +22311,9 @@
         "esp32-s3-heltec-r8": [
           "alloc"
         ],
+        "esp32-s3-heltec-v3": [
+          "alloc"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc"
         ],
@@ -21488,6 +22360,11 @@
           "graphics"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "embedded-graphics-core",
+          "graphics"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "embedded-graphics-core",
           "graphics"
@@ -21546,6 +22423,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -21599,10 +22477,12 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -21658,6 +22538,9 @@
           "default"
         ],
         "esp32-s3-heltec-r8": [
+          "default"
+        ],
+        "esp32-s3-heltec-v3": [
           "default"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -21721,6 +22604,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -21787,6 +22671,10 @@
           "derive",
           "strum_macros"
         ],
+        "esp32-s3-heltec-v3": [
+          "derive",
+          "strum_macros"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "derive",
           "strum_macros"
@@ -21830,6 +22718,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -21882,6 +22771,9 @@
         "esp32-s3-heltec-r8": [
           "const-generics"
         ],
+        "esp32-s3-heltec-v3": [
+          "const-generics"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "const-generics"
         ],
@@ -21930,6 +22822,9 @@
           "default"
         ],
         "esp32-s3-heltec-r8": [
+          "default"
+        ],
+        "esp32-s3-heltec-v3": [
           "default"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -21989,6 +22884,18 @@
           "visit-mut"
         ],
         "esp32-s3-heltec-r8": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "quote",
+          "visit-mut"
+        ],
+        "esp32-s3-heltec-v3": [
           "clone-impls",
           "default",
           "derive",
@@ -22151,6 +23058,18 @@
           "visit-mut"
         ],
         "esp32-s3-heltec-r8": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "esp32-s3-heltec-v3": [
           "clone-impls",
           "default",
           "derive",
@@ -22541,6 +23460,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -23114,6 +24034,22 @@
           "tokio-macros",
           "windows-sys"
         ],
+        "esp32-s3-heltec-v3": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "rt",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "bytes",
           "default",
@@ -23276,6 +24212,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "ios": [],
@@ -23618,6 +24555,11 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
           "default",
@@ -23658,6 +24600,9 @@
           "parse"
         ],
         "esp32-s3-heltec-r8": [
+          "parse"
+        ],
+        "esp32-s3-heltec-v3": [
           "parse"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
@@ -23701,6 +24646,11 @@
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-v3": [
           "alloc",
           "default",
           "std"
@@ -24139,6 +25089,19 @@
           "scan",
           "trouble-host-macros"
         ],
+        "esp32-s3-heltec-v3": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-512",
+          "default-packet-pool-size-32",
+          "default-packet-pool-size-8",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "central",
           "default-packet-pool",
@@ -24281,6 +25244,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -24421,6 +25385,9 @@
         "esp32-s3-heltec-r8": [
           "const-generics"
         ],
+        "esp32-s3-heltec-v3": [
+          "const-generics"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "const-generics"
         ],
@@ -24478,6 +25445,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -24512,6 +25480,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -24540,6 +25509,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -24574,6 +25544,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -24606,6 +25577,10 @@
           "cjk",
           "default"
         ],
+        "esp32-s3-heltec-v3": [
+          "cjk",
+          "default"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "cjk",
           "default"
@@ -24632,6 +25607,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -24698,6 +25674,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -24839,6 +25816,12 @@
           "v4"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "esp32-s3-heltec-v3": [
           "default",
           "rng",
           "std",
@@ -24988,6 +25971,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -25034,6 +26018,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -25063,10 +26048,12 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -25998,6 +26985,14 @@
           "parser",
           "std"
         ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "ascii",
+          "binary",
+          "default",
+          "parser",
+          "std"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
           "ascii",
@@ -26139,6 +27134,10 @@
           "precomputed-tables",
           "static_secrets"
         ],
+        "esp32-s3-heltec-v3": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "precomputed-tables",
           "static_secrets"
@@ -26205,6 +27204,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -26233,6 +27233,9 @@
         "esp32-s3-heltec-r8": [
           "float-save-restore"
         ],
+        "esp32-s3-heltec-v3": [
+          "float-save-restore"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "float-save-restore"
         ],
@@ -26257,6 +27260,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -26430,6 +27434,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": []
       },
@@ -26604,6 +27609,12 @@
           "derive",
           "zeroize_derive"
         ],
+        "esp32-s3-heltec-v3": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
           "default",
@@ -26706,6 +27717,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-v3": [],
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "ios": [],

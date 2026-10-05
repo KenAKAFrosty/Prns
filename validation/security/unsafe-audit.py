@@ -70,6 +70,11 @@ GRAPHS = (
         "xtensa-esp32s3-none-elf",
     ),
     (
+        "esp32-s3-heltec-v3",
+        "personal-hopspot/embedded/esp32/boards/heltec-v3/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
+    (
         "esp32-s3-tbeam",
         "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
         "xtensa-esp32s3-none-elf",

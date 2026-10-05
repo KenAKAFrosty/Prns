@@ -22,6 +22,7 @@ use personal_rns::runtime::{
 use super::*;
 
 const RESPONSE_GRACE_PERIOD: Duration = Duration::from_millis(250);
+const RESET_RESPONSE_GRACE_PERIOD: Duration = Duration::from_secs(2);
 const LORA_ENABLED: u8 = 1 << 0;
 const USB_ENABLED: u8 = 1 << 1;
 const BLUETOOTH_ENABLED: u8 = 1 << 2;
@@ -32,6 +33,7 @@ enum ScheduledAction {
     DisableInterface(InterfaceId),
     ReconcileInterfaces,
     SleepSystem,
+    ResetDevice,
 }
 
 struct ScheduledEffect {
@@ -70,27 +72,106 @@ pub(super) fn capabilities() -> RemoteControlCapabilities {
         RemoteControlRequestKind::InventoryInterfaceConfig,
         RemoteControlRequestKind::SetInterfaceLoRaProfile,
         RemoteControlRequestKind::DescribeBuild,
+        RemoteControlRequestKind::InventoryPathTable,
         RemoteControlRequestKind::SetSystemPower,
+        RemoteControlRequestKind::ResetDevice,
         RemoteControlRequestKind::InventoryControllers,
         RemoteControlRequestKind::AuthorizeController,
         RemoteControlRequestKind::RevokeController,
     ] {
         capabilities = capabilities.with_request(kind);
     }
+    #[cfg(feature = "heltec-v3")]
+    {
+        capabilities = capabilities.with_request(RemoteControlRequestKind::DescribePower);
+    }
     capabilities
 }
 
+#[cfg_attr(feature = "heltec-v3", embassy_executor::task)]
 pub(super) async fn run(
     lora_status: &'static EmbassyInterfaceStatus,
     usb_status: &'static EmbassyInterfaceStatus,
     mut lora_controller: personal_rns::lora::LoRaController<'static>,
     mut subg_store: ConfigurationStore,
     mut subg_configuration: SubGConfigurationState,
+    #[cfg(feature = "heltec-v3")] face: &'static mut super::heltec_v3_face::Face,
+    #[cfg(feature = "heltec-v3")] lora_spectrum: &'static personal_rns::lora::LoRaSpectrumStatus,
+    #[cfg(feature = "heltec-v3")] handle: super::Handle,
+    #[cfg(feature = "heltec-v3")] node_page_destination: personal_rns::wire::DestinationHash,
+    #[cfg(feature = "heltec-v3")] stable_target_destination: personal_rns::wire::DestinationHash,
+    #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+    pairing_permissions: personal_rns::remote_control::RemoteControlPairingPermissions,
+    #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))] pairing_public_app_data: personal_rns::remote_control::RemoteControlPairingPublicAppDataBytes,
 ) -> ! {
     let mut system_awake = true;
     let mut desired_interfaces = enabled_interfaces(lora_status, usb_status);
     let mut scheduled_effect: Option<ScheduledEffect> = None;
     loop {
+        if scheduled_effect
+            .as_ref()
+            .is_some_and(|effect| effect.deadline() <= Instant::now())
+        {
+            apply_scheduled(
+                &mut scheduled_effect,
+                lora_status,
+                usb_status,
+                &mut system_awake,
+                desired_interfaces,
+            );
+        }
+        #[cfg(feature = "heltec-v3")]
+        {
+            #[cfg(feature = "remote-control-pairing")]
+            super::heltec_v3_pairing::poll(&handle).await;
+            if let Ok(snapshots) = snapshots(lora_status, usb_status) {
+                #[cfg(feature = "remote-control-pairing")]
+                super::heltec_v3_pairing::announce(
+                    &handle,
+                    node_page_destination,
+                    stable_target_destination,
+                    snapshots
+                        .iter()
+                        .any(|snapshot| snapshot.connection.is_online()),
+                )
+                .await;
+                let action = face.poll(&snapshots, subg_configuration, system_awake, lora_spectrum);
+                let result = execute_local(
+                    face,
+                    action,
+                    Context {
+                        snapshots: &snapshots,
+                        lora_status,
+                        usb_status,
+                        system_awake: &mut system_awake,
+                        desired_interfaces: &mut desired_interfaces,
+                        scheduled_effect: &mut scheduled_effect,
+                        lora_controller: &mut lora_controller,
+                        subg_store: &mut subg_store,
+                        subg_configuration: &mut subg_configuration,
+                    },
+                    &handle,
+                    node_page_destination,
+                    stable_target_destination,
+                    #[cfg(feature = "remote-control-pairing")]
+                    &pairing_permissions,
+                    #[cfg(feature = "remote-control-pairing")]
+                    &pairing_public_app_data,
+                )
+                .await;
+                if result.is_err() {
+                    face.notice(hopspot::UiNotice::ApplyFailed);
+                }
+            }
+        }
+        #[cfg(feature = "heltec-v3")]
+        let deadline = Instant::now() + Duration::from_millis(25);
+        #[cfg(feature = "heltec-v3")]
+        let pending = match select(REMOTE_CONTROL_COMMANDS.receive(), Timer::at(deadline)).await {
+            Either::First(pending) => pending,
+            Either::Second(()) => continue,
+        };
+        #[cfg(not(feature = "heltec-v3"))]
         let pending = match scheduled_effect.as_ref() {
             Some(effect) => match select(
                 REMOTE_CONTROL_COMMANDS.receive(),
@@ -98,22 +179,10 @@ pub(super) async fn run(
             )
             .await
             {
-                Either::First(pending) => Some(pending),
-                Either::Second(()) => {
-                    apply_scheduled(
-                        &mut scheduled_effect,
-                        lora_status,
-                        usb_status,
-                        &mut system_awake,
-                        desired_interfaces,
-                    );
-                    None
-                }
+                Either::First(pending) => pending,
+                Either::Second(()) => continue,
             },
-            None => Some(REMOTE_CONTROL_COMMANDS.receive().await),
-        };
-        let Some(pending) = pending else {
-            continue;
+            None => REMOTE_CONTROL_COMMANDS.receive().await,
         };
         let (token, command) = pending.into_parts();
         let result = match snapshots(lora_status, usb_status) {
@@ -138,6 +207,137 @@ pub(super) async fn run(
         };
         REMOTE_CONTROL_COMMANDS.complete(token, result);
     }
+}
+
+#[cfg(feature = "heltec-v3")]
+async fn execute_local(
+    face: &mut super::heltec_v3_face::Face,
+    action: hopspot::UiAction,
+    context: Context<'_>,
+    handle: &super::Handle,
+    _node_page_destination: personal_rns::wire::DestinationHash,
+    _stable_target_destination: personal_rns::wire::DestinationHash,
+    #[cfg(feature = "remote-control-pairing")]
+    permissions: &personal_rns::remote_control::RemoteControlPairingPermissions,
+    #[cfg(feature = "remote-control-pairing")]
+    public_app_data: &personal_rns::remote_control::RemoteControlPairingPublicAppDataBytes,
+) -> Result<(), RemoteControlHostCommandError> {
+    use hopspot::UiAction;
+    let command = match action {
+        UiAction::None | UiAction::BlankDisplay | UiAction::ToggleDisplayAutoOff => return Ok(()),
+        UiAction::Announce => {
+            #[cfg(feature = "remote-control-pairing")]
+            super::heltec_v3_pairing::request_announce();
+            #[cfg(not(feature = "remote-control-pairing"))]
+            for destination in [_node_page_destination, _stable_target_destination] {
+                handle
+                    .announce_now(personal_rns::engine::AnnounceNow {
+                        destination,
+                        target: personal_rns::engine::AnnounceTarget::AllInterfaces,
+                        app_data: personal_rns::engine::AnnounceAppData::Registered,
+                    })
+                    .await
+                    .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
+            }
+            face.notice(hopspot::UiNotice::Announcing);
+            return Ok(());
+        }
+        #[cfg(feature = "remote-control-pairing")]
+        action @ (UiAction::OpenRemoteControlPairing
+        | UiAction::CloseRemoteControlPairing
+        | UiAction::ApproveRemoteControlTargetPairing(_)
+        | UiAction::RejectRemoteControlTargetPairing(_)) => {
+            let result =
+                super::heltec_v3_pairing::execute(action, handle, permissions, public_app_data)
+                    .await;
+            if matches!(
+                result,
+                Err(hopspot::RemoteControlTargetPairingFailure::Close)
+            ) {
+                face.state.remote_control_pairing_close_failed();
+            }
+            return result.map_err(|_| RemoteControlHostCommandError::ApplyFailed);
+        }
+        UiAction::ToggleSelectedInterface => {
+            let id = face
+                .selected_interface(context.snapshots, *context.subg_configuration)
+                .ok_or(RemoteControlHostCommandError::ApplyFailed)?;
+            let enabled = desired_interface_enabled(&context, id)
+                .ok_or(RemoteControlHostCommandError::ApplyFailed)?;
+            RemoteControlHostCommand::SetInterfacePower {
+                id,
+                power: if enabled {
+                    RemoteControlInterfacePower::Off
+                } else {
+                    RemoteControlInterfacePower::On
+                },
+            }
+        }
+        UiAction::Sleep => RemoteControlHostCommand::SetSystemPower {
+            power: RemoteControlSystemPower::Asleep,
+        },
+        UiAction::Wake => RemoteControlHostCommand::SetSystemPower {
+            power: RemoteControlSystemPower::Awake,
+        },
+        UiAction::OpenSubGEditor => {
+            face.state.open_subg_editor(*context.subg_configuration);
+            return Ok(());
+        }
+        UiAction::SetSubGConfiguration(configuration) => {
+            apply_subg_configuration(
+                context.lora_controller,
+                context.subg_store,
+                context.subg_configuration,
+                SubGConfigurationState::Configured(configuration),
+            )
+            .await?;
+            face.notice(hopspot::UiNotice::Saved);
+            return Ok(());
+        }
+        UiAction::ClearSubGConfiguration => {
+            apply_subg_configuration(
+                context.lora_controller,
+                context.subg_store,
+                context.subg_configuration,
+                SubGConfigurationState::Unconfigured,
+            )
+            .await?;
+            face.notice(hopspot::UiNotice::Saved);
+            return Ok(());
+        }
+        UiAction::OpenDiscoveryGroupsEditor(id) => {
+            if id != BLE_SUPERVISOR_ID {
+                return Err(RemoteControlHostCommandError::Unsupported);
+            }
+            face.state.open_discovery_groups_editor(
+                id,
+                &BluetoothAutoStatus::new(&BLE_SHARED).discovery_groups(),
+            );
+            return Ok(());
+        }
+        UiAction::ReplaceDiscoveryGroups => {
+            let replacement = face
+                .state
+                .take_discovery_group_replacement()
+                .ok_or(RemoteControlHostCommandError::ApplyFailed)?;
+            replace_bluetooth_discovery_groups(
+                replacement.interface_id(),
+                replacement.groups().clone(),
+            )
+            .await?;
+            face.notice(hopspot::UiNotice::Saved);
+            return Ok(());
+        }
+        UiAction::ToggleStationUplink
+        | UiAction::SwapRadioMode
+        | UiAction::ControlGnss(_)
+        | UiAction::OpenDocs
+        | UiAction::CopySharedInstanceConfig => {
+            return Err(RemoteControlHostCommandError::Unsupported)
+        }
+    };
+    execute(context, command).await?;
+    Ok(())
 }
 
 async fn execute(
@@ -272,6 +472,10 @@ async fn execute(
                 RemoteControlLoRaOutcome::Applied,
             ))
         }
+        #[cfg(feature = "heltec-v3")]
+        RemoteControlHostCommand::DescribePower => Ok(RemoteControlHostResponse::DescribePower(
+            hopspot::latest_power_snapshot(),
+        )),
         RemoteControlHostCommand::DescribeBuild => Ok(RemoteControlHostResponse::DescribeBuild(
             hopspot::hopspot_remote_control_build_version()
                 .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?,
@@ -299,6 +503,12 @@ async fn execute(
                 RemoteControlApplyOutcome::Scheduled
             };
             Ok(RemoteControlHostResponse::SetSystemPower(outcome))
+        }
+        RemoteControlHostCommand::ResetDevice => {
+            schedule_effect(context.scheduled_effect, ScheduledAction::ResetDevice)?;
+            Ok(RemoteControlHostResponse::ResetDevice(
+                RemoteControlApplyOutcome::Scheduled,
+            ))
         }
         _ => Err(RemoteControlHostCommandError::Unsupported),
     }
@@ -385,7 +595,12 @@ fn schedule_effect(
     }
     *scheduled = Some(ScheduledEffect {
         action,
-        apply_at: Instant::now() + RESPONSE_GRACE_PERIOD,
+        apply_at: Instant::now()
+            + if action == ScheduledAction::ResetDevice {
+                RESET_RESPONSE_GRACE_PERIOD
+            } else {
+                RESPONSE_GRACE_PERIOD
+            },
     });
     Ok(())
 }
@@ -521,6 +736,7 @@ fn apply_scheduled(
             BluetoothAutoStatus::new(&BLE_SHARED).disable();
             *system_awake = false;
         }
+        ScheduledAction::ResetDevice => esp_hal::system::software_reset(),
     }
 }
 

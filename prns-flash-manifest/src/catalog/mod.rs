@@ -1058,6 +1058,11 @@ mod tests {
                     Some(("partitions-hopspot-16mb.csv", "16mb"))
                 ),
                 (
+                    "heltec-v3",
+                    Some(8_388_608),
+                    Some(("partitions-hopspot-8mb-v3.csv", "8mb"))
+                ),
+                (
                     "heltec-wireless-stick-lite-v3",
                     Some(8_388_608),
                     Some(("partitions-hopspot-8mb.csv", "8mb"))
@@ -1126,6 +1131,7 @@ mod tests {
                 ("heltec-v4", "heltec-v4", "xtensa-esp32s3-none-elf"),
                 ("heltec-v4-r8", "heltec-v4-r8", "xtensa-esp32s3-none-elf"),
                 ("heltec-e290", "heltec-e290", "xtensa-esp32s3-none-elf"),
+                ("heltec-v3", "heltec-v3", "xtensa-esp32s3-none-elf"),
                 (
                     "heltec-wireless-stick-lite-v3",
                     "heltec-wireless-stick-lite-v3",

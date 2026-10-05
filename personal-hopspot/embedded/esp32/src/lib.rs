@@ -141,3 +141,7 @@ mod station_security;
 mod storage;
 #[cfg(any(test, all(target_arch = "xtensa", not(feature = "esp32s3fn8"))))]
 mod wifi_data_path_recovery;
+
+#[cfg(all(feature = "heltec-v3", any(test, target_arch = "xtensa")))]
+#[path = "s3fn8/ui.rs"]
+mod s3fn8_ui;

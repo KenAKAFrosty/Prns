@@ -50,10 +50,11 @@ pub(crate) fn flash(
     port_name: Option<&str>,
     monitor: bool,
     reporter: Reporter,
+    rc_vault: Option<RcVaultWrite>,
 ) -> Result<(), AppError> {
     let selected = select_port(port_name)?;
     let expected = expected_device(board)?;
-    let plan = sparse_plan(board, target, provisioning)?;
+    let plan = sparse_plan(board, target, provisioning, rc_vault.as_ref())?;
     let total = plan.iter().map(|part| part.bytes.len() as u64).sum::<u64>();
 
     reporter.phase(
@@ -164,10 +165,43 @@ fn real_session(
     ))
 }
 
+/// Extra ESP flash page written beside firmware (Remote Control identity vault).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RcVaultWrite {
+    pub(crate) offset: u32,
+    pub(crate) bytes: Vec<u8>,
+}
+
+fn validate_rc_vault(board: &BoardCatalogEntry, vault: &RcVaultWrite) -> Result<(), AppError> {
+    let prns_flash_manifest::BoardBuild::Esp(build) = &board.build else {
+        return Err(AppError::unsupported_operation(
+            "RC vault requires an ESP target",
+        ));
+    };
+    let region = personal_hopspot_memory::memory_profile_named(build.memory_profile.as_str())
+        .and_then(|profile| {
+            profile
+                .unique_region_for_role(personal_hopspot_memory::RegionRole::RemoteControlIdentity)
+                .ok()
+        })
+        .ok_or_else(|| AppError::configuration("board has no RC vault memory region"))?;
+    if u64::from(vault.offset) != region.range.start()
+        || vault.bytes.len() != 4096
+        || region.range.byte_len() != 4096
+        || !vault.offset.is_multiple_of(4096)
+    {
+        return Err(AppError::configuration(
+            "RC vault must match the board's 4096-byte identity partition",
+        ));
+    }
+    Ok(())
+}
+
 fn sparse_plan(
     board: &BoardCatalogEntry,
     target: &PreparedEspTarget,
     provisioning: &ProvisioningAction,
+    rc_vault: Option<&RcVaultWrite>,
 ) -> Result<Vec<SparsePart>, AppError> {
     if matches!(provisioning, ProvisioningAction::ConfigureWithTcp { .. })
         && !target.supports_tcp_client_provisioning()
@@ -182,6 +216,7 @@ fn sparse_plan(
         .map(|part| SparsePart {
             offset: part.offset(),
             bytes: part.bytes().to_vec(),
+            erase_before_write: false,
         })
         .collect::<Vec<_>>();
     if let Some(config) = provisioning_image(provisioning)
@@ -194,6 +229,25 @@ fn sparse_plan(
         plan.push(SparsePart {
             offset: slot.offset,
             bytes: config,
+            erase_before_write: false,
+        });
+    }
+    if let Some(vault) = rc_vault {
+        validate_rc_vault(board, vault)?;
+        let vault_start = u64::from(vault.offset);
+        let vault_end = vault_start + vault.bytes.len() as u64;
+        if plan.iter().any(|part| {
+            u64::from(part.offset) < vault_end
+                && u64::from(part.offset) + part.bytes.len() as u64 > vault_start
+        }) {
+            return Err(AppError::configuration(
+                "RC vault overlaps a firmware or provisioning part",
+            ));
+        }
+        plan.push(SparsePart {
+            offset: vault.offset,
+            bytes: vault.bytes.clone(),
+            erase_before_write: true,
         });
     }
     plan.sort_by_key(|part| part.offset);
@@ -539,6 +593,24 @@ mod port_tests {
 
     use super::*;
 
+    #[test]
+    fn v3_vault_rejects_v4_offset_and_wrong_page_size() {
+        let catalog = prns_flash_manifest::board_catalog().unwrap();
+        let board = catalog.board("heltec-v3").unwrap();
+        let mut vault = RcVaultWrite {
+            offset: 0x67d000,
+            bytes: vec![0xff; 4096],
+        };
+        assert!(validate_rc_vault(board, &vault).is_ok());
+        vault.offset = 0xe7d000;
+        assert!(validate_rc_vault(board, &vault).is_err());
+        vault.offset = 0x67d001;
+        assert!(validate_rc_vault(board, &vault).is_err());
+        vault.offset = 0x67d000;
+        vault.bytes.pop();
+        assert!(validate_rc_vault(board, &vault).is_err());
+    }
+
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum InjectFailure {
         None,
@@ -681,14 +753,17 @@ mod port_tests {
             SparsePart {
                 offset: 0,
                 bytes: vec![1],
+                erase_before_write: false,
             },
             SparsePart {
                 offset: 0x8000,
                 bytes: vec![2],
+                erase_before_write: false,
             },
             SparsePart {
                 offset: 0x10000,
                 bytes: vec![3],
+                erase_before_write: false,
             },
         ]
     }

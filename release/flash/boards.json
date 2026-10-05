@@ -123,6 +123,33 @@
     },
     {
       "availability": "qualification",
+      "slug": "heltec-v3",
+      "display_name": "Heltec WiFi LoRa 32 V3",
+      "silicon": "ESP32-S3FN8 + SX1262",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "espressif",
+      "transport": "esp-serial",
+      "expected_chip": "esp32s3",
+      "flash_size": 8388608,
+      "preparation_profile": "esp-usb-boot",
+      "provisioning": null,
+      "build": {
+        "kind": "esp",
+        "chip": "esp32s3",
+        "rust_target": "xtensa-esp32s3-none-elf",
+        "memory_profile": "heltec-v3",
+        "partition_table": "partitions-hopspot-8mb-v3.csv",
+        "package": "hopspot-heltec-v3",
+        "binary": "hopspot-heltec-v3",
+        "flash_size_label": "8mb",
+        "flash_mode": "dio",
+        "flash_frequency": "40m",
+        "before_reset": "default-reset",
+        "after_reset": "hard-reset"
+      }
+    },
+    {
+      "availability": "qualification",
       "slug": "heltec-wireless-stick-lite-v3",
       "display_name": "Heltec Wireless Stick Lite V3",
       "silicon": "ESP32-S3FN8 + SX1262",

@@ -571,6 +571,8 @@ where
                 notify,
                 commands,
                 resource_responses: handle.resource_response_receiver(),
+                #[cfg(feature = "remote-control-path-table")]
+                path_page_reply: handle.path_page_reply(),
                 lifecycle,
             },
             |journaled| {
@@ -872,6 +874,8 @@ where
                 notify: *notify,
                 commands: *commands,
                 resource_responses: handle.resource_response_receiver(),
+                #[cfg(feature = "remote-control-path-table")]
+                path_page_reply: handle.path_page_reply(),
                 lifecycle: *lifecycle,
             },
             |journaled| {

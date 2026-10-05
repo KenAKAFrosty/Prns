@@ -17,15 +17,15 @@ use crate::remote_control::{
     RemoteControlInterfaceGroup, RemoteControlInterfaceInventory, RemoteControlInterfacePage,
     RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
     RemoteControlLoRaProfile, RemoteControlMessageWriteError, RemoteControlModeOutcome,
-    RemoteControlPeerPage, RemoteControlPowerOutcome, RemoteControlProtocolError,
-    RemoteControlRequest, RemoteControlRequestKind, RemoteControlRequestParseError,
-    RemoteControlRequestSet, RemoteControlResponse, RemoteControlResponseKind,
-    RemoteControlResponseParseError, RemoteControlRevokeControllerOutcome,
-    RemoteControlSelfAnnouncement, RemoteControlSleepOutcome, RemoteControlStationUplink,
-    RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
-    RemoteControlWifiStation, RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
-    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
-    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    RemoteControlPathInventory, RemoteControlPathPage, RemoteControlPeerPage,
+    RemoteControlPowerOutcome, RemoteControlProtocolError, RemoteControlRequest,
+    RemoteControlRequestKind, RemoteControlRequestParseError, RemoteControlRequestSet,
+    RemoteControlResponse, RemoteControlResponseKind, RemoteControlResponseParseError,
+    RemoteControlRevokeControllerOutcome, RemoteControlSelfAnnouncement, RemoteControlSleepOutcome,
+    RemoteControlStationUplink, RemoteControlSystemPower, RemoteControlWifiCredentialRevision,
+    RemoteControlWifiStageOutcome, RemoteControlWifiStation, RemoteControlWifiStationOutcome,
+    RemoteControlWifiTransactionStatus, RevokeRemoteControlControllerOutcome,
+    SetRemoteControlControllerGrantOutcome, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::links::request::REQUEST_WIRE_OVERHEAD;
 use crate::units::ByteLimit;
@@ -211,6 +211,7 @@ pub enum RemoteControlHostCommand {
     SetSystemPower {
         power: RemoteControlSystemPower,
     },
+    ResetDevice,
     SetGnssPower {
         power: RemoteControlGnssPower,
     },
@@ -286,6 +287,7 @@ impl RemoteControlHostCommand {
             Self::SleepRadios => RemoteControlRequestKind::SleepRadios,
             Self::WakeRadios => RemoteControlRequestKind::WakeRadios,
             Self::SetSystemPower { .. } => RemoteControlRequestKind::SetSystemPower,
+            Self::ResetDevice => RemoteControlRequestKind::ResetDevice,
             Self::SetGnssPower { .. } => RemoteControlRequestKind::SetGnssPower,
             Self::SetDisplayVisibility { .. } => RemoteControlRequestKind::SetDisplayVisibility,
             Self::SetDisplayAutoOff { .. } => RemoteControlRequestKind::SetDisplayAutoOff,
@@ -326,6 +328,7 @@ pub enum RemoteControlHostResponse {
     SleepRadios(RemoteControlSleepOutcome),
     WakeRadios(RemoteControlSleepOutcome),
     SetSystemPower(RemoteControlApplyOutcome),
+    ResetDevice(RemoteControlApplyOutcome),
     SetGnssPower(RemoteControlApplyOutcome),
     SetDisplayVisibility(RemoteControlApplyOutcome),
     SetDisplayAutoOff(RemoteControlApplyOutcome),
@@ -361,6 +364,7 @@ impl RemoteControlHostResponse {
             Self::SleepRadios(_) => RemoteControlRequestKind::SleepRadios,
             Self::WakeRadios(_) => RemoteControlRequestKind::WakeRadios,
             Self::SetSystemPower(_) => RemoteControlRequestKind::SetSystemPower,
+            Self::ResetDevice(_) => RemoteControlRequestKind::ResetDevice,
             Self::SetGnssPower(_) => RemoteControlRequestKind::SetGnssPower,
             Self::SetDisplayVisibility(_) => RemoteControlRequestKind::SetDisplayVisibility,
             Self::SetDisplayAutoOff(_) => RemoteControlRequestKind::SetDisplayAutoOff,
@@ -405,6 +409,7 @@ impl RemoteControlHostResponse {
             Self::SleepRadios(outcome) => RemoteControlResponse::SleepRadios(outcome),
             Self::WakeRadios(outcome) => RemoteControlResponse::WakeRadios(outcome),
             Self::SetSystemPower(outcome) => RemoteControlResponse::SetSystemPower(outcome),
+            Self::ResetDevice(outcome) => RemoteControlResponse::ResetDevice(outcome),
             Self::SetGnssPower(outcome) => RemoteControlResponse::SetGnssPower(outcome),
             Self::SetDisplayVisibility(outcome) => {
                 RemoteControlResponse::SetDisplayVisibility(outcome)
@@ -526,6 +531,37 @@ impl RemoteControlInventoryInterfaces {
             RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
             response => Err(RemoteControlError::UnexpectedResponse {
                 expected: RemoteControlResponseKind::InventoryInterfaces,
+                found: response.kind(),
+            }),
+        }
+    }
+}
+
+pub struct RemoteControlInventoryPathTable;
+
+impl RemoteControlInventoryPathTable {
+    pub const REQUEST: RemoteControlRequest = RemoteControlRequest::InventoryPathTable {
+        page: RemoteControlPathPage::First,
+    };
+    pub const RESPONSE_CAPACITY: usize = Self::REQUEST.maximum_response_encoded_len();
+    pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
+        ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
+
+    pub fn write_page_request(
+        page: RemoteControlPathPage,
+        out: &mut [u8],
+    ) -> Result<usize, RemoteControlError> {
+        RemoteControlRequest::InventoryPathTable { page }
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn parse_response(bytes: &[u8]) -> Result<RemoteControlPathInventory, RemoteControlError> {
+        match RemoteControlResponse::parse(bytes).map_err(RemoteControlError::Response)? {
+            RemoteControlResponse::InventoryPathTable(inventory) => Ok(inventory),
+            RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
+            response => Err(RemoteControlError::UnexpectedResponse {
+                expected: RemoteControlResponseKind::InventoryPathTable,
                 found: response.kind(),
             }),
         }
@@ -1315,6 +1351,13 @@ impl RemoteControlRequestEndpoint {
                     RemoteControlHostCommand::InventoryInterfaceConfig { id },
                 ))
             }
+            Ok(RemoteControlRequest::InventoryPathTable { page }) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::InventoryPathTable,
+                )?;
+                Ok(AdmittedRemoteControlOperation::InventoryPathTable { page })
+            }
             Ok(RemoteControlRequest::SetInterfaceLoRaProfile { id, profile }) => {
                 require_available(
                     available_requests,
@@ -1389,6 +1432,12 @@ impl RemoteControlRequestEndpoint {
                 require_available(available_requests, RemoteControlRequestKind::SetSystemPower)?;
                 Ok(AdmittedRemoteControlOperation::Host(
                     RemoteControlHostCommand::SetSystemPower { power },
+                ))
+            }
+            Ok(RemoteControlRequest::ResetDevice) => {
+                require_available(available_requests, RemoteControlRequestKind::ResetDevice)?;
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::ResetDevice,
                 ))
             }
             Ok(RemoteControlRequest::SetGnssPower { power }) => {
@@ -1592,6 +1641,9 @@ impl RemoteControlRequestEndpoint {
             AdmittedRemoteControlOperation::ProtocolError(error) => {
                 RemoteControlResponse::ProtocolError(error)
             }
+            AdmittedRemoteControlOperation::InventoryPathTable { page } => {
+                RemoteControlResponse::InventoryPathTable(node.inventory_path_table(page).await)
+            }
             #[cfg(feature = "remote-control-wifi-host")]
             _ => return Err(Decline::Ignore),
         };
@@ -1668,6 +1720,9 @@ enum AdmittedRemoteControlOperation {
     #[cfg(feature = "remote-control-wifi-host")]
     InspectWifiTransaction,
     ProtocolError(RemoteControlProtocolError),
+    InventoryPathTable {
+        page: RemoteControlPathPage,
+    },
 }
 
 impl AdmittedRemoteControlOperation {
@@ -2249,6 +2304,30 @@ mod tests {
             .write_into(&mut request)
             .unwrap();
         request
+    }
+
+    #[test]
+    fn reset_requires_an_available_grant() {
+        assert!(matches!(
+            RemoteControlRequestEndpoint::resolve(
+                Ok(RemoteControlRequest::ResetDevice),
+                RemoteControlRequestSet::empty(),
+                RemoteControlSelfAnnouncement::Unavailable,
+            ),
+            Err(RemoteControlAdmitError::KindNotPermitted),
+        ));
+        let mut available = RemoteControlRequestSet::empty();
+        available.insert(RemoteControlRequestKind::ResetDevice);
+        assert!(matches!(
+            RemoteControlRequestEndpoint::resolve(
+                Ok(RemoteControlRequest::ResetDevice),
+                available,
+                RemoteControlSelfAnnouncement::Unavailable,
+            ),
+            Ok(AdmittedRemoteControlOperation::Host(
+                RemoteControlHostCommand::ResetDevice
+            )),
+        ));
     }
 
     #[cfg(not(feature = "remote-control-wifi-host"))]

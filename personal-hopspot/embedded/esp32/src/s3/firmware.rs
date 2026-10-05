@@ -4,14 +4,12 @@ use personal_hopspot_core::display::{
 };
 #[cfg(feature = "remote-control-pairing")]
 use personal_rns::engine::{OpenRemoteControlPairing, RemoteControlTargetPairingApproval};
-use personal_rns::remote_control::{
-    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
-};
 #[cfg(feature = "remote-control-pairing")]
 use personal_rns::remote_control::{
     RemoteControlPairingAttemptTimeout, RemoteControlPairingExpiresAfter,
     RemoteControlPairingPublicAppDataBytes,
 };
+use personal_rns::remote_control::{RemoteControlSelfAnnouncement, RemoteControlService};
 
 #[cfg(feature = "remote-control-pairing")]
 const REMOTE_CONTROL_PAIRING_WINDOW_MILLIS: u64 = 120_000;
@@ -147,7 +145,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let remote_control_bootstrap =
         remote_control_bootstrap.expect("RemoteControl identity bootstrap failed");
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
-        remote_control_bootstrap.into_parts();
+        remote_control_bootstrap.bootstrap.into_parts();
     let wifi_configuration_key = remote_control_identity_secrets
         .target_sealing_key(screen::WIFI_CONFIGURATION_SEALING_DOMAIN);
     let mut wifi_configuration_store =
@@ -291,7 +289,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         .destination_hash();
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
-        RemoteControlInitialControllerGrants::Nobody,
+        crate::identity::factory_or_fallback_grants(remote_control_bootstrap.factory_grant),
         RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
         remote_control::capabilities::<B>(),
     );

@@ -6,6 +6,8 @@ use embassy_futures::select::{select, Either};
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+#[cfg(feature = "remote-control-path-table")]
+use embassy_sync::signal::Signal;
 use embassy_time::{with_timeout, Duration, Timer};
 use heapless::Vec as HeaplessVec;
 
@@ -144,6 +146,8 @@ fn continuously_due_persistence_yields_to_sibling_tasks() {
             HeaplessVec::new();
         let mut egress: PooledEgress<1> = PooledEgress::new();
         let mut persistence = AlwaysDuePersistence { progress };
+        #[cfg(feature = "remote-control-path-table")]
+        let path_page_reply = Signal::new();
         let manifold = run_pooled(
             &mut engine,
             &mut host,
@@ -156,6 +160,8 @@ fn continuously_due_persistence_yields_to_sibling_tasks() {
                 notify: notify.receiver(),
                 commands: commands.receiver(),
                 resource_responses: responses.receiver(),
+                #[cfg(feature = "remote-control-path-table")]
+                path_page_reply: &path_page_reply,
                 lifecycle: lifecycle.receiver(),
             },
             |_| {},
@@ -265,6 +271,8 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
             id: source,
             context: network,
         });
+        #[cfg(feature = "remote-control-path-table")]
+        let path_page_reply = Signal::new();
         let manifold = run_pooled(
             &mut engine,
             &mut host,
@@ -276,6 +284,8 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
                 notify: notify.receiver(),
                 commands: commands.receiver(),
                 resource_responses: responses.receiver(),
+                #[cfg(feature = "remote-control-path-table")]
+                path_page_reply: &path_page_reply,
                 lifecycle: lifecycle.receiver(),
                 ifacs: &mut ifacs,
             },
@@ -407,6 +417,8 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
         let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
         let mut persistence = NoManifoldPersistence;
+        #[cfg(feature = "remote-control-path-table")]
+        let path_page_reply = Signal::new();
         let manifold = run_pooled(
             &mut engine,
             &mut host,
@@ -418,6 +430,8 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
                 notify: notify.receiver(),
                 commands: commands.receiver(),
                 resource_responses: responses.receiver(),
+                #[cfg(feature = "remote-control-path-table")]
+                path_page_reply: &path_page_reply,
                 lifecycle: lifecycle.receiver(),
                 ifacs: &mut ifacs,
             },

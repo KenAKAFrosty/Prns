@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn every_canonical_profile_is_unique_and_valid() {
-    assert_eq!(ALL_MEMORY_PROFILES.len(), 16);
+    assert_eq!(ALL_MEMORY_PROFILES.len(), 17);
     for (index, profile) in ALL_MEMORY_PROFILES.iter().enumerate() {
         assert_eq!(profile.validate(), Ok(()), "{}", profile.id.0);
         assert_eq!(memory_profile(profile.id), Some(*profile));

@@ -1,6 +1,7 @@
 use super::{
-    DCACHE_RAM, DRAM, HELTEC_E290, HELTEC_V4, HELTEC_V4_R8, HELTEC_WIRELESS_STICK_LITE_V3, IRAM,
-    PSRAM, RECLAIMED_RAM, RTC_FAST_RAM, RTC_SLOW_RAM, T_BEAM_SUPREME, XIAO_ESP32_C6,
+    DCACHE_RAM, DRAM, HELTEC_E290, HELTEC_V3, HELTEC_V4, HELTEC_V4_R8,
+    HELTEC_WIRELESS_STICK_LITE_V3, IRAM, PSRAM, RECLAIMED_RAM, RTC_FAST_RAM, RTC_SLOW_RAM,
+    T_BEAM_SUPREME, XIAO_ESP32_C6,
 };
 use crate::profiles::linker::{LinkerAddressProfile, LinkerAddressSpace};
 use crate::profiles::FLASH;
@@ -42,6 +43,8 @@ const ESP32C6_SPACES: [LinkerAddressSpace; 3] = [
 
 const HELTEC_V4_LINKER: LinkerAddressProfile =
     LinkerAddressProfile::new(HELTEC_V4.id, &ESP32S3_SPACES);
+const HELTEC_V3_LINKER: LinkerAddressProfile =
+    LinkerAddressProfile::new(HELTEC_V3.id, &ESP32S3_NO_PSRAM_SPACES);
 const HELTEC_V4_R8_LINKER: LinkerAddressProfile =
     LinkerAddressProfile::new(HELTEC_V4_R8.id, &ESP32S3_SPACES);
 const HELTEC_E290_LINKER: LinkerAddressProfile =
@@ -53,7 +56,8 @@ const HELTEC_WIRELESS_STICK_LITE_V3_LINKER: LinkerAddressProfile =
 const XIAO_ESP32_C6_LINKER: LinkerAddressProfile =
     LinkerAddressProfile::new(XIAO_ESP32_C6.id, &ESP32C6_SPACES);
 
-pub(in crate::profiles) const LINKER_ADDRESS_PROFILES: [&LinkerAddressProfile; 6] = [
+pub(in crate::profiles) const LINKER_ADDRESS_PROFILES: [&LinkerAddressProfile; 7] = [
+    &HELTEC_V3_LINKER,
     &HELTEC_V4_LINKER,
     &HELTEC_V4_R8_LINKER,
     &HELTEC_E290_LINKER,

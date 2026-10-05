@@ -202,8 +202,19 @@ fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
             );
         }
         EmbeddedPersistenceDiagnostic::RemoteControlPairingFailed { failure } => {
-            #[cfg(all(target_arch = "xtensa", feature = "remote-control-pairing"))]
+            #[cfg(all(
+                target_arch = "xtensa",
+                feature = "remote-control-pairing",
+                not(feature = "esp32s3fn8")
+            ))]
             crate::s3::remote_control_pairing_persistence_failed(failure);
+            #[cfg(all(
+                target_arch = "xtensa",
+                feature = "remote-control-pairing",
+                feature = "esp32s3fn8",
+                feature = "heltec-v3"
+            ))]
+            crate::s3fn8::remote_control_pairing_persistence_failed();
             log::error!("remote-control pairing persistence failed: {failure:?}");
         }
     }

@@ -169,6 +169,8 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
             local_build,
             candidate,
             mount,
+            rc_vault,
+            rc_vault_offset,
         }) => {
             let board = find_board(&catalog, &board)?;
             let interactive = !json && ui::interactive_terminal();
@@ -188,6 +190,7 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
                     interactive,
                 },
             )?;
+            let rc_vault = resolve_rc_vault(rc_vault.as_deref(), rc_vault_offset.as_deref())?;
             execute_flash(
                 &catalog,
                 board,
@@ -201,6 +204,7 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
                     local_build,
                     candidate: candidate.as_deref(),
                     mount: mount.as_deref(),
+                    rc_vault,
                 },
                 reporter,
             )
@@ -219,6 +223,7 @@ struct FlashRequest<'a> {
     local_build: bool,
     candidate: Option<&'a Path>,
     mount: Option<&'a Path>,
+    rc_vault: Option<esp::RcVaultWrite>,
 }
 
 fn execute_flash(
@@ -304,8 +309,14 @@ fn execute_flash(
             request.port,
             request.monitor,
             reporter,
+            request.rc_vault,
         ),
         (Transport::Uf2MassStorage, PreparedTarget::Uf2(prepared)) => {
+            if request.rc_vault.is_some() {
+                return Err(AppError::unsupported_operation(
+                    "Remote Control vault pages require ESP sparse flash; UF2 boards do not accept --rc-vault",
+                ));
+            }
             if !matches!(request.provisioning, ProvisioningAction::Preserve) {
                 return Err(AppError::unsupported_operation(format!(
                     "{} does not support Wi-Fi provisioning",
@@ -318,6 +329,11 @@ fn execute_flash(
             uf2::flash(board, &prepared, device, reporter)
         }
         (Transport::NrfSerialDfu, PreparedTarget::NrfSerialDfu(prepared)) => {
+            if request.rc_vault.is_some() {
+                return Err(AppError::unsupported_operation(
+                    "Remote Control vault pages require ESP sparse flash; Nordic serial DFU does not accept --rc-vault",
+                ));
+            }
             if !matches!(request.provisioning, ProvisioningAction::Preserve) {
                 return Err(AppError::unsupported_operation(format!(
                     "{} does not support Wi-Fi provisioning",
@@ -406,9 +422,59 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
             local_build: false,
             candidate: None,
             mount: None,
+            rc_vault: None,
         },
         reporter,
     )
+}
+
+const RC_VAULT_PAGE_LEN: usize = 4096;
+
+fn resolve_rc_vault(
+    path: Option<&Path>,
+    offset: Option<&str>,
+) -> Result<Option<esp::RcVaultWrite>, AppError> {
+    match (path, offset) {
+        (None, None) => Ok(None),
+        (Some(path), Some(offset)) => {
+            let bytes = std::fs::read(path).map_err(|error| {
+                AppError::configuration(format!(
+                    "could not read Remote Control vault {}: {error}",
+                    path.display()
+                ))
+            })?;
+            if bytes.len() != RC_VAULT_PAGE_LEN {
+                return Err(AppError::configuration(format!(
+                    "Remote Control vault must be {RC_VAULT_PAGE_LEN} bytes, got {}",
+                    bytes.len()
+                )));
+            }
+            Ok(Some(esp::RcVaultWrite {
+                offset: parse_flash_offset(offset)?,
+                bytes,
+            }))
+        }
+        _ => Err(AppError::arguments(
+            "--rc-vault and --rc-vault-offset must be provided together",
+        )),
+    }
+}
+
+fn parse_flash_offset(raw: &str) -> Result<u32, AppError> {
+    let trimmed = raw.trim();
+    let parsed = if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        u32::from_str_radix(hex, 16)
+    } else {
+        trimmed.parse::<u32>()
+    };
+    parsed.map_err(|_| {
+        AppError::arguments(format!(
+            "invalid --rc-vault-offset {raw:?}; use decimal or 0x-prefixed hex"
+        ))
+    })
 }
 
 fn confirm_board(board: &BoardCatalogEntry, yes: bool, interactive: bool) -> Result<(), AppError> {
@@ -922,7 +988,7 @@ mod doctor_tests {
             .into_iter()
             .map(|board| board.slug.as_str())
             .collect::<Vec<_>>(),
-            ["t-beam-supreme"]
+            ["heltec-v3", "t-beam-supreme"]
         );
         assert_eq!(
             indistinguishable_esp_boards(
@@ -932,7 +998,7 @@ mod doctor_tests {
             .into_iter()
             .map(|board| board.slug.as_str())
             .collect::<Vec<_>>(),
-            ["heltec-wireless-stick-lite-v3"]
+            ["heltec-v3", "heltec-wireless-stick-lite-v3"]
         );
 
         let mut two_board_catalog = catalog.clone();

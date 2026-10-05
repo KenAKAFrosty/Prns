@@ -17,6 +17,7 @@ fn partition_tables_bind_to_generic_regions() {
         &HELTEC_V4,
         &HELTEC_V4_R8,
         &HELTEC_E290,
+        &HELTEC_V3,
         &HELTEC_WIRELESS_STICK_LITE_V3,
         &T_BEAM_SUPREME,
         &XIAO_ESP32_C6,
@@ -33,12 +34,14 @@ fn partition_tables_bind_to_generic_regions() {
 fn checked_partition_csvs_match_the_canonical_profiles() {
     let sixteen_mib = include_str!("../../../../embedded/esp32/partitions-hopspot-16mb.csv");
     let eight_mib = include_str!("../../../../embedded/esp32/partitions-hopspot-8mb.csv");
+    let eight_mib_v3 = include_str!("../../../../embedded/esp32/partitions-hopspot-8mb-v3.csv");
     let four_mib = include_str!("../../../../embedded/esp32/partitions-hopspot-4mb.csv");
 
     for profile in [&HELTEC_V4, &HELTEC_V4_R8, &HELTEC_E290] {
         assert_partition_csv(profile, sixteen_mib);
     }
     assert_partition_csv(&T_BEAM_SUPREME, eight_mib);
+    assert_partition_csv(&HELTEC_V3, eight_mib_v3);
     assert_partition_csv(&HELTEC_WIRELESS_STICK_LITE_V3, eight_mib);
     assert_partition_csv(&XIAO_ESP32_C6, four_mib);
 }

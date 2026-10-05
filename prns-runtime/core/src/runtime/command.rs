@@ -214,6 +214,13 @@ pub trait PrnsNodeApi: RemoteControlControllerGrantControl {
         false
     }
 
+    async fn inventory_path_table(
+        &self,
+        _page: crate::remote_control::RemoteControlPathPage,
+    ) -> crate::remote_control::RemoteControlPathInventory {
+        crate::remote_control::RemoteControlPathInventory::empty()
+    }
+
     fn close_link(&self, link_id: LinkId) -> bool;
 }
 

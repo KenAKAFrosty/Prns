@@ -320,6 +320,30 @@ const ESP_8_MIB_REGIONS: [MemoryRegion; 12] = [
     ),
 ];
 
+// The original Heltec V3 firmware used the last 8 KiB for its journal.
+// Preserve its arena boundaries until an explicit migration is implemented.
+const ESP_8_MIB_V3_REGIONS: [MemoryRegion; 11] = [
+    ESP_8_MIB_REGIONS[0],
+    ESP_8_MIB_REGIONS[1],
+    ESP_8_MIB_REGIONS[2],
+    ESP_8_MIB_REGIONS[3],
+    ESP_8_MIB_REGIONS[4],
+    ESP_8_MIB_REGIONS[5],
+    ESP_8_MIB_REGIONS[6],
+    ESP_8_MIB_REGIONS[7],
+    ESP_8_MIB_REGIONS[8],
+    ESP_8_MIB_REGIONS[9],
+    region(
+        "journal",
+        FLASH,
+        0x680000,
+        0x800000,
+        RegionOwner::LearnedState,
+        RegionRetention::PreserveAcrossFirmwareUpdate,
+        RegionRole::Journal,
+    ),
+];
+
 const ESP_4_MIB_REGIONS: [MemoryRegion; 11] = [
     ESP_COMMON_PREFIX[0],
     ESP_COMMON_PREFIX[1],
@@ -370,6 +394,8 @@ const ESP_16_MIB_JOURNALS: [JournalLayout; 1] =
     [journal(0xE80000, 0xE81000, 0xE82000, 0xF40000, 0xFFE000)];
 const ESP_8_MIB_JOURNALS: [JournalLayout; 1] =
     [journal(0x680000, 0x681000, 0x682000, 0x740000, 0x7FE000)];
+const ESP_8_MIB_V3_JOURNALS: [JournalLayout; 1] =
+    [journal(0x680000, 0x681000, 0x682000, 0x741000, 0x800000)];
 const ESP_4_MIB_JOURNALS: [JournalLayout; 1] =
     [journal(0x3E0000, 0x3E1000, 0x3E2000, 0x3F0000, 0x3FE000)];
 
@@ -481,6 +507,16 @@ pub const HELTEC_WIRELESS_STICK_LITE_V3: MemoryProfile = MemoryProfile {
     runtime_reservations: &S3FN8_RUNTIME_RESERVATIONS,
 };
 
+pub const HELTEC_V3: MemoryProfile = MemoryProfile {
+    id: MemoryProfileId("heltec-v3"),
+    architecture: ProcessorArchitecture::XtensaEsp32S3,
+    address_spaces: &ESP32S3_8_MIB_NO_PSRAM_SPACES,
+    regions: &ESP_8_MIB_V3_REGIONS,
+    firmware: firmware_placement(0x10000, 0x67D000, 0x67D000),
+    journals: &ESP_8_MIB_V3_JOURNALS,
+    runtime_reservations: &S3FN8_RUNTIME_RESERVATIONS,
+};
+
 pub const XIAO_ESP32_C6: MemoryProfile = MemoryProfile {
     id: MemoryProfileId("xiao-esp32-c6"),
     architecture: ProcessorArchitecture::RiscV32Imac,
@@ -562,6 +598,17 @@ const ESP_16_MIB_PARTITIONS: [EspPartitionBinding; 10] = [
 ];
 
 const ESP_8_MIB_PARTITIONS: [EspPartitionBinding; 10] = ESP_16_MIB_PARTITIONS;
+const ESP_8_MIB_V3_PARTITIONS: [EspPartitionBinding; 9] = [
+    ESP_8_MIB_PARTITIONS[0],
+    ESP_8_MIB_PARTITIONS[1],
+    ESP_8_MIB_PARTITIONS[2],
+    ESP_8_MIB_PARTITIONS[3],
+    ESP_8_MIB_PARTITIONS[4],
+    ESP_8_MIB_PARTITIONS[5],
+    ESP_8_MIB_PARTITIONS[6],
+    ESP_8_MIB_PARTITIONS[7],
+    ESP_8_MIB_PARTITIONS[8],
+];
 
 const ESP_4_MIB_PARTITIONS: [EspPartitionBinding; 9] = [
     ESP_COMMON_PARTITIONS[0],
@@ -578,6 +625,7 @@ const ESP_4_MIB_PARTITIONS: [EspPartitionBinding; 9] = [
 const ESP_16_MIB_PROFILES: [MemoryProfileId; 3] = [HELTEC_V4.id, HELTEC_V4_R8.id, HELTEC_E290.id];
 const ESP_8_MIB_PROFILES: [MemoryProfileId; 2] =
     [T_BEAM_SUPREME.id, HELTEC_WIRELESS_STICK_LITE_V3.id];
+const ESP_8_MIB_V3_PROFILES: [MemoryProfileId; 1] = [HELTEC_V3.id];
 const ESP_4_MIB_PROFILES: [MemoryProfileId; 1] = [XIAO_ESP32_C6.id];
 
 pub const ESP_16_MIB_PARTITION_TABLE: EspPartitionTable = EspPartitionTable {
@@ -590,6 +638,11 @@ pub const ESP_8_MIB_PARTITION_TABLE: EspPartitionTable = EspPartitionTable {
     partitions: &ESP_8_MIB_PARTITIONS,
 };
 
+pub const ESP_8_MIB_V3_PARTITION_TABLE: EspPartitionTable = EspPartitionTable {
+    profiles: &ESP_8_MIB_V3_PROFILES,
+    partitions: &ESP_8_MIB_V3_PARTITIONS,
+};
+
 pub const ESP_4_MIB_PARTITION_TABLE: EspPartitionTable = EspPartitionTable {
     profiles: &ESP_4_MIB_PROFILES,
     partitions: &ESP_4_MIB_PARTITIONS,
@@ -600,6 +653,7 @@ pub fn esp_partition_table(id: MemoryProfileId) -> Option<&'static EspPartitionT
     [
         &ESP_16_MIB_PARTITION_TABLE,
         &ESP_8_MIB_PARTITION_TABLE,
+        &ESP_8_MIB_V3_PARTITION_TABLE,
         &ESP_4_MIB_PARTITION_TABLE,
     ]
     .into_iter()

@@ -1,9 +1,17 @@
 mod board;
 mod entropy;
 mod firmware;
+#[cfg(feature = "heltec-v3")]
+#[path = "../s3/boards/heltec_frontend.rs"]
+mod heltec_frontend;
+#[cfg(feature = "heltec-v3")]
+mod heltec_v3_face;
+#[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+mod heltec_v3_pairing;
 mod remote_control;
 
 use embassy_executor::Spawner;
+#[cfg(not(feature = "heltec-v3"))]
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -13,8 +21,7 @@ use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
 use esp_hal::gpio::{Input, Output};
-use esp_hal::peripherals::BT;
-use esp_hal::rng::TrngSource;
+use esp_hal::peripherals::{ADC1, BT, RNG};
 use esp_hal::rtc_cntl::Rtc;
 use esp_hal::spi::master::Spi;
 use esp_hal::uart::{UartRx, UartTx};
@@ -45,6 +52,9 @@ use entropy::S3Fn8EntropySource;
 
 firmware_app_descriptor!();
 
+#[cfg(feature = "heltec-v3")]
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltecv3");
+#[cfg(not(feature = "heltec-v3"))]
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"wslv3usb");
 const USB_UART_BAUD: u32 = 115_200;
 const USB_UART_DATA_BITS_PER_FRAME: u64 = 8;
@@ -74,6 +84,8 @@ const BLE_SUPERVISOR_ID: InterfaceId =
 const _: () = assert!(InternalStorage::LINK_SESSIONS > BLE_PEER_CAPACITY);
 
 type Mtx = CriticalSectionRawMutex;
+#[cfg(feature = "heltec-v3")]
+type Handle = personal_rns::runtime::PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
 type LoraRadio = Sx126x<
     ExclusiveDevice<Spi<'static, Async>, Output<'static>, Delay>,
     Input<'static>,
@@ -113,7 +125,14 @@ struct S3Fn8Hardware {
     usb_tx: UartTx<'static, Async>,
     lora_radio: LoraRadio,
     bluetooth: BT<'static>,
-    identity_entropy: TrngSource<'static>,
+    rng: RNG<'static>,
+    adc: ADC1<'static>,
+    #[cfg(feature = "heltec-v3")]
+    battery_pin: esp_hal::peripherals::GPIO1<'static>,
+    #[cfg(feature = "heltec-v3")]
+    button: Input<'static>,
+    #[cfg(feature = "heltec-v3")]
+    display: Option<heltec_v3_face::Oled>,
     mac: [u8; 6],
     timebase: personal_rns::manifold::embassy::EmbassyTimebase,
     _rtc: Rtc<'static>,
@@ -155,7 +174,14 @@ async fn manifold_task(
     node: &'static mut Node,
     persistence: &'static mut crate::persistence::S3Fn8Persistence,
 ) {
-    let _ = node.restore_embedded_persistence(persistence).await;
+    let report = node.restore_embedded_persistence(persistence).await;
+    #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+    heltec_v3_pairing::restored(
+        report.logical_start,
+        report.remote_control_controller_grants_restored_count,
+    );
+    #[cfg(not(all(feature = "heltec-v3", feature = "remote-control-pairing")))]
+    let _ = report;
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await
 }
@@ -195,6 +221,12 @@ async fn ble_task(
     crate::bluetooth_auto::run(connector, mac, identity, fleet, &BLE_SHARED, spawner).await;
 }
 
+#[cfg(not(all(feature = "heltec-v3", feature = "remote-control-pairing")))]
 fn ignore_events(_event: PrnsEvent<'_>, _state: &AppState) {}
+
+#[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+pub(crate) fn remote_control_pairing_persistence_failed() {
+    heltec_v3_pairing::persistence_failed();
+}
 
 pub use firmware::run;

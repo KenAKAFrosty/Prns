@@ -432,6 +432,9 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlRequestKind::InspectWifiTransaction,
             RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
             RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
+            RemoteControlRequestKind::InventoryPathTable,
+            RemoteControlRequestKind::FirmwareUpdate,
+            RemoteControlRequestKind::ResetDevice,
         ],
     );
     assert_eq!(
@@ -467,6 +470,8 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlResponseKind::InspectWifiTransaction,
             RemoteControlResponseKind::InventoryInterfaceDiscoveryGroups,
             RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups,
+            RemoteControlResponseKind::InventoryPathTable,
+            RemoteControlResponseKind::ResetDevice,
             RemoteControlResponseKind::ProtocolError,
         ],
     );
@@ -535,6 +540,12 @@ fn protocol_discriminants_are_stable_typed_values() {
         0x10
     );
     assert_eq!(RemoteControlRequestKind::DescribePower.wire_value(), 0x11);
+    assert_eq!(
+        RemoteControlRequestKind::InventoryPathTable.wire_value(),
+        0x1F
+    );
+    assert_eq!(RemoteControlRequestKind::ResetDevice.wire_value(), 0x23);
+    assert_eq!(RemoteControlRequestKind::FirmwareUpdate.wire_value(), 0x22);
     assert_eq!(RemoteControlResponseKind::Describe.wire_value(), 0x01);
     assert_eq!(RemoteControlResponseKind::AnnounceSelf.wire_value(), 0x02);
     assert_eq!(
@@ -547,6 +558,11 @@ fn protocol_discriminants_are_stable_typed_values() {
     );
     assert_eq!(RemoteControlResponseKind::SleepRadios.wire_value(), 0x05);
     assert_eq!(RemoteControlResponseKind::WakeRadios.wire_value(), 0x06);
+    assert_eq!(
+        RemoteControlResponseKind::InventoryPathTable.wire_value(),
+        0x1F
+    );
+    assert_eq!(RemoteControlResponseKind::ResetDevice.wire_value(), 0x23);
     assert_eq!(
         RemoteControlResponseKind::SetInterfaceMode.wire_value(),
         0x07
@@ -808,6 +824,49 @@ fn wifi_station_credentials_reject_empty_ssid_and_omit_password_from_inventory()
         Some("field,lab")
     );
     assert!(crate::remote_control::parse_wifi_station_ssid("LoRa").is_none());
+}
+
+#[test]
+fn managing_grants_include_path_table_added_after_pairing() {
+    let describe_only = grant(0x21, RemoteControlRequestKind::Describe);
+    assert!(!describe_only
+        .effective_requests()
+        .supports(RemoteControlRequestKind::InventoryPathTable));
+    assert!(!describe_only
+        .effective_requests()
+        .supports(RemoteControlRequestKind::ResetDevice));
+
+    let manager = grant(0x22, RemoteControlRequestKind::DescribePower);
+    assert!(manager
+        .effective_requests()
+        .supports(RemoteControlRequestKind::InventoryPathTable));
+    assert!(!manager
+        .permitted_requests()
+        .supports(RemoteControlRequestKind::InventoryPathTable));
+    assert!(!manager
+        .effective_requests()
+        .supports(RemoteControlRequestKind::ResetDevice));
+
+    let power_manager = grant(0x24, RemoteControlRequestKind::SetSystemPower);
+    assert!(power_manager
+        .effective_requests()
+        .supports(RemoteControlRequestKind::ResetDevice));
+
+    let administrator = RemoteControlControllerGrant::new(
+        controller_identity(0x23),
+        RemoteControlControllerAuthority::Administrator,
+        RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+    )
+    .unwrap();
+    assert!(administrator
+        .effective_requests()
+        .supports(RemoteControlRequestKind::InventoryPathTable));
+    assert!(administrator
+        .effective_requests()
+        .supports(RemoteControlRequestKind::ResetDevice));
+    assert!(administrator
+        .effective_requests()
+        .supports(RemoteControlRequestKind::AuthorizeController));
 }
 
 #[test]
@@ -1336,6 +1395,10 @@ fn inventory_power_and_sleep_messages_round_trip() {
             revision: RemoteControlWifiCredentialRevision::new(43).expect("nonzero revision"),
         },
         RemoteControlRequest::InspectWifiTransaction,
+        RemoteControlRequest::InventoryPathTable {
+            page: crate::remote_control::RemoteControlPathPage::First,
+        },
+        RemoteControlRequest::ResetDevice,
     ] {
         let mut bytes = [0u8; RemoteControlRequest::MAX_ENCODED_LEN];
         let written = request.write_into(&mut bytes).unwrap();
@@ -1492,6 +1555,10 @@ fn inventory_power_and_sleep_messages_round_trip() {
                     .expect("bounded remaining time"),
             },
         ),
+        RemoteControlResponse::InventoryPathTable(
+            crate::remote_control::RemoteControlPathInventory::empty(),
+        ),
+        RemoteControlResponse::ResetDevice(RemoteControlApplyOutcome::Scheduled),
     ] {
         let mut bytes = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
         let written = response.write_into(&mut bytes).unwrap();

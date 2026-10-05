@@ -1376,6 +1376,7 @@ dependencies = [
  "prns-interfaces-embassy",
  "prns-interfaces-tokio",
  "prns-runtime",
+ "prns-runtime-embassy",
  "prns-runtime-tokio",
 ]
 

@@ -21,18 +21,19 @@ use super::inventory::{
 use super::{
     RemoteControlApplyOutcome, RemoteControlControllerIdentity, RemoteControlControllerPage,
     RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility, RemoteControlEspRadioMode,
-    RemoteControlGnssPower, RemoteControlInterfacePage, RemoteControlPeerPage,
-    RemoteControlStationUplink, RemoteControlSystemPower, RemoteControlWifiCredentialRevision,
-    RemoteControlWifiStageOutcome, RemoteControlWifiTransactionStatus,
+    RemoteControlGnssPower, RemoteControlInterfacePage, RemoteControlPathInventory,
+    RemoteControlPathPage, RemoteControlPeerPage, RemoteControlStationUplink,
+    RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
+    RemoteControlWifiTransactionStatus, REMOTE_CONTROL_PATH_INVENTORY_MAX_ENCODED_BODY_LEN,
 };
 
 const MESSAGE_HEADER_ENCODED_LEN: usize = 2;
 const DESCRIPTION_COUNT_ENCODED_LEN: usize = 1;
 const PROTOCOL_ERROR_KIND_ENCODED_LEN: usize = 1;
 const PROTOCOL_ERROR_DETAIL_ENCODED_LEN: usize = 1;
-// V1 request kinds occupy the contiguous wire range 0x01..=0x1e. Unknown values are rejected
-// before a request can enter this typed set, so four bytes represent the complete domain.
-const REQUEST_KIND_BITMAP_LEN: usize = 4;
+// The request bitmap covers wire values through 0x23; 0x20 and 0x21 are
+// reserved for network transport, and 0x22 for firmware updates.
+const REQUEST_KIND_BITMAP_LEN: usize = 5;
 
 prns_macros::iterable_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +88,10 @@ prns_macros::iterable_enum! {
         InspectWifiTransaction = 0x1C,
         InventoryInterfaceDiscoveryGroups = 0x1D,
         ReplaceInterfaceDiscoveryGroups = 0x1E,
+        InventoryPathTable = 0x1F,
+        /// Permission for firmware transfer; this is not an RC request.
+        FirmwareUpdate = 0x22,
+        ResetDevice = 0x23,
     }
 }
 
@@ -213,6 +218,16 @@ impl RemoteControlRequestKind {
                     RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
                 ))
             }
+            Self::InventoryPathTable => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
+                REMOTE_CONTROL_PATH_INVENTORY_MAX_ENCODED_BODY_LEN,
+                RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
+            )),
+            Self::FirmwareUpdate => MESSAGE_HEADER_ENCODED_LEN
+                .saturating_add(RemoteControlProtocolError::MAX_ENCODED_BODY_LEN),
+            Self::ResetDevice => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
+                RemoteControlApplyOutcome::ENCODED_LEN,
+                RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
+            )),
         }
     }
 }
@@ -263,6 +278,8 @@ prns_macros::iterable_enum! {
         InspectWifiTransaction = 0x1C,
         InventoryInterfaceDiscoveryGroups = 0x1D,
         ReplaceInterfaceDiscoveryGroups = 0x1E,
+        InventoryPathTable = 0x1F,
+        ResetDevice = 0x23,
         ProtocolError = 0xFF,
     }
 }
@@ -421,6 +438,10 @@ pub enum RemoteControlRequest {
         revision: RemoteControlWifiCredentialRevision,
     },
     InspectWifiTransaction,
+    InventoryPathTable {
+        page: RemoteControlPathPage,
+    },
+    ResetDevice,
 }
 
 impl RemoteControlRequest {
@@ -480,6 +501,8 @@ impl RemoteControlRequest {
             Self::ConfirmWifiCredentials { .. } => RemoteControlRequestKind::ConfirmWifiCredentials,
             Self::CancelWifiCredentials { .. } => RemoteControlRequestKind::CancelWifiCredentials,
             Self::InspectWifiTransaction => RemoteControlRequestKind::InspectWifiTransaction,
+            Self::InventoryPathTable { .. } => RemoteControlRequestKind::InventoryPathTable,
+            Self::ResetDevice => RemoteControlRequestKind::ResetDevice,
         }
     }
 
@@ -492,7 +515,8 @@ impl RemoteControlRequest {
             | Self::DescribePower
             | Self::SleepRadios
             | Self::WakeRadios
-            | Self::InspectWifiTransaction => MESSAGE_HEADER_ENCODED_LEN,
+            | Self::InspectWifiTransaction
+            | Self::ResetDevice => MESSAGE_HEADER_ENCODED_LEN,
             Self::SetSystemPower { .. }
             | Self::SetGnssPower { .. }
             | Self::SetDisplayVisibility { .. }
@@ -511,6 +535,9 @@ impl RemoteControlRequest {
                 MESSAGE_HEADER_ENCODED_LEN.saturating_add(page.encoded_len())
             }
             Self::InventoryControllers { page } => {
+                MESSAGE_HEADER_ENCODED_LEN.saturating_add(page.encoded_len())
+            }
+            Self::InventoryPathTable { page } => {
                 MESSAGE_HEADER_ENCODED_LEN.saturating_add(page.encoded_len())
             }
             Self::SetInterfacePower { .. } | Self::SetInterfaceMode { .. } => {
@@ -599,6 +626,13 @@ impl RemoteControlRequest {
             RemoteControlRequestKind::InspectWifiTransaction if body.is_empty() => {
                 Ok(Self::InspectWifiTransaction)
             }
+            RemoteControlRequestKind::InventoryPathTable => {
+                RemoteControlPathPage::parse(body).map(|page| Self::InventoryPathTable { page })
+            }
+            RemoteControlRequestKind::ResetDevice if body.is_empty() => Ok(Self::ResetDevice),
+            RemoteControlRequestKind::FirmwareUpdate => {
+                Err(RemoteControlRequestParseError::Malformed)
+            }
             RemoteControlRequestKind::SetInterfacePower => parse_set_interface_power(body),
             RemoteControlRequestKind::SetInterfaceMode => parse_set_interface_mode(body),
             RemoteControlRequestKind::SetInterfaceGroup => parse_set_interface_group(body),
@@ -626,7 +660,8 @@ impl RemoteControlRequest {
             | RemoteControlRequestKind::DescribePower
             | RemoteControlRequestKind::SleepRadios
             | RemoteControlRequestKind::WakeRadios
-            | RemoteControlRequestKind::InspectWifiTransaction => {
+            | RemoteControlRequestKind::InspectWifiTransaction
+            | RemoteControlRequestKind::ResetDevice => {
                 Err(RemoteControlRequestParseError::Malformed)
             }
         }
@@ -652,9 +687,10 @@ impl RemoteControlRequest {
             | Self::DescribePower
             | Self::SleepRadios
             | Self::WakeRadios => {}
-            Self::InspectWifiTransaction => {}
+            Self::InspectWifiTransaction | Self::ResetDevice => {}
             Self::InventoryInterfaces { page } => page.write_into(body)?,
             Self::InventoryControllers { page } => page.write_into(body)?,
+            Self::InventoryPathTable { page } => page.write_into(body)?,
             Self::SetInterfacePower { id, power } => {
                 write_interface_id_and_byte(body, *id, power.wire_value())?;
             }
@@ -1566,11 +1602,13 @@ pub enum RemoteControlResponse {
     ConfirmWifiCredentials(RemoteControlApplyOutcome),
     CancelWifiCredentials(RemoteControlApplyOutcome),
     InspectWifiTransaction(RemoteControlWifiTransactionStatus),
+    InventoryPathTable(RemoteControlPathInventory),
+    ResetDevice(RemoteControlApplyOutcome),
     ProtocolError(RemoteControlProtocolError),
 }
 
 impl RemoteControlResponse {
-    pub const MAX_ENCODED_LEN: usize = MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
+    pub const MAX_ENCODED_LEN: usize = maximum(MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
         RemoteControlDiscoveryGroupsInventoryOutcome::MAX_ENCODED_LEN,
         maximum(
             DESCRIPTION_COUNT_ENCODED_LEN.saturating_add(RemoteControlRequestKind::ALL.len()),
@@ -1611,7 +1649,10 @@ impl RemoteControlResponse {
                 ),
             ),
         ),
-    ));
+    )),
+        MESSAGE_HEADER_ENCODED_LEN
+            .saturating_add(REMOTE_CONTROL_PATH_INVENTORY_MAX_ENCODED_BODY_LEN),
+    );
 
     #[must_use]
     pub const fn kind(&self) -> RemoteControlResponseKind {
@@ -1652,6 +1693,8 @@ impl RemoteControlResponse {
             Self::ConfirmWifiCredentials(_) => RemoteControlResponseKind::ConfirmWifiCredentials,
             Self::CancelWifiCredentials(_) => RemoteControlResponseKind::CancelWifiCredentials,
             Self::InspectWifiTransaction(_) => RemoteControlResponseKind::InspectWifiTransaction,
+            Self::InventoryPathTable(_) => RemoteControlResponseKind::InventoryPathTable,
+            Self::ResetDevice(_) => RemoteControlResponseKind::ResetDevice,
             Self::ProtocolError(_) => RemoteControlResponseKind::ProtocolError,
         }
     }
@@ -1681,7 +1724,8 @@ impl RemoteControlResponse {
             Self::DescribeBuild(version) => version.encoded_body_len(),
             Self::DescribePower(snapshot) => snapshot.encoded_body_len(),
             Self::SleepRadios(_) | Self::WakeRadios(_) => RemoteControlSleepOutcome::ENCODED_LEN,
-            Self::SetSystemPower(_)
+            Self::ResetDevice(_)
+            | Self::SetSystemPower(_)
             | Self::SetGnssPower(_)
             | Self::SetDisplayVisibility(_)
             | Self::SetDisplayAutoOff(_)
@@ -1692,6 +1736,7 @@ impl RemoteControlResponse {
             | Self::CancelWifiCredentials(_) => RemoteControlApplyOutcome::ENCODED_LEN,
             Self::StageWifiCredentials(outcome) => outcome.encoded_len(),
             Self::InspectWifiTransaction(status) => status.encoded_len(),
+            Self::InventoryPathTable(inventory) => inventory.encoded_body_len(),
             Self::ProtocolError(error) => error.encoded_body_len(),
         };
         MESSAGE_HEADER_ENCODED_LEN.saturating_add(body_len)
@@ -1809,6 +1854,12 @@ impl RemoteControlResponse {
             RemoteControlResponseKind::InspectWifiTransaction => {
                 parse_wifi_transaction_status(body).map(Self::InspectWifiTransaction)
             }
+            RemoteControlResponseKind::InventoryPathTable => {
+                RemoteControlPathInventory::parse_body(body).map(Self::InventoryPathTable)
+            }
+            RemoteControlResponseKind::ResetDevice => {
+                parse_apply_outcome(body).map(Self::ResetDevice)
+            }
             RemoteControlResponseKind::ProtocolError => {
                 parse_protocol_error(body).map(Self::ProtocolError)
             }
@@ -1855,7 +1906,8 @@ impl RemoteControlResponse {
             Self::SleepRadios(outcome) | Self::WakeRadios(outcome) => {
                 write_sleep_outcome(*outcome, body)
             }
-            Self::SetSystemPower(outcome)
+            Self::ResetDevice(outcome)
+            | Self::SetSystemPower(outcome)
             | Self::SetGnssPower(outcome)
             | Self::SetDisplayVisibility(outcome)
             | Self::SetDisplayAutoOff(outcome)
@@ -1866,6 +1918,7 @@ impl RemoteControlResponse {
             | Self::CancelWifiCredentials(outcome) => write_apply_outcome(*outcome, body),
             Self::StageWifiCredentials(outcome) => write_wifi_stage_outcome(*outcome, body),
             Self::InspectWifiTransaction(status) => write_wifi_transaction_status(*status, body),
+            Self::InventoryPathTable(inventory) => inventory.write_body(body)?,
             Self::ProtocolError(error) => write_protocol_error(error, body),
         }
         Ok(encoded_len)

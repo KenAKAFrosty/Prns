@@ -1,29 +1,47 @@
 use super::*;
-use personal_hopspot_memory::HELTEC_WIRELESS_STICK_LITE_V3;
+#[cfg(feature = "heltec-v3")]
+use personal_hopspot_memory::HELTEC_V3 as BOARD_MEMORY_PROFILE;
+#[cfg(not(feature = "heltec-v3"))]
+use personal_hopspot_memory::HELTEC_WIRELESS_STICK_LITE_V3 as BOARD_MEMORY_PROFILE;
 use personal_rns::interfaces::lora::AirtimePolicy;
 use personal_rns::lora::{LoRaInterfaceInput, LoRaSpectrumStatus};
-use personal_rns::remote_control::{
-    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
-};
+#[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+use personal_rns::remote_control::RemoteControlPairingPublicAppDataBytes;
+use personal_rns::remote_control::{RemoteControlSelfAnnouncement, RemoteControlService};
 use personal_rns::runtime::{PrnsNodeHandle, PrnsNodeRecipe, SharedNorFlash};
 
+#[cfg(feature = "heltec-v3")]
+const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x19Personal Hopspot HeltecV3\xc0";
+#[cfg(not(feature = "heltec-v3"))]
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x27Personal Hopspot Wireless Stick Lite V3\xc0";
+#[cfg(feature = "heltec-v3")]
+const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot HeltecV3";
+#[cfg(not(feature = "heltec-v3"))]
 const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot Wireless Stick Lite V3";
 
+#[cfg_attr(feature = "heltec-v3", embassy_executor::task)]
 pub async fn run(spawner: Spawner) {
-    let memory = crate::memory::EspFirmwareMemory::new(&HELTEC_WIRELESS_STICK_LITE_V3);
+    let memory = crate::memory::EspFirmwareMemory::new(&BOARD_MEMORY_PROFILE);
     let S3Fn8Hardware {
         usb_rx,
         usb_tx,
         lora_radio,
         bluetooth,
-        identity_entropy,
+        mut rng,
+        mut adc,
+        #[cfg(feature = "heltec-v3")]
+        battery_pin,
+        #[cfg(feature = "heltec-v3")]
+        button,
+        #[cfg(feature = "heltec-v3")]
+        display,
         mac,
         timebase,
         _rtc,
         _vext,
         _adc_control,
     } = board::bringup();
+    let identity_entropy = esp_hal::rng::TrngSource::new(rng.reborrow(), adc.reborrow());
 
     let mut boot_entropy = entropy::seed_runtime_entropy(&identity_entropy)
         .expect("the enabled S3 boot TRNG fills the initial seed");
@@ -100,13 +118,28 @@ pub async fn run(spawner: Spawner) {
         .expect("the hopspot destination names are valid")
         .node_page;
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
-        remote_control_bootstrap.into_parts();
+        remote_control_bootstrap.bootstrap.into_parts();
+    #[cfg(feature = "heltec-v3")]
+    let stable_target_destination = remote_control_identity_secrets
+        .identities()
+        .target()
+        .endpoint()
+        .destination_hash();
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
-        RemoteControlInitialControllerGrants::Nobody,
+        crate::identity::factory_or_fallback_grants(remote_control_bootstrap.factory_grant),
         RemoteControlSelfAnnouncement::Destination(node_page_destination),
         remote_control::capabilities(),
     );
+    #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+    let pairing_permissions = personal_hopspot_core::full_remote_control_pairing_permissions(
+        &remote_control.available_requests(),
+    )
+    .expect("Remote Control supports at least Describe");
+    #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+    let pairing_public_app_data =
+        RemoteControlPairingPublicAppDataBytes::try_from(NODE_ANNOUNCE_APP_DATA)
+            .expect("the Heltec V3 product name fits pairing app data");
     let ble_identity = ble_bootstrap.into_identity();
 
     let mut manifold_lanes = ManifoldLanes::new();
@@ -145,7 +178,13 @@ pub async fn run(spawner: Spawner) {
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
         persistence: crate::persistence::s3fn8(shared_flash, &memory),
-        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &AppState),
+        on_event: {
+            #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+            let observer = super::heltec_v3_pairing::on_event;
+            #[cfg(not(all(feature = "heltec-v3", feature = "remote-control-pairing")))]
+            let observer = ignore_events;
+            observer as for<'a> fn(PrnsEvent<'a>, &AppState)
+        },
     };
 
     static NODE: StaticCell<Node> = StaticCell::new();
@@ -165,15 +204,38 @@ pub async fn run(spawner: Spawner) {
     spawner.spawn(
         ble_task(spawner, bluetooth, mac, ble_identity, ble_fleet).expect("Bluetooth task fits"),
     );
-    join(
-        lora.run(lora_seam),
-        remote_control::run(
-            lora_status,
-            &USB_STATUS,
-            lora_controller,
-            subg_configuration_store,
-            subg_configuration,
-        ),
-    )
-    .await;
+    #[cfg(feature = "heltec-v3")]
+    static FACE: StaticCell<super::heltec_v3_face::Face> = StaticCell::new();
+    #[cfg(feature = "heltec-v3")]
+    let face =
+        FACE.init_with(|| super::heltec_v3_face::Face::new(display, adc, battery_pin, button));
+    let controls = remote_control::run(
+        lora_status,
+        &USB_STATUS,
+        lora_controller,
+        subg_configuration_store,
+        subg_configuration,
+        #[cfg(feature = "heltec-v3")]
+        face,
+        #[cfg(feature = "heltec-v3")]
+        lora_spectrum,
+        #[cfg(feature = "heltec-v3")]
+        handle,
+        #[cfg(feature = "heltec-v3")]
+        node_page_destination,
+        #[cfg(feature = "heltec-v3")]
+        stable_target_destination,
+        #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+        pairing_permissions,
+        #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+        pairing_public_app_data,
+    );
+    // Keep the UI/RC poll frame off the no-PSRAM startup stack.
+    #[cfg(feature = "heltec-v3")]
+    {
+        spawner.spawn(controls.expect("UI/Remote Control task fits"));
+        lora.run(lora_seam).await;
+    }
+    #[cfg(not(feature = "heltec-v3"))]
+    join(lora.run(lora_seam), controls).await;
 }

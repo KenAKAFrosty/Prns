@@ -246,9 +246,9 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
     BoardTarget {
         name: "Heltec V3/V3.1",
         slug: "heltec-v3",
-        silicon: "ESP32-S3 + SX1262",
-        tier: Tier::Roadmap,
-        interfaces: &[],
+        silicon: "ESP32-S3FN8 + SX1262",
+        tier: Tier::BringUp,
+        interfaces: &["BLE Auto", "LoRa", "USB Auto"],
         icon: Some("espressif"),
         preparation_profile: None,
         flash_target: None,
@@ -698,7 +698,7 @@ mod tests {
             .map(|board| board.name)
             .collect::<Vec<_>>();
 
-        assert_eq!(bring_up, vec!["Raspberry Pi Zero 2 W"]);
+        assert_eq!(bring_up, vec!["Raspberry Pi Zero 2 W", "Heltec V3/V3.1"]);
         assert!(
             UPCOMING_BOARD_TARGETS
                 .iter()

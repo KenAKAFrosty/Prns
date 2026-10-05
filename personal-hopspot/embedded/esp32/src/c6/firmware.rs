@@ -1,7 +1,5 @@
 use super::*;
-use personal_rns::remote_control::{
-    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
-};
+use personal_rns::remote_control::{RemoteControlSelfAnnouncement, RemoteControlService};
 
 use crate::memory::EspFirmwareMemory;
 
@@ -71,10 +69,10 @@ pub async fn run(spawner: Spawner) {
         .expect("the hopspot destination names are valid")
         .node_page;
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
-        remote_control_bootstrap.into_parts();
+        remote_control_bootstrap.bootstrap.into_parts();
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
-        RemoteControlInitialControllerGrants::Nobody,
+        crate::identity::factory_or_fallback_grants(remote_control_bootstrap.factory_grant),
         RemoteControlSelfAnnouncement::Destination(node_page_destination),
         remote_control::capabilities(),
     );

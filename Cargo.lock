@@ -2006,6 +2006,7 @@ dependencies = [
  "espflash",
  "nusb",
  "personal-hopspot-builder",
+ "personal-hopspot-memory",
  "prns-flash-manifest",
  "prns-nrf-dfu",
  "serde",

@@ -111,7 +111,7 @@ pub(in crate::screen) fn draw_compact_number<D: DrawTarget<Color = BinaryColor>>
 ) {
     let style = MonoTextStyle::new(&FONT_5X8, color);
     let mut x = point.x;
-    for ch in text.chars() {
+    for (index, ch) in text.char_indices() {
         if ch == '.' {
             let _ = Rectangle::new(Point::new(x, point.y + COMPACT_DECIMAL_Y), Size::new(1, 1))
                 .into_styled(fill(color))
@@ -133,10 +133,9 @@ pub(in crate::screen) fn draw_compact_number<D: DrawTarget<Color = BinaryColor>>
             continue;
         }
 
-        let mut glyph: HString<2> = HString::new();
-        let _ = glyph.push(ch);
+        let glyph = &text[index..index + ch.len_utf8()];
         let _ =
-            Text::with_baseline(&glyph, Point::new(x, point.y), style, Baseline::Top).draw(display);
+            Text::with_baseline(glyph, Point::new(x, point.y), style, Baseline::Top).draw(display);
         x += NUMBER_GLYPH_WIDTH;
     }
 }
