@@ -1,4 +1,5 @@
 import { copyFile, mkdir } from "node:fs/promises";
+import "../../prns-js/scripts/stage-code.mjs";
 
 const generatedCasework = new URL(
   "../../prns-js/dist/casework.js",
