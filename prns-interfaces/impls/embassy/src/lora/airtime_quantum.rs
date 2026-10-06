@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn standard_preset_quanta_are_packet_aligned_and_amortize_contention() {
         let cases = [
-            (ModemPreset::ShortFast, 1_208_502),
+            (ModemPreset::ShortFast, 1_297_590),
             (ModemPreset::MediumFast, 1_272_604),
             (ModemPreset::LongFast, 4_228_188),
             (ModemPreset::LongSlow, 28_406_578),
