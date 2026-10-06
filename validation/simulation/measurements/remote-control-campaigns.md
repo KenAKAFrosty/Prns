@@ -42,6 +42,22 @@ The reducer also exposed mistaken fixture assumptions about administrative capab
 
 Routine cases are part of the registered simulator suite. The extended lane is explicit, registered for scheduled/release runs with a one-hour timeout:
 
+The extended lane uses the repository's `simulation` Cargo profile: optimization
+level 2 with debug assertions and overflow checks enabled. This is the same
+profile as the extended core-work campaign. It retains all 1,024 cases, 128
+actions per case, four isolated workers, and two matching fresh-fixture traces
+per case. The release run on `47065befee08a5e0d62fe6f55a50aa3cf1cdc62c`
+used the unoptimized test profile and reached 832 qualified cases before its
+3,600-second limit. That run is incomplete qualification, not a passing result.
+
+A macOS arm64 comparison replayed seed 42 across all four runtime pairings
+under both profiles, alternating execution order. Complete semantic artifacts
+matched in every pairing, including both fresh fixtures' packet and persistence
+traces. Excluding compilation, the unoptimized runs took 17.641 seconds and the
+optimized runs took 12.415 seconds (1.421× faster). The full optimized campaign
+was running concurrently, so this is a comparative sample, not an isolated
+throughput measurement or a substitute for completing the whole campaign.
+
 ```console
 python3 validation/run.py run --suite virtual-device-simulation --suite embedded-persistence-recovery --suite registry
 python3 validation/run.py run --suite remote-control-simulation-extended
