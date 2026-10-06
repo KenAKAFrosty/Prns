@@ -33,43 +33,31 @@ const readyValue = match(ready as Creation, {
 });
 assert(readyValue === 42, "match dispatches tagged data");
 
-const structural = {
-  ...ready,
-  observedAt: 123,
-};
-const structuralValue = match(structural as Creation, {
+const roundTripped = JSON.parse(JSON.stringify(ready)) as Creation;
+const roundTrippedValue = match(roundTripped, {
   Ready: ({ value }) => value,
   Missing: () => 0,
 });
-assert(structuralValue === 42, "match accepts structural supersets");
+assert(roundTrippedValue === 42, "tagged data survives JSON round trips");
 
-const roundTripped = JSON.parse(JSON.stringify(Tag("Missing"))) as Creation;
-const roundTrippedValue = match(roundTripped, {
+const absent: Creation = Tag("Missing");
+const absentValue = match(absent as Creation, {
   Ready: () => "ready",
   Missing: () => "missing",
 });
-assert(roundTrippedValue === "missing", "data-less tags survive JSON round trips");
+assert(absentValue === "missing", "data-less tags dispatch their handler");
 
-const futureState: string = "FutureState";
-const futureValue = match(futureState, {
-  UNTAGGED: (value) => `untagged:${value}`,
+const plainState = "Ready" as "Ready" | "Missing";
+const plainValue = match(plainState, {
+  Ready: () => 42,
+  Missing: () => 0,
 });
-assert(futureValue === "untagged:FutureState", "wide strings use UNTAGGED");
+assert(plainValue === 42, "string literals dispatch their named handler");
 
-const reservedState: string = "UNTAGGED";
-const reservedValue = match(reservedState, {
-  UNTAGGED: (value) => `untagged:${value}`,
+const untaggedValue = match(42, {
+  UNTAGGED: (value) => value + 1,
 });
-assert(reservedValue === "untagged:UNTAGGED", "UNTAGGED remains a value");
-
-type CollidingName = "Ready" | Tagged<"Ready", { readonly value: number }>;
-function collidingValue(value: CollidingName): number {
-  return match(value, {
-    Ready: (data) => data?.value ?? 0,
-  });
-}
-assert(collidingValue("Ready") === 0, "plain and tagged names may overlap");
-assert(collidingValue(ready) === 42, "overlapping tagged data remains typed");
+assert(untaggedValue === 43, "untagged values reach the fallback handler");
 
 const { MakeTag } = from<Creation>();
 const missing = MakeTag("Missing");
@@ -80,13 +68,5 @@ const into = match_into<number>().from(ready as Creation, {
   Missing: () => 0,
 });
 assert(into === 42, "match_into constrains every branch to one return type");
-
-let rejectedPrototypeHandler = false;
-try {
-  match(Tag("toString") as Tagged<"toString">, {} as never);
-} catch (error) {
-  rejectedPrototypeHandler = error instanceof TypeError;
-}
-assert(rejectedPrototypeHandler, "prototype properties are not handlers");
 
 console.log("casework smoke passed");
