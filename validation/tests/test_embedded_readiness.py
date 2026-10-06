@@ -200,7 +200,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 "",
             ),
             (str(self.paths["renode"]), "--version"): CommandOutput(
-                0, "\n".join(execution.emulator.identity) + "\n", ""
+                0, "\n".join(execution.emulator.package_for_host(HostPlatform.MACOS_ARM64).identity) + "\n", ""
             ),
         }
 

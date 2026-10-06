@@ -35,8 +35,8 @@ def load(path: Path) -> Inventory:
         document = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise InventoryError(f"cannot load {relative(path)}: {error}") from error
-    if document.get("schema") != 2:
-        raise InventoryError("embedded platform inventory schema must be 2")
+    if document.get("schema") != 3:
+        raise InventoryError("embedded platform inventory schema must be 3")
     toolchain = table(document.get("toolchain"), "toolchain")
     platforms = tuple(parse_platform(entry) for entry in document.get("platform", []))
     if not platforms:
@@ -130,7 +130,6 @@ def parse_renode_execution(entry: dict) -> RenodeExecution:
             "kind",
             "milestone_symbol",
             "emulator",
-            "emulator_identity",
             "emulator_source_repository",
             "emulator_source_revision",
             "platform_description",
@@ -149,7 +148,6 @@ def parse_renode_execution(entry: dict) -> RenodeExecution:
         raise InventoryError("embedded platform emulator package set repeats a host")
     emulator = RenodeEmulator(
         executable=identifier(entry.get("emulator"), "emulator executable"),
-        identity=nonempty_texts(entry.get("emulator_identity"), "emulator identity"),
         source_repository=https_url(entry.get("emulator_source_repository")),
         source_revision=revision(entry.get("emulator_source_revision")),
         packages=packages,
@@ -166,9 +164,10 @@ def parse_renode_execution(entry: dict) -> RenodeExecution:
 
 def parse_emulator_package(value: object) -> EmulatorPackage:
     entry = table(value, "emulator package")
-    reject_unknown(entry, {"host", "source_url", "source_sha256"}, "emulator package")
+    reject_unknown(entry, {"host", "identity", "source_url", "source_sha256"}, "emulator package")
     return EmulatorPackage(
         host=enum_value(HostPlatform, entry.get("host"), "emulator package host"),
+        identity=nonempty_texts(entry.get("identity"), "emulator package identity"),
         source_url=https_url(entry.get("source_url")),
         source_sha256=sha256(entry.get("source_sha256")),
     )

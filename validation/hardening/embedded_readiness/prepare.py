@@ -123,7 +123,7 @@ def requirements_for_suites(
                 requirements.append(
                     EmulatorRequirement(
                         executable=execution.emulator.executable,
-                        identity=execution.emulator.identity,
+                        identity=package.identity,
                         identity_scope=IdentityScope.ALL_LINES,
                         acquisition=HostedArchive(
                             Archive(package.source_url, package.source_sha256)

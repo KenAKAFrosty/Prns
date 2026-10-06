@@ -1858,6 +1858,22 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertIn(flasher_record, hotfix)
         self.assertIn(f"{flasher_record}.minisig", hotfix)
 
+    def test_board_catalog_is_required_when_the_signed_acceptance_helper_imports_it(self) -> None:
+        self.assertEqual(self.sign_candidate().returncode, 0)
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location("verify_flasher_release_assets", script)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        catalog = self.fixture.root / "qualification" / "flasher_board_catalog.py"
+        self.assertIn("flasher_board_catalog.py", module.expected_candidate_assets(self.fixture.root, VERSION))
+        catalog.unlink()
+        with self.assertRaisesRegex(ValueError, "flasher_board_catalog.py"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+        acceptance = self.fixture.root / "qualification" / "flasher_acceptance_contract.py"
+        acceptance.write_text("SHIPPING_BOARDS = ('t-echo',)\n", encoding="utf-8")
+        self.assertNotIn("flasher_board_catalog.py", module.expected_candidate_assets(self.fixture.root, VERSION))
+
     def test_historical_candidate_need_not_contain_the_new_hotfix_helper(self) -> None:
         self.assertEqual(self.sign_candidate().returncode, 0)
         script = SCRIPTS / "verify-flasher-release-assets.py"
