@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 
 from validation.hardening import embedded_execution
+from validation.hardening.embedded_host import HostPlatform
+from validation.hardening.embedded_readiness.system import SystemProbe
 from validation.hardening.embedded_execution import ExitReason, ProcessObservation
 from validation.hardening.embedded_failure import (
     FailureKind,
@@ -98,8 +100,11 @@ def observed_tool_version(
 
 
 def renode_identity(
-    execution: RenodeExecution, executable: Path
+    execution: RenodeExecution, executable: Path, host: HostPlatform | None
 ) -> tuple[str, ProcessObservation]:
+    package = execution.emulator.package_for_host(host) if host is not None else None
+    if package is None:
+        raise EmbeddedPlatformError(f"no pinned emulator identity for this host; run {DOCTOR}")
     observation = execute((str(executable), "--version"), 30)
     require_success(observation, execution.emulator.executable)
     actual = tuple(
@@ -107,9 +112,9 @@ def renode_identity(
         for line in observation.output().decode("utf-8", errors="replace").splitlines()
         if line.strip()
     )
-    if actual != execution.emulator.identity:
+    if actual != package.identity:
         raise EmbeddedPlatformError(
-            f"emulator identity is {actual!r}, expected {execution.emulator.identity!r}; "
+            f"emulator identity is {actual!r}, expected {package.identity!r}; "
             f"run {DOCTOR}"
         )
     return "; ".join(actual), observation
@@ -143,7 +148,7 @@ def run(suite: str) -> None:
     execution = platform.execution
     if isinstance(execution, RenodeExecution):
         emulator = platform_emulator.renode_executable(execution)
-        identity, identity_observation = renode_identity(execution, emulator)
+        identity, identity_observation = renode_identity(execution, emulator, SystemProbe().host_platform())
         observations.append(identity_observation)
         description, description_sha256 = platform_emulator.platform_description(
             execution, emulator

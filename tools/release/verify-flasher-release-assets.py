@@ -121,7 +121,6 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         "flasher_acceptance_contract.py": candidate
         / "qualification"
         / "flasher_acceptance_contract.py",
-        "flasher_board_catalog.py": candidate / "qualification" / "flasher_board_catalog.py",
         "flasher_tester_roster.py": candidate / "qualification" / "flasher_tester_roster.py",
         "package-flasher-qualification-evidence.py": candidate
         / "qualification"
@@ -140,6 +139,13 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         "reproducibility.json": candidate / "metadata" / "reproducibility.json",
         "release-history.json": candidate / "metadata" / "release-history.json",
     }
+    board_catalog = candidate / "qualification" / "flasher_board_catalog.py"
+    acceptance_contract = sources["flasher_acceptance_contract.py"]
+    if board_catalog.is_file() or (
+        acceptance_contract.is_file()
+        and "from flasher_board_catalog import" in acceptance_contract.read_text(encoding="utf-8")
+    ):
+        sources["flasher_board_catalog.py"] = board_catalog
     for helper in ("flasher_software_acceptance.py", "validation_runner.py", "validation-manifest.toml"):
         helper_path = candidate / "qualification" / helper
         if helper_path.is_file():

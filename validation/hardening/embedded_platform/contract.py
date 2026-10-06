@@ -44,6 +44,7 @@ class BuildRecipe:
 @dataclass(frozen=True)
 class EmulatorPackage:
     host: HostPlatform
+    identity: tuple[str, ...]
     source_url: str
     source_sha256: str
 
@@ -51,7 +52,6 @@ class EmulatorPackage:
 @dataclass(frozen=True)
 class RenodeEmulator:
     executable: str
-    identity: tuple[str, ...]
     source_repository: str
     source_revision: str
     packages: tuple[EmulatorPackage, ...]
