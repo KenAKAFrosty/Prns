@@ -879,4 +879,50 @@ mod tests {
             other => panic!("expected BlobTooLong, got {other:?}"),
         }
     }
+
+    #[test]
+    fn provisioned_vault_page_boots_with_its_target_and_factory_owner() {
+        use crate::identity::in_memory::InMemoryNodeIdentity;
+        use crate::identity::{IdentityPublicKeys, IdentitySigner, IDENTITY_SECRET_KEY_LEN};
+        use crate::remote_control::{
+            encode_remote_control_vault_page, load_factory_controller_grant,
+        };
+
+        let mut target_secret = [0u8; IDENTITY_SECRET_KEY_LEN];
+        target_secret.fill(0x5A);
+        target_secret[0] = 0x01;
+        let mut owner_secret = [0u8; IDENTITY_SECRET_KEY_LEN];
+        owner_secret.fill(0x3C);
+        owner_secret[0] = 0x02;
+        let owner = InMemoryNodeIdentity::from_secret_key_bytes(&owner_secret);
+        let owner_keys = IdentityPublicKeys {
+            encryption: owner.encryption_public_key(),
+            signing: owner.signing_public_key(),
+        };
+        let target = InMemoryNodeIdentity::from_secret_key_bytes(&target_secret);
+
+        let mut flash = FakeFlash::<FAKE_ERASE>::new();
+        flash.bytes.copy_from_slice(
+            &encode_remote_control_vault_page(&target_secret, &owner_keys)
+                .expect("the provisioning page encodes"),
+        );
+        let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(&mut flash, 0);
+        let bootstrap = RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+            &mut vault,
+            &mut runtime_entropy(0x77),
+        )
+        .expect("boot loads the provisioned target and generates the controller");
+        assert_eq!(bootstrap.origins().target(), IdentityOrigin::Loaded);
+        assert_eq!(bootstrap.origins().controller(), IdentityOrigin::Generated);
+        let (secrets, _) = bootstrap.into_parts();
+        assert_eq!(
+            secrets.identities().target().identity_hash(),
+            target.identity_hash()
+        );
+
+        let grant = load_factory_controller_grant(&vault)
+            .expect("the vault reads")
+            .expect("the owner grant survives the controller being stored beside it");
+        assert_eq!(grant.controller().public_keys(), &owner_keys);
+    }
 }
