@@ -23,6 +23,42 @@ sys.modules[SPEC.name] = contracts
 SPEC.loader.exec_module(contracts)
 
 
+class SuiteFinalizationCustodyTests(unittest.TestCase):
+    def test_run_custody_uses_real_api_fields_without_dispatch_inputs(self) -> None:
+        workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
+        block = workflow.split("      - name: Verify protected flasher release finalization custody\n", 1)[1]
+        script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("          gh api \\\n", 1)[0])
+        commit = "a" * 40
+        script = script.replace("${{ inputs.flasher_finalization_run_id }}", "123")
+        script = script.replace("${{ inputs.flasher_acceptance_commit }}", commit)
+        run = {
+            "id": 123, "path": ".github/workflows/flasher-finalize-evidence.yml",
+            "event": "workflow_dispatch", "status": "completed", "conclusion": "success",
+            "head_repository": {"full_name": "owner/repo"},
+            "head_branch": "main", "head_sha": commit,
+        }
+        changes = {
+            "correct": {}, "id": {"id": 124}, "commit": {"head_sha": "b" * 40},
+            "branch": {"head_branch": "trunk"}, "repository": {"head_repository": {"full_name": "other/repo"}},
+            "path": {"path": ".github/workflows/other.yml"}, "event": {"event": "pull_request"},
+            "pending": {"status": "in_progress"}, "failed": {"conclusion": "failure"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gh = root / "gh"
+            gh.write_text('#!/bin/sh\ncat "$WORKFLOW_RUN_FIXTURE"\n')
+            gh.chmod(0o700)
+            fixture = root / "run.json"
+            for name, change in changes.items():
+                fixture.write_text(json.dumps({**run, **change}))
+                with self.subTest(change=name):
+                    result = subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True,
+                        env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                             "RUNNER_TEMP": directory, "GITHUB_REPOSITORY": "owner/repo",
+                             "WORKFLOW_RUN_FIXTURE": str(fixture)})
+                    self.assertEqual(result.returncode == 0, name == "correct", result.stderr)
+
+
 class WorkflowCompilerEnvironmentTests(unittest.TestCase):
     def test_rejects_workflow_global_rustflags(self) -> None:
         workflow = """name: ci

@@ -514,6 +514,34 @@ class FlasherReproducibilityTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "exact pins"):
                 validate_metadata(value, commit=COMMIT)
 
+    def test_build_metadata_matches_dioxus_source_and_binary_distributions(self) -> None:
+        variants = []
+        for banner in (
+            "dioxus 0.7.5",
+            "dioxus 0.7.5 (was built without git repository)",
+            "dioxus 0.7.5 (d027e26)",
+        ):
+            reported = {**tools(), "dioxus": banner}
+            value = build_metadata(
+                commit=COMMIT,
+                source_date_epoch=1_774_358_400,
+                tools=reported,
+                system="Linux",
+                machine="x86_64",
+            )
+            validate_metadata(value, commit=COMMIT)
+            self.assertEqual(reported["dioxus"], banner)
+            variants.append(value)
+        self.assertEqual(variants, [variants[0]] * len(variants))
+
+        for banner in ("dioxus 0.7.4 (d027e26)", "dioxus 0.7.50 (d027e26)"):
+            with self.subTest(banner=banner), self.assertRaisesRegex(ValueError, "exact pins"):
+                build_metadata(
+                    commit=COMMIT,
+                    source_date_epoch=1_774_358_400,
+                    tools={**tools(), "dioxus": banner},
+                )
+
     def test_build_metadata_uses_each_tools_version_report_flag(self) -> None:
         commands: list[tuple[str, ...]] = []
 

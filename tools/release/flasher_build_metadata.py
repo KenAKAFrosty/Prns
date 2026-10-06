@@ -126,6 +126,7 @@ def build_metadata(
     if source_date_epoch <= 0:
         raise ValueError("SOURCE_DATE_EPOCH must be a positive Unix timestamp")
     validate_tools(tools)
+    tools = {**tools, "dioxus": f"dioxus {EXPECTED_TOOLS['dioxus']}"}
     timestamp = datetime.fromtimestamp(source_date_epoch, timezone.utc).replace(microsecond=0)
     return {
         "schema": 2,
