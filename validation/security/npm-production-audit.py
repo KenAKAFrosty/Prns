@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import sys
 
+from npm_lockfile import verify_development_packages
+
 
 repo = Path(__file__).resolve().parents[2]
 root = repo / "prns-wasm"
@@ -82,24 +84,18 @@ for path, expected in test_only.items():
         raise SystemExit(1)
 
 allowed_test_tool_licenses = {
+    "0BSD",
     "Apache-2.0",
     "BSD-3-Clause",
     "ISC",
     "MIT",
     "MPL-2.0",
 }
-for path, metadata in site_lock.get("packages", {}).items():
-    if not path or metadata.get("dev") is not True:
-        continue
-    resolved = metadata.get("resolved", "")
-    integrity = metadata.get("integrity", "")
-    if (
-        metadata.get("license") not in allowed_test_tool_licenses
-        or not resolved.startswith("https://registry.npmjs.org/")
-        or not integrity.startswith("sha512-")
-    ):
-        print(f"website test/build dependency lacks reviewed license/source/integrity: {path}", file=sys.stderr)
-        raise SystemExit(1)
+try:
+    verify_development_packages(site_lock.get("packages", {}), allowed_test_tool_licenses)
+except ValueError as error:
+    print(error, file=sys.stderr)
+    raise SystemExit(1) from error
 
 for source in (site / "src", site / "web-flasher"):
     for path in source.rglob("*"):
