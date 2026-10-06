@@ -2785,24 +2785,29 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(40)]
     fn request_set_intersection_preserves_exact_membership() {
-        const CANONICAL_REQUEST_BITS: u32 = {
-            let mut bits = 0u32;
+        const CANONICAL_REQUEST_BITS: [u8; REQUEST_KIND_BITMAP_LEN] = {
+            let mut bits = [0; REQUEST_KIND_BITMAP_LEN];
             let mut index = 0;
             while index < RemoteControlRequestKind::ALL.len() {
-                bits |= 1u32 << RemoteControlRequestKind::ALL[index].wire_value();
+                let (byte, mask) = request_kind_position(RemoteControlRequestKind::ALL[index]);
+                bits[byte] |= mask;
                 index += 1;
             }
             bits
         };
 
-        let left_membership: u32 = kani::any::<u32>() & CANONICAL_REQUEST_BITS;
-        let right_membership: u32 = kani::any::<u32>() & CANONICAL_REQUEST_BITS;
+        let left_membership: [u8; REQUEST_KIND_BITMAP_LEN] = kani::any();
+        let right_membership: [u8; REQUEST_KIND_BITMAP_LEN] = kani::any();
         let mut left = RemoteControlRequestSet::empty();
         let mut right = RemoteControlRequestSet::empty();
-        left.bits[..4].copy_from_slice(&left_membership.to_le_bytes());
-        left.len = left_membership.count_ones() as u8;
-        right.bits[..4].copy_from_slice(&right_membership.to_le_bytes());
-        right.len = right_membership.count_ones() as u8;
+        let mut index = 0;
+        while index < REQUEST_KIND_BITMAP_LEN {
+            left.bits[index] = left_membership[index] & CANONICAL_REQUEST_BITS[index];
+            left.len += left.bits[index].count_ones() as u8;
+            right.bits[index] = right_membership[index] & CANONICAL_REQUEST_BITS[index];
+            right.len += right.bits[index].count_ones() as u8;
+            index += 1;
+        }
 
         let intersection = left.intersection(&right);
         let selected_index: usize = kani::any();
