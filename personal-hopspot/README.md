@@ -296,6 +296,7 @@ With the board plugged in:
         --spreading-factor 10 --coding-rate 5 --tx-power-dbm 22
     usb_config name --set Box-Hopspot
     usb_config interface INTERFACE_ID off
+    usb_config peers INTERFACE_ID
     usb_config system asleep
     usb_config announce
     usb_config authorize CONTROLLER_PUBLIC_KEY

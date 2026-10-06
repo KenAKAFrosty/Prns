@@ -17,7 +17,8 @@ use personal_rns::prelude::*;
 use personal_rns::remote_control::{
     encode_remote_control_vault_page, RemoteControlControllerAuthority,
     RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceContinuation,
-    RemoteControlInterfacePage, RemoteControlInterfacePower, RemoteControlLoRaProfile,
+    RemoteControlInterfacePage, RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower,
+    RemoteControlLoRaProfile, RemoteControlPeerContinuation, RemoteControlPeerPage,
     RemoteControlRequestSet, RemoteControlSystemPower,
 };
 use personal_rns::runtime::{generate_identity_secret, RemoteControlIdentityDirectory};
@@ -101,6 +102,11 @@ enum Command {
         id: InterfaceId,
         #[arg(value_enum)]
         power: Power,
+    },
+    /// List the peers one interface currently sees (IDs come from `status`).
+    Peers {
+        #[arg(value_parser = interface_id)]
+        id: InterfaceId,
     },
     /// Put the whole node to sleep or wake it.
     System {
@@ -572,6 +578,44 @@ async fn control(options: Options) -> Result<(), Error> {
                     "{}",
                     json!({"event":"interface_power","outcome":format!("{outcome:?}")})
                 );
+            }
+            Command::Peers { id } => {
+                let mut page = RemoteControlPeerPage::First;
+                let mut completion = Err(Error::Pagination);
+                for _ in 0..256 {
+                    let (outcome, _) = connection
+                        .inventory_interface_peers(*id, page)
+                        .await
+                        .map_err(Error::Operation)?;
+                    let RemoteControlInterfacePeersOutcome::Page(peers) = outcome else {
+                        println!("{}", json!({"event":"peers","status":"unknown_interface"}));
+                        completion = Ok(());
+                        break;
+                    };
+                    for peer in peers.peers.iter() {
+                        println!(
+                            "{}",
+                            json!({
+                                "event":"peer","id":hex::encode(peer.id.as_bytes()),
+                                "connection":format!("{:?}",peer.connection),
+                                "tx_bytes":peer.tx_bytes,"rx_bytes":peer.rx_bytes,
+                                "links":peer.links,"destinations":peer.destinations,
+                                "radio":format!("{:?}",peer.radio),
+                                "details":format!("{:?}",peer.details),
+                            })
+                        );
+                    }
+                    match peers.continuation() {
+                        RemoteControlPeerContinuation::Complete => {
+                            completion = Ok(());
+                            break;
+                        }
+                        RemoteControlPeerContinuation::More(cursor) => {
+                            page = RemoteControlPeerPage::After(cursor)
+                        }
+                    }
+                }
+                completion?;
             }
             Command::System { power } => {
                 let power = match power {
