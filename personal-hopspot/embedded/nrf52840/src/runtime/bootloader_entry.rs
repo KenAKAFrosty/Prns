@@ -27,7 +27,11 @@ pub(crate) fn enter_bare_metal_bootloader(mode: WebUsbBootloaderMode) -> ! {
     feature = "board-sensecap-solar-node",
     feature = "board-mesh-pocket",
     feature = "board-muzi-base-duo",
-    any(feature = "board-rak4631", feature = "board-rak10724")
+    any(
+        feature = "board-rak4631",
+        feature = "board-rak10724",
+        feature = "board-xiao-nrf52840"
+    )
 ))]
 mod request {
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -81,7 +85,11 @@ pub const fn webusb_entry() -> WebUsbBootloaderEntry {
         feature = "board-sensecap-solar-node",
         feature = "board-mesh-pocket",
         feature = "board-muzi-base-duo",
-        any(feature = "board-rak4631", feature = "board-rak10724")
+        any(
+            feature = "board-rak4631",
+            feature = "board-rak10724",
+            feature = "board-xiao-nrf52840"
+        )
     ))]
     return WebUsbBootloaderEntry::Supported {
         request: request::request,
@@ -94,7 +102,11 @@ pub const fn webusb_entry() -> WebUsbBootloaderEntry {
         feature = "board-sensecap-solar-node",
         feature = "board-mesh-pocket",
         feature = "board-muzi-base-duo",
-        any(feature = "board-rak4631", feature = "board-rak10724")
+        any(
+            feature = "board-rak4631",
+            feature = "board-rak10724",
+            feature = "board-xiao-nrf52840"
+        )
     )))]
     WebUsbBootloaderEntry::Unsupported
 }
@@ -107,7 +119,11 @@ pub async fn wait() -> ! {
         feature = "board-sensecap-solar-node",
         feature = "board-mesh-pocket",
         feature = "board-muzi-base-duo",
-        any(feature = "board-rak4631", feature = "board-rak10724")
+        any(
+            feature = "board-rak4631",
+            feature = "board-rak10724",
+            feature = "board-xiao-nrf52840"
+        )
     ))]
     request::wait().await;
 
@@ -118,7 +134,11 @@ pub async fn wait() -> ! {
         feature = "board-sensecap-solar-node",
         feature = "board-mesh-pocket",
         feature = "board-muzi-base-duo",
-        any(feature = "board-rak4631", feature = "board-rak10724")
+        any(
+            feature = "board-rak4631",
+            feature = "board-rak10724",
+            feature = "board-xiao-nrf52840"
+        )
     )))]
     core::future::pending().await
 }
