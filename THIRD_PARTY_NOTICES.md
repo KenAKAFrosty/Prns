@@ -2,7 +2,7 @@
 
 This checked bundle covers the shipped and qualification Rust, JavaScript, and Android product graphs.
 It was generated with `cargo-about 0.9.1` by `./tools/prns repo notices generate`.
-Notice input fingerprint: `sha256:d7e9310e1d790a40b7fb82d42adb8cc9f516d589459ee8111cfd754be13b36b6`.
+Notice input fingerprint: `sha256:8ca2ec0bea31d21e7299b40338ef5c8fdfe35f91c24a68abcd32a8d0aaeb5ba3`.
 Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before cargo-about reads its target-filtered packaged license material offline.
 Entries are deduplicated by SPDX identifier and canonical notice text; line endings, trailing space, and repeated blank lines are normalized without changing legal words.
 
@@ -2208,7 +2208,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 License: Boost Software License 1.0
 
-Used by: `xxhash-rust 0.8.15`
+Used by: `xxhash-rust 0.8.16`
 
 Release graphs: website Rust/WASM
 
