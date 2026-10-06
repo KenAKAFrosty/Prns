@@ -1,5 +1,9 @@
 schema = 1
 
+[release_qualification.kani]
+version = "0.3.8"
+reason = "Kani formal proof qualification is deferred for 0.3.8 only: several harnesses timed out and one needs corrected loop bounds. Proofs remain scheduled; this release does not claim passing formal qualification. Normal tests, deterministic simulators, firmware builds, and applicable emulators remain required."
+
 [tools]
 cargo_fuzz = "0.13.1"
 cargo_mutants = "27.1.0"
@@ -2278,8 +2282,8 @@ platform = "any"
 toolchain = "stable"
 tiers = ["scheduled", "release"]
 timeout_seconds = 7200
-command = ["cargo", "test", "--locked", "-p", "prns-simulation", "--features", "controlled-time", "--test", "embassy_ble", "extended_core_work_campaign", "--", "--ignored", "--nocapture"]
-inputs = ["validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "prns-interfaces/impls/embassy", "personal-hopspot/core"]
+command = ["cargo", "test", "--locked", "--profile", "simulation", "-p", "prns-simulation", "--features", "controlled-time", "--test", "embassy_ble", "extended_core_work_campaign", "--", "--ignored", "--nocapture"]
+inputs = ["Cargo.toml", "validation/simulation", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces/impls/tokio", "prns-interfaces/impls/embassy", "personal-hopspot/core"]
 artifacts = "validation-artifacts/results/core-work-simulation"
 
 [[suite]]

@@ -110,9 +110,8 @@ jobs:
             "success"
           test "$(jq -r '.head_repository.full_name' "${RUNNER_TEMP}/flasher-finalization-run.json")" = \
             "$GITHUB_REPOSITORY"
-          test "$(jq -r '.inputs.version' "${RUNNER_TEMP}/flasher-finalization-run.json")" = \
-            "$(cat VERSION)"
-          test "$(jq -r '.inputs.acceptance_commit' "${RUNNER_TEMP}/flasher-finalization-run.json")" = \
+          test "$(jq -r '.head_branch' "${RUNNER_TEMP}/flasher-finalization-run.json")" = main
+          test "$(jq -r '.head_sha' "${RUNNER_TEMP}/flasher-finalization-run.json")" = \
             "${{ inputs.flasher_acceptance_commit }}"
           gh api \
             "repos/${GITHUB_REPOSITORY}/compare/${SOURCE_COMMIT}...${{ inputs.flasher_acceptance_commit }}" \
@@ -230,6 +229,8 @@ jobs:
             -p release/keys/minisign.pub
           "$PRNS_MINISIGN_BIN" -Vm "$acceptance" -x "$acceptance.minisig" \
             -p release/keys/minisign.pub
+          test "$(jq -r '.release.version' "$record")" = "$version"
+          test "$(jq -r '.release.source_commit' "$record")" = "$SOURCE_COMMIT"
           test "$(jq -r '.acceptance.source_commit' "$record")" = \
             "${{ inputs.flasher_acceptance_commit }}"
           bundle="${assets}/prns-flasher-candidate-v${version}-signed.tar.gz"

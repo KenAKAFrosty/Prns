@@ -15,6 +15,14 @@ and the existing browser, interoperability, proof, fuzz, and mutation lanes.
 Unsupported emulator capabilities are not claimed. Signing, reproducibility,
 public review, provenance, rollback, and exact-byte promotion remain required.
 
+For **0.3.8 only**, Kani formal proof qualification is deferred because several
+harnesses timed out and one needs corrected loop bounds. This release does not
+claim passing formal qualification. The committed, candidate-bundled validation
+policy excludes only Kani from the release tier for exactly `VERSION = 0.3.8`;
+all proofs remain scheduled and directly runnable. Other release suites remain
+required. The exception does not apply to hotfixes or later versions, which
+restore the declared proof requirements automatically.
+
 Run `release-readiness.yml` for the final source commit. Download its
 `release-readiness-manifest-COMMIT` artifact after the entire workflow passes.
 After the signed public candidate exists, create acceptance with its bundled

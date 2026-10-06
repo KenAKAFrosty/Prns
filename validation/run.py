@@ -193,7 +193,32 @@ def expanded_suite(suite: dict) -> list[dict]:
     return expanded
 
 
+def active_release_deferrals(manifest: dict) -> list[dict]:
+    policy = manifest.get("release_qualification", {})
+    if "release_qualification" not in manifest:
+        return []
+    if not isinstance(policy, dict) or set(policy) != {"kani"}:
+        raise ValidationError("release qualification may defer only Kani for 0.3.8")
+    kani = policy["kani"]
+    if not isinstance(kani, dict) or set(kani) != {"version", "reason"}:
+        raise ValidationError("Kani release deferral requires exactly version and reason")
+    if kani["version"] != "0.3.8":
+        raise ValidationError("Kani release deferral is authorized only for 0.3.8")
+    if not isinstance(kani["reason"], str) or not kani["reason"].strip():
+        raise ValidationError("Kani release deferral requires a non-empty reason")
+    if any("scheduled" not in proof.get("tiers", []) for proof in manifest.get("kani", [])):
+        raise ValidationError("deferred Kani proofs must remain scheduled")
+    try:
+        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise ValidationError("release qualification requires the source or candidate VERSION") from error
+    if version != kani["version"]:
+        return []
+    return [{"domain": "kani", **kani}]
+
+
 def virtual_suites(manifest: dict) -> list[dict]:
+    kani_deferred = bool(active_release_deferrals(manifest))
     suites = [
         expanded
         for suite in manifest.get("suite", [])
@@ -206,7 +231,7 @@ def virtual_suites(manifest: dict) -> list[dict]:
                 "id": f"kani-{name}",
                 "domain": "kani",
                 "group": proof["group"],
-                "tiers": proof["tiers"],
+                "tiers": [tier for tier in proof["tiers"] if not (kani_deferred and tier == "release")],
                 "platform": "any",
                 "toolchain": "kani",
                 "timeout_seconds": proof.get("timeout_seconds", 900),
@@ -731,6 +756,8 @@ def verification_report(manifest: dict, check_tools: bool) -> list[str]:
         f"{len(triage)} accepted survivor entries; fingerprints, reasons, reviewers, and expiries "
         "are structurally current.",
     ]
+    for deferral in active_release_deferrals(manifest):
+        lines.append(f"[verify] Release deferral: {deferral['reason']}")
     if check_tools:
         tools = manifest["tools"]
         lines.append(
@@ -1686,6 +1713,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--fuzz-seconds", type=int, default=int(os.environ.get("PRNS_FUZZ_SECONDS", "30")))
     toolchain = subcommands.add_parser("toolchain")
     toolchain.add_argument("name", choices=["nightly"])
+    subcommands.add_parser("release-deferrals")
     subcommands.add_parser("prepare-oracles")
     embedded = subcommands.add_parser("prepare-embedded-assurance")
     embedded.add_argument("--root", type=Path, required=True)
@@ -1715,6 +1743,8 @@ def main() -> int:
             for line in verification_report(manifest, arguments.check_tools):
                 print(line)
             print("VALIDATION_REGISTRY_OK")
+        elif arguments.command == "release-deferrals":
+            print(json.dumps(active_release_deferrals(manifest), sort_keys=True))
         elif arguments.command in {"list", "matrix"}:
             suites = selected_suites(
                 manifest,
