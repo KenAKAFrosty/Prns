@@ -788,5 +788,9 @@ pub async fn run(spawner: Spawner) -> ! {
 
 fn ignore_events(_event: PrnsEvent<'_>, _state: &AppState) {}
 
-#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
+#[cfg(any(
+    feature = "board-t1000e",
+    feature = "board-sensecap-solar-node",
+    feature = "board-xiao-nrf52840"
+))]
 mod node_page_announce;
