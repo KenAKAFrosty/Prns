@@ -259,3 +259,11 @@ match(sent.data, {
 ## More examples
 
 [`examples/native-lifecycle.ts`](examples/native-lifecycle.ts) is a complete native lifecycle program with a self-contained loopback interface. The [browser transport playground](../prns-wasm/examples/browser-playground/README.md) runs a live node with permission-gated Web Bluetooth, WebUSB, and Wi-Fi controls.
+
+## Development dependencies
+
+The npm manifest overrides Solid's Seroval dependency with 1.6.8 to address
+[GHSA-p6vx-979v-rg4c](https://github.com/lxsmnsyc/seroval/security/advisories/GHSA-p6vx-979v-rg4c).
+Remove the override once Solid's dependency range requires a patched version.
+This development override does not control the framework versions installed by
+applications consuming this package.

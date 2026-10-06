@@ -27,6 +27,11 @@ dx serve
 First-time Rust or Dioxus dependency downloads may require network access. Once
 present, the essential guide content comes from the repository.
 
+The npm manifest overrides Tailwind CLI's pinned `@parcel/watcher` with 2.6.0,
+which removes the vulnerable `micromatch`/`braces` chain
+([GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)).
+Remove the override when Tailwind selects a watcher without that dependency.
+
 ## Device cards
 
 The flasher lists ThinkNode G4 and Heltec HT-HD01-V2 individually alongside the
