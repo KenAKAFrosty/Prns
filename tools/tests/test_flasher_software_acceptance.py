@@ -67,6 +67,27 @@ class SoftwareAcceptanceTests(unittest.TestCase):
         (self.args.evidence_root / digest).write_bytes(self.args.readiness_manifest.read_bytes())
         return json.loads(self.args.output.read_text())
 
+    def test_bundled_gate_uses_candidate_version_and_committed_inventory(self):
+        repository = Path(__file__).resolve().parents[2]
+        root = Path(self.temp.name) / "candidate"
+        qualification = root / "qualification"
+        qualification.mkdir(parents=True)
+        for source, destination in (("validation/run.py", "validation_runner.py"),
+                                    ("validation/manifest.toml", "validation-manifest.toml")):
+            (qualification / destination).write_bytes((repository / source).read_bytes())
+        for version in ("0.3.8", "0.3.8-hotfix.1", "0.3.9"):
+            (root / "VERSION").write_text(version + "\n")
+            with self.subTest(version=version), patch.object(software, "__file__", str(qualification / "flasher_software_acceptance.py")):
+                runner, inventory = software.validation_contract()
+                suites = runner.selected_suites(inventory, [], None, "release")
+                proofs = {suite["id"] for suite in suites if suite["domain"] == "kani"}
+                self.assertEqual(proofs, set() if version == "0.3.8" else {
+                    "kani-" + proof["name"] for proof in inventory["kani"]
+                })
+                self.assertIn("core-work-simulation-extended", {suite["id"] for suite in suites})
+                errors = software.readiness_errors(self.evidence, COMMIT, NOW)
+                self.assertEqual(bool(errors), version != "0.3.8")
+
     def test_complete_automated_release_needs_no_physical_rows(self):
         record = self.create()
         self.assertEqual(record["schema"], 7)

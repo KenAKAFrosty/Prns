@@ -70,6 +70,20 @@ normalized; bytes, persistence operations, events, crypto order and static
 allocation evidence must match exactly within a profile. Wall-time crypto timing
 is excluded from the semantic counter projection.
 
+The extended release campaign uses Cargo's `simulation` profile to optimize
+execution while retaining development-profile debug assertions and overflow
+checks. Its 1,920 cases, two fresh fixtures per case, process isolation, and trace
+comparison remain the same. Firmware and native release build profiles are
+unchanged.
+
+On the same macOS arm64 host, six seed-42 cases from the Tokio-only and
+Embassy-only profiles produced identical complete semantic artifacts in both
+profiles. Alternating profile order and excluding compilation, their combined
+process time was 9.522 seconds in `dev` and 4.819 seconds in `simulation`
+(1.98 times faster). The complete optimized campaign qualified all 1,920 cases
+twice in 1,704.75 seconds; the validation command took 1,846.06 seconds including
+compilation. These are host measurements, not a guarantee of CI runner speed.
+
 Passing artifacts keep inputs, observations and SHA-256 trace digests. Seed 42
 reference cases and failures retain full traces. Runtime, invalid-input and replay
 failures have distinct classes. The bounded reducer preserves the action and

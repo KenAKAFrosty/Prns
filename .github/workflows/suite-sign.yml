@@ -381,6 +381,9 @@ jobs:
             > "${RUNNER_TEMP}/deployment-policy.json"
           notes="${RUNNER_TEMP}/release-notes.txt"
           echo 'Signed unified suite candidate. Stable promotion requires independent release, OCI, and anonymous-pull verification.' > "$notes"
+          python3 validation/run.py release-deferrals \
+            > "${RUNNER_TEMP}/release-deferrals.json"
+          jq -r '.[].reason' "${RUNNER_TEMP}/release-deferrals.json" >> "$notes"
           if [[ "$(jq -r '.status' "${RUNNER_TEMP}/deployment-policy.json")" = deferred ]]; then
             jq -r '.reason' "${RUNNER_TEMP}/deployment-policy.json" >> "$notes"
           else
