@@ -12,12 +12,12 @@ on:
         required: true
         type: string
       qualification_run_id:
-        description: Successful protected deployment qualification run ID
-        required: true
+        description: Successful protected deployment qualification run ID; omit for the committed 0.3.8 deferral
+        required: false
         type: string
       qualification_evidence_sha256:
-        description: Independently recorded deployment evidence SHA-256
-        required: true
+        description: Deployment evidence SHA-256; omit for the committed 0.3.8 deferral
+        required: false
         type: string
       flasher_acceptance_commit:
         description: Reviewed main commit containing the flasher release acceptance record
@@ -70,11 +70,28 @@ jobs:
           test "${{ inputs.package_is_public }}" = "true"
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "${{ inputs.image_digest }}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "${{ inputs.qualification_run_id }}" =~ ^[1-9][0-9]*$ ]]
-          [[ "${{ inputs.qualification_evidence_sha256 }}" =~ ^[0-9a-f]{64}$ ]]
           [[ "${{ inputs.flasher_acceptance_commit }}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${{ inputs.flasher_finalization_run_id }}" =~ ^[1-9][0-9]*$ ]]
           [[ "${{ inputs.flasher_release_record_sha256 }}" =~ ^[0-9a-f]{64}$ ]]
+      - name: Enforce the committed deployment qualification policy
+        id: deployment-policy
+        env:
+          QUALIFICATION_RUN_ID: ${{ inputs.qualification_run_id }}
+          QUALIFICATION_EVIDENCE_SHA256: ${{ inputs.qualification_evidence_sha256 }}
+        run: |
+          status="$(./tools/prns release prnsd distribution -- deployment-policy --format status)"
+          case "$status" in
+            required)
+              [[ "$QUALIFICATION_RUN_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
+              [[ "$QUALIFICATION_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
+              ;;
+            deferred)
+              test -z "$QUALIFICATION_RUN_ID"
+              test -z "$QUALIFICATION_EVIDENCE_SHA256"
+              ;;
+            *) exit 1 ;;
+          esac
+          echo "status=$status" >> "$GITHUB_OUTPUT"
       - name: Verify protected flasher release finalization custody
         env:
           GH_TOKEN: ${{ github.token }}
@@ -112,6 +129,7 @@ jobs:
           test "$(jq -r '.merge_base_commit.sha' "${RUNNER_TEMP}/acceptance-to-authority.json")" = \
             "${{ inputs.flasher_acceptance_commit }}"
       - name: Verify protected deployment qualification custody
+        if: steps.deployment-policy.outputs.status == 'required'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -125,6 +143,7 @@ jobs:
           test "$(jq -r '.conclusion' "${RUNNER_TEMP}/qualification-run.json")" = "success"
           test "$(jq -r '.head_sha' "${RUNNER_TEMP}/qualification-run.json")" = "$SOURCE_COMMIT"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: steps.deployment-policy.outputs.status == 'required'
         with:
           run-id: ${{ inputs.qualification_run_id }}
           pattern: suite-deployment-qualification-*
@@ -152,7 +171,7 @@ jobs:
           ./tools/prns release toolchain minisign install -- "${RUNNER_TEMP}/prns-release-bin"
           sudo apt-get update
           sudo apt-get install --yes skopeo
-      - name: Verify Minisign custody, exact inventory, and deployment evidence
+      - name: Verify Minisign custody, exact inventory, and signed deployment policy
         env:
           GH_TOKEN: ${{ github.token }}
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
@@ -168,6 +187,12 @@ jobs:
             --assets target/release-assets \
             --source-commit "$SOURCE_COMMIT" \
             --image-digest "${{ inputs.image_digest }}"
+      - name: Verify and publish deployment qualification
+        if: steps.deployment-policy.outputs.status == 'required'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(cat VERSION)"
           ./tools/prns release prnsd distribution -- deployment-verify \
             --evidence "target/qualification/deployment-qualification-v${version}.json" \
             --evidence-sha256 "${{ inputs.qualification_evidence_sha256 }}" \

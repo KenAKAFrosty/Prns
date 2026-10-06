@@ -158,6 +158,43 @@ class SwiftSetupTests(unittest.TestCase):
 
 
 class WorkflowSchedulingTests(unittest.TestCase):
+    def test_deployment_deferral_does_not_accept_fake_qualification_inputs(self) -> None:
+        workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
+        block = workflow.split(
+            "      - name: Enforce the committed deployment qualification policy\n", 1
+        )[1].split("      - name:", 1)[0]
+        script = textwrap.dedent(block.split("        run: |\n", 1)[1])
+        command = "$(./tools/prns release prnsd distribution -- deployment-policy --format status)"
+        self.assertIn(command, script)
+        with tempfile.TemporaryDirectory() as temporary:
+            cases = (
+                ("required", "", "", 1),
+                ("required", "12", "a" * 64, 0),
+                ("required", "0", "a" * 64, 1),
+                ("required", "12", "bad", 1),
+                ("deferred", "", "", 0),
+                ("deferred", "12", "a" * 64, 1),
+                ("deferred", "12", "", 1),
+                ("deferred", "", "a" * 64, 1),
+                ("passed", "", "", 1),
+            )
+            for status, run_id, digest, expected in cases:
+                with self.subTest(status=status, run_id=run_id, digest=digest):
+                    result = subprocess.run(
+                        [
+                            "bash", "-e", "-o", "pipefail", "-c",
+                            script.replace(command, status),
+                        ],
+                        env={
+                            **os.environ,
+                            "QUALIFICATION_RUN_ID": run_id,
+                            "QUALIFICATION_EVIDENCE_SHA256": digest,
+                            "GITHUB_OUTPUT": str(Path(temporary) / "output"),
+                        },
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, expected, result.stderr)
+
     def workflow_jobs(self, name: str) -> dict[str, str]:
         return dict(contracts.workflow_jobs(
             (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")

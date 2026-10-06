@@ -1102,6 +1102,10 @@ path = "tools/release/flasher_acceptance_contract.py"
 reason = "Shared acceptance schema and scaffold implementation used by release commands and bundled qualification tools."
 
 [[internal]]
+path = "tools/release/deployment_qualification_policy.py"
+reason = "Version-bound deployment qualification policy shared by signed suite records and promotion."
+
+[[internal]]
 path = "tools/release/flasher_board_catalog.py"
 reason = "Shared release-board projection from the authoritative catalog or an immutable candidate manifest."
 

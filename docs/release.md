@@ -119,7 +119,8 @@ exact-source automated release inventory, including the deterministic simulator,
 all tests, and applicable emulators. Full physical qualification on every board
 is optional. Signed acceptance explicitly records this boundary; it does not
 claim hardware was tested. Protected public review, signing, provenance, and
-container deployment qualification remain independent gates. See the
+container artifact verification remain independent gates. Railway deployment
+qualification is explicitly deferred for 0.3.8 as described below. See the
 [automated acceptance policy](../release/acceptance/README.md#pre-10-automated-release-gate).
 
 The default state directories are:
@@ -218,7 +219,18 @@ Railway's template composer is the publication authority for the Docker-image te
 
 6. Publish a new template revision for each intentional image upgrade instead of mutating a prior release revision.
 
-Before stable promotion, the protected qualification workflow requires a private deployment of the precise template revision, successful public Backbone and WebSocket connections, persistence restoration with the same identity after restart, and an exercised rollback revision. Making the stable GHCR package public is also an explicit first-publication gate; both architectures must be anonymously pullable.
+For 0.3.8, the release owner deferred Railway deployment and template qualification
+because no project or published template exists. The committed
+[`release/deployment/0.3.8.json`](../release/deployment/0.3.8.json) policy is bound
+into the signed suite record and published release notes. It records that public
+Backbone and WebSocket deployment, persistence restoration, and template rollback
+were not qualified; no passing deployment evidence is generated. Omit the two
+deployment-evidence inputs when promoting this version. The deferral does not
+apply to other versions, which still require the protected qualification workflow.
+
+Reproducible container builds, automated release tests, signatures, provenance,
+and anonymous pulls of both architectures remain required for 0.3.8. Making the
+stable GHCR package public remains an explicit first-publication gate.
 
 ### Verify release artifacts
 
@@ -238,7 +250,13 @@ On macOS, use `shasum -a 256 -c SHA256SUMS.txt`. On Windows, compare
 `(Get-FileHash ARCHIVE -Algorithm SHA256).Hash` against the matching
 `SHA256SUMS.txt` entry. The release record binds native archives, signed flasher candidate, source and image SPDX SBOMs, image and platform digests, linkage reports, and GitHub provenance bundles into the exact checksum inventory.
 
-The unified prerelease passes two protected evidence tracks before stable promotion. Flasher release acceptance adds `qualification-evidence-v0.3.8.tar.gz`, a signed acceptance document, and `flasher-release-record-v0.3.8.json`. Railway qualification adds `deployment-qualification-v0.3.8.json`. Promotion accepts only these narrowly named supplements and independently reverifies workflow custody, Minisign signatures, exact source, artifact digests, and live GitHub attestations.
+Flasher release acceptance adds `qualification-evidence-v0.3.8.tar.gz`, a signed
+acceptance document, and `flasher-release-record-v0.3.8.json`. For versions that
+require Railway qualification, the second protected evidence track adds a
+versioned deployment-qualification asset. Version 0.3.8 instead carries the
+explicit deferral in its signed suite record. Promotion independently reverifies
+workflow custody, Minisign signatures, exact source, artifact digests, and live
+GitHub attestations.
 
 ```sh
 gh attestation verify prnsd-0.3.8-x86_64-unknown-linux-gnu.tar.gz \
