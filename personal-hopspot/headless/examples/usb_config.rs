@@ -47,6 +47,9 @@ const UF2_BLOCK_BYTES: usize = 512;
 const UF2_PAYLOAD_BYTES: usize = 256;
 const NRF52840_UF2_FAMILY: u32 = 0xADA5_2840;
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long to keep asking for a path over the board's own USB connection before accepting one
+/// relayed through another attached board.
+const DIRECT_PATH_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Parser)]
 struct Options {
@@ -494,8 +497,17 @@ async fn control(options: Options) -> Result<(), Error> {
         // USB Auto enumerates and handshakes asynchronously; keep asking for the path until the
         // board answers through it.
         stage.set("finding the board over USB");
-        while handle.request_path(endpoint).await.is_err() {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+        // Every Hopspot on USB is attached, so another board bridged to this one (over Bluetooth,
+        // say) can answer with a longer path; links over that detour are slow and can time out.
+        // Prefer the board's own USB connection, falling back to a relayed path only if no direct
+        // path turns up.
+        let direct_deadline = tokio::time::Instant::now() + DIRECT_PATH_WAIT;
+        loop {
+            match handle.request_path(endpoint).await {
+                Ok(found) if found.hops.0 <= 1 => break,
+                Ok(_) if tokio::time::Instant::now() >= direct_deadline => break,
+                Ok(_) | Err(_) => tokio::time::sleep(Duration::from_millis(500)).await,
+            }
         }
         stage.set("authenticated connection");
         let connection = handle
