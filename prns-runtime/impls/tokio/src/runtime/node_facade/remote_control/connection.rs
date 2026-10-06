@@ -28,6 +28,9 @@ use prns_core::remote_control::{
     RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
     RemoteControlWifiStation, RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
 };
+use prns_core::remote_control::{
+    RemoteControlRadioConfiguration, RemoteControlRadioOutcome, RemoteControlRadioStatus,
+};
 
 use super::{PrnsNodeHandle, RemoteControlHandle};
 use crate::runtime::{RemoteControlInterfaceWatch, StreamId};
@@ -334,6 +337,31 @@ impl RemoteControlTargetHandle<'_> {
             .admit(RemoteControlRequestKind::SetInterfaceLoRaProfile)?;
         self.remote_control
             .set_interface_lora_profile(id, profile)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn configure_radio(
+        &self,
+        id: InterfaceId,
+        configuration: RemoteControlRadioConfiguration,
+    ) -> Result<(RemoteControlRadioOutcome, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::ConfigureRadio)?;
+        self.remote_control
+            .configure_radio(id, configuration)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn inspect_radio(
+        &self,
+        id: InterfaceId,
+    ) -> Result<(RemoteControlRadioStatus, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::InspectRadio)?;
+        self.remote_control
+            .inspect_radio(id)
             .await
             .map_err(Into::into)
     }

@@ -53,7 +53,12 @@ required-features = ["tokio-host", "tcp"]
 name = "remote_control"
 required-features = ["tokio-host", "tcp"]
 
+[[example]]
+name = "radio_control"
+required-features = ["tokio-host", "tcp", "lora-2g4"]
+
 [features]
+lora-2g4 = ["prns-core/lora-2g4", "prns-interfaces-embassy?/lora-2g4"]
 default = ["std", "std-sync-host", "resource-work-offload"]
 alloc = ["prns-core/alloc", "prns-runtime/alloc"]
 rnx = ["alloc", "prns-core/rnx", "prns-runtime/rnx", "prns-runtime-tokio?/rnx", "prns-runtime-embassy?/rnx"]

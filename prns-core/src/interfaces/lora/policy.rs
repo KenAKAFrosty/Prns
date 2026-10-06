@@ -5,11 +5,10 @@ use crate::interfaces::{
 };
 
 use super::framing::LORA_MAX_PAYLOAD;
-use super::profile::RadioProfile;
 
-pub fn descriptor(
+pub fn descriptor<P: Copy + Into<super::LoRaProfile>>(
     id: InterfaceId,
-    profile: &RadioProfile,
+    profile: &P,
     airtime_duty_cycle: Option<AirtimeDutyCycle>,
 ) -> InterfaceDescriptor {
     defaults(profile, airtime_duty_cycle)
@@ -35,8 +34,8 @@ pub fn unconfigured_descriptor(id: InterfaceId) -> InterfaceDescriptor {
     .descriptor(id)
 }
 
-pub fn defaults(
-    profile: &RadioProfile,
+pub fn defaults<P: Copy + Into<super::LoRaProfile>>(
+    profile: &P,
     airtime_duty_cycle: Option<AirtimeDutyCycle>,
 ) -> InterfaceDefaults {
     InterfaceDefaults {
@@ -46,7 +45,7 @@ pub fn defaults(
         },
         mode: InterfaceMode::Full,
         gravity: crate::interfaces::InterfaceGravityDefault::FromBitrate,
-        bitrate: BitrateBps::guess(u64::from(profile.nominal_bitrate_bps())),
+        bitrate: BitrateBps::guess(u64::from((*profile).into().nominal_bitrate_bps())),
         mtu: MtuPolicy::fixed(LORA_MAX_PAYLOAD),
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
@@ -90,5 +89,20 @@ mod tests {
         assert_eq!(d.airtime_duty_cycle, eu_preset);
         let none = descriptor(id, &US915_AUTO_LORA_PROFILE, None);
         assert_eq!(none.airtime_duty_cycle, None);
+    }
+    #[test]
+    fn unconfigured_radio_has_no_ingress_or_egress_and_retains_its_identity() {
+        let id = InterfaceId::new([0x3b; INTERFACE_ID_LEN]);
+        let descriptor = unconfigured_descriptor(id);
+        assert_eq!(descriptor.id, id);
+        assert_eq!(
+            descriptor.capabilities,
+            InterfaceCapabilities {
+                ingress: IngressCapability::Disabled,
+                egress: EgressCapability::Disabled
+            }
+        );
+        assert_eq!(descriptor.hardware_mtu, Some(LORA_MAX_PAYLOAD));
+        assert_eq!(descriptor.airtime_duty_cycle, None);
     }
 }

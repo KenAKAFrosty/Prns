@@ -32,7 +32,7 @@ type SolarNodeSpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>
 type SolarNodeRadio =
     Sx126x<SolarNodeSpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type SolarNodeLoraInterface = LoRaInterface<'static, SolarNodeRadio>;
+pub(crate) type SolarNodeLoraInterface = LoRaInterface<'static, 'static, SolarNodeRadio>;
 
 type SolarNodeUsbDriver = Driver<'static, HardwareVbusDetect>;
 

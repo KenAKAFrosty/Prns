@@ -20,6 +20,8 @@ const ENABLED_SWITCHES: RfSwitchPins = RfSwitchPins::RFSW0
 pub(super) fn board_config() -> BoardConfig {
     BoardConfig {
         part: Lr11xxPart::Lr1110,
+        #[cfg(feature = "lora-2g4")]
+        high_frequency: personal_rns::radios::lr1110::HighFrequencyPath::Unavailable,
         reference_clock: ReferenceClock::Tcxo {
             voltage: TcxoVoltage::V1_6,
             startup_time: TcxoStartupTime::from_rtc_ticks(TCXO_STARTUP_RTC_TICKS),

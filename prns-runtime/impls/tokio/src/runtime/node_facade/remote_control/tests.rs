@@ -244,3 +244,73 @@ async fn duplicate_watch_reader_fails_locally_before_sending_a_request() {
         Err(mpsc::error::TryRecvError::Empty | mpsc::error::TryRecvError::Disconnected)
     ));
 }
+
+#[tokio::test]
+async fn radio_exchanges_preserve_configuration_status_outcomes_and_response_limits() {
+    use prns_core::interfaces::InterfaceId;
+    use prns_core::remote_control::{
+        RemoteControlRadioConfiguration, RemoteControlRadioOutcome, RemoteControlRadioStatus,
+        RemoteControlRequest,
+    };
+    let id = InterfaceId::new(*b"radio-id");
+    let link = LinkId::new([0x76; 16]);
+    for outcome in RemoteControlRadioOutcome::ALL {
+        let (handle, mut commands) = test_handle();
+        let requesting = tokio::spawn(async move {
+            handle
+                .remote_control(link)
+                .configure_radio(id, RemoteControlRadioConfiguration::Unconfigured)
+                .await
+        });
+        let Some(HostCommand::RequestAny(request)) = commands.recv().await else {
+            panic!("expected configuration request")
+        };
+        assert_eq!(
+            RemoteControlRequest::parse(request.data.as_slice()),
+            Ok(RemoteControlRequest::ConfigureRadio {
+                id,
+                configuration: RemoteControlRadioConfiguration::Unconfigured
+            })
+        );
+        assert_eq!(
+            request.maximum_response_bytes,
+            crate::runtime::RemoteControlConfigureRadio::MAXIMUM_RESPONSE_BYTES
+        );
+        assert!(request
+            .completion
+            .send(Ok((
+                encoded_response(&RemoteControlResponse::ConfigureRadio(outcome)),
+                RttMillis::new(12)
+            )))
+            .is_ok());
+        assert!(
+            matches!(requesting.await, Ok(Ok((found, rtt))) if found == outcome && rtt == RttMillis::new(12))
+        );
+    }
+    let (handle, mut commands) = test_handle();
+    let requesting =
+        tokio::spawn(async move { handle.remote_control(link).inspect_radio(id).await });
+    let Some(HostCommand::RequestAny(request)) = commands.recv().await else {
+        panic!("expected inspection request")
+    };
+    assert_eq!(
+        RemoteControlRequest::parse(request.data.as_slice()),
+        Ok(RemoteControlRequest::InspectRadio { id })
+    );
+    assert_eq!(
+        request.maximum_response_bytes,
+        crate::runtime::RemoteControlInspectRadio::MAXIMUM_RESPONSE_BYTES
+    );
+    assert!(request
+        .completion
+        .send(Ok((
+            encoded_response(&RemoteControlResponse::InspectRadio(
+                RemoteControlRadioStatus::UnknownInterface
+            )),
+            RttMillis::new(13)
+        )))
+        .is_ok());
+    assert!(
+        matches!(requesting.await, Ok(Ok((RemoteControlRadioStatus::UnknownInterface, rtt))) if rtt == RttMillis::new(13))
+    );
+}

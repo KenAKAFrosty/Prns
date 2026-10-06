@@ -1,6 +1,8 @@
 pub use prns_interfaces_embassy::radios::{LoRaRadio, RadioEvent, RadioRecovery, ReceivedAirFrame};
 
 pub mod lr1110 {
+    #[cfg(feature = "lora-2g4")]
+    pub use prns_interfaces_embassy::radios::lr1110::HighFrequencyPath;
     pub use prns_interfaces_embassy::radios::lr1110::{
         BoardConfig, Error, HighPowerSelection, Lr1110, Lr11xxPart, PowerAmplifierConfig,
         PowerAmplifierDutyCycle, PowerAmplifierSelection, PowerAmplifierSupply,

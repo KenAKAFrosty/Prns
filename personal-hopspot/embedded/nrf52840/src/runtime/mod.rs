@@ -72,6 +72,7 @@ mod remote_control;
     any(feature = "board-rak4631", feature = "board-rak10724")
 ))]
 pub(crate) mod software_vbus;
+#[cfg(not(feature = "board-muzi-base-duo"))]
 mod subg_configuration;
 
 #[cfg(any(feature = "board-t-echo", feature = "board-mesh-pocket"))]

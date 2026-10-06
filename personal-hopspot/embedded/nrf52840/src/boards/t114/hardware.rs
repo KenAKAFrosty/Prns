@@ -31,7 +31,7 @@ type T114SpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
 
 type T114Radio = Sx126x<T114SpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type T114LoraInterface = LoRaInterface<'static, T114Radio>;
+pub(crate) type T114LoraInterface = LoRaInterface<'static, 'static, T114Radio>;
 
 pub(crate) type T114Display = super::DisplayDriver<T114SpiDevice>;
 pub(crate) type T114DisplayBringup = BoardDisplay<T114Display>;

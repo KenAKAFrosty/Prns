@@ -533,7 +533,8 @@ async fn apply_subg_configuration(
     hopspot::apply_remote_subg_configuration(
         async |configuration| match controller.apply_configuration(configuration).await {
             personal_rns::lora::LoRaApplyOutcome::Applied => Ok(()),
-            personal_rns::lora::LoRaApplyOutcome::Rejected => {
+            personal_rns::lora::LoRaApplyOutcome::Rejected
+            | personal_rns::lora::LoRaApplyOutcome::IdentityExhausted => {
                 Err(RemoteControlHostCommandError::ApplyFailed)
             }
         },

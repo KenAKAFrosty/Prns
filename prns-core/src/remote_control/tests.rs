@@ -436,6 +436,8 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlRequestKind::WatchInterfaces,
             RemoteControlRequestKind::SetNodeName,
             RemoteControlRequestKind::DescribeNodeName,
+            RemoteControlRequestKind::InspectRadio,
+            RemoteControlRequestKind::ConfigureRadio,
         ],
     );
     assert_eq!(
@@ -475,6 +477,8 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlResponseKind::WatchInterfaces,
             RemoteControlResponseKind::SetNodeName,
             RemoteControlResponseKind::DescribeNodeName,
+            RemoteControlResponseKind::InspectRadio,
+            RemoteControlResponseKind::ConfigureRadio,
             RemoteControlResponseKind::ProtocolError,
         ],
     );

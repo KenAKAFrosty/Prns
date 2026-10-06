@@ -441,7 +441,7 @@ mod tests {
     fn an_unreceived_depth_one_command_holds_bounded_backpressure() {
         let mailbox = Box::leak(Box::new(HopspotCommandMailbox::<1>::new()));
         let handle = mailbox.handle();
-        let mut first = pin!(handle.execute(RemoteControlHostCommand::DescribeBuild));
+        let mut first = Box::pin(handle.execute(RemoteControlHostCommand::DescribeBuild));
         assert!(poll(first.as_mut()).is_pending());
 
         drop(first);

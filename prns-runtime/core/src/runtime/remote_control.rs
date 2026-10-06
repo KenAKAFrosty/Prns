@@ -32,6 +32,9 @@ use crate::routing::links::request::REQUEST_WIRE_OVERHEAD;
 use crate::units::ByteLimit;
 use crate::wire::DestinationHash;
 use prns_core::capabilities::power::PowerSnapshot;
+use prns_core::remote_control::{
+    RemoteControlRadioConfiguration, RemoteControlRadioOutcome, RemoteControlRadioStatus,
+};
 
 use super::request_endpoints::{
     Decline, InboundRequest, RequestContext, RespondToken, ResponseSink,
@@ -263,6 +266,13 @@ pub enum RemoteControlHostCommand {
     InventoryInterfaceConfig {
         id: InterfaceId,
     },
+    InspectRadio {
+        id: InterfaceId,
+    },
+    ConfigureRadio {
+        id: InterfaceId,
+        configuration: RemoteControlRadioConfiguration,
+    },
     SetInterfaceLoRaProfile {
         id: InterfaceId,
         profile: RemoteControlLoRaProfile,
@@ -346,6 +356,8 @@ impl RemoteControlHostCommand {
             Self::InventoryInterfaceConfig { .. } => {
                 RemoteControlRequestKind::InventoryInterfaceConfig
             }
+            Self::InspectRadio { .. } => RemoteControlRequestKind::InspectRadio,
+            Self::ConfigureRadio { .. } => RemoteControlRequestKind::ConfigureRadio,
             Self::SetInterfaceLoRaProfile { .. } => {
                 RemoteControlRequestKind::SetInterfaceLoRaProfile
             }
@@ -393,6 +405,8 @@ pub enum RemoteControlHostResponse {
     ReplaceInterfaceDiscoveryGroups(RemoteControlDiscoveryGroupsReplaceOutcome),
     InventoryInterfacePeers(RemoteControlInterfacePeersOutcome),
     InventoryInterfaceConfig(RemoteControlInterfaceConfigOutcome),
+    InspectRadio(RemoteControlRadioStatus),
+    ConfigureRadio(RemoteControlRadioOutcome),
     SetInterfaceLoRaProfile(RemoteControlLoRaOutcome),
     SetInterfaceWifiStation(RemoteControlWifiStationOutcome),
     DescribeBuild(RemoteControlBuildVersion),
@@ -430,6 +444,8 @@ impl RemoteControlHostResponse {
             }
             Self::InventoryInterfacePeers(_) => RemoteControlRequestKind::InventoryInterfacePeers,
             Self::InventoryInterfaceConfig(_) => RemoteControlRequestKind::InventoryInterfaceConfig,
+            Self::InspectRadio(_) => RemoteControlRequestKind::InspectRadio,
+            Self::ConfigureRadio(_) => RemoteControlRequestKind::ConfigureRadio,
             Self::SetInterfaceLoRaProfile(_) => RemoteControlRequestKind::SetInterfaceLoRaProfile,
             Self::SetInterfaceWifiStation(_) => RemoteControlRequestKind::SetInterfaceWifiStation,
             Self::DescribeBuild(_) => RemoteControlRequestKind::DescribeBuild,
@@ -472,6 +488,8 @@ impl RemoteControlHostResponse {
             Self::InventoryInterfaceConfig(outcome) => {
                 RemoteControlResponse::InventoryInterfaceConfig(outcome)
             }
+            Self::InspectRadio(status) => RemoteControlResponse::InspectRadio(status),
+            Self::ConfigureRadio(outcome) => RemoteControlResponse::ConfigureRadio(outcome),
             Self::SetInterfaceLoRaProfile(outcome) => {
                 RemoteControlResponse::SetInterfaceLoRaProfile(outcome)
             }
@@ -1109,6 +1127,62 @@ impl RemoteControlSetInterfaceLoRaProfile {
     }
 }
 
+pub struct RemoteControlConfigureRadio;
+
+impl RemoteControlConfigureRadio {
+    pub const RESPONSE_CAPACITY: usize =
+        RemoteControlRequestKind::ConfigureRadio.maximum_response_encoded_len();
+    pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
+        ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
+
+    pub fn write_request(
+        id: InterfaceId,
+        configuration: RemoteControlRadioConfiguration,
+        out: &mut [u8],
+    ) -> Result<usize, RemoteControlError> {
+        RemoteControlRequest::ConfigureRadio { id, configuration }
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn parse_response(bytes: &[u8]) -> Result<RemoteControlRadioOutcome, RemoteControlError> {
+        match RemoteControlResponse::parse(bytes).map_err(RemoteControlError::Response)? {
+            RemoteControlResponse::ConfigureRadio(outcome) => Ok(outcome),
+            RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
+            response => Err(RemoteControlError::UnexpectedResponse {
+                expected: RemoteControlResponseKind::ConfigureRadio,
+                found: response.kind(),
+            }),
+        }
+    }
+}
+
+pub struct RemoteControlInspectRadio;
+
+impl RemoteControlInspectRadio {
+    pub const RESPONSE_CAPACITY: usize =
+        RemoteControlRequestKind::InspectRadio.maximum_response_encoded_len();
+    pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
+        ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
+
+    pub fn write_request(id: InterfaceId, out: &mut [u8]) -> Result<usize, RemoteControlError> {
+        RemoteControlRequest::InspectRadio { id }
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn parse_response(bytes: &[u8]) -> Result<RemoteControlRadioStatus, RemoteControlError> {
+        match RemoteControlResponse::parse(bytes).map_err(RemoteControlError::Response)? {
+            RemoteControlResponse::InspectRadio(outcome) => Ok(outcome),
+            RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
+            response => Err(RemoteControlError::UnexpectedResponse {
+                expected: RemoteControlResponseKind::InspectRadio,
+                found: response.kind(),
+            }),
+        }
+    }
+}
+
 pub struct RemoteControlInventoryInterfacePeers;
 
 impl RemoteControlInventoryInterfacePeers {
@@ -1619,6 +1693,18 @@ impl RemoteControlRequestEndpoint {
                 )?;
                 Ok(AdmittedRemoteControlOperation::Host(
                     RemoteControlHostCommand::InventoryInterfaceConfig { id },
+                ))
+            }
+            Ok(RemoteControlRequest::InspectRadio { id }) => {
+                require_available(available_requests, RemoteControlRequestKind::InspectRadio)?;
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::InspectRadio { id },
+                ))
+            }
+            Ok(RemoteControlRequest::ConfigureRadio { id, configuration }) => {
+                require_available(available_requests, RemoteControlRequestKind::ConfigureRadio)?;
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::ConfigureRadio { id, configuration },
                 ))
             }
             Ok(RemoteControlRequest::SetInterfaceLoRaProfile { id, profile }) => {
@@ -3512,5 +3598,111 @@ mod tests {
             assert!(grants.contains_controller(&extra.identity_hash()));
             assert_eq!(*node.received_revocation.lock().unwrap(), Some(extra));
         });
+    }
+    #[test]
+    fn radio_operations_require_their_exact_capability_before_host_admission() {
+        let id = InterfaceId::new(*b"radio-id");
+        for request in [
+            RemoteControlRequest::InspectRadio { id },
+            RemoteControlRequest::ConfigureRadio {
+                id,
+                configuration: RemoteControlRadioConfiguration::Unconfigured,
+            },
+        ] {
+            let kind = request.kind();
+            let mut encoded = [0; RemoteControlRequest::MAX_ENCODED_LEN];
+            let len = request.write_into(&mut encoded).unwrap();
+            assert!(matches!(
+                RemoteControlRequestEndpoint::resolve(
+                    RemoteControlRequest::parse(&encoded[..len]),
+                    RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+                    RemoteControlSelfAnnouncement::Unavailable
+                ),
+                Err(RemoteControlAdmitError::KindNotPermitted)
+            ));
+            let admitted = RemoteControlRequestEndpoint::resolve(
+                RemoteControlRequest::parse(&encoded[..len]),
+                RemoteControlRequestSet::only(kind),
+                RemoteControlSelfAnnouncement::Unavailable,
+            )
+            .unwrap();
+            match (request, admitted) {
+                (
+                    RemoteControlRequest::InspectRadio { id },
+                    AdmittedRemoteControlOperation::Host(RemoteControlHostCommand::InspectRadio {
+                        id: actual,
+                    }),
+                ) => assert_eq!(actual, id),
+                (
+                    RemoteControlRequest::ConfigureRadio { id, configuration },
+                    AdmittedRemoteControlOperation::Host(
+                        RemoteControlHostCommand::ConfigureRadio {
+                            id: actual,
+                            configuration: actual_configuration,
+                        },
+                    ),
+                ) => assert_eq!((actual, actual_configuration), (id, configuration)),
+                _ => panic!("radio operation lost its typed host command"),
+            }
+        }
+    }
+
+    #[test]
+    fn radio_exchange_wrappers_preserve_errors_and_reject_cross_operation_responses() {
+        let mut bytes = [0; RemoteControlResponse::MAX_ENCODED_LEN];
+        let wrong =
+            RemoteControlResponse::AnnounceSelf(RemoteControlAnnounceSelfOutcome::Announced);
+        let len = wrong.write_into(&mut bytes).unwrap();
+        for (result, expected) in [
+            (
+                RemoteControlInspectRadio::parse_response(&bytes[..len]).map(|_| ()),
+                RemoteControlResponseKind::InspectRadio,
+            ),
+            (
+                RemoteControlConfigureRadio::parse_response(&bytes[..len]).map(|_| ()),
+                RemoteControlResponseKind::ConfigureRadio,
+            ),
+        ] {
+            assert_eq!(
+                result,
+                Err(RemoteControlError::UnexpectedResponse {
+                    expected,
+                    found: wrong.kind()
+                })
+            );
+        }
+        let error = RemoteControlProtocolError::UnknownRequestKind { found: 0xaa };
+        let len = RemoteControlResponse::ProtocolError(error)
+            .write_into(&mut bytes)
+            .unwrap();
+        assert_eq!(
+            RemoteControlInspectRadio::parse_response(&bytes[..len]),
+            Err(RemoteControlError::Remote(error))
+        );
+        assert_eq!(
+            RemoteControlConfigureRadio::parse_response(&bytes[..len]),
+            Err(RemoteControlError::Remote(error))
+        );
+        assert!(matches!(
+            RemoteControlInspectRadio::parse_response(&[]),
+            Err(RemoteControlError::Response(_))
+        ));
+        assert!(matches!(
+            RemoteControlConfigureRadio::parse_response(&[]),
+            Err(RemoteControlError::Response(_))
+        ));
+        let id = InterfaceId::new(*b"radio-id");
+        assert!(matches!(
+            RemoteControlInspectRadio::write_request(id, &mut []),
+            Err(RemoteControlError::Encode(_))
+        ));
+        assert!(matches!(
+            RemoteControlConfigureRadio::write_request(
+                id,
+                RemoteControlRadioConfiguration::Unconfigured,
+                &mut []
+            ),
+            Err(RemoteControlError::Encode(_))
+        ));
     }
 }

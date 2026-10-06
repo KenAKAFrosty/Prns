@@ -1,4 +1,7 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
+use prns_core::remote_control::{
+    RemoteControlRadioConfiguration, RemoteControlRadioOutcome, RemoteControlRadioStatus,
+};
 
 use crate::engine::{EstablishLinkFailure, IdentifyFailure};
 use crate::identity::IdentityHash;
@@ -367,6 +370,31 @@ impl<
             .admit(RemoteControlRequestKind::SetInterfaceLoRaProfile)?;
         self.remote_control
             .set_interface_lora_profile(id, profile)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn configure_radio(
+        &self,
+        id: InterfaceId,
+        configuration: RemoteControlRadioConfiguration,
+    ) -> Result<(RemoteControlRadioOutcome, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::ConfigureRadio)?;
+        self.remote_control
+            .configure_radio(id, configuration)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn inspect_radio(
+        &self,
+        id: InterfaceId,
+    ) -> Result<(RemoteControlRadioStatus, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::InspectRadio)?;
+        self.remote_control
+            .inspect_radio(id)
             .await
             .map_err(Into::into)
     }

@@ -1,9 +1,10 @@
 use core::cmp::{max, min};
 
 use prns_core::interfaces::lora::{
-    ModemPreset, RadioProfile, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
+    LoRaProfile as RadioProfile, ModemPreset, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
 };
-use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
+const US915_AUTO_LORA_PROFILE: RadioProfile =
+    RadioProfile::SubG(prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE);
 
 use super::airtime_quantum::{AirtimeQuantum, ServiceAge};
 use super::channel_access::{

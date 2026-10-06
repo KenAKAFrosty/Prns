@@ -1,3 +1,7 @@
+use crate::runtime::{RemoteControlConfigureRadio, RemoteControlInspectRadio};
+use prns_core::remote_control::{
+    RemoteControlRadioConfiguration, RemoteControlRadioOutcome, RemoteControlRadioStatus,
+};
 mod connection;
 mod pairing;
 mod watch;
@@ -511,6 +515,56 @@ impl RemoteControlHandle<'_> {
             .await
             .map_err(RemoteControlError::Request)?;
         let outcome = RemoteControlSetInterfaceLoRaProfile::parse_response(response.as_slice())?;
+        Ok((outcome, rtt))
+    }
+
+    pub async fn configure_radio(
+        &self,
+        id: InterfaceId,
+        configuration: RemoteControlRadioConfiguration,
+    ) -> Result<(RemoteControlRadioOutcome, RttMillis), RemoteControlError> {
+        let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len =
+            RemoteControlConfigureRadio::write_request(id, configuration, encoded.as_mut_slice())?;
+        encoded.truncate(encoded_len);
+        let (response, rtt) = self
+            .node
+            .request_owned_with_options(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                encoded,
+                RequestOptions {
+                    response_timeout: RequestResponseTimeout::LinkDefault,
+                    maximum_response_bytes: RemoteControlConfigureRadio::MAXIMUM_RESPONSE_BYTES,
+                },
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let outcome = RemoteControlConfigureRadio::parse_response(response.as_slice())?;
+        Ok((outcome, rtt))
+    }
+
+    pub async fn inspect_radio(
+        &self,
+        id: InterfaceId,
+    ) -> Result<(RemoteControlRadioStatus, RttMillis), RemoteControlError> {
+        let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len = RemoteControlInspectRadio::write_request(id, encoded.as_mut_slice())?;
+        encoded.truncate(encoded_len);
+        let (response, rtt) = self
+            .node
+            .request_owned_with_options(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                encoded,
+                RequestOptions {
+                    response_timeout: RequestResponseTimeout::LinkDefault,
+                    maximum_response_bytes: RemoteControlInspectRadio::MAXIMUM_RESPONSE_BYTES,
+                },
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let outcome = RemoteControlInspectRadio::parse_response(response.as_slice())?;
         Ok((outcome, rtt))
     }
 

@@ -30,7 +30,7 @@ type Rak4631SpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
 type Rak4631Radio =
     Sx126x<Rak4631SpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type Rak4631LoraInterface = LoRaInterface<'static, Rak4631Radio>;
+pub(crate) type Rak4631LoraInterface = LoRaInterface<'static, 'static, Rak4631Radio>;
 
 type Rak4631UsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
 

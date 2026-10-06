@@ -24,3 +24,6 @@ pub use state::{
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "lora-2g4")]
+pub use state::RadioEditorError;

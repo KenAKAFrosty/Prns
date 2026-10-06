@@ -60,6 +60,12 @@ pub enum LoraBandwidth {
     Bw125kHz,
     Bw250kHz,
     Bw500kHz,
+    #[cfg(feature = "lora-2g4")]
+    Bw203kHz,
+    #[cfg(feature = "lora-2g4")]
+    Bw406kHz,
+    #[cfg(feature = "lora-2g4")]
+    Bw812kHz,
 }
 
 impl LoraBandwidth {
@@ -68,6 +74,20 @@ impl LoraBandwidth {
             Self::Bw125kHz => 125_000,
             Self::Bw250kHz => 250_000,
             Self::Bw500kHz => 500_000,
+            #[cfg(feature = "lora-2g4")]
+            Self::Bw203kHz => 203_000,
+            #[cfg(feature = "lora-2g4")]
+            Self::Bw406kHz => 406_000,
+            #[cfg(feature = "lora-2g4")]
+            Self::Bw812kHz => 812_000,
+        }
+    }
+
+    pub const fn is_sub_ghz(self) -> bool {
+        match self {
+            Self::Bw125kHz | Self::Bw250kHz | Self::Bw500kHz => true,
+            #[cfg(feature = "lora-2g4")]
+            Self::Bw203kHz | Self::Bw406kHz | Self::Bw812kHz => false,
         }
     }
 
@@ -76,6 +96,12 @@ impl LoraBandwidth {
             Self::Bw125kHz => Self::Bw250kHz,
             Self::Bw250kHz => Self::Bw500kHz,
             Self::Bw500kHz => Self::Bw125kHz,
+            #[cfg(feature = "lora-2g4")]
+            Self::Bw203kHz => Self::Bw406kHz,
+            #[cfg(feature = "lora-2g4")]
+            Self::Bw406kHz => Self::Bw812kHz,
+            #[cfg(feature = "lora-2g4")]
+            Self::Bw812kHz => Self::Bw203kHz,
         }
     }
 }
@@ -139,6 +165,16 @@ pub const fn nominal_lora_bitrate_bps(
 }
 
 impl Modulation {
+    pub const fn coding_rate(self) -> CodingRate {
+        let Self::Lora { coding_rate, .. } = self;
+        coding_rate
+    }
+
+    pub const fn bandwidth(self) -> LoraBandwidth {
+        let Self::Lora { bandwidth, .. } = self;
+        bandwidth
+    }
+
     pub const fn spreading_factor(self) -> SpreadingFactor {
         let Self::Lora {
             spreading_factor, ..
@@ -161,6 +197,10 @@ impl Modulation {
             bandwidth,
             ..
         } = self;
+        #[cfg(feature = "lora-2g4")]
+        if !bandwidth.is_sub_ghz() {
+            return (1u64 << *spreading_factor as u8) * 1_000 > 16 * bandwidth.hz() as u64;
+        }
         matches!(
             (spreading_factor, bandwidth),
             (
@@ -246,5 +286,49 @@ mod tests {
             cr = cr.next();
         }
         assert_eq!(cr, CodingRate::Cr45);
+    }
+    #[test]
+    fn bitrate_handles_absent_modulation_and_coding_rate_codes_are_exact() {
+        assert_eq!(nominal_lora_bitrate_bps(0, 5, 125_000), 0);
+        assert_eq!(nominal_lora_bitrate_bps(7, 0, 125_000), 0);
+        for (denominator, rate) in [
+            (5, CodingRate::Cr45),
+            (6, CodingRate::Cr46),
+            (7, CodingRate::Cr47),
+            (8, CodingRate::Cr48),
+        ] {
+            assert_eq!(CodingRate::from_denominator(denominator), Some(rate));
+        }
+        for invalid in [0, 4, 9, u8::MAX] {
+            assert_eq!(CodingRate::from_denominator(invalid), None);
+        }
+    }
+    #[test]
+    fn signal_quality_rounds_and_clamps_the_complete_snr_domain() {
+        // RNode maps each spreading factor's sensitivity floor to zero and
+        // +6 dB to 100 percent. An independent floating-point oracle checks
+        // quarter-dB quantization, rounding, and saturation at both ends.
+        for (sf, floor_db) in [
+            (SpreadingFactor::Sf5, -5.0),
+            (SpreadingFactor::Sf6, -7.0),
+            (SpreadingFactor::Sf7, -9.0),
+            (SpreadingFactor::Sf8, -11.0),
+            (SpreadingFactor::Sf9, -13.0),
+            (SpreadingFactor::Sf10, -15.0),
+            (SpreadingFactor::Sf11, -17.0),
+            (SpreadingFactor::Sf12, -19.0),
+        ] {
+            for quarters in i16::MIN..=i16::MAX {
+                let snr_db = f64::from(quarters) / 4.0;
+                let expected = ((snr_db - floor_db) / (6.0 - floor_db) * 1000.0)
+                    .clamp(0.0, 1000.0)
+                    .round() as u16;
+                assert_eq!(
+                    sf.signal_quality(SnrQuarterDb::new(quarters)),
+                    SignalQualityTenthsPercent::new(expected),
+                    "{sf:?}, {quarters}"
+                );
+            }
+        }
     }
 }

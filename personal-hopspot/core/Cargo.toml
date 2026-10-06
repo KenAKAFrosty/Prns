@@ -11,6 +11,7 @@ description = "Shared Personal Hopspot application state, canonical display face
 build = "build.rs"
 
 [features]
+lora-2g4 = ["personal-rns/lora-2g4", "prns-core/lora-2g4"]
 default = ["display", "remote-control-pairing"]
 display = ["dep:embedded-graphics"]
 embedded = ["personal-rns/embassy-host", "dep:embassy-sync"]

@@ -162,6 +162,24 @@ pub fn decorate_hopspot_remote_control_card(
     wifi_ssid: Option<&str>,
     ble_identity: Option<BleIdentity>,
 ) -> Result<(), RemoteControlInterfaceCardError> {
+    decorate_hopspot_radio_card(
+        snapshot,
+        card,
+        discovery_group,
+        lora_profile.map(Into::into),
+        wifi_ssid,
+        ble_identity,
+    )
+}
+
+pub fn decorate_hopspot_radio_card(
+    snapshot: &InterfaceSnapshot,
+    card: &mut RemoteControlInterfaceCard,
+    discovery_group: Option<&str>,
+    lora_profile: Option<personal_rns::interfaces::lora::LoRaProfile>,
+    wifi_ssid: Option<&str>,
+    ble_identity: Option<BleIdentity>,
+) -> Result<(), RemoteControlInterfaceCardError> {
     let Some(kind) = operator_kind(snapshot) else {
         return Ok(());
     };

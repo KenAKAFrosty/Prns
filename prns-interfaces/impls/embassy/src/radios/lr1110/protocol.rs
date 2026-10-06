@@ -1,6 +1,6 @@
 use prns_core::interfaces::lora::{
-    CodingRate as ProfileCodingRate, LoRaNetwork, LoraBandwidth as ProfileBandwidth,
-    Modulation as ProfileModulation, RadioProfile, SpreadingFactor as ProfileSpreadingFactor,
+    CodingRate as ProfileCodingRate, LoRaNetwork, LoRaProfile, LoraBandwidth as ProfileBandwidth,
+    Modulation as ProfileModulation, SpreadingFactor as ProfileSpreadingFactor,
 };
 
 use super::config::Lr11xxPart;
@@ -75,14 +75,26 @@ pub(super) enum Bandwidth {
     Bw125 = 0x04,
     Bw250 = 0x05,
     Bw500 = 0x06,
+    #[cfg(feature = "lora-2g4")]
+    Bw203 = 0x0d,
+    #[cfg(feature = "lora-2g4")]
+    Bw406 = 0x0e,
+    #[cfg(feature = "lora-2g4")]
+    Bw812 = 0x0f,
 }
 
 impl Bandwidth {
-    fn khz(self) -> u32 {
+    fn hz(self) -> u32 {
         match self {
-            Self::Bw125 => 125,
-            Self::Bw250 => 250,
-            Self::Bw500 => 500,
+            Self::Bw125 => 125_000,
+            Self::Bw250 => 250_000,
+            Self::Bw500 => 500_000,
+            #[cfg(feature = "lora-2g4")]
+            Self::Bw203 => 203_000,
+            #[cfg(feature = "lora-2g4")]
+            Self::Bw406 => 406_000,
+            #[cfg(feature = "lora-2g4")]
+            Self::Bw812 => 812_000,
         }
     }
 }
@@ -219,7 +231,8 @@ pub(super) fn command_with_u32(operation: u16, value: [u8; 4]) -> [u8; 6] {
     ]
 }
 
-pub(super) fn radio_config(profile: RadioProfile) -> RadioConfig {
+pub(super) fn radio_config(profile: impl Into<LoRaProfile>) -> RadioConfig {
+    let profile = profile.into();
     let ProfileModulation::Lora {
         spreading_factor,
         bandwidth,
@@ -239,6 +252,12 @@ pub(super) fn radio_config(profile: RadioProfile) -> RadioConfig {
         ProfileBandwidth::Bw125kHz => Bandwidth::Bw125,
         ProfileBandwidth::Bw250kHz => Bandwidth::Bw250,
         ProfileBandwidth::Bw500kHz => Bandwidth::Bw500,
+        #[cfg(feature = "lora-2g4")]
+        ProfileBandwidth::Bw203kHz => Bandwidth::Bw203,
+        #[cfg(feature = "lora-2g4")]
+        ProfileBandwidth::Bw406kHz => Bandwidth::Bw406,
+        #[cfg(feature = "lora-2g4")]
+        ProfileBandwidth::Bw812kHz => Bandwidth::Bw812,
     };
     let coding_rate = match coding_rate {
         ProfileCodingRate::Cr45 => CodingRate::Cr4_5,
@@ -265,7 +284,7 @@ pub(super) fn radio_config(profile: RadioProfile) -> RadioConfig {
 }
 
 pub(super) fn lora_ldro(spreading_factor: SpreadingFactor, bandwidth: Bandwidth) -> u8 {
-    u8::from((1u32 << spreading_factor as u32) > 16 * bandwidth.khz())
+    u8::from((1u64 << spreading_factor as u32) * 1_000 > 16 * u64::from(bandwidth.hz()))
 }
 
 fn decode_rssi_dbm(encoded: u8) -> i16 {

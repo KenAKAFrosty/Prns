@@ -1,5 +1,9 @@
 pub(in crate::screen) mod groups;
+#[cfg(feature = "lora-2g4")]
+pub(in crate::screen) mod radio;
 pub(in crate::screen) mod subg;
+#[cfg(feature = "lora-2g4")]
+pub use radio::RadioEditorError;
 
 use core::future::Future;
 
@@ -156,6 +160,8 @@ pub enum UiAction {
     ReplaceDiscoveryGroups,
     OpenSubGEditor,
     SetSubGConfiguration(SubGConfiguration),
+    #[cfg(feature = "lora-2g4")]
+    SetLoRaConfiguration(personal_rns::interfaces::lora::LoRaConfiguration),
     ClearSubGConfiguration,
     SwapRadioMode,
     OpenDocs,
@@ -521,6 +527,8 @@ pub(in crate::screen) enum UiMode {
         screen: SubGScreen,
         profile: RadioProfile,
     },
+    #[cfg(feature = "lora-2g4")]
+    RadioEditor(radio::RadioEditor),
     DiscoveryGroupEditor(DiscoveryGroupEditor),
     DiscoveryGroupCommit(DiscoveryGroupReplacement),
     ConfirmSubGClear {
@@ -602,6 +610,8 @@ impl UiState {
 
     pub(in crate::screen) fn global_menu_selected_item(&self) -> Option<usize> {
         match self.mode {
+            #[cfg(feature = "lora-2g4")]
+            UiMode::RadioEditor(_) => None,
             UiMode::GlobalMenu { selected_item } => Some(selected_item),
             UiMode::Cards
             | UiMode::LimitsPage { .. }
@@ -619,6 +629,8 @@ impl UiState {
 
     pub(in crate::screen) fn interface_menu_selected_item(&self) -> Option<usize> {
         match self.mode {
+            #[cfg(feature = "lora-2g4")]
+            UiMode::RadioEditor(_) => None,
             UiMode::InterfaceMenu { selected_item, .. } => Some(selected_item),
             UiMode::Cards
             | UiMode::GlobalMenu { .. }
@@ -632,6 +644,16 @@ impl UiState {
             #[cfg(feature = "remote-control-pairing")]
             UiMode::RemoteControlPairing { .. } => None,
         }
+    }
+
+    #[cfg(feature = "lora-2g4")]
+    pub fn open_dual_band_radio_editor(
+        &mut self,
+        state: personal_rns::interfaces::lora::LoRaConfigurationState,
+        maximum_power: personal_rns::interfaces::lora::TxPower,
+    ) -> Result<(), RadioEditorError> {
+        self.mode = UiMode::RadioEditor(radio::RadioEditor::new(state, maximum_power)?);
+        Ok(())
     }
 
     pub fn open_subg_editor(&mut self, state: SubGConfigurationState) {
@@ -765,6 +787,8 @@ impl UiState {
         self.visible_start = visible_start_for(item_count, self.selected_focus, self.visible_start);
 
         match self.mode {
+            #[cfg(feature = "lora-2g4")]
+            UiMode::RadioEditor(_) => {}
             UiMode::Cards
             | UiMode::GlobalMenu { .. }
             | UiMode::LimitsPage { .. }
@@ -1019,6 +1043,25 @@ impl UiState {
                     _ => UiAction::None,
                 }
             }
+            #[cfg(feature = "lora-2g4")]
+            (event, UiMode::RadioEditor(editor)) => match editor.input(event) {
+                radio::RadioEditorOutcome::Stay(editor) => {
+                    self.mode = UiMode::RadioEditor(editor);
+                    UiAction::None
+                }
+                radio::RadioEditorOutcome::SubG(configuration) => {
+                    self.open_subg_editor(configuration);
+                    UiAction::None
+                }
+                radio::RadioEditorOutcome::Save(configuration) => {
+                    self.mode = UiMode::Cards;
+                    UiAction::SetLoRaConfiguration(configuration)
+                }
+                radio::RadioEditorOutcome::Cancel => {
+                    self.mode = UiMode::Cards;
+                    UiAction::None
+                }
+            },
             (InputEvent::ShortPress, UiMode::SubGEditor { screen, profile }) => {
                 let (screen, profile) = subg_editor_tap(screen, profile);
                 self.mode = UiMode::SubGEditor { screen, profile };

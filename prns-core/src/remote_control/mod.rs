@@ -21,11 +21,14 @@ mod inventory;
 mod message;
 mod pagination;
 mod pairing;
+mod radio;
 mod service;
 mod stream;
 
 #[cfg(feature = "test-support")]
 pub mod test_support;
+
+pub use radio::*;
 
 pub use self::core::*;
 pub use bootstrap::*;

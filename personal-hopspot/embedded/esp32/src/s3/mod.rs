@@ -266,7 +266,7 @@ type UsbSeam = EmbassyInterfaceSeam<
     { personal_rns::interfaces::usb_auto::MAX_DATA_BYTES },
 >;
 #[cfg(feature = "lora")]
-type S3LoraInterface = LoRaInterface<'static, LoraRadio>;
+type S3LoraInterface = LoRaInterface<'static, 'static, LoraRadio>;
 #[cfg(feature = "lora")]
 type S3LoraSeam = EmbassyInterfaceSeam<'static, Mtx, S3EntropySource, NOTIFY_CAP, LORA_MAX_PAYLOAD>;
 type S3EspNowInterface = EspNowInterface<'static, EspNowAdapter>;

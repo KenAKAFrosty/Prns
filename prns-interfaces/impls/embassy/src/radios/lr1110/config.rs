@@ -207,9 +207,18 @@ impl PowerAmplifierTable {
     }
 }
 
+#[cfg(feature = "lora-2g4")]
+#[derive(Debug, PartialEq, Eq)]
+pub enum HighFrequencyPath {
+    Unavailable,
+    Regulated { maximum_power_dbm: i8 },
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct BoardConfig {
     pub part: Lr11xxPart,
+    #[cfg(feature = "lora-2g4")]
+    pub high_frequency: HighFrequencyPath,
     pub reference_clock: ReferenceClock,
     pub regulator: RegulatorMode,
     pub receive_gain: ReceiveGain,

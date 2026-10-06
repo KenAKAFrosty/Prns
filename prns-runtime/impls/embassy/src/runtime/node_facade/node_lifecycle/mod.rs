@@ -55,7 +55,7 @@ pub struct ManifoldWiring<
     pub(super) ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
     pub(super) notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     pub(super) commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
-    pub(super) lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
+    pub(super) lifecycle: Receiver<'static, M, InterfaceLifecycle<'static>, LIFECYCLE>,
     pub(super) handle:
         PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
 }
@@ -88,7 +88,7 @@ pub struct PrnsNode<
     egress: PooledEgress<LANE_COUNT>,
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
-    lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
+    lifecycle: Receiver<'static, M, InterfaceLifecycle<'static>, LIFECYCLE>,
     handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
     host: H,
     descriptors: HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,

@@ -13,6 +13,9 @@ const ENABLED_SWITCHES: RfSwitchPins = RECEIVE_SWITCH.union(TRANSMIT_SWITCH);
 
 pub(super) fn board_config() -> BoardConfig {
     BoardConfig {
+        high_frequency: personal_rns::radios::lr1110::HighFrequencyPath::Regulated {
+            maximum_power_dbm: 11,
+        },
         part: Lr11xxPart::Lr1121,
         reference_clock: ReferenceClock::Tcxo {
             voltage: TcxoVoltage::V3_0,

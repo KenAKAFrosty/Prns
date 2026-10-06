@@ -1,4 +1,4 @@
-use prns_core::interfaces::lora::RadioProfile;
+use prns_core::interfaces::lora::LoRaProfile as RadioProfile;
 
 use super::channel_access::ChannelTiming;
 
@@ -126,7 +126,8 @@ impl BackoffRate {
 mod tests {
     use super::*;
     use prns_core::interfaces::lora::{ModemPreset, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX};
-    use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
+    const US915_AUTO_LORA_PROFILE: RadioProfile =
+        RadioProfile::SubG(prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE);
 
     fn profile(preset: ModemPreset) -> RadioProfile {
         US915_AUTO_LORA_PROFILE

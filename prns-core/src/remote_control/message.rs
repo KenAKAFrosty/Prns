@@ -1,3 +1,4 @@
+use super::{RemoteControlRadioConfiguration, RemoteControlRadioOutcome, RemoteControlRadioStatus};
 use crate::capabilities::power::PowerSnapshot;
 use crate::identity::{IdentityHash, IDENTITY_PUBLIC_KEY_LEN};
 use crate::interfaces::{InterfaceId, InterfaceMode, INTERFACE_ID_LEN};
@@ -31,7 +32,7 @@ const MESSAGE_HEADER_ENCODED_LEN: usize = 2;
 const DESCRIPTION_COUNT_ENCODED_LEN: usize = 1;
 const PROTOCOL_ERROR_KIND_ENCODED_LEN: usize = 1;
 const PROTOCOL_ERROR_DETAIL_ENCODED_LEN: usize = 1;
-// V1 request kinds occupy the contiguous wire range 0x01..=0x20. Unknown values are rejected
+// V1 request kinds occupy the contiguous wire range 0x01..=0x24. Unknown values are rejected
 // before a request can enter this typed set, so five bytes represent the complete domain.
 const REQUEST_KIND_BITMAP_LEN: usize = 5;
 pub const REMOTE_CONTROL_APP_MESSAGE_CAP: usize = 96;
@@ -130,6 +131,8 @@ prns_macros::iterable_enum! {
         WatchInterfaces = 0x20,
         SetNodeName = 0x21,
         DescribeNodeName = 0x22,
+        InspectRadio = 0x23,
+        ConfigureRadio = 0x24,
     }
 }
 
@@ -202,6 +205,13 @@ impl RemoteControlRequestKind {
             )),
             Self::InventoryInterfaceConfig => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
                 RemoteControlInterfaceConfigOutcome::MAX_ENCODED_LEN,
+                RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
+            )),
+            Self::InspectRadio => {
+                MESSAGE_HEADER_ENCODED_LEN.saturating_add(RemoteControlRadioStatus::MAX_ENCODED_LEN)
+            }
+            Self::ConfigureRadio => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
+                RemoteControlRadioOutcome::ENCODED_LEN,
                 RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
             )),
             Self::SetInterfaceLoRaProfile => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
@@ -335,6 +345,8 @@ prns_macros::iterable_enum! {
         WatchInterfaces = 0x20,
         SetNodeName = 0x21,
         DescribeNodeName = 0x22,
+        InspectRadio = 0x23,
+        ConfigureRadio = 0x24,
         ProtocolError = 0xFF,
     }
 }
@@ -443,6 +455,13 @@ pub enum RemoteControlRequest {
     InventoryInterfaceConfig {
         id: InterfaceId,
     },
+    InspectRadio {
+        id: InterfaceId,
+    },
+    ConfigureRadio {
+        id: InterfaceId,
+        configuration: RemoteControlRadioConfiguration,
+    },
     SetInterfaceLoRaProfile {
         id: InterfaceId,
         profile: RemoteControlLoRaProfile,
@@ -539,6 +558,8 @@ impl RemoteControlRequest {
             Self::InventoryInterfaceConfig { .. } => {
                 RemoteControlRequestKind::InventoryInterfaceConfig
             }
+            Self::InspectRadio { .. } => RemoteControlRequestKind::InspectRadio,
+            Self::ConfigureRadio { .. } => RemoteControlRequestKind::ConfigureRadio,
             Self::SetInterfaceLoRaProfile { .. } => {
                 RemoteControlRequestKind::SetInterfaceLoRaProfile
             }
@@ -622,6 +643,12 @@ impl RemoteControlRequest {
                 .saturating_add(INTERFACE_ID_LEN.saturating_add(groups.encoded_body_len())),
             Self::SetInterfaceGroup { group, .. } => MESSAGE_HEADER_ENCODED_LEN
                 .saturating_add(INTERFACE_ID_LEN.saturating_add(group.encoded_body_len())),
+            Self::InspectRadio { .. } => {
+                MESSAGE_HEADER_ENCODED_LEN.saturating_add(INTERFACE_ID_LEN)
+            }
+            Self::ConfigureRadio { configuration, .. } => MESSAGE_HEADER_ENCODED_LEN
+                .saturating_add(INTERFACE_ID_LEN)
+                .saturating_add(configuration.encoded_len()),
             Self::SetInterfaceLoRaProfile { profile, .. } => MESSAGE_HEADER_ENCODED_LEN
                 .saturating_add(INTERFACE_ID_LEN.saturating_add(profile.encoded_body_len())),
             Self::SetInterfaceWifiStation { station, .. } => MESSAGE_HEADER_ENCODED_LEN
@@ -719,6 +746,28 @@ impl RemoteControlRequest {
             RemoteControlRequestKind::InventoryInterfaceConfig => {
                 parse_inventory_interface_config(body)
             }
+            RemoteControlRequestKind::InspectRadio => {
+                let id: [u8; INTERFACE_ID_LEN] = body
+                    .try_into()
+                    .map_err(|_| RemoteControlRequestParseError::Malformed)?;
+                Ok(Self::InspectRadio {
+                    id: InterfaceId::new(id),
+                })
+            }
+            RemoteControlRequestKind::ConfigureRadio => {
+                let (id, rest) = body
+                    .split_at_checked(INTERFACE_ID_LEN)
+                    .ok_or(RemoteControlRequestParseError::Truncated)?;
+                let id: [u8; INTERFACE_ID_LEN] = id
+                    .try_into()
+                    .map_err(|_| RemoteControlRequestParseError::Malformed)?;
+                let configuration = RemoteControlRadioConfiguration::parse(rest)
+                    .ok_or(RemoteControlRequestParseError::Malformed)?;
+                Ok(Self::ConfigureRadio {
+                    id: InterfaceId::new(id),
+                    configuration,
+                })
+            }
             RemoteControlRequestKind::SetInterfaceLoRaProfile => {
                 parse_set_interface_lora_profile(body)
             }
@@ -794,6 +843,14 @@ impl RemoteControlRequest {
             }
             Self::InventoryInterfaceConfig { id } => {
                 write_interface_id(body, *id)?;
+            }
+            Self::InspectRadio { id } => write_interface_id(body, *id)?,
+            Self::ConfigureRadio { id, configuration } => {
+                let (id_out, rest) = body
+                    .split_at_mut_checked(INTERFACE_ID_LEN)
+                    .ok_or(RemoteControlMessageWriteError::BufferTooShort)?;
+                id_out.copy_from_slice(id.as_bytes());
+                configuration.write(rest)?;
             }
             Self::SetInterfaceLoRaProfile { id, profile } => {
                 write_interface_id_and_lora_profile(body, *id, *profile)?;
@@ -1669,6 +1726,8 @@ pub enum RemoteControlResponse {
     ReplaceInterfaceDiscoveryGroups(RemoteControlDiscoveryGroupsReplaceOutcome),
     InventoryInterfacePeers(RemoteControlInterfacePeersOutcome),
     InventoryInterfaceConfig(RemoteControlInterfaceConfigOutcome),
+    InspectRadio(RemoteControlRadioStatus),
+    ConfigureRadio(RemoteControlRadioOutcome),
     SetInterfaceLoRaProfile(RemoteControlLoRaOutcome),
     SetInterfaceWifiStation(RemoteControlWifiStationOutcome),
     InventoryControllers(RemoteControlControllerInventory),
@@ -1762,6 +1821,8 @@ impl RemoteControlResponse {
             Self::InventoryInterfaceConfig(_) => {
                 RemoteControlResponseKind::InventoryInterfaceConfig
             }
+            Self::InspectRadio(_) => RemoteControlResponseKind::InspectRadio,
+            Self::ConfigureRadio(_) => RemoteControlResponseKind::ConfigureRadio,
             Self::SetInterfaceLoRaProfile(_) => RemoteControlResponseKind::SetInterfaceLoRaProfile,
             Self::SetInterfaceWifiStation(_) => RemoteControlResponseKind::SetInterfaceWifiStation,
             Self::InventoryControllers(_) => RemoteControlResponseKind::InventoryControllers,
@@ -1807,6 +1868,8 @@ impl RemoteControlResponse {
             }
             Self::InventoryInterfacePeers(outcome) => outcome.encoded_body_len(),
             Self::InventoryInterfaceConfig(outcome) => outcome.encoded_body_len(),
+            Self::InspectRadio(status) => status.encoded_len(),
+            Self::ConfigureRadio(_) => RemoteControlRadioOutcome::ENCODED_LEN,
             Self::SetInterfaceLoRaProfile(_) => RemoteControlLoRaOutcome::ENCODED_LEN,
             Self::SetInterfaceWifiStation(_) => RemoteControlWifiStationOutcome::ENCODED_LEN,
             Self::InventoryControllers(inventory) => inventory.encoded_body_len(),
@@ -1885,6 +1948,12 @@ impl RemoteControlResponse {
                 RemoteControlInterfaceConfigOutcome::parse_body(body)
                     .map(Self::InventoryInterfaceConfig)
             }
+            RemoteControlResponseKind::InspectRadio => RemoteControlRadioStatus::parse(body)
+                .map(Self::InspectRadio)
+                .ok_or(RemoteControlResponseParseError::Malformed),
+            RemoteControlResponseKind::ConfigureRadio => RemoteControlRadioOutcome::parse(body)
+                .map(Self::ConfigureRadio)
+                .ok_or(RemoteControlResponseParseError::Malformed),
             RemoteControlResponseKind::SetInterfaceLoRaProfile => {
                 parse_lora_outcome(body).map(Self::SetInterfaceLoRaProfile)
             }
@@ -1993,6 +2062,8 @@ impl RemoteControlResponse {
             }
             Self::InventoryInterfacePeers(outcome) => outcome.write_body(body)?,
             Self::InventoryInterfaceConfig(outcome) => outcome.write_body(body)?,
+            Self::InspectRadio(status) => status.write(body)?,
+            Self::ConfigureRadio(outcome) => outcome.write(body)?,
             Self::SetInterfaceLoRaProfile(outcome) => write_lora_outcome(*outcome, body),
             Self::SetInterfaceWifiStation(outcome) => write_wifi_station_outcome(*outcome, body),
             Self::InventoryControllers(inventory) => inventory
@@ -2785,23 +2856,27 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(40)]
     fn request_set_intersection_preserves_exact_membership() {
-        const CANONICAL_REQUEST_BITS: u32 = {
-            let mut bits = 0u32;
+        const CANONICAL_REQUEST_BITS: u64 = {
+            let mut bits = 0u64;
             let mut index = 0;
             while index < RemoteControlRequestKind::ALL.len() {
-                bits |= 1u32 << RemoteControlRequestKind::ALL[index].wire_value();
+                bits |= 1u64 << RemoteControlRequestKind::ALL[index].wire_value();
                 index += 1;
             }
             bits
         };
 
-        let left_membership: u32 = kani::any::<u32>() & CANONICAL_REQUEST_BITS;
-        let right_membership: u32 = kani::any::<u32>() & CANONICAL_REQUEST_BITS;
+        let left_membership: u64 = kani::any::<u64>() & CANONICAL_REQUEST_BITS;
+        let right_membership: u64 = kani::any::<u64>() & CANONICAL_REQUEST_BITS;
         let mut left = RemoteControlRequestSet::empty();
         let mut right = RemoteControlRequestSet::empty();
-        left.bits[..4].copy_from_slice(&left_membership.to_le_bytes());
+        let bitmap_bytes = left.bits.len();
+        left.bits
+            .copy_from_slice(&left_membership.to_le_bytes()[..bitmap_bytes]);
         left.len = left_membership.count_ones() as u8;
-        right.bits[..4].copy_from_slice(&right_membership.to_le_bytes());
+        right
+            .bits
+            .copy_from_slice(&right_membership.to_le_bytes()[..bitmap_bytes]);
         right.len = right_membership.count_ones() as u8;
 
         let intersection = left.intersection(&right);

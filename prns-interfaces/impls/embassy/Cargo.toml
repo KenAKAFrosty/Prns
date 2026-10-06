@@ -54,6 +54,7 @@ critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 
 [features]
+lora-2g4 = ["lora", "prns-core/lora-2g4"]
 default = []
 log = ["dep:log", "trouble-host?/log"]
 tcp = ["dep:embassy-net", "dep:embedded-io-async-07"]

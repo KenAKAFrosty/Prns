@@ -51,6 +51,22 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
         return;
     }
 
+    #[cfg(feature = "lora-2g4")]
+    if let UiMode::RadioEditor(editor) = state.mode {
+        use embedded_graphics::mono_font::{iso_8859_1::FONT_5X8, MonoTextStyle};
+        use embedded_graphics::text::{Baseline, Text};
+        for (row, line) in editor.lines().iter().enumerate() {
+            let _ = Text::with_baseline(
+                line,
+                Point::new(4, 22 + row as i32 * 12),
+                MonoTextStyle::new(&FONT_5X8, BinaryColor::On),
+                Baseline::Top,
+            )
+            .draw(display);
+        }
+        return;
+    }
+
     if let UiMode::SubGEditor { screen, profile } = state.mode {
         draw_subg_editor(display, screen, &profile);
         return;

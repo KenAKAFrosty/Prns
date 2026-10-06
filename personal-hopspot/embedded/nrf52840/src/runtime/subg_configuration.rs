@@ -15,7 +15,9 @@ pub(super) async fn apply_subg_configuration(
     hopspot::apply_remote_subg_configuration(
         async |configuration| match controller.apply_configuration(configuration).await {
             LoRaApplyOutcome::Applied => Ok(()),
-            LoRaApplyOutcome::Rejected => Err(RemoteControlHostCommandError::ApplyFailed),
+            LoRaApplyOutcome::Rejected | LoRaApplyOutcome::IdentityExhausted => {
+                Err(RemoteControlHostCommandError::ApplyFailed)
+            }
         },
         store,
         active,

@@ -10,7 +10,7 @@ use super::{
     SetRemoteControlControllerGrantOutcome,
 };
 use crate::identity::{IdentityHash, PublicIdentityMaterial, IDENTITY_PUBLIC_KEY_LEN};
-use crate::interfaces::lora::RadioProfile;
+use crate::interfaces::lora::{LoRaProfile, RadioProfile};
 use crate::interfaces::{
     ConnectionState, DiscoveryGroupId, DiscoveryGroupSet, InterfaceId, InterfaceKind,
     InterfaceMode, PeerDetails, RadioIndication, INTERFACE_ID_LEN, MAX_DISCOVERY_GROUPS,
@@ -1250,8 +1250,16 @@ impl RemoteControlLoRaProfile {
 
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
-        let profile = RadioProfile::parse_inventory_config(text)?;
-        Self::from_profile(profile)
+        Self::from_band_profile(LoRaProfile::parse_inventory_config(text)?)
+    }
+
+    pub fn from_band_profile(profile: LoRaProfile) -> Option<Self> {
+        profile.validate().ok()?;
+        Self::from_canonical(profile.inventory_config().as_str())
+    }
+
+    pub fn band_profile(self) -> Option<LoRaProfile> {
+        LoRaProfile::parse_inventory_config(self.as_str()?)
     }
 
     #[must_use]

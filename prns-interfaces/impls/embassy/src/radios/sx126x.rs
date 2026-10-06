@@ -305,6 +305,7 @@ pub struct BoardConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
+    UnsupportedProfile,
     Spi,
     Busy,
     Dio1,
@@ -902,12 +903,14 @@ where
             | Error::UnexpectedTransmitInterrupt(_)
             | Error::Reset
             | Error::Timeout => RadioRecovery::Reinitialize,
-            Error::Crc | Error::BufferTooSmall => RadioRecovery::Continue,
+            Error::UnsupportedProfile | Error::Crc | Error::BufferTooSmall => {
+                RadioRecovery::Continue
+            }
         }
     }
 
     async fn initialize(&mut self, profile: RadioProfile) -> Result<(), Self::Error> {
-        Sx126x::init(self, radio_config(profile)).await
+        Sx126x::init(self, radio_config(profile)?).await
     }
 
     async fn idle(&mut self) -> Result<(), Self::Error> {
@@ -951,7 +954,7 @@ fn sync_word_for_network(network: LoRaNetwork) -> u16 {
     }
 }
 
-fn radio_config(profile: RadioProfile) -> RadioConfig {
+fn radio_config(profile: RadioProfile) -> Result<RadioConfig, Error> {
     let ProfileModulation::Lora {
         spreading_factor,
         bandwidth,
@@ -971,6 +974,10 @@ fn radio_config(profile: RadioProfile) -> RadioConfig {
         ProfileBandwidth::Bw125kHz => Bandwidth::Bw125,
         ProfileBandwidth::Bw250kHz => Bandwidth::Bw250,
         ProfileBandwidth::Bw500kHz => Bandwidth::Bw500,
+        #[cfg(feature = "lora-2g4")]
+        ProfileBandwidth::Bw203kHz | ProfileBandwidth::Bw406kHz | ProfileBandwidth::Bw812kHz => {
+            return Err(Error::UnsupportedProfile)
+        }
     };
     let coding_rate = match coding_rate {
         ProfileCodingRate::Cr45 => CodingRate::Cr4_5,
@@ -978,7 +985,7 @@ fn radio_config(profile: RadioProfile) -> RadioConfig {
         ProfileCodingRate::Cr47 => CodingRate::Cr4_7,
         ProfileCodingRate::Cr48 => CodingRate::Cr4_8,
     };
-    RadioConfig {
+    Ok(RadioConfig {
         frequency_hz: profile.frequency().hz(),
         modulation: Modulation::Lora {
             spreading_factor,
@@ -993,7 +1000,7 @@ fn radio_config(profile: RadioProfile) -> RadioConfig {
         },
         network: LoRaNetwork::Reticulum,
         tx_power_dbm: profile.tx_power().dbm(),
-    }
+    })
 }
 
 fn image_calibration_pair(frequency_hz: u32) -> [u8; 2] {
@@ -1363,7 +1370,7 @@ mod tests {
     #[test]
     fn reticulum_profile_maps_to_the_existing_sx126x_configuration() {
         assert_eq!(
-            radio_config(US915_AUTO_LORA_PROFILE),
+            radio_config(US915_AUTO_LORA_PROFILE).expect("supported SubG profile"),
             RadioConfig {
                 frequency_hz: 921_500_000,
                 modulation: Modulation::Lora {
@@ -1467,7 +1474,10 @@ mod tests {
             )
         );
 
-        block_on(radio.init(radio_config(US915_AUTO_LORA_PROFILE))).expect("init");
+        block_on(
+            radio.init(radio_config(US915_AUTO_LORA_PROFILE).expect("supported SubG profile")),
+        )
+        .expect("init");
         assert_eq!(radio.tx_power_dbm, 8);
         assert!(
             log.borrow()
@@ -1668,7 +1678,10 @@ mod tests {
             MockDelay,
             board(),
         );
-        block_on(radio.init(radio_config(US915_AUTO_LORA_PROFILE))).expect("init");
+        block_on(
+            radio.init(radio_config(US915_AUTO_LORA_PROFILE).expect("supported SubG profile")),
+        )
+        .expect("init");
         block_on(radio.arm_rx()).expect("arm receive");
 
         let mut buffer = [0; MAX_LORA_PAYLOAD];

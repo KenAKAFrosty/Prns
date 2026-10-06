@@ -84,6 +84,11 @@ impl EmbassyInterfaceStatus {
         self.connection.store(connection.as_u8(), Ordering::Relaxed);
     }
 
+    /// Last state reported by the interface task, independent of desired enablement.
+    pub fn observed_connection(&self) -> ConnectionState {
+        ConnectionState::from_u8(self.connection.load(Ordering::Relaxed))
+    }
+
     pub fn set_id(&self, id: InterfaceId) {
         self.id.store_relaxed(u64::from_be_bytes(*id.as_bytes()));
     }
@@ -182,7 +187,7 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
         if !self.is_enabled() {
             return ConnectionState::Disabled;
         }
-        ConnectionState::from_u8(self.connection.load(Ordering::Relaxed))
+        self.observed_connection()
     }
 
     fn rx_bytes(&self) -> u64 {
@@ -233,6 +238,113 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
 mod tests {
     use super::*;
     use embassy_futures::{block_on, join::join};
+
+    #[test]
+    fn satisfied_waiters_return_immediately_and_connection_preserves_the_observed_state() {
+        let status = EmbassyInterfaceStatus::new_accounted(
+            InterfaceId::new([0x5a; 8]),
+            ConnectionState::Initializing,
+        );
+        for connection in [
+            ConnectionState::Unknown,
+            ConnectionState::Initializing,
+            ConnectionState::Connected,
+            ConnectionState::Disconnected,
+            ConnectionState::Reconnecting,
+            ConnectionState::Degraded,
+            ConnectionState::Failed,
+            ConnectionState::Disabled,
+        ] {
+            status.set_connection(connection);
+            block_on(status.wait_until_enabled());
+            assert_eq!(status.connection(), connection);
+            status.disable();
+            block_on(status.wait_until_disabled());
+            assert_eq!(status.connection(), ConnectionState::Disabled);
+            assert_eq!(status.observed_connection(), connection);
+            status.enable();
+            assert_eq!(status.connection(), connection);
+        }
+    }
+
+    #[test]
+    fn published_identity_and_traffic_statistics_round_trip_without_cross_field_aliasing() {
+        let status = EmbassyInterfaceStatus::new_accounted(
+            InterfaceId::new([0x5a; 8]),
+            ConnectionState::Connected,
+        );
+        let id = InterfaceId::new([1, 2, 3, 4, 5, 6, 7, 8]);
+        status.set_id(id);
+        assert_eq!(status.id(), id);
+        assert_eq!(
+            (
+                status.rx_bytes(),
+                status.tx_bytes(),
+                status.airtime(),
+                status.transfer_rates()
+            ),
+            (0, 0, None, None)
+        );
+        status.add_rx(3);
+        status.add_rx(5);
+        status.add_tx(7);
+        status.add_tx(11);
+        assert_eq!((status.rx_bytes(), status.tx_bytes()), (8, 18));
+        for (short, long) in [(0, 0), (1, 999), (1000, 2)] {
+            let value = AirtimeUtilization {
+                short_per_mille: short,
+                long_per_mille: long,
+            };
+            status.set_airtime(value);
+            assert_eq!(status.airtime(), Some(value));
+        }
+        for (rx, tx) in [(0, 0), (1, u32::MAX), (u32::MAX, 2)] {
+            let value = TransferRates {
+                rx_bps: rx,
+                tx_bps: tx,
+            };
+            status.set_transfer_rates(value);
+            assert_eq!(status.transfer_rates(), Some(value));
+        }
+    }
+
+    #[test]
+    fn coalesced_power_changes_do_not_wake_a_waiter_for_the_opposite_state() {
+        use core::{
+            future::Future,
+            task::{Context, Poll},
+        };
+        let status = EmbassyInterfaceStatus::new_unaccounted(
+            InterfaceId::new([0; 8]),
+            ConnectionState::Connected,
+        );
+        status.disable();
+        let mut waiting = std::boxed::Box::pin(status.wait_until_enabled());
+        let mut context = Context::from_waker(std::task::Waker::noop());
+        assert_eq!(waiting.as_mut().poll(&mut context), Poll::Pending);
+        status.toggle_enabled();
+        status.toggle_enabled();
+        assert_eq!(waiting.as_mut().poll(&mut context), Poll::Pending);
+        status.enable();
+        assert_eq!(waiting.as_mut().poll(&mut context), Poll::Ready(()));
+    }
+
+    #[test]
+    fn disabled_waiter_stays_pending_until_power_is_actually_disabled() {
+        use core::{
+            future::Future,
+            task::{Context, Poll},
+        };
+        let status = EmbassyInterfaceStatus::new_unaccounted(
+            InterfaceId::new([0; 8]),
+            ConnectionState::Connected,
+        );
+        let mut waiting = std::boxed::Box::pin(status.wait_until_disabled());
+        let mut context = Context::from_waker(std::task::Waker::noop());
+        assert_eq!(waiting.as_mut().poll(&mut context), Poll::Pending);
+        status.disable();
+        assert_eq!(waiting.as_mut().poll(&mut context), Poll::Ready(()));
+    }
 
     #[test]
     fn enabled_state_changes_wake_waiters() {
@@ -316,5 +428,18 @@ mod tests {
             other_status.frame_accounting(),
             Some(FrameAccounting::default())
         );
+    }
+    #[test]
+    fn observed_hardware_failure_is_visible_even_when_power_is_disabled() {
+        let status = EmbassyInterfaceStatus::new_unaccounted(
+            InterfaceId::new([0; 8]),
+            ConnectionState::Connected,
+        );
+        status.disable();
+        status.set_connection(ConnectionState::Failed);
+        assert_eq!(status.connection(), ConnectionState::Disabled);
+        assert_eq!(status.observed_connection(), ConnectionState::Failed);
+        status.set_connection(ConnectionState::Disabled);
+        assert_eq!(status.observed_connection(), ConnectionState::Disabled);
     }
 }

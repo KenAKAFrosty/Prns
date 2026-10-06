@@ -30,7 +30,7 @@ type MuziBaseDuoSpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Dela
 type MuziBaseDuoRadio =
     Lr1110<MuziBaseDuoSpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type MuziBaseDuoLoraInterface = LoRaInterface<'static, MuziBaseDuoRadio>;
+pub(crate) type MuziBaseDuoLoraInterface = LoRaInterface<'static, 'static, MuziBaseDuoRadio>;
 
 type MuziBaseDuoUsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
 

@@ -161,7 +161,7 @@ created on the affected 0.3.7 through 0.3.7-hotfix.4 first-boot path.
 
 LoRa-capable firmware persists the selected radio profile in a dedicated two-page store. Reset records a durable choice to follow the firmware default, while an explicitly saved profile remains fixed across updates. Sparse firmware updates preserve the profile store; a full-chip erase clears it.
 
-Every embedded Hopspot board target journals learned routes and retained self-ratchet history. Route writes are batched to conserve flash and battery, while critical ratchet state receives the shorter durability window. T114 uses the established T096 journal map, MeshTower V2 reserves its own six-page journal below the existing profile and identity pages, and the muzi Base Duo shares that MeshTower V2 map because both sit on the same S140 6.1.1 UF2 bootloader layout. Their first persistence-capable update starts with empty learned state; later reboots and sparse firmware updates restore it. A full-chip erase clears it.
+Every embedded Hopspot board target journals learned routes and retained self-ratchet history. Route writes are batched to conserve flash and battery, while critical ratchet state receives the shorter durability window. T114 uses the established T096 journal map, MeshTower V2 reserves its own six-page journal below the existing profile and identity pages, and the muzi Base Duo preserves those identity and learned-state addresses on the same S140 6.1.1 UF2 bootloader layout. Their first persistence-capable update starts with empty learned state; later reboots and sparse firmware updates restore it. A full-chip erase clears it.
 
 The first firmware update carrying the board-sized flash layout moves learned-state persistence on the 16 MiB Heltec V4 and V4 R8 from the lower 8 MiB region to the physical flash tail. Node identity, Bluetooth identity, and Wi-Fi provisioning remain intact, but learned routes and retained self-ratchet history from older firmware are reset once and rebuild from network activity. The 8 MiB T-Beam Supreme journal remains in place. T-Echo keeps its journal timebase and arena starts while reserving the former final arena page, reducing the second arena from 20 pages to 19.
 
@@ -259,3 +259,61 @@ This requires the 0.3.8 USB enrollment implementation. Automated tests exercise
 its wire contract, browser failure handling, and the journal's power-loss and
 revocation behavior. Physical USB behavior remains outside simulator/emulator
 coverage.
+
+
+### Base Duo dual-band LoRa
+
+The Base Duo has one LR1121 radio and one active LoRa interface. Its firmware
+opts into the nondefault `lora-2g4` feature; SubG-only builds omit that band.
+Fresh devices remain unconfigured until a profile is explicitly saved.
+
+The 2.4 GHz balanced preset is 2445 MHz, SF7, BW812, CR4/5, 10 dBm, with an
+18-symbol preamble. Manual profiles use `G,frequency_hz,sf,bw,cr,power_dbm,preamble`;
+for example `G,2445000000,7,8,5,10,18`. Bandwidth codes 3, 4 and 8 select
+203, 406 and 812 kHz. The board accepts power up to 11 dBm. Existing SubG
+`L,...` profile text remains compatible.
+
+`InspectRadio` reports supported bands, operating state, and the last confirmed
+saved configuration separately. `ConfigureRadio` saves a profile or clears it.
+These operations require an authorized controller grant containing those request
+kinds; grants created before these operations existed may need replacement.
+The headless Base Duo exposes them through Remote Control. Display-capable
+integrations can use the shared dual-band editor and supply their board's power
+ceiling explicitly.
+
+An already-authorized controller can use the example through a TCP Reticulum
+bridge that reaches the Base Duo's USB or Bluetooth interface:
+
+```sh
+cargo run --locked -p personal-rns --example radio_control \
+  --features tokio-host,tcp,lora-2g4 -- \
+  HOST:PORT TARGET_DESTINATION_HEX CONTROLLER_KEY_FILE LOCAL_TARGET_KEY_FILE balanced
+```
+
+Use `inspect`, `clear`, or explicit profile text in place of `balanced`. Both key
+files contain separate raw 64-byte private identities. The controller key must
+match the grant on the target. The local target key belongs to the example's own
+node. Press the Base Duo announce button when prompted. The example checks the
+target's advertised capabilities before configuring its single LoRa interface.
+
+Changes finish the current logical transmission, pause the radio, stage the
+hardware, save the journal, and await runtime publication before traffic resumes.
+Changing channel identity discards old queued transmissions and partial receive
+state; changing only power or preamble preserves queued transmissions. Failed
+changes restore the prior configuration. Indeterminate restoration leaves the
+radio unavailable and reports `RecoveryRequired`; reboot reloads the journal.
+Saving a disabled radio changes its desired configuration without activating RF.
+Requester disconnection does not cancel an admitted save.
+
+Base Duo's journal uses the existing pages at `0xE0000` and `0xE1000`,
+with the firmware ceiling at `0xE0000`. Identity, learned-state, Bluetooth,
+and bootloader addresses stay fixed. A build
+without 2.4 GHz support rejects a committed 2.4 GHz record rather than reviving
+an older SubG configuration.
+
+Hardware references: the manufacturer's [module datasheet](https://cdn.shopify.com/s/files/1/0657/6973/4201/files/nRFLR1121_Wireless_Transceiver_Module_Datasheet_V1.1.pdf?v=1767888139)
+shows a separate filtered 2.4 GHz path, and the [Base Duo schematic](https://cdn.shopify.com/s/files/1/0657/6973/4201/files/Base_Duo_Schematic_Rev01.pdf?v=1766439439)
+connects it to its own antenna connector. The [LR1121 manual](https://www.mouser.com/pdfDocs/UserManual_LR1121_v1_1.pdf)
+owns the HF PA and modulation commands. New-band timing follows [Semtech
+SWDR001 at a333238](https://github.com/Lora-net/SWDR001/blob/a333238acfa0a9dee9ce2824ce52e89b98f3d24b/src/lr11xx_radio.c),
+including whole coded symbol blocks and nominal bandwidth values.

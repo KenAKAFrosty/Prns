@@ -12,7 +12,8 @@ use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
 #[cfg(not(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-wio-tracker-l1"
+    feature = "board-wio-tracker-l1",
+    feature = "board-muzi-base-duo"
 )))]
 use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
@@ -448,7 +449,8 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(not(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-wio-tracker-l1"
+        feature = "board-wio-tracker-l1",
+        feature = "board-muzi-base-duo"
     )))]
     let (subg_configuration, subg_configuration_store) = {
         let mut store =
@@ -458,6 +460,22 @@ pub async fn run(spawner: Spawner) -> ! {
             Err(_) => SubGConfigurationState::Unconfigured,
         };
         (state, store)
+    };
+    #[cfg(feature = "board-muzi-base-duo")]
+    let mut radio_store = personal_hopspot_core::SubGConfigurationStore::new(
+        shared_flash,
+        board::RADIO_PROFILE_PAGES,
+    );
+    #[cfg(feature = "board-muzi-base-duo")]
+    let (subg_configuration, radio_service) = match radio_store.load_radio().await {
+        Ok(loaded) => (
+            loaded.state,
+            hopspot::LoRaConfigurationService::new(loaded.state),
+        ),
+        Err(_) => (
+            personal_rns::interfaces::lora::LoRaConfigurationState::Unconfigured,
+            hopspot::LoRaConfigurationService::unresolved(),
+        ),
     };
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus =
@@ -648,8 +666,13 @@ pub async fn run(spawner: Spawner) -> ! {
             lora_status,
             usb_status,
             lora_controller,
-            subg_configuration,
+            subg_configuration.into(),
+            #[cfg(not(feature = "board-muzi-base-duo"))]
             subg_configuration_store,
+            #[cfg(feature = "board-muzi-base-duo")]
+            radio_store,
+            #[cfg(feature = "board-muzi-base-duo")]
+            radio_service,
         ),
         gnss,
         node_page_destination,
@@ -668,8 +691,13 @@ pub async fn run(spawner: Spawner) -> ! {
             lora_status,
             usb_status,
             lora_controller,
-            subg_configuration,
+            subg_configuration.into(),
+            #[cfg(not(feature = "board-muzi-base-duo"))]
             subg_configuration_store,
+            #[cfg(feature = "board-muzi-base-duo")]
+            radio_store,
+            #[cfg(feature = "board-muzi-base-duo")]
+            radio_service,
         ),
         button,
         node_page_destination,

@@ -29,7 +29,7 @@ type T1000eSpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
 
 type T1000eRadio = Lr1110<T1000eSpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type T1000eLoraInterface = LoRaInterface<'static, T1000eRadio>;
+pub(crate) type T1000eLoraInterface = LoRaInterface<'static, 'static, T1000eRadio>;
 
 type T1000eUsbDriver = Driver<'static, HardwareVbusDetect>;
 

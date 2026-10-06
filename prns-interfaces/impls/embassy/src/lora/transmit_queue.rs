@@ -231,4 +231,15 @@ mod tests {
         }
         assert_eq!(queue.used, 24 * (PACKET_LENGTH_BYTES + packet.len()));
     }
+    #[test]
+    fn oversized_packet_is_rejected_without_consuming_queue_capacity() {
+        let mut storage = storage();
+        let mut queue = TransmitQueue::new(&mut storage);
+        assert_eq!(
+            queue.push(&[0; LORA_MAX_PAYLOAD + 1]),
+            Err(TransmitQueueError::PacketTooLarge)
+        );
+        assert!(queue.is_empty());
+        assert!(queue.can_push_max_packet());
+    }
 }

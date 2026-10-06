@@ -1,17 +1,18 @@
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use prns_core::interfaces::lora::RadioProfile;
-use prns_core::interfaces::subghz::{ResolvedSubGMode, SubGConfigurationState};
+use prns_core::interfaces::lora::{LoRaConfigurationState, LoRaProfile as RadioProfile};
+use prns_runtime::manifold::driver::InterfacePublicationOutcome;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoRaApplyOutcome {
     Applied,
     Rejected,
+    IdentityExhausted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct LoRaApplyRequest {
-    pub(super) id: u32,
+    pub(super) id: u64,
     pub(super) command: LoRaConfigurationCommand,
 }
 
@@ -19,22 +20,28 @@ pub(super) struct LoRaApplyRequest {
 pub(super) enum LoRaConfigurationCommand {
     Apply(RadioProfile),
     Clear,
+    Quiesce,
+    Stage(LoRaConfigurationState),
+    Publish,
+    Resume,
+    Hold,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LoRaApplyResult {
-    id: u32,
+    id: u64,
     outcome: LoRaApplyOutcome,
 }
 
 pub struct LoRaControl {
     requests: Signal<CriticalSectionRawMutex, LoRaApplyRequest>,
     results: Signal<CriticalSectionRawMutex, LoRaApplyResult>,
+    publication: Signal<CriticalSectionRawMutex, InterfacePublicationOutcome>,
 }
 
 pub struct LoRaController<'a> {
     control: &'a LoRaControl,
-    next_id: u32,
+    next_id: u64,
 }
 
 pub struct LoRaControlTarget<'a> {
@@ -47,6 +54,7 @@ impl LoRaControl {
         Self {
             requests: Signal::new(),
             results: Signal::new(),
+            publication: Signal::new(),
         }
     }
 
@@ -64,7 +72,10 @@ impl LoRaControl {
 impl<'a> LoRaController<'a> {
     async fn request(&mut self, command: LoRaConfigurationCommand) -> LoRaApplyOutcome {
         let id = self.next_id;
-        self.next_id = id.wrapping_add(1);
+        let Some(next_id) = id.checked_add(1) else {
+            return LoRaApplyOutcome::IdentityExhausted;
+        };
+        self.next_id = next_id;
         self.control
             .requests
             .signal(LoRaApplyRequest { id, command });
@@ -76,22 +87,43 @@ impl<'a> LoRaController<'a> {
         }
     }
 
-    pub async fn apply(&mut self, profile: RadioProfile) -> LoRaApplyOutcome {
-        self.request(LoRaConfigurationCommand::Apply(profile)).await
+    pub async fn quiesce(&mut self) -> LoRaApplyOutcome {
+        self.request(LoRaConfigurationCommand::Quiesce).await
+    }
+    pub async fn stage_configuration(
+        &mut self,
+        configuration: LoRaConfigurationState,
+    ) -> LoRaApplyOutcome {
+        self.request(LoRaConfigurationCommand::Stage(configuration))
+            .await
+    }
+    pub async fn publish_configuration(&mut self) -> LoRaApplyOutcome {
+        self.request(LoRaConfigurationCommand::Publish).await
+    }
+    pub async fn resume_configuration(&mut self) -> LoRaApplyOutcome {
+        self.request(LoRaConfigurationCommand::Resume).await
+    }
+    pub async fn hold_configuration(&mut self) -> LoRaApplyOutcome {
+        self.request(LoRaConfigurationCommand::Hold).await
+    }
+
+    pub async fn apply(&mut self, profile: impl Into<RadioProfile>) -> LoRaApplyOutcome {
+        self.request(LoRaConfigurationCommand::Apply(profile.into()))
+            .await
     }
 
     pub async fn clear(&mut self) -> LoRaApplyOutcome {
         self.request(LoRaConfigurationCommand::Clear).await
     }
 
-    pub async fn apply_configuration(
+    pub async fn apply_configuration<C: Into<LoRaConfigurationState>>(
         &mut self,
-        configuration: SubGConfigurationState,
+        configuration: C,
     ) -> LoRaApplyOutcome {
-        let command = match configuration {
-            SubGConfigurationState::Unconfigured => LoRaConfigurationCommand::Clear,
-            SubGConfigurationState::Configured(configuration) => {
-                let ResolvedSubGMode::LoRa(profile) = configuration.resolve();
+        let command = match configuration.into() {
+            LoRaConfigurationState::Unconfigured => LoRaConfigurationCommand::Clear,
+            LoRaConfigurationState::Configured(configuration) => {
+                let profile = configuration.profile();
                 LoRaConfigurationCommand::Apply(profile)
             }
         };
@@ -99,12 +131,22 @@ impl<'a> LoRaController<'a> {
     }
 }
 
-impl LoRaControlTarget<'_> {
+impl<'a> LoRaControlTarget<'a> {
+    pub(super) fn has_pending(&self) -> bool {
+        self.control.requests.signaled()
+    }
+
+    pub(super) fn publication(
+        &self,
+    ) -> &'a Signal<CriticalSectionRawMutex, InterfacePublicationOutcome> {
+        &self.control.publication
+    }
+
     pub(super) fn wait(&self) -> impl core::future::Future<Output = LoRaApplyRequest> + '_ {
         self.control.requests.wait()
     }
 
-    pub(super) fn complete(&self, id: u32, outcome: LoRaApplyOutcome) {
+    pub(super) fn complete(&self, id: u64, outcome: LoRaApplyOutcome) {
         self.control.results.signal(LoRaApplyResult { id, outcome });
     }
 }
@@ -115,6 +157,32 @@ impl Default for LoRaControl {
     }
 }
 
+impl prns_core::interfaces::lora::configuration::ConfigurationRadio for LoRaController<'_> {
+    async fn perform(
+        &mut self,
+        operation: prns_core::interfaces::lora::configuration::RadioConfigurationOperation,
+    ) -> prns_core::interfaces::lora::configuration::ConfigurationCompletion {
+        use prns_core::interfaces::lora::configuration::{
+            ConfigurationCompletion, RadioConfigurationOperation,
+        };
+        let command = match operation {
+            RadioConfigurationOperation::Quiesce => LoRaConfigurationCommand::Quiesce,
+            RadioConfigurationOperation::Stage(configuration) => {
+                LoRaConfigurationCommand::Stage(configuration)
+            }
+            RadioConfigurationOperation::Publish => LoRaConfigurationCommand::Publish,
+            RadioConfigurationOperation::Resume => LoRaConfigurationCommand::Resume,
+            RadioConfigurationOperation::Hold => LoRaConfigurationCommand::Hold,
+        };
+        match self.request(command).await {
+            LoRaApplyOutcome::Applied => ConfigurationCompletion::Succeeded,
+            LoRaApplyOutcome::Rejected | LoRaApplyOutcome::IdentityExhausted => {
+                ConfigurationCompletion::Failed
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,14 +190,20 @@ mod tests {
     use core::task::{Context, Poll};
     use embassy_futures::join::join;
     use prns_core::interfaces::lora::TxPower;
-    use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
+    const US915_AUTO_LORA_PROFILE: RadioProfile =
+        RadioProfile::SubG(prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE);
     use std::boxed::Box;
     use std::task::Waker;
 
     fn block_on<F: Future>(future: F) -> F::Output {
         let mut context = Context::from_waker(Waker::noop());
         let mut future = Box::pin(future);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "control request failed to settle"
+            );
             match future.as_mut().poll(&mut context) {
                 Poll::Ready(output) => return output,
                 Poll::Pending => std::thread::yield_now(),
@@ -209,10 +283,13 @@ mod tests {
         let (mut controller, target) = control.split();
         let first = US915_AUTO_LORA_PROFILE;
         let second = first.with_tx_power(TxPower::new(12)).unwrap();
+        assert!(!target.has_pending());
         let mut cancelled = Box::pin(controller.apply(first));
         let mut context = Context::from_waker(Waker::noop());
         assert_eq!(cancelled.as_mut().poll(&mut context), Poll::Pending);
+        assert!(target.has_pending());
         let abandoned = block_on(target.wait());
+        assert!(!target.has_pending());
         assert_eq!(abandoned.command, LoRaConfigurationCommand::Apply(first));
         drop(cancelled);
 
@@ -223,5 +300,66 @@ mod tests {
             target.complete(current.id, LoRaApplyOutcome::Applied);
         }));
         assert_eq!(outcome, LoRaApplyOutcome::Applied);
+    }
+    #[test]
+    fn exhausted_identity_does_not_submit_or_wrap_a_request() {
+        let mut control = LoRaControl::new();
+        let (mut controller, target) = control.split();
+        controller.next_id = u64::MAX;
+        assert_eq!(
+            block_on(controller.quiesce()),
+            LoRaApplyOutcome::IdentityExhausted
+        );
+        assert_eq!(controller.next_id, u64::MAX);
+        assert!(!target.has_pending());
+    }
+    #[test]
+    fn configuration_radio_adapter_preserves_every_operation_and_completion() {
+        use prns_core::interfaces::lora::configuration::{
+            ConfigurationCompletion, ConfigurationRadio, RadioConfigurationOperation as Operation,
+        };
+        for (operation, command) in [
+            (Operation::Quiesce, LoRaConfigurationCommand::Quiesce),
+            (
+                Operation::Stage(LoRaConfigurationState::Unconfigured),
+                LoRaConfigurationCommand::Stage(LoRaConfigurationState::Unconfigured),
+            ),
+            (Operation::Publish, LoRaConfigurationCommand::Publish),
+            (Operation::Resume, LoRaConfigurationCommand::Resume),
+            (Operation::Hold, LoRaConfigurationCommand::Hold),
+        ] {
+            for (outcome, expected) in [
+                (
+                    LoRaApplyOutcome::Applied,
+                    ConfigurationCompletion::Succeeded,
+                ),
+                (LoRaApplyOutcome::Rejected, ConfigurationCompletion::Failed),
+            ] {
+                let mut control = LoRaControl::default();
+                let (mut controller, target) = control.split();
+                let (result, ()) = block_on(join(controller.perform(operation), async {
+                    let request = target.wait().await;
+                    assert_eq!(request.command, command);
+                    target.complete(request.id, outcome);
+                }));
+                assert_eq!(result, expected);
+            }
+        }
+        let mut control = LoRaControl::default();
+        let (mut controller, target) = control.split();
+        let (result, ()) = block_on(join(
+            controller.apply_configuration(LoRaConfigurationState::Unconfigured),
+            async {
+                let request = target.wait().await;
+                assert_eq!(request.command, LoRaConfigurationCommand::Clear);
+                target.complete(request.id, LoRaApplyOutcome::Applied);
+            },
+        ));
+        assert_eq!(result, LoRaApplyOutcome::Applied);
+        controller.next_id = u64::MAX;
+        assert_eq!(
+            block_on(controller.perform(Operation::Hold)),
+            ConfigurationCompletion::Failed
+        );
     }
 }

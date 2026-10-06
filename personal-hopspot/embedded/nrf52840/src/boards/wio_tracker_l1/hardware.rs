@@ -40,7 +40,7 @@ type WioSpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
 
 type WioRadio = Sx126x<WioSpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type WioLoraInterface = LoRaInterface<'static, WioRadio>;
+pub(crate) type WioLoraInterface = LoRaInterface<'static, 'static, WioRadio>;
 
 pub(crate) type WioDisplayBringup = BoardDisplay<super::DisplayDriver>;
 

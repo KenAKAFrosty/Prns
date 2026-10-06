@@ -20,8 +20,11 @@ pub use config::{
 };
 pub use sub_ghz_power::SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE;
 
-use super::{LoRaRadio, RadioRecovery};
+use super::{BandRadioError, LoRaRadio, RadioRecovery};
 pub use super::{RadioEvent, ReceivedAirFrame};
+#[cfg(feature = "lora-2g4")]
+pub use config::HighFrequencyPath;
+use prns_core::interfaces::lora::LoRaProfile;
 use protocol::{
     antenna_referred_rssi_dbm, classify_receive_irq, command_with_u32, command_with_u8, irq,
     lora_ldro, op, opcode, radio_config, sync_word_command, FirmwareVersion, IrqEventKind,
@@ -73,6 +76,7 @@ pub enum Error {
     CommandRejected,
     NotInitialized,
     UnsupportedTransmitPower(i8),
+    UnsupportedProfile,
     Crc,
     Timeout,
     BufferTooSmall,
@@ -252,7 +256,9 @@ where
         }
     }
 
-    async fn initialize_profile(&mut self, profile: RadioProfile) -> Result<(), Error> {
+    async fn initialize_profile(&mut self, profile: LoRaProfile) -> Result<(), Error> {
+        self.validate_band_profile(profile)
+            .map_err(|_| Error::UnsupportedProfile)?;
         self.state = RadioState::Uninitialized;
         let config = radio_config(profile);
         self.hard_reset().await?;
@@ -271,7 +277,7 @@ where
         self.set_network(config.network, firmware).await?;
         self.set_rf_frequency(config.frequency_hz).await?;
         self.set_modulation_params(config.modulation).await?;
-        self.set_transmit_power(config.tx_power_dbm).await?;
+        self.set_profile_transmit_power(profile).await?;
         self.set_packet_params(config.packet, RECEIVE_MAXIMUM_PAYLOAD)
             .await?;
         self.set_receive_gain().await?;
@@ -416,10 +422,31 @@ where
         .await
     }
 
+    async fn set_profile_transmit_power(&mut self, profile: LoRaProfile) -> Result<(), Error> {
+        match profile {
+            LoRaProfile::SubG(profile) => self.set_transmit_power(profile.tx_power().dbm()).await,
+            #[cfg(feature = "lora-2g4")]
+            LoRaProfile::Ghz24(profile) => {
+                self.write_power_config(PowerAmplifierConfig {
+                    chip_output_power_dbm: profile.tx_power().dbm(),
+                    selection: PowerAmplifierSelection::HighFrequency,
+                    supply: PowerAmplifierSupply::Regulator,
+                    duty_cycle: PowerAmplifierDutyCycle::new(0),
+                    high_power_selection: HighPowerSelection::new(0),
+                })
+                .await
+            }
+        }
+    }
+
     async fn set_transmit_power(&mut self, output_power_dbm: i8) -> Result<(), Error> {
         let Some(config) = self.board.power_amplifier.configuration(output_power_dbm) else {
             return Err(Error::UnsupportedTransmitPower(output_power_dbm));
         };
+        self.write_power_config(config).await
+    }
+
+    async fn write_power_config(&mut self, config: PowerAmplifierConfig) -> Result<(), Error> {
         self.write_command(&[
             opcode(op::SET_PA_CONFIG)[0],
             opcode(op::SET_PA_CONFIG)[1],
@@ -665,6 +692,50 @@ where
         Ok(())
     }
 
+    fn validate_band_profile(
+        &self,
+        profile: LoRaProfile,
+    ) -> Result<(), RadioProfileCompatibilityError> {
+        match profile {
+            LoRaProfile::SubG(profile) => self.validate_profile(profile),
+            #[cfg(feature = "lora-2g4")]
+            LoRaProfile::Ghz24(profile) => {
+                let maximum_dbm = match (&self.board.part, &self.board.high_frequency) {
+                    (Lr11xxPart::Lr1121, HighFrequencyPath::Regulated { maximum_power_dbm }) => {
+                        *maximum_power_dbm
+                    }
+                    (
+                        Lr11xxPart::Lr1110,
+                        HighFrequencyPath::Unavailable | HighFrequencyPath::Regulated { .. },
+                    )
+                    | (Lr11xxPart::Lr1121, HighFrequencyPath::Unavailable) => {
+                        return Err(RadioProfileCompatibilityError::UnsupportedBand)
+                    }
+                };
+                let power_dbm = profile.tx_power().dbm();
+                if power_dbm > maximum_dbm {
+                    return Err(
+                        RadioProfileCompatibilityError::TransmitPowerOutsideRadioRange {
+                            power_dbm,
+                            minimum_dbm: -18,
+                            maximum_dbm,
+                        },
+                    );
+                }
+                Ok(())
+            }
+        }
+    }
+
+    async fn initialize_band(
+        &mut self,
+        profile: LoRaProfile,
+    ) -> Result<(), BandRadioError<Self::Error>> {
+        self.initialize_profile(profile)
+            .await
+            .map_err(BandRadioError::Radio)
+    }
+
     fn recovery(error: &Self::Error) -> RadioRecovery {
         match error {
             Error::Spi
@@ -677,14 +748,15 @@ where
             | Error::NotInitialized
             | Error::Timeout
             | Error::UnexpectedInterrupt(_) => RadioRecovery::Reinitialize,
-            Error::UnsupportedTransmitPower(_) | Error::Crc | Error::BufferTooSmall => {
-                RadioRecovery::Continue
-            }
+            Error::UnsupportedTransmitPower(_)
+            | Error::UnsupportedProfile
+            | Error::Crc
+            | Error::BufferTooSmall => RadioRecovery::Continue,
         }
     }
 
     async fn initialize(&mut self, profile: RadioProfile) -> Result<(), Self::Error> {
-        self.initialize_profile(profile).await
+        self.initialize_profile(profile.into()).await
     }
 
     async fn idle(&mut self) -> Result<(), Self::Error> {
