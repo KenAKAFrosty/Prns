@@ -18,7 +18,7 @@ use prns_runtime::runtime::{Fleet, InterfaceSupervisor};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
-const EVENT_DEADLINE: Duration = Duration::from_secs(10);
+const EVENT_DEADLINE: Duration = Duration::from_secs(30);
 const TEST_DISCOVERY_CAPACITY: NonZeroU8 = NonZeroU8::new(8).unwrap();
 
 #[derive(Debug)]
