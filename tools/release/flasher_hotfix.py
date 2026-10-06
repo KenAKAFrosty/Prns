@@ -193,8 +193,6 @@ def parse_spec(path: Path, shipping_boards: set[str] | None = None) -> HotfixSpe
     qualification = document.get("qualification")
     if not isinstance(release, dict) or set(release) != RELEASE_FIELDS:
         raise ValueError("hotfix release identity has an unsupported shape")
-    if not isinstance(qualification, dict) or set(qualification) != QUALIFICATION_FIELDS:
-        raise ValueError("hotfix qualification contract has an unsupported shape")
 
     version = require_version(release.get("version"), "hotfix version")
     base_version = require_version(release.get("base_version"), "hotfix base version")
@@ -219,26 +217,39 @@ def parse_spec(path: Path, shipping_boards: set[str] | None = None) -> HotfixSpe
     changed_boards = require_tokens(document.get("changed_boards"), "changed_boards")
     if shipping_boards is not None and not set(changed_boards) <= shipping_boards:
         raise ValueError("changed_boards must be a subset of the shipping board set")
-    surfaces = require_tokens(qualification.get("surfaces"), "qualification surfaces")
-    if not set(surfaces) <= SURFACES:
-        raise ValueError("hotfix qualification surfaces must be cli and/or web")
-    required_scenarios = require_tokens(
-        qualification.get("required_scenarios"), "required_scenarios"
-    )
-    required_checks = require_tokens(
-        qualification.get("required_checks"), "required_checks"
-    )
-    physical_boards = require_tokens(
-        qualification.get("physical_boards"), "physical_boards"
-    )
-    deferred_hardware = parse_deferrals(qualification.get("deferred_hardware"))
-    deferred_boards = {entry.board for entry in deferred_hardware}
-    if set(physical_boards) & deferred_boards:
-        raise ValueError("physical_boards and deferred_hardware must be disjoint")
-    if set(physical_boards) | deferred_boards != set(changed_boards):
-        raise ValueError(
-            "physical_boards and deferred_hardware must exactly partition changed_boards"
+    from flasher_acceptance_contract import software_qualification
+
+    if software_qualification(version):
+        if qualification != {"mode": "automated"}:
+            raise ValueError("pre-1.0 hotfix qualification must select automated mode")
+        surfaces = ()
+        required_scenarios = ()
+        required_checks = ()
+        physical_boards = ()
+        deferred_hardware = ()
+    else:
+        if not isinstance(qualification, dict) or set(qualification) != QUALIFICATION_FIELDS:
+            raise ValueError("hotfix qualification contract has an unsupported shape")
+        surfaces = require_tokens(qualification.get("surfaces"), "qualification surfaces")
+        if not set(surfaces) <= SURFACES:
+            raise ValueError("hotfix qualification surfaces must be cli and/or web")
+        required_scenarios = require_tokens(
+            qualification.get("required_scenarios"), "required_scenarios"
         )
+        required_checks = require_tokens(
+            qualification.get("required_checks"), "required_checks"
+        )
+        physical_boards = require_tokens(
+            qualification.get("physical_boards"), "physical_boards"
+        )
+        deferred_hardware = parse_deferrals(qualification.get("deferred_hardware"))
+        deferred_boards = {entry.board for entry in deferred_hardware}
+        if set(physical_boards) & deferred_boards:
+            raise ValueError("physical_boards and deferred_hardware must be disjoint")
+        if set(physical_boards) | deferred_boards != set(changed_boards):
+            raise ValueError(
+                "physical_boards and deferred_hardware must exactly partition changed_boards"
+            )
     summary = require_text(document.get("summary"), "hotfix summary")
 
     return HotfixSpec(

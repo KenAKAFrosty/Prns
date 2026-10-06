@@ -94,10 +94,22 @@ fn main() -> io::Result<()> {
     };
 
     let shared = repo.join("assets/nnpages");
+    let nav = fs::read_to_string(shared.join("nav.mu"))?;
+    let nav = if env::var_os("CARGO_FEATURE_OMIT_COMING_FROM_RNS").is_some() {
+        const COMING_FROM_RNS_LINK: &str =
+            "`F6eb`_`[Coming from RNS?`:/page/coming-from-rns.mu]`_`f   ";
+        ensure(
+            nav.contains(COMING_FROM_RNS_LINK),
+            "shared navigation is missing the Coming from RNS link",
+        )?;
+        nav.replace(COMING_FROM_RNS_LINK, "")
+    } else {
+        nav
+    };
     let hopspot_head = [
         fs::read_to_string(shared.join("masthead.mu"))?,
         fs::read_to_string(manifest.join("src/node_pages/hopspot_welcome.mu"))?,
-        fs::read_to_string(shared.join("nav.mu"))?,
+        nav.clone(),
         fs::read_to_string(shared.join("why_prns.mu"))?,
         fs::read_to_string(shared.join("license.mu"))?,
         fs::read_to_string(shared.join("quote.mu"))?,
@@ -106,7 +118,7 @@ fn main() -> io::Result<()> {
     let browser_head = [
         fs::read_to_string(shared.join("masthead.mu"))?,
         fs::read_to_string(manifest.join("src/node_pages/browser_welcome.mu"))?,
-        fs::read_to_string(shared.join("nav.mu"))?,
+        nav.clone(),
         fs::read_to_string(shared.join("why_prns.mu"))?,
         fs::read_to_string(shared.join("license.mu"))?,
         fs::read_to_string(shared.join("quote.mu"))?,

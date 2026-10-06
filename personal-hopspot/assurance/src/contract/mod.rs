@@ -14,9 +14,9 @@ pub use matrix::{
 };
 pub use personal_hopspot_builder::{RepositoryCommit as SourceCommit, WorkingTreeFingerprint};
 pub use proof::{
-    EvidenceArtifact, EvidenceGap, Failure, FailureKind, MiriCoverage, PlatformMilestone,
-    ProofArtifactKind, ProofContractError, ProofEvidence, ProofFragment, ProofKind, SourceCustody,
-    SourceIdentity, Subject, ToolIdentity, ToolKind, UnavailableReason, Verdict,
-    PROOF_FRAGMENT_SCHEMA_VERSION,
+    EvidenceArtifact, EvidenceGap, Failure, FailureKind, MiriCoverage, MiriScope,
+    PlatformMilestone, ProofArtifactKind, ProofContractError, ProofEvidence, ProofFragment,
+    ProofKind, SourceCustody, SourceIdentity, Subject, ToolIdentity, ToolKind, UnavailableReason,
+    Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
 };
 pub use value::{EvidenceFingerprint, EvidencePath, ValueError};

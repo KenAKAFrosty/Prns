@@ -13,6 +13,7 @@ import {
   recoveryGuidance,
   sha256Hex,
   validateUf2Artifact,
+  validateUf2HandOffRequest,
   validateRequest,
 } from "../src/core.js";
 import { testingContract } from "../src/contract.js";
@@ -114,6 +115,33 @@ test("ESP serial filters are explicit, bounded, and unique", () => {
   }
 });
 
+test("UF2 hand-off request is the exact Personal Hopspot identity with the hand-off verb", () => {
+  const handOff = () => ({
+    schema: 1,
+    boardSlug: "t1000-e",
+    managedApplication: { ...nrfRequest().nrfSerialDfu.managedApplication, request: 0x55 },
+  });
+  assert.equal(validateUf2HandOffRequest(handOff()).boardSlug, "t1000-e");
+
+  for (const mutate of [
+    (candidate) => { candidate.schema = 2; },
+    (candidate) => { candidate.boardSlug = "T1000 E"; },
+    (candidate) => { candidate.boardSlug = "t-echo"; },
+    (candidate) => { candidate.parts = []; },
+    (candidate) => { candidate.managedApplication.request = 0x50; },
+    (candidate) => { candidate.managedApplication.value = 0x5053; },
+    (candidate) => { candidate.managedApplication.product = "T1000-E"; },
+    (candidate) => { delete candidate.managedApplication.serialNumber; },
+  ]) {
+    const candidate = handOff();
+    mutate(candidate);
+    assert.throws(
+      () => validateUf2HandOffRequest(candidate),
+      /unsupported|supports only T1000-E|invalid|exact Personal Hopspot/,
+    );
+  }
+});
+
 test("T1000-E Nordic serial DFU identity is exact and closed", () => {
   const value = nrfRequest();
   assert.equal(validateRequest(value).nrfSerialDfu.entry, "managed-application");
@@ -175,11 +203,11 @@ test("transport-specific request identity is complete and bounded", () => {
   delete uf2.installMode;
   delete uf2.eraseConfirmed;
   assert.equal(validateRequest(uf2).mountLabel, "TECHOBOOT");
-  for (const mountLabel of ["", ".UF2", "BAD LABEL", "../UF2", "UF2/BOOT", "A".repeat(33)]) {
+  for (const mountLabel of ["", ".UF2", " BAD LABEL", "BAD LABEL ", "BAD\tLABEL", "../UF2", "UF2/BOOT", "A".repeat(33)]) {
     uf2.mountLabel = mountLabel;
     assert.throws(() => validateRequest(uf2), /UF2 target identity is incomplete/);
   }
-  for (const mountLabel of ["T114_BOOT", "UF2.1"]) {
+  for (const mountLabel of ["T114_BOOT", "UF2.1", "TRACKER L1"]) {
     uf2.mountLabel = mountLabel;
     assert.equal(validateRequest(uf2).mountLabel, mountLabel);
   }

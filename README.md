@@ -148,9 +148,9 @@ Your network and apps don't change, just your daemon does.
 
 The Prns daemon, `prnsd`, takes the role `rnsd` holds today. It handles your current config and identity, and your apps carry over unchanged.
 
-Among what you gain: brand-new interfaces, a built-in operator CLI, observability out of the box, and [up to 89× the throughput](benchmarks/RESULTS.md) in published benchmarks you can rerun yourself. [Here's the full before-and-after](docs/coming-from-rns.md).
+Among what you gain: brand-new interfaces, a built-in operator CLI, observability out of the box, and [up to 110× the throughput](benchmarks/RESULTS.md) in published benchmarks you can rerun yourself. [Here's the full before-and-after](docs/coming-from-rns.md).
 
-> 89× is the best published result (single-packet throughput on macOS), but most scenarios land between 3× and 20× depending on host and workload
+> The peak is 110.22× for single-packet throughput on an Apple M4 against stock interpreted RNS 1.5.4. Across 30 published host/scenario comparisons, the middle half is roughly 5×–25× (median 9.62×); the full range is 1.02×–110.22×. These are loopback measurements, not promised radio or application speedups. [Scope and calculation](benchmarks/README.md#published-performance-summary).
 
 #### Looking for something specific?
 

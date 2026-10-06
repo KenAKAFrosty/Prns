@@ -41,6 +41,19 @@ use super::interface_status::account_protocol_violation;
 use super::packet_phy::retain_packet_phy;
 use super::EmbassyInterfaceStatus;
 
+// Use one callback type for ingress and command continuations so their large
+// inline-work dispatcher is shared in firmware instead of monomorphized twice.
+fn persist_and_notify<'a, S: StorageLayout>(
+    persistence: &'a mut impl ManifoldPersistence<S>,
+    on_journaled: &'a mut impl FnMut(Journaled<'_>),
+    now: crate::engine::InstantMillis,
+) -> impl FnMut(Journaled<'_>) + 'a {
+    move |journaled| {
+        persistence.observe(&journaled, now);
+        on_journaled(journaled);
+    }
+}
+
 const RNS_PATH_TABLE_MAX_ENTRIES: usize = 8;
 pub const RNS_PATH_TABLE_RESPONSE_BYTES: usize = RESPONSE_WIRE_OVERHEAD
     + 1
@@ -299,10 +312,7 @@ pub(crate) async fn run_pooled<
                                         ifacs,
                                         &mut pacers,
                                         now,
-                                        &mut |journaled| {
-                                            persistence.observe(&journaled, now);
-                                            on_journaled(journaled);
-                                        },
+                                        &mut persist_and_notify(persistence, &mut on_journaled, now),
                                         &mut owed_work,
                                     )
                                 },
@@ -319,10 +329,7 @@ pub(crate) async fn run_pooled<
                             frame_accounting_statuses,
                             now,
                             &mut should_prove,
-                            &mut |journaled| {
-                                persistence.observe(&journaled, now);
-                                on_journaled(journaled);
-                            },
+                            &mut persist_and_notify(persistence, &mut on_journaled, now),
                         );
                         account_protocol_violation(
                             frame_accounting_statuses,
@@ -361,10 +368,7 @@ pub(crate) async fn run_pooled<
                                 ifacs,
                                 &mut pacers,
                                 now,
-                                &mut |journaled| {
-                                    persistence.observe(&journaled, now);
-                                    on_journaled(journaled);
-                                },
+                                &mut persist_and_notify(persistence, &mut on_journaled, now),
                                 &mut owed_work,
                             )
                         },
@@ -398,10 +402,7 @@ pub(crate) async fn run_pooled<
                                     ifacs,
                                     &mut pacers,
                                     now,
-                                    &mut |journaled| {
-                                        persistence.observe(&journaled, now);
-                                        on_journaled(journaled);
-                                    },
+                                    &mut persist_and_notify(persistence, &mut on_journaled, now),
                                 )
                             },
                         )
@@ -418,10 +419,7 @@ pub(crate) async fn run_pooled<
                     frame_accounting_statuses,
                     now,
                     &mut should_prove,
-                    &mut |journaled| {
-                        persistence.observe(&journaled, now);
-                        on_journaled(journaled);
-                    },
+                    &mut persist_and_notify(persistence, &mut on_journaled, now),
                 ));
                 merge_wake_schedules_delta(
                     &mut wake_schedules,
@@ -445,10 +443,7 @@ pub(crate) async fn run_pooled<
                             ifacs,
                             &mut pacers,
                             now,
-                            &mut |journaled| {
-                                persistence.observe(&journaled, now);
-                                on_journaled(journaled);
-                            },
+                            &mut persist_and_notify(persistence, &mut on_journaled, now),
                         )
                     },
                 );
@@ -526,10 +521,7 @@ pub(crate) async fn run_pooled<
                                 ifacs,
                                 &mut pacers,
                                 now,
-                                &mut |journaled| {
-                                    persistence.observe(&journaled, now);
-                                    on_journaled(journaled);
-                                },
+                                &mut persist_and_notify(persistence, &mut on_journaled, now),
                             )
                         },
                     );

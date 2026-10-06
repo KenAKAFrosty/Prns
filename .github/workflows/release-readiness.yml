@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       matrix: ${{ steps.inventory.outputs.matrix }}
+      emulated: ${{ steps.inventory.outputs.emulated }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -45,7 +46,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
           test -z "$(git status --porcelain --untracked-files=no)"
           python3 validation/run.py verify
-          echo "matrix=$(python3 validation/run.py matrix --tier release)" >> "$GITHUB_OUTPUT"
+          echo "matrix=$(python3 validation/run.py matrix --tier release --emulators none)" >> "$GITHUB_OUTPUT"
+          echo "emulated=$(python3 validation/run.py matrix --tier release --emulators required)" >> "$GITHUB_OUTPUT"
 
   embedded-emulators:
     needs: inventory
@@ -76,7 +78,7 @@ jobs:
           path: ${{ runner.temp }}/prns-embedded-assurance.tar.xz
 
   qualify:
-    needs: [inventory, embedded-emulators]
+    needs: inventory
     name: ${{ matrix.id }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 260
@@ -89,7 +91,8 @@ jobs:
     defaults:
       run:
         shell: bash
-    steps:
+    # Both lanes use identical preparation, suite execution, and evidence uploads.
+    steps: &qualification-steps
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.sha }}
@@ -98,14 +101,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.96.0
-          components: clippy,rustfmt,llvm-tools-preview
+          components: clippy,rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: release-readiness-${{ matrix.id }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        # Firmware resource checks build the captive portal; release tests audit its tooling.
+        if: matrix.toolchain == 'node' || matrix.group == 'web' || matrix.group == 'esp' || matrix.domain == 'security' || matrix.domain == 'release'
         with:
           node-version: "24.18.0"
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        if: matrix.domain == 'oracles' || matrix.domain == 'interop' || matrix.domain == 'release'
       - name: Prepare nightly validation toolchain
         if: matrix.toolchain == 'nightly' || matrix.toolchain == 'kani'
         run: |
@@ -114,8 +120,12 @@ jobs:
       - name: Prepare embedded targets
         if: matrix.group == 'embedded' || matrix.group == 'esp' || matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
         run: rustup target add --toolchain 1.96.0 riscv32imac-unknown-none-elf thumbv7em-none-eabihf
+      - name: Prepare embedded object inspection tools
+        if: matrix.group == 'embedded' || matrix.group == 'esp' || matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
+        run: rustup component add --toolchain 1.96.0 llvm-tools-preview
       - name: Prepare Linux native development packages
-        if: runner.os == 'Linux' && matrix.platform != 'android-device'
+        # Core proofs, fuzz targets, and stock-RNS oracles do not link system D-Bus.
+        if: runner.os == 'Linux' && matrix.platform != 'android-device' && matrix.domain != 'kani' && matrix.domain != 'fuzz' && matrix.domain != 'oracles'
         run: |
           packages=(libdbus-1-dev pkg-config)
           if [[ "${{ matrix.group }}" == linux-host ]]; then
@@ -233,9 +243,25 @@ jobs:
             target/flash-artifacts/resources/configured/work/*/function-boundaries.json
             target/flash-artifacts/resources/configured/work/*/stack-evidence.json
 
+  qualify-emulated:
+    needs: [inventory, embedded-emulators]
+    name: ${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 260
+    env:
+      RUSTUP_TOOLCHAIN: 1.96.0
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJSON(needs.inventory.outputs.emulated) }}
+    defaults:
+      run:
+        shell: bash
+    steps: *qualification-steps
+
   embedded-assurance:
     if: always()
-    needs: [inventory, qualify]
+    needs: [inventory, qualify, qualify-emulated]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -258,13 +284,25 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: release-readiness-embedded-*-${{ github.run_id }}
-          path: target/flash-artifacts/assurance/proofs
+          path: validation-artifacts
           merge-multiple: true
+      - name: Require every embedded proof attempt
+        run: |
+          python3 validation/run.py aggregate \
+            --tier release \
+            --domain hardening \
+            --suite embedded-isa-thumbv7em \
+            --suite embedded-isa-riscv32imac \
+            --suite embedded-isa-xtensa-esp32s3 \
+            --suite embedded-miri-quick \
+            --suite embedded-platform-nrf52840 \
+            --suite embedded-platform-esp32s3 \
+            --expected-sha "$GITHUB_SHA"
       - name: Compose complete release embedded assurance
         run: |
           ./tools/prns build embedded assurance summarize \
             --resources target/flash-artifacts/assurance/resources \
-            --proofs target/flash-artifacts/assurance/proofs \
+            --proofs validation-artifacts/results \
             --output target/flash-artifacts/assurance/matrix
       - name: Publish embedded assurance matrix to the job summary
         run: cat target/flash-artifacts/assurance/matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"
@@ -277,7 +315,7 @@ jobs:
 
   aggregate:
     if: always()
-    needs: [inventory, qualify, embedded-assurance]
+    needs: [inventory, qualify, qualify-emulated, embedded-assurance]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -286,6 +324,12 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: release-embedded-assurance
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: release-readiness-*-${{ github.run_id }}

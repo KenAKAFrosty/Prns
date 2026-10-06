@@ -434,6 +434,8 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
             RemoteControlRequestKind::AppMessage,
             RemoteControlRequestKind::WatchInterfaces,
+            RemoteControlRequestKind::SetNodeName,
+            RemoteControlRequestKind::DescribeNodeName,
         ],
     );
     assert_eq!(
@@ -471,6 +473,8 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups,
             RemoteControlResponseKind::AppMessage,
             RemoteControlResponseKind::WatchInterfaces,
+            RemoteControlResponseKind::SetNodeName,
+            RemoteControlResponseKind::DescribeNodeName,
             RemoteControlResponseKind::ProtocolError,
         ],
     );
@@ -2004,4 +2008,108 @@ proptest! {
             prop_assert_eq!(RemoteControlResponse::parse(encoded), Ok(response));
         }
     }
+}
+
+#[test]
+fn node_names_are_trimmed_bounded_printable_utf8() {
+    assert!(RemoteControlNodeName::new("Rooftop RAK").is_some());
+    assert!(RemoteControlNodeName::new("Λ גג 🛰").is_some());
+    assert!(RemoteControlNodeName::new(&"a".repeat(REMOTE_CONTROL_NODE_NAME_CAP)).is_some());
+    for refused in [
+        "",
+        " leading",
+        "trailing ",
+        "tab\there",
+        "line\nbreak",
+        &"a".repeat(REMOTE_CONTROL_NODE_NAME_CAP + 1),
+    ] {
+        assert_eq!(RemoteControlNodeName::new(refused), None, "{refused:?}");
+    }
+}
+
+#[test]
+fn node_name_requests_and_responses_round_trip_and_reject_malformed_bodies() {
+    let name = RemoteControlNodeName::new("Rooftop RAK").unwrap();
+    for request in [
+        RemoteControlRequest::SetNodeName { name },
+        RemoteControlRequest::DescribeNodeName,
+    ] {
+        let mut bytes = [0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let written = request.write_into(&mut bytes).unwrap();
+        assert_eq!(written, request.encoded_len());
+        assert_eq!(
+            RemoteControlRequest::parse(bytes.get(..written).unwrap()),
+            Ok(request)
+        );
+    }
+    let malformed = |kind: RemoteControlRequestKind, body: &[u8]| {
+        let mut bytes = vec![
+            RemoteControlProtocolVersion::V1.wire_value(),
+            kind.wire_value(),
+        ];
+        bytes.extend_from_slice(body);
+        RemoteControlRequest::parse(&bytes)
+    };
+    let refused = Err(crate::remote_control::RemoteControlRequestParseError::Malformed);
+    assert_eq!(
+        malformed(RemoteControlRequestKind::DescribeNodeName, &[0]),
+        refused
+    );
+    assert_eq!(
+        malformed(RemoteControlRequestKind::SetNodeName, &[]),
+        refused
+    );
+    assert_eq!(
+        malformed(RemoteControlRequestKind::SetNodeName, &[3, b'a', b'b']),
+        refused
+    );
+    assert_eq!(
+        malformed(RemoteControlRequestKind::SetNodeName, &[2, b' ', b'a']),
+        refused
+    );
+    assert_eq!(
+        malformed(RemoteControlRequestKind::SetNodeName, &[2, 0xff, 0xfe]),
+        refused
+    );
+
+    let longest = RemoteControlNodeName::new(&"n".repeat(REMOTE_CONTROL_NODE_NAME_CAP)).unwrap();
+    for (response, kind) in [
+        (
+            RemoteControlResponse::SetNodeName(RemoteControlApplyOutcome::Applied),
+            RemoteControlRequestKind::SetNodeName,
+        ),
+        (
+            RemoteControlResponse::DescribeNodeName(longest),
+            RemoteControlRequestKind::DescribeNodeName,
+        ),
+    ] {
+        let mut bytes = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
+        let written = response.write_into(&mut bytes).unwrap();
+        assert_eq!(
+            RemoteControlResponse::parse(bytes.get(..written).unwrap()),
+            Ok(response)
+        );
+        assert!(written <= kind.maximum_response_encoded_len());
+    }
+}
+
+#[test]
+fn node_name_snapshots_round_trip_and_refuse_unknown_versions() {
+    let name = RemoteControlNodeName::new("Rooftop RAK").unwrap();
+    let mut encoded = [0u8; NODE_NAME_SNAPSHOT_MAX_LEN];
+    let written = name.encode_snapshot(&mut encoded);
+    assert_eq!(
+        RemoteControlNodeName::decode_snapshot(encoded.get(..written).unwrap()),
+        Some(name)
+    );
+    let mut future = encoded;
+    future[0] = NODE_NAME_SNAPSHOT_VERSION + 1;
+    assert_eq!(
+        RemoteControlNodeName::decode_snapshot(future.get(..written).unwrap()),
+        None
+    );
+    assert_eq!(
+        RemoteControlNodeName::decode_snapshot(encoded.get(..written - 1).unwrap()),
+        None
+    );
 }

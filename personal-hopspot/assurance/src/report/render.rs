@@ -26,7 +26,7 @@ pub fn matrix(matrix: &AssuranceMatrix) -> String {
         let capability = result.capability();
         let (verdict, details) = match result {
             CapabilityResult::Observed { proof, .. } => {
-                (verdict_name(&proof.verdict), verdict_detail(&proof.verdict))
+                (verdict_name(&proof.verdict), proof_detail(&proof.verdict))
             }
             CapabilityResult::Unavailable { reason, .. } => {
                 ("unavailable", unavailable_reason(*reason).to_string())
@@ -74,6 +74,31 @@ fn verdict_name<T>(verdict: &Verdict<T>) -> &'static str {
         Verdict::Failed { .. } => "failed",
         Verdict::Partial { .. } => "partial",
         Verdict::Unavailable { .. } => "unavailable",
+    }
+}
+
+fn proof_detail(verdict: &Verdict<crate::contract::ProofEvidence>) -> String {
+    use crate::contract::{MiriCoverage, MiriScope, ProofEvidence};
+    match verdict {
+        Verdict::Passed {
+            evidence:
+                ProofEvidence::Miri {
+                    scope,
+                    coverage,
+                    completed_tests,
+                },
+        } => {
+            let scope = match scope {
+                MiriScope::Focused => "focused",
+                MiriScope::Exhaustive => "exhaustive",
+            };
+            let models = match coverage {
+                MiriCoverage::Stacked => "Stacked Borrows",
+                MiriCoverage::StackedAndTree => "Stacked and Tree Borrows",
+            };
+            format!("{scope} Miri; {models}; {completed_tests} tests per model")
+        }
+        _ => verdict_detail(verdict),
     }
 }
 

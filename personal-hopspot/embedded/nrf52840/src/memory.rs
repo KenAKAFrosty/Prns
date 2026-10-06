@@ -18,12 +18,6 @@ impl NrfFirmwareMemory {
         narrow_address(self.region(role).range.start())
     }
 
-    #[cfg(any(
-        feature = "board-t-echo",
-        feature = "board-t096",
-        feature = "board-t114",
-        feature = "board-mesh-pocket"
-    ))]
     pub(crate) const fn two_flash_pages(&self, role: RegionRole) -> [u32; 2] {
         let region = self.region(role);
         let page_bytes = self.journal().page_bytes;

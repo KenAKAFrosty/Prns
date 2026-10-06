@@ -1,6 +1,7 @@
 mod appliance;
 mod bridge;
 mod contract;
+mod enrollment;
 mod model;
 mod protocol;
 mod release;
@@ -12,7 +13,7 @@ use dioxus_i18n::t;
 
 use crate::local_development;
 use crate::platforms::{
-    board_target_by_slug, Tier, IN_PROGRESS_BOARD_TARGETS, QUALIFICATION_BOARD_TARGETS,
+    board_target_by_slug, Tier, LINUX_APPLIANCE_BOARD_TARGETS, QUALIFICATION_BOARD_TARGETS,
     SHIPPING_BOARD_TARGETS, UPCOMING_BOARD_TARGETS,
 };
 use crate::routes::Route;
@@ -104,10 +105,10 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
                 "Beta"
             }
             h1 { class: "mt-3 text-3xl md:text-4xl font-semibold tracking-tight text-paper",
-                "Install a Personal Hopspot"
+                "Flash a Personal Hopspot"
             }
             p { class: "mt-4 max-w-3xl leading-relaxed text-soft",
-                "Choose your exact board. Supported firmware targets install a signed release from your browser, with every byte verified locally before it touches the device. Linux appliances use an application installation guide."
+                "Choose your device to get started. Flash a signed release from your browser, or follow the setup guide for your board."
             }
         }
 
@@ -128,20 +129,18 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
             }
         }
 
-        appliance::LinuxApplianceCard {}
-
         section { class: if selected_target.is_some() || selected_appliance.is_some() { "mt-12" } else { "mt-4" },
             h2 { class: "text-2xl font-semibold tracking-tight text-paper",
-                if selected_target.is_some() { "Change board" } else { "Select the exact board" }
+                if selected_target.is_some() || selected_appliance.is_some() { "Change board" } else { "Select the exact board" }
             }
             p { class: "mt-3 max-w-3xl leading-relaxed text-soft",
-                "Shipping targets flash from a signed public release. Boards in hardware qualification and final bring-up sit beside them and graduate in place."
+                "Each card shows the current support status and next steps for that device."
             }
             div { class: "mt-6 grid gap-4 md:grid-cols-2",
                 for board in SHIPPING_BOARD_TARGETS
                     .iter()
                     .chain(QUALIFICATION_BOARD_TARGETS.iter())
-                    .chain(IN_PROGRESS_BOARD_TARGETS.iter())
+                    .chain(LINUX_APPLIANCE_BOARD_TARGETS.iter())
                 {
                     BoardTargetCard {
                         key: "{board.slug}",

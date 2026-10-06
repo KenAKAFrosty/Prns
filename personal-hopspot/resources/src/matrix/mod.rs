@@ -6,7 +6,7 @@ mod tests;
 
 use std::collections::BTreeSet;
 
-use personal_hopspot_builder::architecture::{adapter_for, Adapter};
+use personal_hopspot_builder::architecture::{adapter_for, nrf52840_serial_dfu_adapter, Adapter};
 use personal_hopspot_builder::BuildError;
 use personal_hopspot_memory::{MemoryProfile, ValidationError};
 use prns_flash_manifest::{
@@ -103,6 +103,12 @@ pub enum MatrixError {
         target: &'static str,
         error: ValidationError,
     },
+    #[error("resource target {target:?} has an unsupported compiler adapter: {source}")]
+    Adapter {
+        target: String,
+        #[source]
+        source: BuildError,
+    },
     #[error("resource target ID {0:?} is duplicated")]
     DuplicateTarget(String),
     #[error("unknown resource target {0:?}")]
@@ -198,7 +204,12 @@ impl<'a> Matrix<'a> {
                         id: memory.id().0.to_string(),
                         display_name: board.display_name.clone(),
                         profile: memory.profile(),
-                        adapter: adapter_for(memory.architecture()),
+                        adapter: nrf52840_serial_dfu_adapter(&recipe.rust_target).map_err(
+                            |source| MatrixError::Adapter {
+                                target: board.slug.clone(),
+                                source,
+                            },
+                        )?,
                         recipe: TargetRecipe::SerialDfu { board, recipe },
                     });
                 }

@@ -903,6 +903,192 @@ mod tests {
     }
 
     #[test]
+    fn remote_profile_changes_and_clears_survive_a_reboot() {
+        use crate::apply_remote_subg_configuration;
+        let mut store = SubGConfigurationStore::new(ByteFlash::erased(), PAGES);
+        let mut active = SubGConfigurationState::Unconfigured;
+        for requested in [
+            SubGConfigurationState::Configured(manual_configuration_for(SubGRegion::Custom)),
+            SubGConfigurationState::Configured(Us915::auto_lora()),
+            SubGConfigurationState::Unconfigured,
+        ] {
+            let mut applied = Vec::new();
+            assert_eq!(
+                block_on(apply_remote_subg_configuration(
+                    async |state| {
+                        applied.push(state);
+                        Ok(())
+                    },
+                    &mut store,
+                    &mut active,
+                    requested,
+                )),
+                Ok(())
+            );
+            let mut rebooted = SubGConfigurationStore::new(
+                ByteFlash::from_bytes(store.flash.bytes.clone()),
+                PAGES,
+            );
+            assert_eq!(
+                (active, block_on(rebooted.load()).unwrap().state, applied),
+                (requested, requested, std::vec![requested])
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_remote_profile_never_changes_flash_or_active_state() {
+        use personal_rns::runtime::RemoteControlHostCommandError as Error;
+        let mut store = SubGConfigurationStore::new(ByteFlash::erased(), PAGES);
+        let mut active = SubGConfigurationState::Unconfigured;
+        let result = block_on(crate::apply_remote_subg_configuration(
+            async |_| Err(Error::ApplyFailed),
+            &mut store,
+            &mut active,
+            SubGConfigurationState::Configured(Us915::auto_lora()),
+        ));
+        assert_eq!(
+            (result, active, store.flash.writes, store.flash.erases),
+            (
+                Err(Error::ApplyFailed),
+                SubGConfigurationState::Unconfigured,
+                0,
+                0
+            )
+        );
+    }
+
+    #[test]
+    fn failed_remote_profile_save_restores_radio_and_reboot_state() {
+        use personal_rns::runtime::RemoteControlHostCommandError as Error;
+        let requested = SubGConfigurationState::Configured(Us915::auto_lora());
+        for flash in [
+            ByteFlash::erased().with_fault(Fault::WriteBefore(0)),
+            ByteFlash::erased()
+                .with_fault(Fault::WriteAfter(2))
+                .with_fault(Fault::ReadBefore(2)),
+        ] {
+            let mut store = SubGConfigurationStore::new(flash, PAGES);
+            let mut active = SubGConfigurationState::Unconfigured;
+            let mut applied = Vec::new();
+            let result = block_on(crate::apply_remote_subg_configuration(
+                async |state| {
+                    applied.push(state);
+                    Ok(())
+                },
+                &mut store,
+                &mut active,
+                requested,
+            ));
+            let mut rebooted =
+                SubGConfigurationStore::new(ByteFlash::from_bytes(store.flash.bytes), PAGES);
+            assert_eq!(
+                (
+                    result,
+                    active,
+                    block_on(rebooted.load()).unwrap().state,
+                    applied
+                ),
+                (
+                    Err(Error::PersistenceFailed),
+                    SubGConfigurationState::Unconfigured,
+                    SubGConfigurationState::Unconfigured,
+                    std::vec![requested, SubGConfigurationState::Unconfigured]
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn unconfirmed_flash_rollback_is_reported_instead_of_claiming_a_restored_profile() {
+        use personal_rns::runtime::RemoteControlHostCommandError as Error;
+        let flash = ByteFlash::erased()
+            .with_fault(Fault::WriteAfter(2))
+            .with_fault(Fault::ReadBefore(2))
+            .with_fault(Fault::WriteBefore(3));
+        let mut store = SubGConfigurationStore::new(flash, PAGES);
+        let mut active = SubGConfigurationState::Unconfigured;
+        let requested = SubGConfigurationState::Configured(Us915::auto_lora());
+        let result = block_on(crate::apply_remote_subg_configuration(
+            async |_| Ok(()),
+            &mut store,
+            &mut active,
+            requested,
+        ));
+        let mut rebooted =
+            SubGConfigurationStore::new(ByteFlash::from_bytes(store.flash.bytes), PAGES);
+        assert_eq!(
+            (result, active, block_on(rebooted.load()).unwrap().state),
+            (
+                Err(Error::RollbackFailed),
+                SubGConfigurationState::Unconfigured,
+                requested
+            )
+        );
+    }
+
+    #[test]
+    fn rejected_radio_rollback_preserves_the_actual_running_state() {
+        use personal_rns::runtime::RemoteControlHostCommandError as Error;
+        let mut store = SubGConfigurationStore::new(
+            ByteFlash::erased().with_fault(Fault::WriteBefore(0)),
+            PAGES,
+        );
+        let mut active = SubGConfigurationState::Unconfigured;
+        let requested = SubGConfigurationState::Configured(Us915::auto_lora());
+        let result = block_on(crate::apply_remote_subg_configuration(
+            async |state| {
+                if state == requested {
+                    Ok(())
+                } else {
+                    Err(Error::ApplyFailed)
+                }
+            },
+            &mut store,
+            &mut active,
+            requested,
+        ));
+        assert_eq!((result, active), (Err(Error::RollbackFailed), requested));
+    }
+
+    #[test]
+    fn retrying_the_running_profile_after_failed_rollback_confirms_durability() {
+        use personal_rns::runtime::RemoteControlHostCommandError as Error;
+        let mut store = SubGConfigurationStore::new(
+            ByteFlash::erased().with_fault(Fault::WriteBefore(0)),
+            PAGES,
+        );
+        let mut active = SubGConfigurationState::Unconfigured;
+        let requested = SubGConfigurationState::Configured(Us915::auto_lora());
+        assert_eq!(
+            block_on(crate::apply_remote_subg_configuration(
+                async |state| if state == requested {
+                    Ok(())
+                } else {
+                    Err(Error::ApplyFailed)
+                },
+                &mut store,
+                &mut active,
+                requested,
+            )),
+            Err(Error::RollbackFailed)
+        );
+        assert_eq!(active, requested);
+        assert_eq!(
+            block_on(crate::apply_remote_subg_configuration(
+                async |_| panic!("the radio already has the requested profile"),
+                &mut store,
+                &mut active,
+                requested,
+            )),
+            Ok(())
+        );
+        let mut rebooted =
+            SubGConfigurationStore::new(ByteFlash::from_bytes(store.flash.bytes), PAGES);
+        assert_eq!(block_on(rebooted.load()).unwrap().state, requested);
+    }
+
+    #[test]
     fn every_representable_configuration_round_trips() {
         let mut configurations = std::vec![Us915::auto_lora()];
         for region in RegulatoryRegion::ALL {

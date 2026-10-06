@@ -426,8 +426,8 @@ where
     M: RawMutex,
     P: ManifoldPersistence<S>,
 {
-    fn has_pending_discovery_group_change(&self) -> bool {
-        self.persistence.has_pending_discovery_group_change()
+    fn has_pending_configuration_change(&self) -> bool {
+        self.persistence.has_pending_configuration_change()
     }
 
     fn observe(&mut self, journaled: &Journaled<'_>, now: crate::engine::InstantMillis) {
@@ -498,7 +498,7 @@ where
                 .observe_remote_control_pairing_failure(failure);
             return;
         }
-        if self.persistence.has_pending_discovery_group_change() {
+        if self.persistence.has_pending_configuration_change() {
             self.persistence.progress(engine, now).await;
             return;
         }
@@ -1238,7 +1238,7 @@ mod tests {
     }
 
     impl ManifoldPersistence<GrowableHeap> for ScriptedPersistence {
-        fn has_pending_discovery_group_change(&self) -> bool {
+        fn has_pending_configuration_change(&self) -> bool {
             false
         }
 

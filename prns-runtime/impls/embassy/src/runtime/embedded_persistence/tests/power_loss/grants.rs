@@ -103,6 +103,32 @@ pub(super) async fn restore(image: [u8; CAPACITY], expected: &[Grant]) {
     );
 }
 
+#[test]
+fn retained_revocation_overrides_a_factory_grant_after_restart() {
+    embassy_futures::block_on(async {
+        let revoked = grant(0x42, Authority::Administrator, Request::Describe);
+        let empty = snapshot(&[]);
+        let mut flash = TestFlash::new();
+        flash.bytes = image(&empty, Campaign::Append).await;
+        let mut owner = EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+            flash,
+            LAYOUT,
+            EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0)),
+            FixedRouteSnapshotKeys::new(),
+            (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+        );
+        let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+        let mut remote = available_remote_control(&mut engine);
+        remote.set_controller_grant(revoked).unwrap();
+        let report = owner
+            .restore(&mut engine, &mut remote, InstantMillis(0))
+            .await;
+        assert_eq!(report.remote_control_controller_grants_refused_count, 0);
+        assert_eq!(report.remote_control_controller_grants_dropped_count, 0);
+        assert!(remote.controller_grants().unwrap().is_empty());
+    });
+}
+
 async fn store(
     image: [u8; CAPACITY],
     confirmed: &RemoteControlAuthorizationSnapshot,
@@ -174,77 +200,105 @@ async fn store(
     (image, trace)
 }
 
+enum GrantChange {
+    Update,
+    Revoke,
+}
+
 #[test]
-fn interrupted_grant_updates_and_revocations_restore_whole_authority_tables() {
+fn interrupted_grant_update_append_restores_whole_authority_tables() {
+    exercise_grant_change(Campaign::Append, GrantChange::Update, FaultPartition::All);
+}
+
+partitioned_campaign!(
+    interrupted_grant_update_compaction_restores_whole_authority_tables,
+    exercise_grant_change,
+    Campaign::CompactThenAppend,
+    GrantChange::Update,
+);
+
+#[test]
+fn interrupted_grant_revocation_append_restores_whole_authority_tables() {
+    exercise_grant_change(Campaign::Append, GrantChange::Revoke, FaultPartition::All);
+}
+
+partitioned_campaign!(
+    interrupted_grant_revocation_compaction_restores_whole_authority_tables,
+    exercise_grant_change,
+    Campaign::CompactThenAppend,
+    GrantChange::Revoke,
+);
+
+fn exercise_grant_change(campaign: Campaign, change: GrantChange, partition: FaultPartition) {
     embassy_futures::block_on(async {
         let administrator = grant(11, Authority::Administrator, Request::Describe);
         let operator = grant(22, Authority::Operator, Request::Describe);
         let confirmed = [administrator, operator];
         let confirmed_snapshot = snapshot(&confirmed);
-        let candidates = [
-            std::vec![
+        let candidate = match change {
+            GrantChange::Update => std::vec![
                 administrator,
                 grant(22, Authority::Operator, Request::AnnounceSelf)
             ],
-            std::vec![administrator],
-        ];
-        for candidate in candidates {
-            let candidate_snapshot = snapshot(&candidate);
-            for campaign in [Campaign::Append, Campaign::CompactThenAppend] {
-                let baseline = image(&confirmed_snapshot, campaign).await;
-                let (healthy, trace) =
-                    store(baseline, &confirmed_snapshot, &candidate_snapshot, None).await;
-                restore(healthy, &candidate).await;
-                assert_eq!(
-                    trace
-                        .iter()
-                        .any(|event| matches!(event, Operation::Erase { .. })),
-                    matches!(campaign, Campaign::CompactThenAppend)
-                );
-                let commit = trace
-                    .iter()
-                    .rposition(|event| matches!(event, Operation::Write { .. }))
-                    .unwrap();
-                assert!(matches!(trace[commit], Operation::Write { len: 4, .. }));
-                let mut cuts = 0;
-                for (operation, event) in trace.iter().enumerate() {
-                    let prefixes: Vec<_> = match event {
-                        Operation::Read { len, .. } => std::vec![0, *len],
-                        Operation::Write { len, .. } | Operation::Erase { len, .. } => {
-                            (0..=*len).collect()
-                        }
-                    };
-                    for completed_bytes in prefixes {
-                        let cut = Cut {
-                            operation,
-                            completed_bytes,
-                        };
-                        let (image, observed) = store(
-                            baseline,
-                            &confirmed_snapshot,
-                            &candidate_snapshot,
-                            Some(cut),
-                        )
-                        .await;
-                        assert_eq!(observed, trace[..=operation], "{cut:?}");
-                        let expected = if operation > commit
-                            || (operation == commit && completed_bytes == 4)
-                        {
-                            candidate.as_slice()
-                        } else {
-                            &confirmed
-                        };
-                        for _ in 0..2 {
-                            restore(image, expected).await;
-                        }
-                        cuts += 1;
-                    }
+            GrantChange::Revoke => std::vec![administrator],
+        };
+        let candidate_snapshot = snapshot(&candidate);
+        let baseline = image(&confirmed_snapshot, campaign).await;
+        let (healthy, trace) =
+            store(baseline, &confirmed_snapshot, &candidate_snapshot, None).await;
+        restore(healthy, &candidate).await;
+        assert_eq!(
+            trace
+                .iter()
+                .any(|event| matches!(event, Operation::Erase { .. })),
+            matches!(campaign, Campaign::CompactThenAppend)
+        );
+        let commit = trace
+            .iter()
+            .rposition(|event| matches!(event, Operation::Write { .. }))
+            .unwrap();
+        assert!(matches!(trace[commit], Operation::Write { len: 4, .. }));
+        let mut cuts = 0;
+        let mut boundary = 0;
+        for (operation, event) in trace.iter().enumerate() {
+            let prefixes: Vec<_> = match event {
+                Operation::Read { len, .. } => std::vec![0, *len],
+                Operation::Write { len, .. } | Operation::Erase { len, .. } => (0..=*len).collect(),
+            };
+            for completed_bytes in prefixes {
+                let selected = partition.includes(boundary);
+                boundary += 1;
+                if !selected {
+                    continue;
                 }
-                std::eprintln!(
-                    "verified {cuts} {campaign:?} grant cuts, candidate table size {}",
-                    candidate.len()
-                );
+                let cut = Cut {
+                    operation,
+                    completed_bytes,
+                };
+                let (image, observed) = store(
+                    baseline,
+                    &confirmed_snapshot,
+                    &candidate_snapshot,
+                    Some(cut),
+                )
+                .await;
+                assert_eq!(observed, trace[..=operation], "{cut:?}");
+                let expected =
+                    if operation > commit || (operation == commit && completed_bytes == 4) {
+                        candidate.as_slice()
+                    } else {
+                        &confirmed
+                    };
+                for _ in 0..2 {
+                    restore(image, expected).await;
+                }
+                cuts += 1;
             }
         }
+        assert!(cuts > 0);
+        std::eprintln!(
+            "verified {cuts} {campaign:?} grant cuts, candidate table size {}",
+            candidate.len()
+        );
     });
 }

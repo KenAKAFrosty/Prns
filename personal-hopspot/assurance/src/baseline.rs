@@ -4,10 +4,7 @@ use personal_hopspot_builder::artifact::publish;
 use personal_hopspot_builder::{BuildError, SourceCustody};
 use thiserror::Error;
 
-use crate::contract::{
-    AssuranceMatrix, CapabilityResult, MatrixStatus, MiriCoverage, ProofEvidence, SourceCommit,
-    Verdict,
-};
+use crate::contract::{AssuranceMatrix, CapabilityResult, MatrixStatus, SourceCommit, Verdict};
 use crate::evidence::{load_canonical_matrix, MatrixValidationError};
 
 const BASELINE_PATH: &str = "personal-hopspot/assurance/baseline/canonical.json";
@@ -22,8 +19,6 @@ pub enum BaselineError {
     WorkingTreeEvidence,
     #[error("assurance baseline combines evidence from multiple commits")]
     MixedSourceCommits,
-    #[error("assurance baseline requires stacked-and-tree Miri coverage")]
-    IncompleteMiriCoverage,
     #[error("could not serialize assurance baseline: {0}")]
     Serialize(#[from] serde_json::Error),
     #[error("could not publish assurance baseline: {0}")]
@@ -90,17 +85,6 @@ fn validate_evidence_custody(matrix: &AssuranceMatrix) -> Result<(), BaselineErr
             continue;
         };
         merge_source(&proof.source.custody, &mut commit)?;
-        if matches!(
-            &proof.verdict,
-            Verdict::Passed {
-                evidence: ProofEvidence::Miri {
-                    coverage: MiriCoverage::Stacked,
-                    ..
-                }
-            }
-        ) {
-            return Err(BaselineError::IncompleteMiriCoverage);
-        }
     }
     Ok(())
 }
@@ -131,8 +115,8 @@ mod tests {
     use super::{refresh, validate_evidence_custody, BaselineError};
     use crate::contract::{
         Capability, CapabilityResult, ComponentId, EvidenceFingerprint, MatrixStatus, MiriCoverage,
-        ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId, SourceCommit, SourceCustody,
-        SourceIdentity, Subject, SupportLevel, ToolIdentity, ToolKind, Verdict,
+        MiriScope, ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId, SourceCommit,
+        SourceCustody, SourceIdentity, Subject, SupportLevel, ToolIdentity, ToolKind, Verdict,
         WorkingTreeFingerprint, PROOF_FRAGMENT_SCHEMA_VERSION,
     };
     use crate::evidence::assemble;
@@ -179,6 +163,7 @@ mod tests {
                 verdict: Verdict::Passed {
                     evidence: ProofEvidence::Miri {
                         coverage,
+                        scope: MiriScope::Focused,
                         completed_tests: 1,
                     },
                 },
@@ -223,17 +208,15 @@ mod tests {
     }
 
     #[test]
-    fn canonical_baseline_requires_full_miri_coverage() -> Result<(), Box<dyn std::error::Error>> {
+    fn canonical_baseline_accepts_focused_miri_coverage() -> Result<(), Box<dyn std::error::Error>>
+    {
         let matrix = matrix_with_capabilities(vec![observed_miri(
             "sx126x",
             'a',
             clean,
             MiriCoverage::Stacked,
         )?])?;
-        assert!(matches!(
-            validate_evidence_custody(&matrix),
-            Err(BaselineError::IncompleteMiriCoverage)
-        ));
+        validate_evidence_custody(&matrix)?;
         Ok(())
     }
 

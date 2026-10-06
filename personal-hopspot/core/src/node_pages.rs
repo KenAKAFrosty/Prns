@@ -22,6 +22,7 @@ pub const RNS_PATH_PATH: &str = "/path";
 pub const NODE_PAGE_PATHS: &[&str] = &[
     INDEX_PATH,
     QUICKSTART_PATH,
+    #[cfg(not(feature = "omit-coming-from-rns"))]
     COMING_FROM_RNS_PATH,
     SOURCE_PAGE_PATH,
     SOURCE_ARCHIVE_PATH,
@@ -31,14 +32,18 @@ pub const NODE_PAGE_PATHS: &[&str] = &[
 pub const NODE_PAGE_PATHS: &[&str] = &[
     INDEX_PATH,
     QUICKSTART_PATH,
+    #[cfg(not(feature = "omit-coming-from-rns"))]
     COMING_FROM_RNS_PATH,
     SOURCE_PAGE_PATH,
 ];
 pub const QUICKSTART_PAGE: &[u8] = include_bytes!("node_pages/quickstart.mu");
-#[cfg(not(feature = "compact-node-pages"))]
+#[cfg(all(
+    not(feature = "compact-node-pages"),
+    not(feature = "omit-coming-from-rns")
+))]
 pub const COMING_FROM_RNS_PAGE: &[u8] =
     include_bytes!("../../../assets/nnpages/coming_from_rns.mu");
-#[cfg(feature = "compact-node-pages")]
+#[cfg(all(feature = "compact-node-pages", not(feature = "omit-coming-from-rns")))]
 pub const COMING_FROM_RNS_PAGE: &[u8] = b">Coming from RNS
 
 Your config, your identity file, and your apps remain yours. This flash-constrained Hopspot keeps the offline quickstart and live RNS management tools instead of embedding the full migration guide.
@@ -187,6 +192,7 @@ impl<S> RequestEndpointSet<S> for NoSourceNodePageRoutes {
     const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
         (INDEX_PATH, RequestEndpointPolicy::AllowAll),
         (QUICKSTART_PATH, RequestEndpointPolicy::AllowAll),
+        #[cfg(not(feature = "omit-coming-from-rns"))]
         (COMING_FROM_RNS_PATH, RequestEndpointPolicy::AllowAll),
         (SOURCE_PAGE_PATH, RequestEndpointPolicy::AllowAll),
         (
@@ -200,14 +206,16 @@ impl<S> RequestEndpointSet<S> for NoSourceNodePageRoutes {
         node: &impl PrnsNodeApi,
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
+        #[cfg(not(feature = "omit-coming-from-rns"))]
+        if path_hash == RequestPathHash::of(COMING_FROM_RNS_PATH) {
+            return context.respond_static_messagepack_bytes(COMING_FROM_RNS_PAGE);
+        }
         if path_hash == RequestPathHash::of(RNS_PATH_PATH) {
             dispatch_rns_path(context, node).await
         } else if path_hash == RequestPathHash::of(INDEX_PATH) {
             context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_NO_SOURCE)
         } else if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
             context.respond_static_messagepack_bytes(QUICKSTART_PAGE)
-        } else if path_hash == RequestPathHash::of(COMING_FROM_RNS_PATH) {
-            context.respond_static_messagepack_bytes(COMING_FROM_RNS_PAGE)
         } else if path_hash == RequestPathHash::of(SOURCE_PAGE_PATH) {
             context.respond_static_messagepack_bytes(SOURCE_PAGE)
         } else {
@@ -224,6 +232,7 @@ impl<S> RequestEndpointSet<S> for SourceNodePageRoutes {
     const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
         (INDEX_PATH, RequestEndpointPolicy::AllowAll),
         (QUICKSTART_PATH, RequestEndpointPolicy::AllowAll),
+        #[cfg(not(feature = "omit-coming-from-rns"))]
         (COMING_FROM_RNS_PATH, RequestEndpointPolicy::AllowAll),
         (SOURCE_PAGE_PATH, RequestEndpointPolicy::AllowAll),
         (SOURCE_ARCHIVE_PATH, RequestEndpointPolicy::AllowAll),
@@ -239,14 +248,16 @@ impl<S> RequestEndpointSet<S> for SourceNodePageRoutes {
         node: &impl PrnsNodeApi,
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
+        #[cfg(not(feature = "omit-coming-from-rns"))]
+        if path_hash == RequestPathHash::of(COMING_FROM_RNS_PATH) {
+            return context.respond_static_messagepack_bytes(COMING_FROM_RNS_PAGE);
+        }
         if path_hash == RequestPathHash::of(RNS_PATH_PATH) {
             dispatch_rns_path(context, node).await
         } else if path_hash == RequestPathHash::of(INDEX_PATH) {
             context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_WITH_SOURCE)
         } else if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
             context.respond_static_messagepack_bytes(QUICKSTART_PAGE)
-        } else if path_hash == RequestPathHash::of(COMING_FROM_RNS_PATH) {
-            context.respond_static_messagepack_bytes(COMING_FROM_RNS_PAGE)
         } else if path_hash == RequestPathHash::of(SOURCE_PAGE_PATH) {
             context.respond_static_messagepack_bytes(SOURCE_PAGE)
         } else if path_hash == RequestPathHash::of(SOURCE_ARCHIVE_PATH) {
@@ -266,6 +277,7 @@ impl<S> RequestEndpointSet<S> for BrowserNodePageRoutes {
     const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
         (INDEX_PATH, RequestEndpointPolicy::AllowAll),
         (QUICKSTART_PATH, RequestEndpointPolicy::AllowAll),
+        #[cfg(not(feature = "omit-coming-from-rns"))]
         (COMING_FROM_RNS_PATH, RequestEndpointPolicy::AllowAll),
         (SOURCE_PAGE_PATH, RequestEndpointPolicy::AllowAll),
         (SOURCE_ARCHIVE_PATH, RequestEndpointPolicy::AllowAll),
@@ -275,6 +287,7 @@ impl<S> RequestEndpointSet<S> for BrowserNodePageRoutes {
     const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
         (INDEX_PATH, RequestEndpointPolicy::AllowAll),
         (QUICKSTART_PATH, RequestEndpointPolicy::AllowAll),
+        #[cfg(not(feature = "omit-coming-from-rns"))]
         (COMING_FROM_RNS_PATH, RequestEndpointPolicy::AllowAll),
         (SOURCE_PAGE_PATH, RequestEndpointPolicy::AllowAll),
     ];
@@ -290,6 +303,7 @@ impl<S> RequestEndpointSet<S> for BrowserNodePageRoutes {
         if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
             return context.respond_static_messagepack_bytes(QUICKSTART_PAGE);
         }
+        #[cfg(not(feature = "omit-coming-from-rns"))]
         if path_hash == RequestPathHash::of(COMING_FROM_RNS_PATH) {
             return context.respond_static_messagepack_bytes(COMING_FROM_RNS_PAGE);
         }
@@ -368,9 +382,12 @@ mod tests {
         assert!(LARGEST_SINGLE_WINDOW_PAGE_LEN >= BROWSER_INDEX_PAGE.len());
         assert!(LARGEST_SINGLE_WINDOW_PAGE_LEN >= QUICKSTART_PAGE.len());
         assert!(LARGEST_SINGLE_WINDOW_PAGE_LEN >= SOURCE_PAGE.len());
-        #[cfg(not(feature = "compact-node-pages"))]
+        #[cfg(all(
+            not(feature = "compact-node-pages"),
+            not(feature = "omit-coming-from-rns")
+        ))]
         assert!(COMING_FROM_RNS_PAGE.len() > LARGEST_SINGLE_WINDOW_PAGE_LEN);
-        #[cfg(feature = "compact-node-pages")]
+        #[cfg(all(feature = "compact-node-pages", not(feature = "omit-coming-from-rns")))]
         assert!(COMING_FROM_RNS_PAGE.len() < LARGEST_SINGLE_WINDOW_PAGE_LEN);
         assert_eq!(
             PAGE_PACKED_RESPONSE_LEN,
@@ -402,13 +419,23 @@ mod tests {
         let routes = <NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS;
         assert!(routes.iter().any(|(path, _)| *path == INDEX_PATH));
         assert!(routes.iter().any(|(path, _)| *path == QUICKSTART_PATH));
-        assert!(routes.iter().any(|(path, _)| *path == COMING_FROM_RNS_PATH));
+        assert_eq!(
+            routes.iter().any(|(path, _)| *path == COMING_FROM_RNS_PATH),
+            !cfg!(feature = "omit-coming-from-rns")
+        );
+        assert_eq!(
+            NODE_PAGE_PATHS.contains(&COMING_FROM_RNS_PATH),
+            !cfg!(feature = "omit-coming-from-rns")
+        );
         assert!(routes.iter().any(|(path, _)| *path == SOURCE_PAGE_PATH));
         assert!(routes.iter().any(|(path, policy)| {
             *path == RNS_PATH_PATH
                 && *policy == RequestEndpointPolicy::AllowRemoteControlControllers
         }));
-        assert!(page.contains("`[Coming from RNS?`:/page/coming-from-rns.mu]"));
+        assert_eq!(
+            page.contains("`[Coming from RNS?`:/page/coming-from-rns.mu]"),
+            !cfg!(feature = "omit-coming-from-rns")
+        );
         assert!(page.contains("`[Download the source`:/page/source.mu]"));
         assert!(!page.contains("Offline quickstart"));
         assert!(page.contains("Mesh networking that's yours"));
@@ -441,23 +468,32 @@ mod tests {
             assert!(source_page.contains(&BUILD_COMMIT[..12]));
         }
 
-        let coming_from_rns = core::str::from_utf8(COMING_FROM_RNS_PAGE).unwrap();
-        assert!(coming_from_rns.contains(">Coming from RNS"));
-        assert!(coming_from_rns.contains("Your config, your identity file, and your apps"));
-        assert!(coming_from_rns.contains("`[Back to index`:/page/index.mu]"));
+        #[cfg(not(feature = "omit-coming-from-rns"))]
+        {
+            let coming_from_rns = core::str::from_utf8(COMING_FROM_RNS_PAGE).unwrap();
+            assert!(coming_from_rns.contains(">Coming from RNS"));
+            assert!(coming_from_rns.contains("Your config, your identity file, and your apps"));
+            assert!(coming_from_rns.contains("`[Back to index`:/page/index.mu]"));
+        }
     }
 
     #[test]
     fn the_browser_face_carries_the_shared_nav_and_pages() {
         let browser = core::str::from_utf8(BROWSER_INDEX_PAGE).unwrap();
-        assert!(browser.contains("`[Coming from RNS?`:/page/coming-from-rns.mu]"));
+        assert_eq!(
+            browser.contains("`[Coming from RNS?`:/page/coming-from-rns.mu]"),
+            !cfg!(feature = "omit-coming-from-rns")
+        );
         assert!(browser.contains("`[Download the source`:/page/source.mu]"));
         assert!(browser.contains("`[Get the source`:/page/source.mu]"));
         assert!(!browser.contains("Open the offline Prns quickstart"));
         assert!(!browser.contains("source.zip not carried or served"));
 
         let routes = <BrowserNodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS;
-        assert!(routes.iter().any(|(path, _)| *path == COMING_FROM_RNS_PATH));
+        assert_eq!(
+            routes.iter().any(|(path, _)| *path == COMING_FROM_RNS_PATH),
+            !cfg!(feature = "omit-coming-from-rns")
+        );
         assert!(routes.iter().any(|(path, _)| *path == SOURCE_PAGE_PATH));
         assert_eq!(
             routes.iter().any(|(path, _)| *path == SOURCE_ARCHIVE_PATH),
@@ -485,8 +521,11 @@ mod tests {
         assert!(!source_page.contains("{{"));
         assert!(!source_page.contains("prnsd:managed"));
 
-        let coming_from_rns = core::str::from_utf8(COMING_FROM_RNS_PAGE).unwrap();
-        assert!(coming_from_rns.contains(">Coming from RNS"));
+        #[cfg(not(feature = "omit-coming-from-rns"))]
+        {
+            let coming_from_rns = core::str::from_utf8(COMING_FROM_RNS_PAGE).unwrap();
+            assert!(coming_from_rns.contains(">Coming from RNS"));
+        }
     }
 
     #[test]
@@ -500,6 +539,7 @@ mod tests {
             HOPSPOT_INDEX_PAGE,
             BROWSER_INDEX_PAGE,
             QUICKSTART_PAGE,
+            #[cfg(not(feature = "omit-coming-from-rns"))]
             COMING_FROM_RNS_PAGE,
             SOURCE_PAGE,
         ] {

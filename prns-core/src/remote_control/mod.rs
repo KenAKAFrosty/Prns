@@ -24,6 +24,9 @@ mod pairing;
 mod service;
 mod stream;
 
+#[cfg(feature = "test-support")]
+pub mod test_support;
+
 pub use self::core::*;
 pub use bootstrap::*;
 pub use control::*;

@@ -114,9 +114,9 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(DEV.parse_selection(["--all"]).boards, boards)
         self.assertIn("t096", boards)
         self.assertIn("t1000-e", boards)
-        self.assertNotIn("heltec-e290", boards)
+        self.assertIn("heltec-e290", boards)
 
-    def test_qualification_board_requires_explicit_selection(self) -> None:
+    def test_promoted_board_supports_explicit_selection(self) -> None:
         selection = DEV.parse_selection(["heltec-e290"])
         self.assertEqual(selection.boards, ("heltec-e290",))
         self.assertEqual(

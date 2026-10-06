@@ -1985,7 +1985,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "personal-rns"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -2085,7 +2085,7 @@ dependencies = [
 
 [[package]]
 name = "prns-config"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "home",
  "prns-core",
@@ -2095,7 +2095,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "aes",
  "base64",
@@ -2125,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "prns-ffi"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "cfg-if",
  "dispatch2",
@@ -2143,14 +2143,14 @@ dependencies = [
 
 [[package]]
 name = "prns-host"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "prns-runtime",
 ]
 
 [[package]]
 name = "prns-host-native"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "dbus",
  "personal-rns",
@@ -2161,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "prns-host-snapshot"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "personal-rns",
  "prns-host",
@@ -2169,7 +2169,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-embassy"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "embassy-futures",
  "embassy-net",
@@ -2186,7 +2186,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "bluer",
  "btleplug",
@@ -2216,11 +2216,11 @@ dependencies = [
 
 [[package]]
 name = "prns-macros"
-version = "0.3.7"
+version = "0.3.8"
 
 [[package]]
 name = "prns-napi"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "dbus",
  "napi",
@@ -2234,7 +2234,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -2245,7 +2245,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-embassy"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "critical-section",
  "embassy-futures",
@@ -2261,7 +2261,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "futures-util",
  "getrandom 0.2.17",

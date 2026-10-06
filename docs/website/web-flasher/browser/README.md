@@ -21,3 +21,9 @@ npm run test:production-boundary
 The browser suite requires no physical hardware. It records UI behavior around
 the fake bridge; the lower-level bridge suite remains responsible for serial
 protocol, MD5, and disconnect behavior.
+
+The `readiness` project first checks that the signed fixture hydrates and its
+flasher controls respond. If this shared prerequisite fails, the run fails once
+without retrying every dependent Chromium scenario. Its trace, screenshot, and
+runtime-error attachment identify the common failure. A healthy fixture still
+runs every existing scenario with the usual retry policy.

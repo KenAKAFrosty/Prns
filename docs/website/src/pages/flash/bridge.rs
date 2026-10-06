@@ -4,7 +4,7 @@ use prns_flash_manifest::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::platforms::BoardFlashTarget;
+use crate::platforms::{BoardFlashTarget, NrfManagedApplicationIdentity};
 
 use super::contract::{self, BridgeErrorCode, BridgePhase};
 use super::model::{
@@ -32,6 +32,16 @@ const CONTINUE_NRF_BOOTLOADER_SCRIPT: &str = r#"
 try {
   await window.__prnsFlash?.continueNrfBootloaderSelection();
 } catch (_) {}
+"#;
+
+const UF2_HAND_OFF_SCRIPT: &str = r#"
+const request = await dioxus.recv();
+window.__prnsFlash = window.__prnsFlash || await import('/assets/flasher/prns-flash.js');
+try {
+  return await window.__prnsFlash.handOffToUf2(request);
+} catch (_) {
+  return { status: "error", code: "connection_failure", message: "The local flasher engine could not run the UF2 hand-off." };
+}
 "#;
 
 // Chrome for Android initially exposed Web Serial only for Bluetooth RFCOMM.
@@ -142,6 +152,44 @@ struct BridgeNrfManagedApplication {
     request: u8,
     value: u16,
     index: u16,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Uf2HandOffRequest {
+    schema: u8,
+    board_slug: String,
+    managed_application: BridgeNrfManagedApplication,
+}
+
+impl Uf2HandOffRequest {
+    pub(super) fn new(board_slug: &str, identity: NrfManagedApplicationIdentity) -> Self {
+        let control = prns_flash_manifest::WebUsbControlRequest::UF2_HAND_OFF;
+        Self {
+            schema: contract::schema(),
+            board_slug: board_slug.to_string(),
+            managed_application: BridgeNrfManagedApplication {
+                usb: BridgeUsbIdentity {
+                    vendor_id: identity.vendor_id,
+                    product_id: identity.product_id,
+                },
+                manufacturer: identity.manufacturer.to_string(),
+                product: identity.product.to_string(),
+                serial_number: identity.serial_number.to_string(),
+                interface_number: identity.interface_number,
+                request: control.request(),
+                value: control.value(),
+                index: control.index(),
+            },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+enum Uf2HandOffOutcome {
+    Requested,
+    Error { message: String },
 }
 
 #[derive(Serialize)]
@@ -282,6 +330,7 @@ impl BridgeRequest {
                     recovery_mount_label,
                     recovery_board_id_match_kind,
                     recovery_board_id,
+                    ..
                 },
                 ReleaseCompatibility::Uf2(softdevice),
             ) => {
@@ -313,6 +362,7 @@ impl BridgeRequest {
                     recovery_mount_label,
                     recovery_board_id_match_kind,
                     recovery_board_id,
+                    ..
                 },
                 ReleaseCompatibility::NrfSerialDfu(entry),
             ) => {
@@ -987,6 +1037,20 @@ pub(super) fn continue_nrf_bootloader_selection() {
     document::eval(CONTINUE_NRF_BOOTLOADER_SCRIPT);
 }
 
+pub(super) async fn hand_off_to_uf2(request: Uf2HandOffRequest) -> Result<(), String> {
+    let bridge = document::eval(UF2_HAND_OFF_SCRIPT);
+    if bridge.send(request).is_err() {
+        return Err("Could not start the local flasher engine.".to_string());
+    }
+    match bridge.join::<Uf2HandOffOutcome>().await {
+        Ok(Uf2HandOffOutcome::Requested) => Ok(()),
+        Ok(Uf2HandOffOutcome::Error { message }) => Err(message),
+        Err(_) => Err(
+            "The local flasher engine stopped before reporting the hand-off result.".to_string(),
+        ),
+    }
+}
+
 pub(super) fn is_busy(phase: BridgePhase) -> bool {
     contract::phase(phase).busy()
 }
@@ -1010,6 +1074,48 @@ mod tests {
     };
     use std::collections::BTreeSet;
 
+    const T1000E_MANAGED_APPLICATION: NrfManagedApplicationIdentity =
+        NrfManagedApplicationIdentity {
+            vendor_id: 0x1209,
+            product_id: 0x0001,
+            manufacturer: "Stay Personal",
+            product: "Personal Hopspot (T1000-E)",
+            serial_number: "PERSONAL-RNS-T1000E-HOP",
+            interface_number: 0,
+        };
+
+    #[test]
+    fn uf2_hand_off_request_carries_the_hand_off_verb_over_the_prns_signature(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let request = Uf2HandOffRequest::new("t1000-e", T1000E_MANAGED_APPLICATION);
+        let value = serde_json::to_value(request)?;
+        assert_eq!(value["schema"], contract::schema());
+        assert_eq!(value["boardSlug"], "t1000-e");
+        assert_eq!(value["managedApplication"]["request"], 0x55);
+        assert_eq!(value["managedApplication"]["value"], 0x5052);
+        assert_eq!(value["managedApplication"]["index"], 0x4e53);
+        assert_eq!(
+            value["managedApplication"]["serialNumber"],
+            "PERSONAL-RNS-T1000E-HOP"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn uf2_hand_off_outcomes_deserialize_by_status() -> Result<(), Box<dyn std::error::Error>> {
+        assert!(matches!(
+            serde_json::from_str::<Uf2HandOffOutcome>(r#"{"status":"requested"}"#)?,
+            Uf2HandOffOutcome::Requested
+        ));
+        let failed = serde_json::from_str::<Uf2HandOffOutcome>(
+            r#"{"status":"error","code":"busy","message":"A device operation is already active."}"#,
+        )?;
+        assert!(matches!(
+            failed,
+            Uf2HandOffOutcome::Error { ref message } if message == "A device operation is already active."
+        ));
+        Ok(())
+    }
     const EVENT_FIELDS: [&str; 11] = [
         "phase",
         "code",
@@ -1115,6 +1221,7 @@ mod tests {
             recovery_mount_label: "T1000-E",
             recovery_board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::Exact,
             recovery_board_id: "nrf52840-t1000-e-v1",
+            managed_application: T1000E_MANAGED_APPLICATION,
         };
         let compatibility = ReleaseCompatibility::Uf2(nrf.compatibility().softdevice().clone());
         let request = BridgeRequest::from_target(
@@ -1203,6 +1310,7 @@ mod tests {
                 recovery_mount_label: "WRONG",
                 recovery_board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::Exact,
                 recovery_board_id: "nrf52840-t1000-e-v1",
+                managed_application: T1000E_MANAGED_APPLICATION,
             },
             &compatibility,
         )
@@ -1551,6 +1659,7 @@ mod tests {
                 mount_label: "TECHOBOOT",
                 board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::RevisionPrefix,
                 board_id: "nrf52840-techo-v",
+                alternative_board_identities: &[],
             },
             &compatibility,
         )

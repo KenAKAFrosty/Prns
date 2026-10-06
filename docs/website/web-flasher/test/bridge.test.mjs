@@ -7,6 +7,7 @@ import {
   clearPrepared,
   fetchSignedDocuments,
   flash,
+  handOffToUf2,
   prepare,
   testing,
 } from "../src/prns-flash.js";
@@ -115,6 +116,156 @@ function terminalEvents(events) {
 }
 
 test.beforeEach(() => testing.reset());
+
+function recoveryRequest() {
+  return {
+    schema: 1,
+    boardSlug: "t1000-e",
+    managedApplication: {
+      usb: { vendorId: 0x1209, productId: 0x0001 },
+      manufacturer: "Stay Personal",
+      product: "Personal Hopspot (T1000-E)",
+      serialNumber: "PERSONAL-RNS-T1000E-HOP",
+      interfaceNumber: 0,
+      request: 0x55,
+      value: 0x5052,
+      index: 0x4e53,
+    },
+  };
+}
+
+function recoveryUsb() {
+  const calls = [];
+  const device = {
+    vendorId: 0x1209,
+    productId: 0x0001,
+    manufacturerName: "Stay Personal",
+    productName: "Personal Hopspot (T1000-E)",
+    serialNumber: "PERSONAL-RNS-T1000E-HOP",
+    configuration: { interfaces: [{ interfaceNumber: 0 }] },
+    opened: false,
+    async open() { calls.push("open"); this.opened = true; },
+    async claimInterface(number) { calls.push(["claim", number]); },
+    async controlTransferOut(control, data) {
+      calls.push(["control", control, data]);
+      return { status: "ok", bytesWritten: 0 };
+    },
+    async close() { calls.push("close"); this.opened = false; },
+  };
+  const usb = {
+    async requestDevice(options) { calls.push(["picker", options]); return device; },
+  };
+  return { usb, device, calls };
+}
+
+test("recovery works without a prepared release and requests only a zero-data control transfer", async () => {
+  const { usb, calls } = recoveryUsb();
+  const result = await handOffToUf2(recoveryRequest(), {
+    environment: environment(),
+    usb,
+    fetchImpl: () => assert.fail("recovery must not fetch firmware"),
+    serial: { requestPort: () => assert.fail("recovery must not open serial DFU") },
+  });
+  assert.deepEqual(result, { status: "requested" });
+  assert.deepEqual(calls, [
+    ["picker", { filters: [{ vendorId: 0x1209, productId: 0x0001, serialNumber: "PERSONAL-RNS-T1000E-HOP" }] }],
+    "open",
+    ["claim", 0],
+    ["control", { requestType: "vendor", recipient: "device", request: 0x55, value: 0x5052, index: 0x4e53 }, undefined],
+    "close",
+  ]);
+  assert.equal(testing.prepared(), null);
+});
+
+test("recovery discards a prepared install and clears its local configuration bytes", async () => {
+  await prepareDefault();
+  const configuration = testing.prepared().files.at(-1).bytes;
+  assert.ok(configuration.some((byte) => byte !== 0));
+  const { usb } = recoveryUsb();
+  await handOffToUf2(recoveryRequest(), { environment: environment(), usb });
+  assert.equal(testing.prepared(), null);
+  assert.ok(configuration.every((byte) => byte === 0));
+  await assert.rejects(flash(() => {}, { environment: environment() }), /Prepare and verify/);
+});
+
+test("recovery cancels an in-flight preparation so it cannot repopulate a stale install", async () => {
+  const { value, payloads } = request();
+  let releaseFetch;
+  const preparation = prepare(value, () => {}, {
+    loadEsptool: false,
+    cryptoImpl: webcrypto,
+    fetchImpl: () => new Promise((resolve) => { releaseFetch = resolve; }),
+  });
+  const cancelled = assert.rejects(preparation, (error) => error.code === "cancelled");
+  const { usb } = recoveryUsb();
+  assert.deepEqual(await handOffToUf2(recoveryRequest(), { environment: environment(), usb }), { status: "requested" });
+  releaseFetch(streamedResponse(payloads[0]));
+  await cancelled;
+  assert.equal(testing.prepared(), null);
+  assert.equal(value.provisioning.password, "");
+});
+
+test("recovery excludes concurrent preparation and device operations until the picker settles", async () => {
+  const { usb, device } = recoveryUsb();
+  let selectDevice;
+  usb.requestDevice = () => new Promise((resolve) => { selectDevice = resolve; });
+  const operation = handOffToUf2(recoveryRequest(), { environment: environment(), usb });
+  assert.equal((await handOffToUf2(recoveryRequest(), { environment: environment(), usb })).code, "busy");
+  await assert.rejects(prepare(request().value), (error) => error.code === "busy");
+  await assert.rejects(flash(() => {}, { environment: environment() }), (error) => error.code === "not_prepared");
+  selectDevice(device);
+  assert.deepEqual(await operation, { status: "requested" });
+  const retry = recoveryUsb();
+  assert.deepEqual(await handOffToUf2(recoveryRequest(), { environment: environment(), usb: retry.usb }), { status: "requested" });
+});
+
+test("recovery rejects invalid requests or browser conditions before USB access", async () => {
+  const malformed = recoveryRequest();
+  malformed.boardSlug = "t-echo";
+  const wrongVerb = recoveryRequest();
+  wrongVerb.managedApplication.request = 0x50;
+  for (const [value, host, code] of [
+    [malformed, environment(), "invalid_request"],
+    [wrongVerb, environment(), "invalid_request"],
+    [recoveryRequest(), { isSecureContext: false }, "insecure_context"],
+  ]) {
+    const result = await handOffToUf2(value, {
+      environment: host,
+      usb: { requestDevice: () => assert.fail("USB access must be rejected") },
+    });
+    assert.equal(result.code, code);
+  }
+  assert.equal((await handOffToUf2(recoveryRequest(), { environment: environment() })).code, "unsupported_browser");
+});
+
+test("recovery picker cancellation and cancellation during selection never send a reset", async () => {
+  const denied = recoveryUsb();
+  denied.usb.requestDevice = async () => { throw Object.assign(new Error("cancelled"), { name: "NotFoundError" }); };
+  assert.equal((await handOffToUf2(recoveryRequest(), { environment: environment(), usb: denied.usb })).code, "permission_denied");
+  assert.deepEqual(denied.calls, []);
+
+  const pending = recoveryUsb();
+  pending.usb.requestDevice = async () => { clearPrepared(); return pending.device; };
+  assert.equal((await handOffToUf2(recoveryRequest(), { environment: environment(), usb: pending.usb })).code, "cancelled");
+  assert.deepEqual(pending.calls, []);
+});
+
+test("recovery fails closed for a different device, interfaces, stall, and incomplete acknowledgement", async () => {
+  for (const [change, code, message] of [
+    [(device) => { device.productName = "another tracker"; }, "ambiguous_device", /exact Personal Hopspot identity/],
+    [(device) => { device.configuration.interfaces.push({ interfaceNumber: 1 }); }, "ambiguous_device", /interface set/],
+    [(device) => { device.controlTransferOut = async () => ({ status: "stall", bytesWritten: 0 }); }, "connection_failure", /Older releases/],
+    [(device) => { device.controlTransferOut = async () => ({ status: "ok", bytesWritten: 1 }); }, "connection_failure", /did not acknowledge/],
+  ]) {
+    const { usb, device } = recoveryUsb();
+    change(device);
+    const result = await handOffToUf2(recoveryRequest(), { environment: environment(), usb });
+    assert.equal(result.status, "error");
+    assert.equal(result.code, code);
+    assert.match(result.message, message);
+    assert.equal(device.opened, false);
+  }
+});
 
 test("signed release documents are streamed sequentially within shared limits", async () => {
   const descriptor = new TextEncoder().encode('{"version":"0.2.6"}');

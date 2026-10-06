@@ -14,7 +14,7 @@ SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 if str(SCRIPT_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIRECTORY))
 
-from flasher_acceptance_contract import hotfix_scaffold, scaffold  # noqa: E402
+from flasher_acceptance_contract import hotfix_scaffold, scaffold, software_qualification  # noqa: E402
 from flasher_hotfix import verify_candidate as verify_hotfix_candidate  # noqa: E402
 from flasher_tester_roster import validate_roster  # noqa: E402
 
@@ -44,7 +44,11 @@ def create(arguments: argparse.Namespace) -> None:
         raise ValueError(
             "tester roster is invalid: " + "; ".join(roster_errors)
         )
-    if hotfix is None:
+    if software_qualification(version):
+        from flasher_software_acceptance import create_record
+
+        record = create_record(manifest, arguments)
+    elif hotfix is None:
         record = scaffold(
             manifest,
             arguments.manifest,
@@ -107,6 +111,8 @@ def main() -> int:
     parser.add_argument("--signed-bundle", type=Path, required=True)
     parser.add_argument("--tester-roster", type=Path, required=True)
     parser.add_argument("--prerelease-published-at", required=True)
+    parser.add_argument("--readiness-manifest", type=Path)
+    parser.add_argument("--readiness-run-id")
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
     try:
@@ -114,7 +120,7 @@ def main() -> int:
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"acceptance scaffold failed: {error}", file=sys.stderr)
         return 1
-    print(f"created not-run acceptance scaffold: {arguments.output}")
+    print(f"created candidate acceptance record: {arguments.output}")
     return 0
 
 

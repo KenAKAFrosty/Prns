@@ -110,7 +110,7 @@ pub fn campaign(cases: Vec<Case>, name: &str) {
             if !artifact.passed() {
                 let reduced = reduce(&executable, &artifact, &directory);
                 reduced.write(&directory.join("reduced.json"));
-                panic!("qualification failed: original {}, reduced {}; replay with ./tools/prns repo.simulation.remote-control.replay --case {}", directory.join("original.json").display(), directory.join("reduced.json").display(), directory.join("case.json").display());
+                panic!("qualification failed: {:?}; original {}, reduced {}; replay with ./tools/prns repo.simulation.remote-control.replay --case {}", artifact.failure().expect("failed qualification"), directory.join("original.json").display(), directory.join("reduced.json").display(), directory.join("case.json").display());
             }
         }
         if (batch + 1) % 8 == 0 {

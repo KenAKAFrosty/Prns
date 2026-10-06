@@ -163,9 +163,10 @@ async fn exercise(image: [u8; CAPACITY], step: Step, cut: Option<Cut>) -> Vec<Op
     trace
 }
 
-async fn campaign(steps: &[Step]) {
+async fn campaign(steps: &[Step], partition: FaultPartition) {
     let image = image().await;
     let mut cases = 0;
+    let mut boundary = 0;
     for &step in steps {
         let trace = exercise(image, step, None).await;
         assert!(!trace.is_empty());
@@ -175,6 +176,11 @@ async fn campaign(steps: &[Step]) {
                 Operation::Write { len, .. } | Operation::Erase { len, .. } => (0..=*len).collect(),
             };
             for completed_bytes in prefixes {
+                let selected = partition.includes(boundary);
+                boundary += 1;
+                if !selected {
+                    continue;
+                }
                 let observed = exercise(
                     image,
                     step,
@@ -189,6 +195,7 @@ async fn campaign(steps: &[Step]) {
             }
         }
     }
+    assert!(cases > 0);
     std::eprintln!("verified {cases} cancellation boundaries for {steps:?}");
 }
 
@@ -207,17 +214,21 @@ fn cancelled_completed_erase_cannot_consume_a_second_erase() {
     });
 }
 
-#[test]
-fn cancelled_arena_erases_wait_for_a_new_wear_budget() {
-    embassy_futures::block_on(campaign(&[Step::Erase(0), Step::Erase(1)]));
+partitioned_campaign!(
+    cancelled_arena_erases_wait_for_a_new_wear_budget,
+    arena_erase_campaign,
+);
+
+fn arena_erase_campaign(partition: FaultPartition) {
+    embassy_futures::block_on(campaign(&[Step::Erase(0), Step::Erase(1)], partition));
 }
 
 #[test]
 fn cancelled_grant_copies_recover_without_reprogramming_the_tail() {
-    embassy_futures::block_on(campaign(&[Step::Grants]));
+    embassy_futures::block_on(campaign(&[Step::Grants], FaultPartition::All));
 }
 
 #[test]
 fn cancelled_group_copies_recover_without_reprogramming_the_tail() {
-    embassy_futures::block_on(campaign(&[Step::Groups]));
+    embassy_futures::block_on(campaign(&[Step::Groups], FaultPartition::All));
 }

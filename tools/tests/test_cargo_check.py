@@ -18,6 +18,13 @@ SPEC.loader.exec_module(cargo_check)
 
 
 class CargoCheckTests(unittest.TestCase):
+    def test_default_gives_one_cargo_process_the_available_cpu_budget(self) -> None:
+        for cpus, expected in ((None, 2), (1, 1), (4, 4), (16, 16)):
+            with self.subTest(cpus=cpus), mock.patch.object(
+                cargo_check.os, "cpu_count", return_value=cpus
+            ):
+                self.assertEqual(cargo_check.default_parallelism(), (1, expected))
+
     def write_repository(self, root: Path, manifest: str) -> Path:
         for workspace in (root, root / "host", root / "firmware"):
             workspace.mkdir(parents=True, exist_ok=True)

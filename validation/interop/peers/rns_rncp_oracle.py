@@ -284,9 +284,11 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
         )
         recovery_link.identify(local_identity)
         recovery_source = open(recovery_path, "rb")
+        completed = []
         recovery = RNS.Resource(
             recovery_source,
             recovery_link,
+            callback=completed.append,
             metadata={"name": recovery_path.name.encode("utf-8")},
             auto_compress=recovery_path.name == "stock-compressed.bin",
         )
@@ -303,14 +305,19 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
                 )
             single_segment_recoveries += 1
         wait_for(
-            lambda: recovery.status >= RNS.Resource.COMPLETE,
+            lambda: bool(completed),
             30,
             f"recovery transfer {recovery_path.name} did not conclude",
         )
-        if recovery.status != RNS.Resource.COMPLETE:
+        # COMPLETE on the initial Resource only proves its first segment.
+        # RNS calls the conclusion callback for the final segment (or failure).
+        concluded = completed[0]
+        if concluded.status != RNS.Resource.COMPLETE:
             raise RuntimeError(
-                f"recovery transfer {recovery_path.name} failed with status {recovery.status}"
+                f"recovery transfer {recovery_path.name} failed with status {concluded.status}"
             )
+        if concluded.segment_index != concluded.get_segments():
+            raise RuntimeError(f"recovery transfer {recovery_path.name} stopped before its final segment")
         if recovery_path.stat().st_size > RNS.Resource.MAX_EFFICIENT_SIZE:
             if recovery.get_segments() <= 1:
                 raise RuntimeError(

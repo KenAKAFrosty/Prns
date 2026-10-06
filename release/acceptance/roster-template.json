@@ -259,6 +259,27 @@
       "recovery_instructions_reviewed": true
     },
     {
+      "board": "mesh-tower-v2",
+      "surface": "web",
+      "os": "macos",
+      "architecture": "aarch64",
+      "browser": {"name": "chrome", "channel": "stable"},
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "mesh-tower-v2",
+      "surface": "cli",
+      "os": "macos",
+      "architecture": "aarch64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
       "board": "muzi-base-duo",
       "surface": "web",
       "os": "macos",
@@ -294,6 +315,126 @@
       "board": "t1000-e",
       "surface": "cli",
       "os": "macos",
+      "architecture": "x86_64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "heltec-v3",
+      "surface": "web",
+      "os": "linux",
+      "architecture": "x86_64",
+      "browser": {
+        "name": "chrome",
+        "channel": "stable"
+      },
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "heltec-v3",
+      "surface": "cli",
+      "os": "linux",
+      "architecture": "x86_64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "seeed-wio-tracker-l1",
+      "surface": "web",
+      "os": "linux",
+      "architecture": "x86_64",
+      "browser": {
+        "name": "chrome",
+        "channel": "stable"
+      },
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "seeed-wio-tracker-l1",
+      "surface": "cli",
+      "os": "linux",
+      "architecture": "x86_64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "xiao-esp32s3-wio-sx1262",
+      "surface": "web",
+      "os": "linux",
+      "architecture": "x86_64",
+      "browser": {
+        "name": "chrome",
+        "channel": "stable"
+      },
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "xiao-esp32s3-wio-sx1262",
+      "surface": "cli",
+      "os": "linux",
+      "architecture": "x86_64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "rak10724",
+      "surface": "web",
+      "os": "linux",
+      "architecture": "x86_64",
+      "browser": {
+        "name": "chrome",
+        "channel": "stable"
+      },
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "rak10724",
+      "surface": "cli",
+      "os": "linux",
+      "architecture": "x86_64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "seeed-sensecap-solar-node-p1",
+      "surface": "web",
+      "os": "linux",
+      "architecture": "x86_64",
+      "browser": {
+        "name": "chrome",
+        "channel": "stable"
+      },
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "seeed-sensecap-solar-node-p1",
+      "surface": "cli",
+      "os": "linux",
       "architecture": "x86_64",
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
       "cables_ready": true,

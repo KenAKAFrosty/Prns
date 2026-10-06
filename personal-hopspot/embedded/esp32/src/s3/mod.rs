@@ -20,6 +20,7 @@ use esp_hal::rom::spiflash::esp_rom_spiflash_read;
 use esp_hal::spi::master::Spi;
 use esp_hal::system::Stack as CpuStack;
 use esp_hal::time::Duration as HalDuration;
+use esp_hal::uart::{UartRx, UartTx};
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
@@ -30,11 +31,14 @@ use embassy_futures::select::{select3, Either3};
 #[cfg(not(feature = "remote-control-pairing"))]
 use embassy_futures::select::{select4, Either4};
 use embassy_net::tcp::TcpSocket;
+#[cfg(feature = "wifi-auto")]
 use embassy_net::udp::{PacketMetadata, UdpSocket};
+#[cfg(feature = "wifi-auto")]
 use embassy_net::{
     Config as NetConfig, ConfigV6, DhcpConfig, IpEndpoint, Ipv6Cidr, Runner, Stack, StackResources,
     StaticConfigV6,
 };
+#[cfg(feature = "wifi-auto")]
 use embassy_net::{IpAddress, Ipv4Address, Ipv4Cidr, StaticConfigV4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 #[cfg(feature = "remote-control-pairing")]
@@ -55,21 +59,28 @@ use portable_atomic::AtomicBool;
 use portable_atomic::{AtomicU32, AtomicU64, Ordering};
 use static_cell::StaticCell;
 
+#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::ap::AccessPointConfig;
+#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::scan::{ScanConfig, ScanTypeConfig};
+#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::sta::StationConfig;
+#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::{
     AuthenticationMethod, Config as WifiConfig, ControllerConfig, DisconnectReason,
     Interface as WifiStaDevice, PowerSaveMode, WifiController, WifiError,
 };
 
+#[cfg(feature = "esp-now")]
 use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
 use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
+#[cfg(feature = "esp-now")]
 use personal_rns::esp_now::EspNowInterface;
 use personal_rns::interfaces::bluetooth_auto::BLE_HW_MTU;
+#[cfg(feature = "esp-now")]
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
@@ -77,6 +88,7 @@ use personal_rns::interfaces::esp_now::{
 use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
 use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::usb_auto::device_descriptor;
+#[cfg(feature = "wifi-auto")]
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::interfaces::{
@@ -102,6 +114,7 @@ use personal_rns::runtime::{
 #[cfg(feature = "remote-control-pairing")]
 use personal_rns::runtime::{Diagnostic, Message, RemoteControlPairingControl};
 use personal_rns::storage::StorageLayout;
+#[cfg(feature = "tcp")]
 use personal_rns::tcp::{
     TcpClient, TcpClientInput, TcpClientTarget, TcpSocketBuffers, TCP_DNS_HOSTNAME_MAX_BYTES,
 };
@@ -132,14 +145,15 @@ use crate::storage::EngineStorageType;
 use personal_hopspot_core as screen;
 
 pub(crate) use crate::display_runtime::{
-    ImmediateBoardDisplay, RetainedBoardDisplay, RetainedDisplayDevice, S3BoardDisplay,
-    S3DisplayRuntime, S3Presentation,
+    HeadlessBoardDisplay, ImmediateBoardDisplay, RetainedBoardDisplay, RetainedDisplayDevice,
+    S3BoardDisplay, S3DisplayRuntime, S3Presentation,
 };
 pub(crate) use crate::immediate_display::ImmediateDisplayDevice;
 #[cfg(feature = "lora")]
 pub(crate) use board::LoraRadio;
 pub(crate) use board::{
     BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
+    S3UsbHardware,
 };
 pub(crate) use entropy::{
     bootstrap_s3_runtime, runtime_entropy, S3EntropySource, S3RuntimeBootstrap, S3RuntimeEntropy,
@@ -188,7 +202,13 @@ const TCP_BITRATE_BPS: BitrateBps = wifi_auto_contract::WIFI_EMBEDDED_BITRATE_CE
 const TCP_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 
 const LANE_COUNT: usize = 5 + cfg!(feature = "lora") as usize;
-const MEMBERS: usize = 24;
+// The V3 has no PSRAM. Its fixed storage profile reserves SRAM for the radio
+// drivers and one direct BLE peer instead of the V4's broad manifold.
+const MEMBERS: usize = if cfg!(feature = "sram-storage") {
+    1
+} else {
+    24
+};
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
 pub const BLE_CONTROLLER_ACTIVITY_CAPACITY: u8 = (BLE_PEER_CAPACITY + 1) as u8;
 // The S3 Wi-Fi blob creates its driver task at priority 29. Keep the BLE controller immediately
@@ -202,6 +222,8 @@ const LANE_DEPTH: usize = 1;
 /// hashmap update. Derive every S3 lane's PSRAM backlog from the engine storage recipe: the compact
 /// build can hold only eighteen parts, rather than the protocol-wide seventy-five-part window.
 const OUTBOUND_BURST_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
+const _: () =
+    assert!(OUTBOUND_BURST_DEPTH >= personal_rns::interfaces::usb_auto::DEVICE_MIN_OUTBOUND_FRAMES);
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const _: () = assert!(EngineStorageType::LINK_SESSIONS > MEMBERS + BLE_PEER_CAPACITY);
 const _: () = assert!(BLE_CONTROLLER_ACTIVITY_CAPACITY <= 10);
@@ -236,8 +258,13 @@ type Mtx = CriticalSectionRawMutex;
 type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
 type RemoteControlHandle =
     screen::HopspotCommandHandle<{ remote_control::REMOTE_CONTROL_COMMAND_DEPTH }>;
-type UsbSeam =
-    EmbassyInterfaceSeam<'static, Mtx, S3EntropySource, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
+type UsbSeam = EmbassyInterfaceSeam<
+    'static,
+    Mtx,
+    S3EntropySource,
+    NOTIFY_CAP,
+    { personal_rns::interfaces::usb_auto::MAX_DATA_BYTES },
+>;
 #[cfg(feature = "lora")]
 type S3LoraInterface = LoRaInterface<'static, LoraRadio>;
 #[cfg(feature = "lora")]
@@ -306,8 +333,12 @@ static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
     BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 #[cfg(feature = "lora")]
 static LORA_CONTROL: StaticCell<LoRaControl> = StaticCell::new();
-static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, 0> =
-    StaticManifoldLane::new();
+static USB_MANIFOLD_LANE: StaticManifoldLane<
+    Mtx,
+    { personal_rns::interfaces::usb_auto::MAX_DATA_BYTES },
+    LANE_DEPTH,
+    0,
+> = StaticManifoldLane::new();
 static TCP_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
 static WIFI_MANIFOLD_LANE: StaticManifoldLane<
@@ -708,6 +739,59 @@ async fn usb_device_task(
     device.run(seam).await
 }
 
+#[embassy_executor::task]
+async fn usb_uart_device_task(
+    rx: UartRx<'static, Async>,
+    tx: UartTx<'static, Async>,
+    seam: UsbSeam,
+    status: &'static EmbassyInterfaceStatus,
+) {
+    let device = UsbAutoDevice::new(UsbAutoDeviceInput {
+        rx: RecoverableUsbUartRx(rx),
+        tx: RecoverableUsbUartTx(tx),
+        status,
+        // The CP2102 UART exposes no cable-presence signal. Read/write failures
+        // and the USB Auto liveness protocol own disconnect detection instead.
+        host_presence: PhysicalHostPresence::new(|| true),
+        bitrate: personal_rns::interfaces::BitrateBps::guess(115_200),
+    });
+    device.run(seam).await
+}
+
+struct RecoverableUsbUartRx(UartRx<'static, Async>);
+
+impl embedded_io_06::ErrorType for RecoverableUsbUartRx {
+    type Error = embedded_io_06::ErrorKind;
+}
+
+impl embedded_io_async_06::Read for RecoverableUsbUartRx {
+    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Self::Error> {
+        embedded_io_async::Read::read(&mut self.0, buffer)
+            .await
+            .map_err(|_| embedded_io_06::ErrorKind::Interrupted)
+    }
+}
+
+struct RecoverableUsbUartTx(UartTx<'static, Async>);
+
+impl embedded_io_06::ErrorType for RecoverableUsbUartTx {
+    type Error = embedded_io_06::ErrorKind;
+}
+
+impl embedded_io_async_06::Write for RecoverableUsbUartTx {
+    async fn write(&mut self, buffer: &[u8]) -> Result<usize, Self::Error> {
+        embedded_io_async::Write::write(&mut self.0, buffer)
+            .await
+            .map_err(|_| embedded_io_06::ErrorKind::Interrupted)
+    }
+
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        embedded_io_async::Write::flush(&mut self.0)
+            .await
+            .map_err(|_| embedded_io_06::ErrorKind::Interrupted)
+    }
+}
+
 /// The identical ESP32-S3 early boot every board's `bringup` runs first: allocators (PSRAM +
 /// internal + the reclaimed D-cache region), the RTOS timer, and the RTC with its watchdogs disabled
 /// for the slow PSRAM-backed engine construction. A block expression (so its bindings escape
@@ -716,6 +800,16 @@ async fn usb_device_task(
 /// Heap region order is load-bearing for Wi-Fi boards: PSRAM must register first so capability-free boot allocations land externally and leave the small internal regions for the radio.
 /// Heltec V4-R8 (Octal) passes a custom `PsramConfig` and uses `split_psram_heap`, which gives engine construction a private freelist without starving the rest of the system.
 macro_rules! boot_common {
+    // The Heltec WiFi LoRa 32 V3 has no PSRAM. Do not probe or register an
+    // external heap before the OLED bring-up: the probe faults before a
+    // visible diagnostic can be rendered.
+    ($p:ident, $banner:expr, no_psram) => {{
+        ::esp_println::logger::init_logger_from_env();
+        ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
+        ::esp_alloc::heap_allocator!(size: $crate::s3::RADIO_INTERNAL_HEAP_BYTES);
+        $crate::s3::reclaim_dcache_region();
+        $crate::s3::boot_rtos_tail!($p, $banner)
+    }};
     ($p:ident, $banner:expr) => {
         $crate::s3::boot_common!(
             $p,

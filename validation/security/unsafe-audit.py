@@ -65,6 +65,16 @@ GRAPHS = (
         "xtensa-esp32s3-none-elf",
     ),
     (
+        "esp32-s3-heltec-v3",
+        "personal-hopspot/embedded/esp32/boards/heltec-v3/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
+    (
+        "esp32-s3-xiao-esp32s3-wio-sx1262",
+        "personal-hopspot/embedded/esp32/boards/xiao-esp32s3-wio-sx1262/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
+    (
         "esp32-s3-heltec",
         "personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml",
         "xtensa-esp32s3-none-elf",

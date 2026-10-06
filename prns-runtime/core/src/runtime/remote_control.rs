@@ -17,15 +17,15 @@ use crate::remote_control::{
     RemoteControlInterfaceGroup, RemoteControlInterfaceInventory, RemoteControlInterfacePage,
     RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower,
     RemoteControlInterfaceWatchSupport, RemoteControlLoRaOutcome, RemoteControlLoRaProfile,
-    RemoteControlMessageWriteError, RemoteControlModeOutcome, RemoteControlPeerPage,
-    RemoteControlPowerOutcome, RemoteControlProtocolError, RemoteControlRequest,
-    RemoteControlRequestKind, RemoteControlRequestParseError, RemoteControlRequestSet,
-    RemoteControlResponse, RemoteControlResponseKind, RemoteControlResponseParseError,
-    RemoteControlRevokeControllerOutcome, RemoteControlSelfAnnouncement, RemoteControlSleepOutcome,
-    RemoteControlStationUplink, RemoteControlSystemPower, RemoteControlWifiCredentialRevision,
-    RemoteControlWifiStageOutcome, RemoteControlWifiStation, RemoteControlWifiStationOutcome,
-    RemoteControlWifiTransactionStatus, RevokeRemoteControlControllerOutcome,
-    SetRemoteControlControllerGrantOutcome,
+    RemoteControlMessageWriteError, RemoteControlModeOutcome, RemoteControlNodeName,
+    RemoteControlPeerPage, RemoteControlPowerOutcome, RemoteControlProtocolError,
+    RemoteControlRequest, RemoteControlRequestKind, RemoteControlRequestParseError,
+    RemoteControlRequestSet, RemoteControlResponse, RemoteControlResponseKind,
+    RemoteControlResponseParseError, RemoteControlRevokeControllerOutcome,
+    RemoteControlSelfAnnouncement, RemoteControlSleepOutcome, RemoteControlStationUplink,
+    RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
+    RemoteControlWifiStation, RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
 };
 use crate::routing::links::channel::byte_stream::StreamId;
 use crate::routing::links::request::REQUEST_WIRE_OVERHEAD;
@@ -288,6 +288,10 @@ pub enum RemoteControlHostCommand {
     SetDisplayAutoOff {
         auto_off: RemoteControlDisplayAutoOff,
     },
+    SetNodeName {
+        name: RemoteControlNodeName,
+    },
+    DescribeNodeName,
     #[cfg(feature = "remote-control-wifi-host")]
     SetStationUplink {
         id: InterfaceId,
@@ -357,6 +361,8 @@ impl RemoteControlHostCommand {
             Self::SetGnssPower { .. } => RemoteControlRequestKind::SetGnssPower,
             Self::SetDisplayVisibility { .. } => RemoteControlRequestKind::SetDisplayVisibility,
             Self::SetDisplayAutoOff { .. } => RemoteControlRequestKind::SetDisplayAutoOff,
+            Self::SetNodeName { .. } => RemoteControlRequestKind::SetNodeName,
+            Self::DescribeNodeName => RemoteControlRequestKind::DescribeNodeName,
             #[cfg(feature = "remote-control-wifi-host")]
             Self::SetStationUplink { .. } => RemoteControlRequestKind::SetStationUplink,
             Self::SetEspRadioMode { .. } => RemoteControlRequestKind::SetEspRadioMode,
@@ -397,6 +403,8 @@ pub enum RemoteControlHostResponse {
     SetGnssPower(RemoteControlApplyOutcome),
     SetDisplayVisibility(RemoteControlApplyOutcome),
     SetDisplayAutoOff(RemoteControlApplyOutcome),
+    SetNodeName(RemoteControlApplyOutcome),
+    DescribeNodeName(RemoteControlNodeName),
     SetStationUplink(RemoteControlApplyOutcome),
     SetEspRadioMode(RemoteControlApplyOutcome),
     StageWifiCredentials(RemoteControlWifiStageOutcome),
@@ -432,6 +440,8 @@ impl RemoteControlHostResponse {
             Self::SetGnssPower(_) => RemoteControlRequestKind::SetGnssPower,
             Self::SetDisplayVisibility(_) => RemoteControlRequestKind::SetDisplayVisibility,
             Self::SetDisplayAutoOff(_) => RemoteControlRequestKind::SetDisplayAutoOff,
+            Self::SetNodeName(_) => RemoteControlRequestKind::SetNodeName,
+            Self::DescribeNodeName(_) => RemoteControlRequestKind::DescribeNodeName,
             Self::SetStationUplink(_) => RemoteControlRequestKind::SetStationUplink,
             Self::SetEspRadioMode(_) => RemoteControlRequestKind::SetEspRadioMode,
             Self::StageWifiCredentials(_) => RemoteControlRequestKind::StageWifiCredentials,
@@ -478,6 +488,8 @@ impl RemoteControlHostResponse {
                 RemoteControlResponse::SetDisplayVisibility(outcome)
             }
             Self::SetDisplayAutoOff(outcome) => RemoteControlResponse::SetDisplayAutoOff(outcome),
+            Self::SetNodeName(outcome) => RemoteControlResponse::SetNodeName(outcome),
+            Self::DescribeNodeName(name) => RemoteControlResponse::DescribeNodeName(name),
             Self::SetStationUplink(outcome) => RemoteControlResponse::SetStationUplink(outcome),
             Self::SetEspRadioMode(outcome) => RemoteControlResponse::SetEspRadioMode(outcome),
             Self::StageWifiCredentials(outcome) => {
@@ -1183,6 +1195,32 @@ impl RemoteControlDescribeBuild {
     }
 }
 
+pub struct RemoteControlDescribeNodeName;
+
+impl RemoteControlDescribeNodeName {
+    pub const REQUEST: RemoteControlRequest = RemoteControlRequest::DescribeNodeName;
+    pub const RESPONSE_CAPACITY: usize = Self::REQUEST.maximum_response_encoded_len();
+    pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
+        ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
+
+    pub fn write_request(out: &mut [u8]) -> Result<usize, RemoteControlError> {
+        Self::REQUEST
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn parse_response(bytes: &[u8]) -> Result<RemoteControlNodeName, RemoteControlError> {
+        match RemoteControlResponse::parse(bytes).map_err(RemoteControlError::Response)? {
+            RemoteControlResponse::DescribeNodeName(name) => Ok(name),
+            RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
+            response => Err(RemoteControlError::UnexpectedResponse {
+                expected: RemoteControlResponseKind::DescribeNodeName,
+                found: response.kind(),
+            }),
+        }
+    }
+}
+
 pub struct RemoteControlDescribePower;
 
 impl RemoteControlDescribePower {
@@ -1321,6 +1359,12 @@ remote_control_apply_exchange!(
     SetDisplayAutoOff,
     auto_off,
     RemoteControlDisplayAutoOff
+);
+remote_control_apply_exchange!(
+    RemoteControlSetNodeName,
+    SetNodeName,
+    name,
+    RemoteControlNodeName
 );
 remote_control_apply_exchange!(
     RemoteControlSetEspRadioMode,
@@ -1627,6 +1671,21 @@ impl RemoteControlRequestEndpoint {
                 require_available(available_requests, RemoteControlRequestKind::DescribeBuild)?;
                 Ok(AdmittedRemoteControlOperation::Host(
                     RemoteControlHostCommand::DescribeBuild,
+                ))
+            }
+            Ok(RemoteControlRequest::SetNodeName { name }) => {
+                require_available(available_requests, RemoteControlRequestKind::SetNodeName)?;
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetNodeName { name },
+                ))
+            }
+            Ok(RemoteControlRequest::DescribeNodeName) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::DescribeNodeName,
+                )?;
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::DescribeNodeName,
                 ))
             }
             Ok(RemoteControlRequest::DescribePower) => {

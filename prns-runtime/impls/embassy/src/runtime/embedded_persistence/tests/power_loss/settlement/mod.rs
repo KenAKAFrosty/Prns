@@ -216,7 +216,7 @@ fn verify(finalize: Finalize) -> Outcome {
                     *groups.groups_for(interface).unwrap()
                 )));
             assert!(core::future::Future::poll(group_change.as_mut(), &mut context).is_pending());
-            assert!(!ManifoldPersistence::<crate::storage::GrowableHeap>::has_pending_discovery_group_change(&manifold));
+            assert!(!ManifoldPersistence::<crate::storage::GrowableHeap>::has_pending_configuration_change(&manifold));
             {
                 let mut wake = core::pin::pin!(
                     ManifoldPersistence::<crate::storage::GrowableHeap>::wait_for_work(&manifold)

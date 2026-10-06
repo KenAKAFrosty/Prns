@@ -610,6 +610,40 @@ expires = "yesterday"
         identifiers = [entry["id"] for entry in json.loads(first)["include"]]
         self.assertEqual(identifiers, sorted(identifiers))
 
+    def test_emulator_matrix_partitions_preserve_every_suite_and_runner(self) -> None:
+        emulated_ids = {
+            "embedded-isa-riscv32imac", "embedded-isa-thumbv7em",
+            "embedded-isa-xtensa-esp32s3", "embedded-platform-esp32s3",
+            "embedded-platform-nrf52840",
+        }
+        for domain, tier in ((None, "release"), ("hardening", "release"),
+                             ("hardening", "scheduled")):
+            with self.subTest(domain=domain, tier=tier):
+                command = [sys.executable, str(RUNNER_PATH), "matrix", "--tier", tier]
+                if domain:
+                    command += ["--domain", domain]
+                matrices = {}
+                for mode in (None, "none", "required"):
+                    result = subprocess.run(
+                        command + (["--emulators", mode] if mode else []),
+                        check=True, capture_output=True, text=True,
+                    )
+                    matrices[mode] = json.loads(result.stdout)["include"]
+                    self.assertIn(f"{len(matrices[mode])} suites selected", result.stderr)
+                independent, emulated = matrices["none"], matrices["required"]
+                self.assertTrue(independent)
+                self.assertEqual({entry["id"] for entry in emulated}, emulated_ids)
+                self.assertTrue(emulated_ids.isdisjoint(entry["id"] for entry in independent))
+                self.assertEqual(
+                    sorted(independent + emulated, key=lambda entry: entry["id"]),
+                    matrices[None],
+                )
+
+    def test_emulator_filter_keeps_ungrouped_suites(self) -> None:
+        suite = {"id": "portable-check", "platform": "any"}
+        self.assertEqual(runner.ci_matrix([suite], "none"), runner.ci_matrix([suite]))
+        self.assertEqual(runner.ci_matrix([suite], "required"), {"include": []})
+
     def test_mutation_aggregate_merges_all_complete_shards(self) -> None:
         manifest = mutation_manifest()
         with tempfile.TemporaryDirectory() as directory:

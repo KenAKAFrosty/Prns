@@ -18,8 +18,7 @@ else
     npx --prefix docs/website playwright install chromium
 fi
 npm --prefix docs/website run test:flasher
-npm --prefix docs/website run build:flasher
-npm --prefix docs/website run build:css
+# Each browser entrypoint builds its own assets before preparing its site.
 npm --prefix docs/website run test:browser
 npm --prefix docs/website run test:production-boundary
 

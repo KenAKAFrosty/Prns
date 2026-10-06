@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -18,15 +19,27 @@ from validation.hardening.embedded_failure import (
     ProofFailure,
     execution_error,
 )
+from validation.hardening.embedded_miri_execution import (
+    MiriExecutionError,
+    TestExecution,
+    WORKERS_PER_MODEL,
+    discover_tests,
+    run_tests,
+)
+from validation.hardening.embedded_miri_shards import Shard, ShardError, validate_execution
 
 
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY_PATH = ROOT / "validation" / "hardening" / "embedded-miri.toml"
 RUNNER_PATH = ROOT / "validation" / "hardening" / "embedded_miri.py"
 FAILURE_SOURCE = ROOT / "validation" / "hardening" / "embedded_failure.py"
+EXECUTION_SOURCE = ROOT / "validation" / "hardening" / "embedded_miri_execution.py"
+SHARD_SOURCE = ROOT / "validation" / "hardening" / "embedded_miri_shards.py"
+DISTRIBUTION_SOURCE = ROOT / "validation" / "hardening" / "embedded_miri_distribution.py"
+VALIDATION_RUNNER = ROOT / "validation" / "run.py"
 VALID_IDENTIFIER = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?")
 TEST_RESULT = re.compile(
-    rb"test result: ok\. (?P<passed>[0-9]+) passed; 0 failed; [0-9]+ ignored;"
+    rb"test result: ok\. (?P<passed>[0-9]+) passed; 0 failed; 0 ignored;"
 )
 PROVISIONING_ENV = "PRNS_EMBEDDED_MIRI_PROVISIONING"
 
@@ -72,6 +85,13 @@ class Observation:
 
 
 @dataclass(frozen=True)
+class ModelExecution:
+    observation: Observation
+    inventory: tuple[str, ...]
+    results: tuple[TestExecution, ...]
+
+
+@dataclass(frozen=True)
 class ToolchainIdentity:
     channel: str
     rustc_version: str
@@ -82,6 +102,7 @@ class ToolchainIdentity:
 class ModeConfiguration:
     borrow_models: tuple[BorrowModel, ...]
     coverage: str
+    scope: str
     runner: str
 
 
@@ -171,12 +192,14 @@ def mode_configuration(mode: Mode) -> ModeConfiguration:
             return ModeConfiguration(
                 borrow_models=(BorrowModel.STACKED,),
                 coverage="stacked",
+                scope="focused",
                 runner="miri-stacked",
             )
         case Mode.FULL:
             return ModeConfiguration(
                 borrow_models=(BorrowModel.STACKED, BorrowModel.TREE),
                 coverage="stacked-and-tree",
+                scope="exhaustive",
                 runner="miri-stacked-tree",
             )
 
@@ -325,6 +348,8 @@ def run_scenario(
     identity: ToolchainIdentity,
     artifact_directory: Path,
 ) -> Observation:
+    if mode is Mode.FULL:
+        return run_full_scenario(scenario, model, identity, artifact_directory)
     log = artifact_directory / f"{scenario.component}-{model.value}.log"
     completed_tests = 0
     outputs = []
@@ -369,11 +394,81 @@ def run_scenario(
     return Observation(model=model, completed_tests=completed_tests, log=log)
 
 
+def run_full_scenario(
+    scenario: Scenario, model: BorrowModel, identity: ToolchainIdentity,
+    artifact_directory: Path,
+) -> Observation:
+    return execute_full_scenario(scenario, model, identity, artifact_directory).observation
+
+
+def execute_full_scenario(
+    scenario: Scenario, model: BorrowModel, identity: ToolchainIdentity,
+    artifact_directory: Path, shard: Shard | None = None,
+    *, workers: int = WORKERS_PER_MODEL,
+) -> ModelExecution:
+    log = artifact_directory / f"{scenario.component}-{model.value}.log"
+    command = command_for(scenario, scenario.full_filters[0], identity.channel)
+    command = command[:command.index("--")]
+    environment = miri_environment(model)
+    outputs = []
+    failures = []
+    completed = 0
+    seen: set[str] = set()
+    results = []
+    try:
+        inventory = discover_tests(command, scenario.full_filters, ROOT, environment)
+        names = shard.select(inventory) if shard is not None else inventory
+        outputs.append(("discovered-tests=" + json.dumps(inventory) + "\n").encode())
+        if shard is not None:
+            outputs.append(("assigned-tests=" + json.dumps(names) + "\n").encode())
+        print(
+            f"[embedded-miri:{model.value}] {scenario.component}: "
+            f"{len(names)} of {len(inventory)} tests assigned", flush=True,
+        )
+        for result in run_tests(
+            command, names, ROOT, environment,
+            artifact_directory / f"{scenario.component}-{model.value}-tests",
+            workers=workers,
+        ):
+            outputs.append(result.output)
+            results.append(result)
+            log.write_bytes(render_log(model, identity, outputs))
+            if result.name not in names or result.name in seen:
+                raise EmbeddedMiriError(f"unexpected or duplicate Miri test result: {result.name}")
+            seen.add(result.name)
+            if result.returncode != 0:
+                failures.append(result.name)
+                continue
+            try:
+                validate_execution(result)
+            except ShardError as error:
+                raise EmbeddedMiriError(str(error)) from error
+            completed += 1
+    except (OSError, subprocess.SubprocessError, MiriExecutionError) as error:
+        outputs.append(str(error).encode())
+        raise execution_error(FailureKind.TOOL_FAILURE, str(error)) from error
+    finally:
+        log.write_bytes(render_log(model, identity, outputs))
+    if failures:
+        raise execution_error(
+            FailureKind.STRUCTURAL_VIOLATION,
+            f"{scenario.component} {model.value} failed tests: {', '.join(failures)}; log={relative(log)}",
+        )
+    if completed != len(names):
+        raise EmbeddedMiriError(f"Miri completed {completed} of {len(names)} discovered tests")
+    return ModelExecution(
+        Observation(model=model, completed_tests=completed, log=log), inventory, tuple(results),
+    )
+
+
 def parse_completed_tests(output: bytes) -> int:
     match = TEST_RESULT.search(output)
     if match is None:
         raise EmbeddedMiriError("Miri output has no successful unit-test result")
-    return int(match.group("passed"))
+    completed = int(match.group("passed"))
+    if completed == 0:
+        raise EmbeddedMiriError("Miri filter completed no tests")
+    return completed
 
 
 def tool_version(command: tuple[str, ...]) -> str:
@@ -412,6 +507,8 @@ def record_proof(
         configuration.runner,
         "--coverage",
         configuration.coverage,
+        "--scope",
+        configuration.scope,
         "--completed-tests",
         str(next(iter(completed))),
         "--rustc-version",
@@ -421,7 +518,10 @@ def record_proof(
         "--output",
         str(output),
     ]
-    for source in (INVENTORY_PATH, RUNNER_PATH, FAILURE_SOURCE, *scenario.sources):
+    for source in (
+        INVENTORY_PATH, RUNNER_PATH, FAILURE_SOURCE, EXECUTION_SOURCE,
+        SHARD_SOURCE, DISTRIBUTION_SOURCE, VALIDATION_RUNNER, *scenario.sources,
+    ):
         command.extend(("--source", str(source)))
     for observation in observations:
         command.extend(("--log", str(observation.log)))
@@ -462,7 +562,10 @@ def record_failure(
         "--output",
         str(output),
     ]
-    for source in (INVENTORY_PATH, RUNNER_PATH, FAILURE_SOURCE, *scenario.sources):
+    for source in (
+        INVENTORY_PATH, RUNNER_PATH, FAILURE_SOURCE, EXECUTION_SOURCE,
+        SHARD_SOURCE, DISTRIBUTION_SOURCE, VALIDATION_RUNNER, *scenario.sources,
+    ):
         command.extend(("--source", str(source)))
     for log in logs:
         command.extend(("--log", str(log)))
@@ -488,10 +591,12 @@ def artifact_directory() -> Path:
 
 def clear_owned_artifacts(scenarios: tuple[Scenario, ...], artifact_directory: Path) -> None:
     for scenario in scenarios:
-        for suffix in (".assurance.json", "-stacked.log", "-tree.log"):
+        for suffix in (
+            ".assurance.json", "-stacked.log", "-tree.log",
+            "-stacked.shard.json", "-tree.shard.json",
+        ):
             path = artifact_directory / f"{scenario.component}{suffix}"
-            if path.is_file() or path.is_symlink():
-                path.unlink()
+            path.unlink(missing_ok=True)
 
 
 def relative(path: Path) -> str:
@@ -501,42 +606,40 @@ def relative(path: Path) -> str:
         return path.as_posix()
 
 
+def prepare_identity() -> ToolchainIdentity:
+    toolchain = nightly_toolchain()
+    prepare_miri(toolchain, provisioning_policy())
+    return ToolchainIdentity(
+        channel=toolchain,
+        rustc_version=tool_version(("rustc", f"+{toolchain}", "--version")),
+        miri_version=tool_version(("cargo", f"+{toolchain}", "miri", "--version")),
+    )
+
+
 def run(mode: Mode) -> None:
     scenarios = load_inventory()
     configuration = mode_configuration(mode)
     artifacts = artifact_directory()
     clear_owned_artifacts(scenarios, artifacts)
-    toolchain = nightly_toolchain()
-    prepare_miri(toolchain, provisioning_policy())
-    identity = ToolchainIdentity(
-        channel=toolchain,
-        rustc_version=tool_version(("rustc", f"+{toolchain}", "--version")),
-        miri_version=tool_version(("cargo", f"+{toolchain}", "miri", "--version")),
-    )
+    identity = prepare_identity()
     suite_failures = []
     for scenario in scenarios:
         observations = []
         scenario_failures = []
-        for model in configuration.borrow_models:
-            try:
-                observations.append(
-                    run_scenario(
-                        scenario,
-                        mode,
-                        model,
-                        identity,
-                        artifacts,
+        with ThreadPoolExecutor(max_workers=len(configuration.borrow_models)) as executor:
+            pending = [
+                executor.submit(run_scenario, scenario, mode, model, identity, artifacts)
+                for model in configuration.borrow_models
+            ]
+            for future in pending:
+                try:
+                    observations.append(future.result())
+                except ProofExecutionError as error:
+                    scenario_failures.append(error.failure)
+                except (EmbeddedMiriError, OSError, subprocess.SubprocessError) as error:
+                    scenario_failures.append(
+                        ProofFailure(kind=FailureKind.TOOL_FAILURE, diagnostic=str(error))
                     )
-                )
-            except ProofExecutionError as error:
-                scenario_failures.append(error.failure)
-            except (EmbeddedMiriError, OSError, subprocess.SubprocessError) as error:
-                scenario_failures.append(
-                    ProofFailure(
-                        kind=FailureKind.TOOL_FAILURE,
-                        diagnostic=str(error),
-                    )
-                )
         if scenario_failures:
             first = scenario_failures[0]
             combined = ProofFailure(
@@ -582,17 +685,28 @@ def run(mode: Mode) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from validation.run import ROUND_ROBIN_SHARDING
+
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=[mode.value for mode in Mode])
+    parser.add_argument("--shard")
+    parser.add_argument("--sharding", choices=[ROUND_ROBIN_SHARDING])
     return parser
 
 
 def main() -> int:
     arguments = build_parser().parse_args()
     try:
+        if arguments.shard is not None or arguments.sharding is not None:
+            if arguments.mode != Mode.FULL.value or arguments.shard is None or arguments.sharding is None:
+                raise EmbeddedMiriError("full Miri shards require both --shard and --sharding")
+            from validation.hardening.embedded_miri_distribution import run_shard
+
+            run_shard(Shard.parse(arguments.shard))
+            return 0
         run(Mode(arguments.mode))
         return 0
-    except (EmbeddedMiriError, OSError, subprocess.SubprocessError) as error:
+    except (EmbeddedMiriError, ShardError, OSError, subprocess.SubprocessError) as error:
         print(f"EMBEDDED_MIRI_ERROR: {error}", file=sys.stderr)
         return 1
 

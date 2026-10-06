@@ -1,0 +1,83 @@
+name: embedded-miri-deep
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: embedded-miri-deep-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings --cfg aes_armv8"
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.inventory.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: inventory
+        run: |
+          python3 validation/run.py verify
+          echo "matrix=$(python3 validation/run.py matrix --tier scheduled --suite embedded-miri-full)" >> "$GITHUB_OUTPUT"
+
+  miri:
+    needs: inventory
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.inventory.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: embedded-miri-deep-${{ matrix.id }}
+      - run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embedded-miri-deep-${{ matrix.id }}-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 30
+          path: validation-artifacts/**
+
+  collect:
+    needs: miri
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: embedded-miri-deep-*-${{ github.run_id }}
+          path: validation-artifacts
+          merge-multiple: true
+      - run: python3 validation/run.py aggregate --tier scheduled --suite embedded-miri-full --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embedded-miri-deep-summary-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 30
+          path: validation-artifacts/**

@@ -177,6 +177,8 @@ describes the next application-installation transaction and recovery gates. The
 [HaLoW integration contract](docs/halow-integration.md) records the proposed
 transport semantics, radio default, additional interfaces, and qualification work.
 
+Each of those pages leads with a short version ([G4](docs/g4-quick-installation.md), [Heltec](docs/heltec-quick-installation.md), [shared steps](docs/halow-quick-installation.md)) and keeps the full guide beneath it as the extended guide. The full guides stay authoritative: change a procedure there first, then carry it into the short version.
+
 See the [bring-up and installer procedure](docs/thinknode-g4.md) for the tested
 cross-build, hardware evidence, temporary deployment, and remaining requirements
 before offering persistent installation or firmware flashing to other users.

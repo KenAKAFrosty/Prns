@@ -13,15 +13,15 @@ use crate::runtime::{
     RemoteControlActivateWifiCredentials, RemoteControlAnnounceSelf,
     RemoteControlAppMessageExchange, RemoteControlAuthorizeController,
     RemoteControlCancelWifiCredentials, RemoteControlConfirmWifiCredentials, RemoteControlDescribe,
-    RemoteControlDescribeBuild, RemoteControlDescribePower, RemoteControlError,
-    RemoteControlInspectWifiTransaction, RemoteControlInventoryControllers,
+    RemoteControlDescribeBuild, RemoteControlDescribeNodeName, RemoteControlDescribePower,
+    RemoteControlError, RemoteControlInspectWifiTransaction, RemoteControlInventoryControllers,
     RemoteControlInventoryInterfaceConfig, RemoteControlInventoryInterfaceDiscoveryGroups,
     RemoteControlInventoryInterfacePeers, RemoteControlInventoryInterfaces,
     RemoteControlReplaceInterfaceDiscoveryGroups, RemoteControlRevokeController,
     RemoteControlSetDisplayAutoOff, RemoteControlSetDisplayVisibility,
     RemoteControlSetEspRadioMode, RemoteControlSetGnssPower, RemoteControlSetInterfaceGroup,
     RemoteControlSetInterfaceLoRaProfile, RemoteControlSetInterfaceMode,
-    RemoteControlSetInterfacePower, RemoteControlSetInterfaceWifiStation,
+    RemoteControlSetInterfacePower, RemoteControlSetInterfaceWifiStation, RemoteControlSetNodeName,
     RemoteControlSetStationUplink, RemoteControlSetSystemPower, RemoteControlSleepRadios,
     RemoteControlStageWifiCredentials, RemoteControlWakeRadios,
 };
@@ -169,6 +169,12 @@ impl<
         RemoteControlDisplayAutoOff
     );
     remote_control_apply_method!(
+        set_node_name,
+        RemoteControlSetNodeName,
+        name,
+        prns_core::remote_control::RemoteControlNodeName
+    );
+    remote_control_apply_method!(
         set_esp_radio_mode,
         RemoteControlSetEspRadioMode,
         mode,
@@ -246,6 +252,26 @@ impl<
             .map_err(RemoteControlError::Request)?;
         let version = RemoteControlDescribeBuild::parse_response(response.as_slice())?;
         Ok((version, rtt))
+    }
+
+    pub async fn describe_node_name(
+        &self,
+    ) -> Result<(prns_core::remote_control::RemoteControlNodeName, RttMillis), RemoteControlError>
+    {
+        let mut encoded = [0u8; RemoteControlDescribeNodeName::REQUEST.encoded_len()];
+        RemoteControlDescribeNodeName::write_request(&mut encoded)?;
+        let (response, rtt) = self
+            .node
+            .request_with_maximum_response_bytes::<{ RemoteControlDescribeNodeName::RESPONSE_CAPACITY }>(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                &encoded,
+                RequestResponseTimeout::LinkDefault,
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let name = RemoteControlDescribeNodeName::parse_response(response.as_slice())?;
+        Ok((name, rtt))
     }
 
     pub async fn describe_power(&self) -> Result<(PowerSnapshot, RttMillis), RemoteControlError> {

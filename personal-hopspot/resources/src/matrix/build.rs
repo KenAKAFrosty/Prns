@@ -72,7 +72,7 @@ impl Target<'_> {
                 })
             }
             TargetRecipe::BuildOnly(target) => {
-                nrf52840::firmware::build(context, self.profile(), target.recipe).map(|output| {
+                nrf52840::firmware::build(context, self.id(), target.recipe).map(|output| {
                     BuildEvidence {
                         firmware: output.firmware().clone(),
                         firmware_image_bytes: output.firmware_image_bytes(),

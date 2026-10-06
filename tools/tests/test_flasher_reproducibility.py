@@ -139,6 +139,18 @@ def manifest(
                 "variants": [],
             },
         )
+    included = {target["board_slug"] for target in value["targets"]}
+    catalog = json.loads((ROOT / "release/flash/boards.json").read_text())["boards"]
+    for board in catalog:
+        slug = board["slug"]
+        if slug not in SHIPPING_BOARDS or slug in included:
+            continue
+        value["targets"].append({
+            "board_slug": slug,
+            "transport": board["transport"],
+            "parts": [{"size": 1_000_000}] if board["transport"] == "esp-serial" else [],
+            "variants": [{"size": 350_000}] if board["transport"] == "uf2-mass-storage" else [],
+        })
     if source_size is not None:
         for target in value["targets"]:
             if target["board_slug"] in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}:

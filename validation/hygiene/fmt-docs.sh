@@ -23,7 +23,8 @@ done < <(
     | tr -d '\r'
 )
 
-echo "[docs] intra-doc links (personal-rns)"
-cargo doc --locked -p personal-rns --no-deps --document-private-items --quiet
+# Keep the packages together: their unified default features are part of this check.
+echo "[docs] intra-doc links (prns-core, prns-runtime, personal-rns)"
+cargo doc --locked -p prns-core -p prns-runtime -p personal-rns --no-deps --document-private-items --quiet
 
 echo "FMT_DOC_CHECK_GATE_OK"

@@ -183,7 +183,19 @@ export function cancelNrfBootloaderSelection() {
   pending.reject(new FlashBridgeError("cancelled", "Nordic DFU was cancelled."));
 }
 
-async function requestManagedBootloader(usb, expected, isCancelled) {
+const BOOTLOADER_ENTRY_STALL_MESSAGE = "Personal Hopspot rejected the exact bootloader-entry request.";
+const UF2_HAND_OFF_STALL_MESSAGE = "This Hopspot firmware did not accept recovery entry. Older releases do not support this button. Use the manual recovery instructions below, or update Hopspot to a release with recovery entry.";
+
+export async function requestUf2HandOff(usb, expected, isCancelled = () => false) {
+  await requestManagedBootloader(usb, expected, isCancelled, UF2_HAND_OFF_STALL_MESSAGE);
+}
+
+async function requestManagedBootloader(
+  usb,
+  expected,
+  isCancelled,
+  stallMessage = BOOTLOADER_ENTRY_STALL_MESSAGE,
+) {
   requireActive(isCancelled);
   let device;
   try {
@@ -198,7 +210,7 @@ async function requestManagedBootloader(usb, expected, isCancelled) {
     if (error?.name === "NotFoundError") {
       throw new FlashBridgeError(
         "permission_denied",
-        "No exact Personal Hopspot WebUSB device was selected.",
+        "No exact Personal Hopspot WebUSB device was selected. If the picker is empty, Hopspot may not have started its USB interface; use manual recovery to expose the stock bootloader.",
         { cause: error },
       );
     }
@@ -240,6 +252,7 @@ async function requestManagedBootloader(usb, expected, isCancelled) {
       );
     }
     await device.claimInterface(expected.interfaceNumber);
+    requireActive(isCancelled);
     const result = await device.controlTransferOut({
       requestType: "vendor",
       recipient: "device",
@@ -247,10 +260,13 @@ async function requestManagedBootloader(usb, expected, isCancelled) {
       value: expected.value,
       index: expected.index,
     });
+    if (result?.status === "stall") {
+      throw new FlashBridgeError("connection_failure", stallMessage);
+    }
     if (result?.status !== "ok" || result.bytesWritten !== 0) {
       throw new FlashBridgeError(
         "connection_failure",
-        "Personal Hopspot rejected the exact bootloader-entry request.",
+        "The device did not acknowledge bootloader entry. Check the USB connection and retry.",
       );
     }
   } catch (error) {
@@ -269,7 +285,7 @@ async function requestManagedBootloader(usb, expected, isCancelled) {
   }
 }
 
-function requireManagedIdentity(device, expected) {
+export function requireManagedIdentity(device, expected) {
   if (
     device?.vendorId !== expected.usb.vendorId
     || device?.productId !== expected.usb.productId

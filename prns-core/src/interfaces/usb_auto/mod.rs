@@ -1,9 +1,16 @@
+mod enrollment;
+pub use enrollment::{
+    UsbControllerEnrollment, UsbControllerEnrollmentBusy, UsbControllerEnrollmentStatus,
+    CONTROLLER_ENROLL_CONTROL_REQUEST, CONTROLLER_ENROLL_REQUEST_BYTES,
+    CONTROLLER_ENROLL_STATUS_BYTES, CONTROLLER_ENROLL_STATUS_REQUEST,
+};
 mod policy;
 mod protocol;
 
 pub use policy::{
-    device_descriptor, host_descriptor, DEVICE_DEFAULTS, DEVICE_USB_BITRATE_BPS, DEVICE_USB_HW_MTU,
-    HOST_DEFAULTS, HOST_USB_BITRATE_BPS, HOST_USB_HW_MTU,
+    device_descriptor, host_descriptor, DEVICE_DEFAULTS, DEVICE_MIN_OUTBOUND_FRAMES,
+    DEVICE_USB_BITRATE_BPS, DEVICE_USB_HW_MTU, HOST_DEFAULTS, HOST_USB_BITRATE_BPS,
+    HOST_USB_HW_MTU,
 };
 pub use protocol::{
     decode_message, host_react, node_tag_for, Capabilities, Decoder, HostInbound, MalformedMessage,
@@ -12,7 +19,8 @@ pub use protocol::{
     ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION, BOOTLOADER_ENTRY_CONTROL_INDEX,
     BOOTLOADER_ENTRY_CONTROL_REQUEST, BOOTLOADER_ENTRY_CONTROL_VALUE, HOST_HEARTBEAT_INTERVAL_MS,
     HOST_HEARTBEAT_TIMEOUT_MS, MAGIC, MAX_DATA_BYTES, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES,
-    NODE_TAG_LEN, PROTOCOL_VERSION, READ_CHUNK_BYTES, WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID,
+    NODE_TAG_LEN, PROTOCOL_VERSION, READ_CHUNK_BYTES, UF2_HAND_OFF_CONTROL_REQUEST,
+    WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID,
 };
 #[cfg(any(test, feature = "embassy-host"))]
 pub use protocol::{react_to, InboundReaction};

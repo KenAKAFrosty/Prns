@@ -31,13 +31,14 @@ jobs:
       oracles: ${{ steps.matrix.outputs.oracles }}
       interop: ${{ steps.matrix.outputs.interop }}
       hardening: ${{ steps.matrix.outputs.hardening }}
+      hardening_emulated: ${{ steps.matrix.outputs.hardening_emulated }}
       embedded_resources: ${{ steps.matrix.outputs.embedded_resources }}
       tier: ${{ steps.matrix.outputs.tier }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - id: matrix
         env:
-          VALIDATION_TIER: ${{ github.event_name == 'schedule' && 'scheduled' || 'release' }}
+          VALIDATION_TIER: scheduled
         run: |
           python3 validation/run.py verify
           echo "tier=$VALIDATION_TIER" >> "$GITHUB_OUTPUT"
@@ -45,7 +46,8 @@ jobs:
           echo "fuzz=$(python3 validation/run.py matrix --domain fuzz --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
           echo "oracles=$(python3 validation/run.py matrix --domain oracles --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
           echo "interop=$(python3 validation/run.py matrix --domain interop --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
-          echo "hardening=$(python3 validation/run.py matrix --domain hardening --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
+          echo "hardening=$(python3 validation/run.py matrix --domain hardening --tier "$VALIDATION_TIER" --emulators none)" >> "$GITHUB_OUTPUT"
+          echo "hardening_emulated=$(python3 validation/run.py matrix --domain hardening --tier "$VALIDATION_TIER" --emulators required)" >> "$GITHUB_OUTPUT"
           echo "embedded_resources=$(python3 validation/run.py matrix --suite embedded-builds --suite esp32-firmware-check --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
 
   embedded-emulators:
@@ -217,14 +219,15 @@ jobs:
           retention-days: 7
 
   hardening:
-    needs: [inventory, embedded-emulators]
+    needs: inventory
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 330
     strategy:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.inventory.outputs.hardening) }}
-    steps:
+    # Keep both lanes on the same tool and evidence contract.
+    steps: &hardening-steps
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - id: toolchain
         run: echo "nightly=$(python3 validation/run.py toolchain nightly)" >> "$GITHUB_OUTPUT"
@@ -275,9 +278,19 @@ jobs:
           path: validation-artifacts/results
           retention-days: 7
 
+  hardening-emulated:
+    needs: [inventory, embedded-emulators]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.inventory.outputs.hardening_emulated) }}
+    steps: *hardening-steps
+
   embedded-assurance:
     if: always()
-    needs: [inventory, embedded-resources, hardening]
+    needs: [inventory, embedded-resources, hardening, hardening-emulated]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -330,7 +343,7 @@ jobs:
   deep-validation:
     name: Deep validation
     if: always()
-    needs: [kani, fuzz, oracles, interop, hardening, embedded-resources, embedded-assurance]
+    needs: [kani, fuzz, oracles, interop, hardening, hardening-emulated, embedded-resources, embedded-assurance]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
@@ -339,10 +352,11 @@ jobs:
       ORACLES_RESULT: ${{ needs.oracles.result }}
       INTEROP_RESULT: ${{ needs.interop.result }}
       HARDENING_RESULT: ${{ needs.hardening.result }}
+      HARDENING_EMULATED_RESULT: ${{ needs.hardening-emulated.result }}
       EMBEDDED_RESOURCES_RESULT: ${{ needs.embedded-resources.result }}
       EMBEDDED_ASSURANCE_RESULT: ${{ needs.embedded-assurance.result }}
     steps:
       - run: |
-          for result in "$KANI_RESULT" "$FUZZ_RESULT" "$ORACLES_RESULT" "$INTEROP_RESULT" "$HARDENING_RESULT" "$EMBEDDED_RESOURCES_RESULT" "$EMBEDDED_ASSURANCE_RESULT"; do
+          for result in "$KANI_RESULT" "$FUZZ_RESULT" "$ORACLES_RESULT" "$INTEROP_RESULT" "$HARDENING_RESULT" "$HARDENING_EMULATED_RESULT" "$EMBEDDED_RESOURCES_RESULT" "$EMBEDDED_ASSURANCE_RESULT"; do
             test "$result" = success
           done

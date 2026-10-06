@@ -126,24 +126,6 @@ COUNT_CONTRACTS = (
     ),
     CountContract(
         "release/flash/README.md",
-        "physical slot, ",
-        "web_serial_roster",
-        " Firefox Web Serial",
-    ),
-    CountContract(
-        "release/flash/README.md",
-        "Firefox Web Serial slots, ",
-        "fallback",
-        " Safari fallback",
-    ),
-    CountContract(
-        "release/flash/README.md",
-        "fallback, and ",
-        "installer_roster",
-        " archive-installation coverage slots",
-    ),
-    CountContract(
-        "release/flash/README.md",
         "physical row, ",
         "web_serial",
         " Firefox Web Serial smokes",

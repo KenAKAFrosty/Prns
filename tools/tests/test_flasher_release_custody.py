@@ -55,12 +55,15 @@ CLI_TARGETS = {
     "x86_64-pc-windows-msvc": ".zip",
 }
 SHIPPING_BOARDS = release_boards(SCRIPTS / "flasher_board_catalog.py").shipping
-CATALOG_INTERFACES = {
-    board["slug"]: board["interfaces"]
+CATALOG = {
+    board["slug"]: board
     for board in json.loads(
         (ROOT / "release" / "flash" / "boards.json").read_text(encoding="utf-8")
     )["boards"]
 }
+
+CATALOG_INTERFACES = {slug: board["interfaces"] for slug, board in CATALOG.items()}
+UF2_BOARDS = {slug for slug, board in CATALOG.items() if board["transport"] == "uf2-mass-storage"}
 
 
 def sha256(path: Path) -> str:
@@ -213,12 +216,8 @@ class CandidateFixture:
         self.firmware_paths = []
         for index, board in enumerate(SHIPPING_BOARDS, start=1):
             filenames = (
-                ("t-echo-s140-6.1.1.uf2", "t-echo-s140-7.3.0.uf2")
-                if board == "t-echo"
-                else ("heltec-t114-s140-6.1.1.uf2",)
-                if board == "t114"
-                else ("t096-s140-6.1.1.uf2",)
-                if board == "t096"
+                tuple(variant["filename"] for variant in CATALOG[board]["build"]["variants"])
+                if board in UF2_BOARDS
                 else ("t1000e.bin", "t1000e.dat", "t1000e.uf2")
                 if board == "t1000-e"
                 else ("application.bin",)
@@ -228,7 +227,7 @@ class CandidateFixture:
                 relative = f"firmware/{board}/{filename}"
                 artifact = root / relative
                 artifact.parent.mkdir(parents=True, exist_ok=True)
-                if board in {"t-echo", "t114", "t096"}:
+                if board in UF2_BOARDS:
                     application_base = 0x26000 if "6.1.1" in filename else 0x27000
                     artifact.write_bytes(uf2_payload(application_base))
                 elif board == "t1000-e" and filename == "t1000e.bin":
@@ -266,15 +265,19 @@ class CandidateFixture:
                         ("0x00026000", "0x00027000"),
                     )
                 ]
-            elif board in {"t114", "t096"}:
+            elif board in UF2_BOARDS:
                 parts = []
                 variants = [
                     {
                         **artifacts[0],
                         "softdevice_family": "s140",
-                        "softdevice_version": "6.1.1",
-                        "fwid": "0x00b6",
-                        "application_base": "0x00026000",
+                        "softdevice_version": CATALOG[board]["build"]["variants"][0]["softdevice_version"],
+                        "fwid": CATALOG[board]["build"]["variants"][0]["fwid"],
+                        "application_base": (
+                            "0x00027000"
+                            if CATALOG[board]["build"]["variants"][0]["softdevice_version"] == "7.3.0"
+                            else "0x00026000"
+                        ),
                         "family_id": "0xada52840",
                     }
                 ]
@@ -289,7 +292,7 @@ class CandidateFixture:
                 "interfaces": CATALOG_INTERFACES[board],
                 "transport": (
                     "uf2-mass-storage"
-                    if board in {"t-echo", "t114", "t096"}
+                    if board in UF2_BOARDS
                     else "nrf-serial-dfu"
                     if board == "t1000-e"
                     else "esp-serial"
@@ -423,6 +426,9 @@ class CandidateFixture:
             "create-flasher-acceptance.py": SCRIPTS / "create-flasher-acceptance.py",
             "validate-flasher-acceptance.py": SCRIPTS / "validate-flasher-acceptance.py",
             "flasher_acceptance_contract.py": SCRIPTS / "flasher_acceptance_contract.py",
+            "flasher_software_acceptance.py": SCRIPTS / "flasher_software_acceptance.py",
+            "validation_runner.py": ROOT / "validation" / "run.py",
+            "validation-manifest.toml": ROOT / "validation" / "manifest.toml",
             "flasher_board_catalog.py": SCRIPTS / "flasher_board_catalog.py",
             "flasher_manifest.py": SCRIPTS / "flasher_manifest.py",
             "flasher_memory_contracts.py": SCRIPTS / "flasher_memory_contracts.py",
@@ -456,6 +462,9 @@ class CandidateFixture:
             ("t1000-e", "cli"): ("macos", "x86_64"),
             ("t1000-e", "web"): ("windows", "x86_64"),
         }
+        for board in SHIPPING_BOARDS:
+            for surface in ("cli", "web"):
+                physical_hosts.setdefault((board, surface), ("linux", "x86_64"))
         physical_assignments = []
         for (board, surface), (os_name, architecture) in physical_hosts.items():
             if board not in SHIPPING_BOARDS:
@@ -1590,6 +1599,9 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.root / "qualification" / "create-flasher-acceptance.py",
             self.fixture.root / "qualification" / "validate-flasher-acceptance.py",
             self.fixture.root / "qualification" / "flasher_acceptance_contract.py",
+            self.fixture.root / "qualification" / "flasher_software_acceptance.py",
+            self.fixture.root / "qualification" / "validation_runner.py",
+            self.fixture.root / "qualification" / "validation-manifest.toml",
             self.fixture.root / "qualification" / "flasher_board_catalog.py",
             self.fixture.root / "qualification" / "flasher_hotfix.py",
             self.fixture.root / "qualification" / "flasher_manifest.py",

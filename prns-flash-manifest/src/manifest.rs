@@ -712,7 +712,7 @@ mod tests {
             0x000e_a000
         );
         assert_eq!(target.firmware_owned().start(), 0x0002_7000);
-        assert_eq!(target.firmware_owned().end_exclusive(), 0x000e_9000);
+        assert_eq!(target.firmware_owned().end_exclusive(), 0x000e_7000);
         Ok(())
     }
 
@@ -775,6 +775,59 @@ mod tests {
         };
         assert_eq!(validated.variants().len(), 1);
         assert_eq!(validated.variants()[0].compatibility().softdevice(), &v6);
+        Ok(())
+    }
+
+    #[test]
+    fn shared_rak_bootloader_identity_cannot_substitute_the_other_kits_release_artifact(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let version = ReleaseVersion::parse("0.2.6")?;
+        let foundation = SoftdeviceIdentity::parse("s140", "6.1.1")?;
+        for (selected, other) in [("rak4631", "rak10724"), ("rak10724", "rak4631")] {
+            let board = catalog.board(selected).ok_or("missing selected RAK kit")?;
+            let other_board = catalog.board(other).ok_or("missing other RAK kit")?;
+            let mut selected_target = target(board);
+            let ReleaseTarget::Uf2(validated) = selected_target
+                .clone()
+                .into_validated_uf2_variant(board, &version, &foundation)?
+            else {
+                return Err("RAK kit must remain a UF2 target".into());
+            };
+            assert!(validated
+                .variant_for(&foundation)
+                .ok_or("missing S140 variant")?
+                .part()
+                .path()
+                .as_str()
+                .starts_with(&format!("firmware/hopspot/{selected}/0.2.6/")));
+            selected_target.variants = target(other_board).variants;
+            assert!(matches!(
+                selected_target.into_validated_uf2_variant(board, &version, &foundation),
+                Err(ManifestError::InvalidPart { .. })
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn solar_release_requires_its_verified_s140_foundation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("seeed-sensecap-solar-node-p1")
+            .ok_or("missing Solar")?;
+        let version = ReleaseVersion::parse("0.2.6")?;
+        for softdevice in ["6.1.1", "7.2.0", "7.3.0"] {
+            let foundation = SoftdeviceIdentity::parse("s140", softdevice)?;
+            assert_eq!(
+                target(board)
+                    .into_validated_uf2_variant(board, &version, &foundation)
+                    .is_ok(),
+                softdevice == "7.3.0",
+                "Solar must reject a mismatched bootloader foundation"
+            );
+        }
         Ok(())
     }
 

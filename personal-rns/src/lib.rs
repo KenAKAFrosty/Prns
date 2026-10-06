@@ -134,7 +134,8 @@ pub use prns_runtime_tokio::runtime::{
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_runtime_embassy::runtime::{
     restored_discovery_group_configuration, restored_discovery_group_configuration_now,
-    restored_discovery_groups, restored_discovery_groups_now, store_discovery_group_configuration,
+    restored_discovery_groups, restored_discovery_groups_now, restored_node_name,
+    restored_node_name_now, store_discovery_group_configuration, store_node_name,
     DiscoveryGroupConfigurationChange, EmbeddedCompactionPolicy, EmbeddedFlashPersistence,
     EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
     EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget,
@@ -151,7 +152,8 @@ pub use prns_runtime_embassy::runtime::{
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
 pub use prns_runtime_embassy::runtime::{
     restored_discovery_group_configuration, restored_discovery_group_configuration_now,
-    restored_discovery_groups, restored_discovery_groups_now, store_discovery_group_configuration,
+    restored_discovery_groups, restored_discovery_groups_now, restored_node_name,
+    restored_node_name_now, store_discovery_group_configuration, store_node_name,
     DiscoveryGroupConfigurationChange, EmbeddedCompactionPolicy, EmbeddedFlashPersistence,
     EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
     EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget,

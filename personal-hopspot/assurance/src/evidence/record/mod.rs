@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::capabilities;
 use crate::contract::{
     ArchitectureId, ComponentId, EvidenceArtifact, EvidenceFingerprint, EvidencePath,
-    IdentifierError, MiriCoverage, PlatformId, PlatformMilestone, ProofArtifactKind,
+    IdentifierError, MiriCoverage, MiriScope, PlatformId, PlatformMilestone, ProofArtifactKind,
     ProofContractError, ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId, Subject,
     SupportLevel, ToolIdentity, ToolKind, ValueError, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
 };
@@ -22,6 +22,7 @@ pub(crate) struct MiriRecordRequest {
     pub scenario: ScenarioId,
     pub runner: RunnerId,
     pub coverage: MiriCoverage,
+    pub scope: MiriScope,
     pub completed_tests: u32,
     pub rustc_version: String,
     pub miri_version: String,
@@ -163,6 +164,7 @@ pub(crate) fn record_miri(
         verdict: Verdict::Passed {
             evidence: ProofEvidence::Miri {
                 coverage: request.coverage,
+                scope: request.scope,
                 completed_tests: request.completed_tests,
             },
         },

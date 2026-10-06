@@ -735,6 +735,7 @@ where
             Observe,
             PENDING,
             impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+            impl AsRef<crate::runtime::NodeNameStoreExchange>,
         >,
     ) where
         M: Sync,
@@ -772,6 +773,7 @@ where
             Observe,
             PENDING,
             impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+            impl AsRef<crate::runtime::NodeNameStoreExchange>,
         >,
         should_prove: Decide,
     ) where
@@ -805,6 +807,7 @@ where
             Observe,
             PENDING,
             impl AsRef<DiscoveryGroupConfigurationStoreExchange>,
+            impl AsRef<crate::runtime::NodeNameStoreExchange>,
         >,
     ) -> EmbeddedPersistenceRestoreReport
     where

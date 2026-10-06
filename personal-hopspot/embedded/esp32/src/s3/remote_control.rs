@@ -1260,46 +1260,16 @@ pub(super) async fn apply_subg_configuration(
     active: &mut SubGConfigurationState,
     requested: SubGConfigurationState,
 ) -> Result<(), RemoteControlHostCommandError> {
-    if *active == requested {
-        return Ok(());
-    }
-    let previous = *active;
-    if controller.apply_configuration(requested).await == LoRaApplyOutcome::Rejected {
-        return Err(RemoteControlHostCommandError::ApplyFailed);
-    }
-    *active = requested;
-    let persistence = match requested {
-        SubGConfigurationState::Configured(configuration) => store.save(configuration).await,
-        SubGConfigurationState::Unconfigured => store.clear().await,
-    };
-    match persistence {
-        screen::SubGConfigurationCommitOutcome::Committed => Ok(()),
-        screen::SubGConfigurationCommitOutcome::Indeterminate(_) => {
-            if controller.apply_configuration(previous).await != LoRaApplyOutcome::Applied {
-                return Err(RemoteControlHostCommandError::RollbackFailed);
-            }
-            *active = previous;
-            let rollback = match previous {
-                SubGConfigurationState::Configured(configuration) => {
-                    store.save(configuration).await
-                }
-                SubGConfigurationState::Unconfigured => store.clear().await,
-            };
-            if rollback == screen::SubGConfigurationCommitOutcome::Committed {
-                Err(RemoteControlHostCommandError::PersistenceFailed)
-            } else {
-                Err(RemoteControlHostCommandError::RollbackFailed)
-            }
-        }
-        screen::SubGConfigurationCommitOutcome::NotCommitted(_) => {
-            if controller.apply_configuration(previous).await == LoRaApplyOutcome::Applied {
-                *active = previous;
-                Err(RemoteControlHostCommandError::PersistenceFailed)
-            } else {
-                Err(RemoteControlHostCommandError::RollbackFailed)
-            }
-        }
-    }
+    screen::apply_remote_subg_configuration(
+        async |configuration| match controller.apply_configuration(configuration).await {
+            LoRaApplyOutcome::Applied => Ok(()),
+            LoRaApplyOutcome::Rejected => Err(RemoteControlHostCommandError::ApplyFailed),
+        },
+        store,
+        active,
+        requested,
+    )
+    .await
 }
 
 pub(super) async fn rollback_expired(

@@ -96,7 +96,7 @@ fn corpus() -> Vec<Case> {
         for hops in hops {
             cases.push(Case {
                 label: format!("hops-{type_2}-{hops}"),
-                raw: packet(flags, hops, 0, &[], &mut generator),
+                raw: packet(flags, hops, 0, &[0xa5], &mut generator),
             });
         }
         let complete = packet(flags, 0, 0, &[0x11, 0x22], &mut generator);
@@ -130,7 +130,8 @@ fn normalized(raw: &[u8]) -> serde_json::Value {
     let Ok((header, payload)) = WirePacketHeader::parse(raw) else {
         return serde_json::json!({ "error": "rejected" });
     };
-    if !wire_hop_count_is_valid(header.hops) {
+    // Match ingress admission as well as the structural header decoder.
+    if !wire_hop_count_is_valid(header.hops) || payload.is_empty() {
         return serde_json::json!({ "error": "rejected" });
     }
     let mut encoded = [0u8; HEADER_MAX_LEN];

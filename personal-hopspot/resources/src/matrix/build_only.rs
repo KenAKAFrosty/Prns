@@ -1,6 +1,6 @@
 use personal_hopspot_builder::platform::nrf52840::firmware;
 use personal_hopspot_builder::LtoMode;
-use personal_hopspot_memory::{MemoryProfile, MESH_TOWER_V2, MUZI_BASE_DUO};
+use personal_hopspot_memory::{MemoryProfile, MESH_TOWER_V2, MUZI_BASE_DUO, WIO_TRACKER_L1};
 
 const NRF52840_RUST_TARGET: &str = "thumbv7em-none-eabihf";
 const NRF52840_PACKAGE: &str = "t-echo";
@@ -12,7 +12,7 @@ pub(super) struct BuildOnlyTarget {
     pub recipe: firmware::Recipe<'static>,
 }
 
-pub(super) const TARGETS: [BuildOnlyTarget; 2] = [
+pub(super) const TARGETS: [BuildOnlyTarget; 3] = [
     BuildOnlyTarget {
         id: "mesh-tower-v2",
         display_name: "Heltec MeshTower V2",
@@ -35,6 +35,18 @@ pub(super) const TARGETS: [BuildOnlyTarget; 2] = [
             rust_target: NRF52840_RUST_TARGET,
             cargo_features: "board-muzi-base-duo,softdevice-s140-v6",
             lto: LtoMode::Thin,
+        },
+    },
+    BuildOnlyTarget {
+        id: "wio-tracker-l1-pro-1w",
+        display_name: "Seeed Wio Tracker L1 Pro 1W",
+        profile: &WIO_TRACKER_L1,
+        recipe: firmware::Recipe {
+            package: NRF52840_PACKAGE,
+            binary: "wio-tracker-l1",
+            rust_target: NRF52840_RUST_TARGET,
+            cargo_features: "board-wio-tracker-l1,wio-tracker-l1-pro-1w",
+            lto: LtoMode::Configured,
         },
     },
 ];

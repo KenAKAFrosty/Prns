@@ -9,6 +9,7 @@ type Owner<'a> = EmbeddedFlashPersistence<
     fn(EmbeddedPersistenceDiagnostic),
     4,
     &'a DiscoveryGroupConfigurationStoreExchange,
+    NodeNameStoreExchange,
 >;
 
 pub(super) enum Recovery {
@@ -47,7 +48,7 @@ pub(super) async fn verify(
 ) -> Recovery {
     let exchange = DiscoveryGroupConfigurationStoreExchange::new();
     let control = Rc::new(RefCell::new(Control::new()));
-    let mut owner = Owner::with_discovery_group_store(
+    let mut owner = EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4, _>::with_discovery_group_store(
         Flash::boot(image, control.clone()),
         LAYOUT,
         EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0)),

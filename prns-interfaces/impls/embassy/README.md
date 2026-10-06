@@ -4,6 +4,16 @@ This crate is one package in the Personal RNS public Rust graph. Quick overviews
 
 All public packages use the same engine, release version, and dual MIT/Apache-2.0 license.
 
+## USB bootloader entry
+
+With the `usb` feature, `WebUsbBootloaderEntry::Supported` receives a validated
+`WebUsbBootloaderMode`: `PrnsFlasher` for the existing `0x50` update request,
+or `Uf2HandOff` for the `0x55` recovery-drive request. Callbacks schedule a
+reset after acknowledging the control transfer; board firmware owns the
+bootloader mode and reset implementation. Both requests require the exact
+PRNS signature and an empty data stage. See the
+[T1000-E recovery contract](../../../personal-hopspot/embedded/nrf52840/RECOVERY.md).
+
 ## Host-side BLE checks
 
 The `bluetooth-auto-embassy` validation suite runs the production Embassy BLE

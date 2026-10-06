@@ -110,8 +110,9 @@ readiness unless an Android application release explicitly places it in scope.
 
 Ordinary `cargo test` never searches for or silently uses a local Python
 environment. Oracle and live interop suites require explicit interpreters that
-contain the RNS version pinned for that evidence domain. Prepare reproducible local
-environments with:
+contain the RNS version pinned for that evidence domain. Both domains currently
+use stock interpreted RNS 1.5.4, matching the benchmark reference. Prepare
+reproducible local environments with:
 
 ```console
 python3 validation/run.py prepare-oracles

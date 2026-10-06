@@ -33,10 +33,10 @@ The release is intentionally split into three immutable layers:
    visibly public. The job then re-fetches and hashes the exact bundle and manifest and publishes
    immutable, attempt-specific review evidence on the GitHub prerelease. That persistent schema-2
    asset binds the signing run, exact rerun attempt, protected job, source revision, publication
-   timestamp, candidate hashes, and approval timestamp. Every qualification observation must occur
-   after publication.
-3. After physical qualification, the protected evidence workflow validates schema-5 ordinary or
-   schema-6 hotfix-scoped acceptance,
+   timestamp, candidate hashes, and approval timestamp. Physical qualification observations for historical releases must occur
+   after publication. Automated evidence binds the exact candidate source commit.
+3. The protected evidence workflow validates schema-7 automated acceptance for pre-1.0
+   releases from 0.3.8 onward (schema-5 physical or schema-6 scoped acceptance for older releases),
    signs it, generates a release record binding every custody layer, signs that record, and adds the
    deterministic qualification-evidence archive plus four signed evidence documents to the
    prerelease. It also revalidates one exact successful public-review run attempt and binds that
@@ -64,7 +64,8 @@ every shipping board and therefore carry an explicitly empty inheritance record.
 hosted flasher are still reproduced for the hotfix identity, and the normal dependency, signing,
 public-review, rollback, and exact-byte promotion gates remain in force.
 
-Schema-6 acceptance contains only the committed physical boards, surfaces, scenarios, and checks.
+Hotfixes from 0.3.8 onward use the same automated release gate as ordinary releases.
+Historical schema-6 acceptance contains only the committed physical boards, surfaces, scenarios, and checks.
 If the specification explicitly defers hardware for a changed board, the release owner must approve
 the exact committed basis and follow-up after the public prerelease exists. The record names that
 board as deferred and does not claim a hardware pass. See
@@ -92,10 +93,8 @@ Before signing any candidate:
 - create `release-rollback` with manual release-owner approval and no signing secrets or wait
   timer; rollback jobs only receive the repository public key and read-only release inputs;
 - confirm Actions attestations are available for the repository and `gh attestation verify` works;
-- assign every catalog-derived physical slot, three Firefox Web Serial slots, one Safari fallback,
-  and five archive-installation coverage slots to real testers across their required hosts; one
-  person may hold multiple or all slots;
-- commit and validate `release/acceptance/rosters/VERSION.json` with those real assignments;
+- commit and validate `release/acceptance/rosters/VERSION.json` with the release owner
+  and confirmation date; pre-1.0 releases from 0.3.8 need no physical assignments;
 - review the exact default-branch workflow revisions. Do not dispatch a signing workflow from a
   feature branch.
 - require the stable **Release critical** CI check in default-branch protection. It includes the
@@ -157,6 +156,11 @@ recovery dry-run before promotion.
 
 ## Qualify and finalize evidence
 
+From 0.3.8 until 1.0, follow the [automated acceptance gate](../acceptance/README.md#pre-10-automated-release-gate).
+All release-tier suites must pass, including the deterministic simulator and applicable
+emulators. Physical qualification remains optional. The procedures below for individual
+physical observations apply only to historical schema-5 and schema-6 acceptance.
+
 Testers extract the signed candidate. CLI qualification imports/uses only its verified cache
 contents; web qualification serves `CANDIDATE/website` from localhost and opens `/flash`. The
 hosted website also carries the exact commit-bound `source.zip` and
@@ -181,7 +185,8 @@ recorded evidence-archive SHA-256. The workflow:
 - revalidates one durable public-review evidence asset against its exact workflow run attempt and
   protected job;
 - extracts the evidence archive safely and recomputes every referenced object's SHA-256;
-- validates every manifest-derived transport-aware physical row, three Firefox Web Serial smokes,
+- validates complete exact-source automated evidence and successful readiness workflow custody
+  for schema 7; historical schema 5 validates every manifest-derived transport-aware physical row, three Firefox Web Serial smokes,
   one Safari fallback, and all five installer/exact-version smokes for an ordinary release;
   schema-6 hotfixes instead require only their committed targeted runs and explicit hardware
   deferrals;
@@ -234,7 +239,7 @@ report is resolved, calculate the signed flasher release record's SHA-256 and di
 signed flasher release** with the version, that hash, the matching baseline kind and conditional
 signed-baseline fields, and the successful rollback dry-run run ID and exact attempt. The protected workflow independently
 re-verifies Minisign, all
-candidate hashes, physical acceptance, flasher release-record equality, GitHub attestations, stable
+candidate hashes, release acceptance, flasher release-record equality, GitHub attestations, stable
 channel, source commit, public release state, protected public-review approval, complete rollback baseline,
 the immutable review artifact plus its exact successful signing workflow/job revision,
 retained-history head, and the successful 15-minute dry-run before deploying the exact website
@@ -256,7 +261,7 @@ verification attempt's artifact names, so retrying failed jobs cannot silently s
 bytes or collide with an earlier artifact.
 
 Promotion never rebuilds or replaces release assets. A missing/tampered acceptance document,
-flasher release record, attestation, signature, expected hash, or physical result blocks deployment.
+flasher release record, attestation, signature, expected hash, or required automated result blocks deployment.
 After deployment, the workflow fetches and verifies the live signed channel and manifest, compares
 the deployed website shell and flasher bundle with the signed candidate, downloads and hashes every
 live firmware part, checks the complete release-asset set, and exercises the immutable Linux shell

@@ -1,7 +1,7 @@
 {
   "implementation": "RNS 1.5.4",
   "slug": "rns-1.5.4",
-  "language": "Python",
+  "language": "Python (stock interpreted)",
   "crypto_backend": "PyCA cryptography / OpenSSL",
   "role": "reference",
   "repo": "https://github.com/markqvist/Reticulum",

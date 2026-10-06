@@ -14,6 +14,8 @@ import unittest
 SCRIPTS = Path(__file__).resolve().parents[1] / "release"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+from flasher_board_catalog import release_boards
+
 PATH = SCRIPTS / "write-flasher-installation-evidence.py"
 SPEC = importlib.util.spec_from_file_location("write_flasher_installation_evidence", PATH)
 if SPEC is None or SPEC.loader is None:
@@ -41,6 +43,13 @@ def roster(version: str) -> dict:
         ("t096", "web", "macos", "aarch64"),
         ("t1000-e", "cli", "macos", "x86_64"),
         ("t1000-e", "web", "windows", "x86_64"),
+    )
+    assigned = {board for board, _, _, _ in hosts}
+    hosts += tuple(
+        (board, surface, "linux", "x86_64")
+        for board in release_boards(PATH).shipping
+        if board not in assigned
+        for surface in ("cli", "web")
     )
     for board, surface, os_name, architecture in hosts:
         assignment = {

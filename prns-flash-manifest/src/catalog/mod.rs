@@ -337,6 +337,8 @@ pub struct Uf2Build {
     pub rust_target: String,
     pub mount_label: String,
     pub board_identity: Uf2BoardIdentity,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternative_board_identities: Vec<Uf2BoardIdentity>,
     pub application_usb: Uf2ApplicationUsb,
     pub variants: Vec<Uf2BuildVariant>,
 }
@@ -347,6 +349,12 @@ pub struct Uf2BoardIdentity {
     #[serde(rename = "match")]
     pub match_kind: Uf2BoardIdMatchKind,
     pub value: String,
+}
+
+impl Uf2Build {
+    pub fn board_identities(&self) -> impl Iterator<Item = &Uf2BoardIdentity> {
+        std::iter::once(&self.board_identity).chain(&self.alternative_board_identities)
+    }
 }
 
 impl Uf2BoardIdentity {
@@ -561,12 +569,15 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
 fn validate_uf2_board_identities(boards: &[BoardCatalogEntry]) -> Result<(), CatalogError> {
     let identities = boards
         .iter()
-        .filter_map(|board| match &board.build {
-            BoardBuild::Uf2(build) => Some((board.slug.as_str(), &build.board_identity)),
-            BoardBuild::Esp(_) => None,
-            BoardBuild::NrfSerialDfu(build) => {
-                Some((board.slug.as_str(), &build.recovery.board_identity))
-            }
+        .flat_map(|board| {
+            let identities: Vec<&Uf2BoardIdentity> = match &board.build {
+                BoardBuild::Uf2(build) => build.board_identities().collect(),
+                BoardBuild::Esp(_) => Vec::new(),
+                BoardBuild::NrfSerialDfu(build) => vec![&build.recovery.board_identity],
+            };
+            identities
+                .into_iter()
+                .map(|identity| (board.slug.as_str(), identity))
         })
         .collect::<Vec<_>>();
     for (index, (slug, identity)) in identities.iter().enumerate() {
@@ -585,7 +596,7 @@ fn validate_uf2_board_identities(boards: &[BoardCatalogEntry]) -> Result<(), Cat
                         message: "UF2 Board-ID match rule is invalid".to_string(),
                     })?;
             if identity.overlaps(&other_identity)
-                && !identity.declares_shared_identity_with(&other_identity)
+                && (slug == other_slug || !identity.declares_shared_identity_with(&other_identity))
             {
                 return Err(CatalogError::OverlappingUf2BoardIdentities {
                     first: (*slug).to_string(),
@@ -731,6 +742,46 @@ const T096_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
     }],
 };
 
+const WIO_TRACKER_L1_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::WioTrackerL1Uf2,
+    package: "t-echo",
+    binary: "wio-tracker-l1",
+    board_feature: "board-wio-tracker-l1",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (Wio Tracker L1)",
+    serial_number: "PERSONAL-RNS-WIO-L1-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "7.3.0",
+        fwid: "0x0123",
+        memory_profile: "wio-tracker-l1",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::SoftdeviceS140V7,
+        target_directory: "target/wio-tracker-l1",
+        filename: "wio-tracker-l1-s140-7.3.0.uf2",
+    }],
+};
+
+const MESH_TOWER_V2_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::MeshTowerV2Uf2,
+    package: "t-echo",
+    binary: "heltec-mesh-tower-v2",
+    board_feature: "board-mesh-tower-v2",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (Heltec MeshTower V2)",
+    serial_number: "PERSONAL-RNS-MTWR-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        memory_profile: "mesh-tower-v2",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::SoftdeviceS140V6,
+        target_directory: "target/mesh-tower-v2",
+        filename: "heltec-mesh-tower-v2-s140-6.1.1.uf2",
+    }],
+};
+
 const MUZI_BASE_DUO_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
     preparation_profile: PreparationProfile::MuziBaseDuoUf2,
     package: "t-echo",
@@ -771,6 +822,46 @@ const RAK4631_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
     }],
 };
 
+const RAK10724_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::Rak10724Uf2,
+    package: "t-echo",
+    binary: "rak10724",
+    board_feature: "board-rak10724",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (RAK WisMesh 1W)",
+    serial_number: "PERSONAL-RNS-RAK10724-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        memory_profile: "rak10724",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::SoftdeviceS140V6,
+        target_directory: "target/rak10724",
+        filename: "rak10724-s140-6.1.1.uf2",
+    }],
+};
+
+const SENSECAP_SOLAR_NODE_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::SensecapSolarNodeUf2,
+    package: "t-echo",
+    binary: "sensecap-solar-node",
+    board_feature: "board-sensecap-solar-node",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (SenseCAP Solar Node)",
+    serial_number: "PERSONAL-RNS-SOLARNODE-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "7.3.0",
+        fwid: "0x0123",
+        memory_profile: "sensecap-solar-node",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::BareMetal,
+        target_directory: "target/sensecap-solar-node",
+        filename: "sensecap-solar-node-s140-7.3.0.uf2",
+    }],
+};
+
 fn pinned_uf2_recipe(slug: &str) -> Option<&'static PinnedUf2Recipe> {
     match slug {
         "t-echo" => Some(&T_ECHO_UF2_RECIPE),
@@ -778,8 +869,12 @@ fn pinned_uf2_recipe(slug: &str) -> Option<&'static PinnedUf2Recipe> {
         "mesh-pocket-10000" => Some(&MESH_POCKET_10000_UF2_RECIPE),
         "t096" => Some(&T096_UF2_RECIPE),
         "t114" => Some(&T114_UF2_RECIPE),
+        "seeed-wio-tracker-l1" => Some(&WIO_TRACKER_L1_UF2_RECIPE),
+        "mesh-tower-v2" => Some(&MESH_TOWER_V2_UF2_RECIPE),
         "muzi-base-duo" => Some(&MUZI_BASE_DUO_UF2_RECIPE),
         "rak4631" => Some(&RAK4631_UF2_RECIPE),
+        "rak10724" => Some(&RAK10724_UF2_RECIPE),
+        "seeed-sensecap-solar-node-p1" => Some(&SENSECAP_SOLAR_NODE_UF2_RECIPE),
         _ => None,
     }
 }
@@ -976,7 +1071,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_catalog_has_shipping_and_qualification_boards() -> Result<(), CatalogError> {
+    fn solar_recovery_identities_are_finite_and_cannot_overlap_other_products() {
+        let mut catalog = board_catalog().expect("catalog");
+        let solar = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.slug == "seeed-sensecap-solar-node-p1")
+            .expect("Solar");
+        let BoardBuild::Uf2(build) = &mut solar.build else {
+            panic!("UF2")
+        };
+        assert_eq!(build.mount_label, "SENSECAP");
+        let rules = build
+            .board_identities()
+            .map(|identity| identity.validated().expect("rule"))
+            .collect::<Vec<_>>();
+        for accepted in ["nRF52840-SeeedSenseCAPSolarP1-v1", "nRF52840-SeeedXiao-v1"] {
+            assert!(rules
+                .iter()
+                .any(|rule| rule.matches(&accepted.to_ascii_lowercase())));
+        }
+        for rejected in [
+            "nRF52840-SeeedSenseCAPSolarP1-v2",
+            "nRF52840-SeeedXiao-v2",
+            "nRF52840-T1000-E-v1",
+        ] {
+            assert!(!rules
+                .iter()
+                .any(|rule| rule.matches(&rejected.to_ascii_lowercase())));
+        }
+        build.alternative_board_identities.push(Uf2BoardIdentity {
+            match_kind: Uf2BoardIdMatchKind::Exact,
+            value: "nrf52840-t1000-e-v1".to_string(),
+        });
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::OverlappingUf2BoardIdentities { .. })
+        ));
+    }
+
+    #[test]
+    fn embedded_catalog_has_all_release_ready_boards() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
         assert_eq!(catalog.schema_version, 5);
         let slugs = catalog
@@ -988,18 +1123,30 @@ mod tests {
             [
                 "heltec-v4",
                 "heltec-v4-r8",
+                "heltec-e290",
+                "heltec-wireless-stick-lite-v3",
                 "t-beam-supreme",
                 "xiao-esp32-c6",
                 "t-echo",
                 "t114",
+                "mesh-pocket-5000",
+                "mesh-pocket-10000",
                 "t096",
-                "t1000-e"
+                "rak4631",
+                "t1000-e",
+                "mesh-tower-v2",
+                "muzi-base-duo",
+                "heltec-v3",
+                "seeed-wio-tracker-l1",
+                "xiao-esp32s3-wio-sx1262",
+                "rak10724",
+                "seeed-sensecap-solar-node-p1"
             ]
         );
         assert!(catalog
             .boards
             .iter()
-            .any(|board| board.availability == BoardAvailability::Qualification));
+            .all(|board| board.availability == BoardAvailability::Shipping));
         Ok(())
     }
 
@@ -1079,7 +1226,21 @@ mod tests {
                 ("t096", None, None),
                 ("rak4631", None, None),
                 ("t1000-e", None, None),
+                ("mesh-tower-v2", None, None),
                 ("muzi-base-duo", None, None),
+                (
+                    "heltec-v3",
+                    Some(8_388_608),
+                    Some(("partitions-hopspot-8mb.csv", "8mb"))
+                ),
+                ("seeed-wio-tracker-l1", None, None),
+                (
+                    "xiao-esp32s3-wio-sx1262",
+                    Some(8_388_608),
+                    Some(("partitions-hopspot-8mb.csv", "8mb"))
+                ),
+                ("rak10724", None, None),
+                ("seeed-sensecap-solar-node-p1", None, None),
             ]
         );
         Ok(())
@@ -1157,7 +1318,25 @@ mod tests {
                 ("t096", "t096", "thumbv7em-none-eabihf"),
                 ("rak4631", "rak4631", "thumbv7em-none-eabihf"),
                 ("t1000-e", "t1000-e", "thumbv7em-none-eabihf"),
+                ("mesh-tower-v2", "mesh-tower-v2", "thumbv7em-none-eabihf"),
                 ("muzi-base-duo", "muzi-base-duo", "thumbv7em-none-eabihf"),
+                ("heltec-v3", "heltec-v3", "xtensa-esp32s3-none-elf"),
+                (
+                    "seeed-wio-tracker-l1",
+                    "wio-tracker-l1",
+                    "thumbv7em-none-eabihf"
+                ),
+                (
+                    "xiao-esp32s3-wio-sx1262",
+                    "xiao-esp32s3-wio-sx1262",
+                    "xtensa-esp32s3-none-elf"
+                ),
+                ("rak10724", "rak10724", "thumbv7em-none-eabihf"),
+                (
+                    "seeed-sensecap-solar-node-p1",
+                    "sensecap-solar-node",
+                    "thumbv7em-none-eabihf"
+                ),
             ]
         );
         Ok(())
@@ -1175,15 +1354,15 @@ mod tests {
     }
 
     #[test]
-    fn e290_qualification_contract_is_complete_and_not_shipping() -> Result<(), CatalogError> {
+    fn e290_shipping_contract_is_complete() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
         let board = catalog
             .board("heltec-e290")
             .ok_or_else(|| CatalogError::InvalidBoard {
                 board: "heltec-e290".to_string(),
-                message: "missing qualification target".to_string(),
+                message: "missing release target".to_string(),
             })?;
-        assert_eq!(board.availability, BoardAvailability::Qualification);
+        assert_eq!(board.availability, BoardAvailability::Shipping);
         assert_eq!(board.display_name, "Heltec Vision Master E290-HF");
         assert_eq!(board.expected_chip.as_deref(), Some("esp32s3"));
         assert_eq!(board.flash_size, Some(16_777_216));
@@ -1210,7 +1389,7 @@ mod tests {
         assert_eq!(build.flash_frequency, "40m");
         assert_eq!(build.before_reset, "usb-reset");
         assert_eq!(build.after_reset, "watchdog-reset");
-        assert!(!catalog
+        assert!(catalog
             .shipping_boards()
             .any(|entry| entry.slug == board.slug));
         Ok(())
@@ -1223,7 +1402,7 @@ mod tests {
             .board("heltec-wireless-stick-lite-v3")
             .ok_or_else(|| CatalogError::InvalidBoard {
                 board: "heltec-wireless-stick-lite-v3".to_string(),
-                message: "missing qualification target".to_string(),
+                message: "missing release target".to_string(),
             })?;
         assert_eq!(board.display_name, "Heltec Wireless Stick Lite V3");
         assert_eq!(board.expected_chip.as_deref(), Some("esp32s3"));
@@ -1296,26 +1475,29 @@ mod tests {
     }
 
     #[test]
-    fn rak4631_qualification_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
+    fn rak4631_shipping_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
         let board = catalog
             .board("rak4631")
             .ok_or_else(|| CatalogError::InvalidBoard {
                 board: "rak4631".to_string(),
-                message: "missing qualification target".to_string(),
+                message: "missing release target".to_string(),
             })?;
         let BoardBuild::Uf2(build) = &board.build else {
             return Err(invalid(board, "expected a UF2 build"));
         };
 
-        assert_eq!(board.availability, BoardAvailability::Qualification);
+        assert_eq!(board.availability, BoardAvailability::Shipping);
         assert_eq!(board.preparation_profile, "rak4631-uf2");
         assert_eq!(build.package, "t-echo");
         assert_eq!(build.binary, "rak4631");
         assert_eq!(build.board_feature, "board-rak4631");
         assert_eq!(build.rust_target, "thumbv7em-none-eabihf");
         assert_eq!(build.mount_label, "RAK4631");
-        assert_eq!(build.board_identity.match_kind, Uf2BoardIdMatchKind::Exact);
+        assert_eq!(
+            build.board_identity.match_kind,
+            Uf2BoardIdMatchKind::ExactShared
+        );
         assert_eq!(build.board_identity.value, "wisblock-rak4631-board");
         assert_eq!(build.application_usb.usb.vendor_id, "0x1209");
         assert_eq!(build.application_usb.usb.product_id, "0x0001");
@@ -1340,7 +1522,7 @@ mod tests {
             .expect("RAK4631 memory profile")
             .transport_envelope();
         assert_eq!(application.start(), 0x0002_6000);
-        assert_eq!(application.end_exclusive(), 0x000e_2000);
+        assert_eq!(application.end_exclusive(), 0x000e_0000);
         assert_eq!(variant.family_id, "0xada52840");
         assert_eq!(
             variant.application_link,
@@ -1494,7 +1676,7 @@ mod tests {
             .board("t1000-e")
             .ok_or_else(|| CatalogError::InvalidBoard {
                 board: "t1000-e".to_string(),
-                message: "missing qualification target".to_string(),
+                message: "missing release target".to_string(),
             })?;
         let BoardBuild::NrfSerialDfu(build) = &board.build else {
             return Err(invalid(board, "expected Nordic serial DFU build"));
@@ -1528,7 +1710,13 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             capable,
-            ["heltec-v4", "heltec-v4-r8", "heltec-e290", "t-beam-supreme"]
+            [
+                "heltec-v4",
+                "heltec-v4-r8",
+                "heltec-e290",
+                "t-beam-supreme",
+                "xiao-esp32s3-wio-sx1262"
+            ]
         );
         Ok(())
     }
@@ -1632,7 +1820,7 @@ mod tests {
             ("mesh-pocket-10000", "10000", "PERSONAL-RNS-MSPK10-HOP"),
         ] {
             let board = catalog.board(slug).ok_or("expected MeshPocket target")?;
-            assert_eq!(board.availability, BoardAvailability::Qualification);
+            assert_eq!(board.availability, BoardAvailability::Shipping);
             assert_eq!(board.preparation_profile, "mesh-pocket-uf2");
             let BoardBuild::Uf2(build) = &board.build else {
                 return Err("expected a UF2 build".into());

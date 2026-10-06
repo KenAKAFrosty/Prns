@@ -3,9 +3,10 @@ use core::future::Future;
 
 #[cfg(feature = "board-t114")]
 use embassy_futures::join::join5;
-#[cfg(feature = "board-t096")]
+#[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
 use embassy_futures::join::{join3, join4};
 use embassy_futures::select::{select4, Either4};
+#[cfg(feature = "board-t114")]
 use embassy_nrf::gpio::Input;
 use embassy_time::{Duration, Timer};
 use personal_hopspot_core as hopspot;
@@ -28,6 +29,10 @@ use super::{BLE_MANIFOLD_LANE, COMMANDS, COMPLETION, INTERFACE_STORE, REMOTE_CON
 
 pub(super) const INTERFACE_CAPACITY: usize = 2 + MEMBERS;
 pub(super) const LANE_COUNT: usize = 3;
+// LoRa, USB, every BLE member, and the BLE supervisor itself.
+const STATUS_CAPACITY: usize = INTERFACE_CAPACITY + 1;
+// BLE members roll up into the supervisor card beside LoRa and USB.
+const CARD_CAPACITY: usize = 3;
 const NOTICE_MS: u64 = 900;
 
 fn display_now() -> hopspot::display::MonotonicMillis {
@@ -104,6 +109,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
     } = input;
     let ui_handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     async move {
+        super::node_name::restore().await;
         let mut display = display.into_runtime(display_now());
         let mut ui_state = hopspot::UiState::new(hopspot::UiConfiguration {
             storage_limits: <board::Storage as StorageLayout>::LIMITS,
@@ -111,12 +117,12 @@ pub(super) fn face(input: FaceInput) -> impl Future {
             access_point: hopspot::AccessPointState::Unsupported,
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
             discovery_groups: hopspot::DiscoveryGroupEditorAvailability::Available,
-            #[cfg(feature = "board-t096")]
+            #[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
             gnss: hopspot::GnssAvailability::Available,
             #[cfg(feature = "board-t114")]
             gnss: hopspot::GnssAvailability::Unavailable,
         });
-        let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
+        let mut activity = hopspot::CardActivityTracker::<CARD_CAPACITY>::new();
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
         let mut persistence_notice = hopspot::PersistenceNotice::new();
         let mut working_subg_configuration = subg_configuration;
@@ -132,7 +138,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
             startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
         let mut scheduled_remote_control_effect = None;
         let mut system = super::remote_control::SystemIntent::from_status(lora_status, usb_status);
-        #[cfg(feature = "board-t096")]
+        #[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
         let mut gnss_wanted = false;
         macro_rules! execute_hopspot_command {
             ($snapshots:expr, $power:expr, $command:expr) => {
@@ -148,7 +154,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                         lora_controller: &mut lora_controller,
                         subg_store: &mut subg_configuration_store,
                         subg_configuration: &mut working_subg_configuration,
-                        #[cfg(feature = "board-t096")]
+                        #[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
                         gnss_wanted: &mut gnss_wanted,
                     },
                     $command,
@@ -240,7 +246,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
             }
             let now = hopspot::display::MonotonicMillis::new(now_ms);
             let _blanking = display.poll_blanking(now, display_now).await;
-            #[cfg(feature = "board-t096")]
+            #[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
             let gnss = (display.visibility() == hopspot::display::DisplayVisibility::Visible
                 && ui_state.gnss_visible())
             .then(board::gnss_snapshot);
@@ -364,7 +370,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                                 notice_until_ms = Some((now_ms + NOTICE_MS, notice));
                             }
                         }
-                        #[cfg(feature = "board-t096")]
+                        #[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
                         hopspot::UiAction::ControlGnss(command) => {
                             let power = match command {
                                 hopspot::GnssReceiverCommand::Enable => {
@@ -517,13 +523,13 @@ where
     join5(io, lora, face, bluetooth, board::drive_button(button))
 }
 
-#[cfg(feature = "board-t096")]
+#[cfg(any(feature = "board-t096", feature = "board-wio-tracker-l1"))]
 pub(super) fn run<I, L, F, B>(
     io: I,
     lora: L,
     face: F,
     bluetooth: B,
-    button: Input<'static>,
+    button: board::ButtonInput,
     gnss: board::Gnss,
 ) -> impl Future
 where
@@ -544,9 +550,9 @@ enum SnapshotBuildError {
 fn snapshots(
     lora: &EmbassyInterfaceStatus,
     usb: &EmbassyInterfaceStatus,
-) -> Result<heapless::Vec<InterfaceSnapshot, { MEMBERS + 4 }>, SnapshotBuildError> {
+) -> Result<heapless::Vec<InterfaceSnapshot, STATUS_CAPACITY>, SnapshotBuildError> {
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
-    let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), { MEMBERS + 4 }> =
+    let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), STATUS_CAPACITY> =
         heapless::Vec::new();
     entries
         .push((lora, Membership::Independent))
@@ -593,7 +599,7 @@ fn cards(
     subg_configuration: SubGConfigurationState,
     lora_id: InterfaceId,
     usb_id: InterfaceId,
-) -> heapless::Vec<hopspot::Card, { MEMBERS + 4 }> {
+) -> heapless::Vec<hopspot::Card, CARD_CAPACITY> {
     hopspot::snapshots_to_cards(snapshots, |id| {
         if id == lora_id {
             Some(hopspot::subg_card(subg_configuration))

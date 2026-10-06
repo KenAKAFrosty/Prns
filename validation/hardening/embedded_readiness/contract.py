@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import tomllib
 from pathlib import Path
 
 from validation.hardening import embedded_miri
@@ -33,6 +34,9 @@ def load_contract(home: Path | None = None) -> ReadinessContract:
     scenarios = embedded_miri.load_inventory()
     resolved_home = home if home is not None else home_directory()
     return ReadinessContract(
+        resource_toolchain=tomllib.loads(
+            (ROOT / "personal-hopspot/embedded/nrf52840/rust-toolchain.toml").read_text(encoding="utf-8")
+        )["toolchain"]["channel"],
         isa_toolchain=isa.rust_toolchain,
         architectures=isa.architectures,
         platforms=platform.platforms,

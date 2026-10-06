@@ -76,22 +76,27 @@ fn memory_x_layouts_derive_from_each_canonical_profile() {
         ),
         (
             &T1000_E,
-            AddressRange::new(0x27000, 0xE9000),
+            AddressRange::new(0x27000, 0xE7000),
             AddressRange::new(0x2001_0000, 0x2004_0000),
         ),
         (
             &MESH_TOWER_V2,
-            AddressRange::new(0x26000, 0xE2000),
+            AddressRange::new(0x26000, 0xE0000),
             AddressRange::new(0x2000_C000, 0x2004_0000),
         ),
         (
             &MUZI_BASE_DUO,
-            AddressRange::new(0x26000, 0xE2000),
+            AddressRange::new(0x26000, 0xE0000),
             AddressRange::new(0x2000_C000, 0x2004_0000),
         ),
         (
             &RAK4631,
-            AddressRange::new(0x26000, 0xE2000),
+            AddressRange::new(0x26000, 0xE0000),
+            AddressRange::new(0x2000_C000, 0x2004_0000),
+        ),
+        (
+            &WIO_TRACKER_L1,
+            AddressRange::new(0x27000, 0xE1000),
             AddressRange::new(0x2000_C000, 0x2004_0000),
         ),
     ] {
@@ -179,4 +184,48 @@ fn base_and_rak_topologies_slot_into_the_existing_arm_contract() {
             external_bytes: 2 * MIB,
         })
     );
+}
+
+#[test]
+fn screenless_profiles_persist_radio_settings_without_moving_identities_or_journals() {
+    for (profile, radio, identity, node, journal_start, journal_end) in [
+        (&MESH_TOWER_V2, 0xE0000, 0xE2000, 0xEB000, 0xE3000, 0xE9000),
+        (&MUZI_BASE_DUO, 0xE0000, 0xE2000, 0xEB000, 0xE3000, 0xE9000),
+        (&RAK4631, 0xE0000, 0xE2000, 0xEB000, 0xE3000, 0xE9000),
+        (&RAK10724, 0xE0000, 0xE2000, 0xEB000, 0xE3000, 0xE9000),
+        (&T1000_E, 0xE7000, 0xE9000, 0xF0000, 0xEA000, 0xF0000),
+        (
+            &SENSECAP_SOLAR_NODE,
+            0xE7000,
+            0xE9000,
+            0xF0000,
+            0xEA000,
+            0xF0000,
+        ),
+    ] {
+        let region = |role| profile.unique_region_for_role(role).unwrap();
+        let radio_region = region(RegionRole::RadioProfile);
+        assert_eq!(
+            (radio_region.range, radio_region.retention),
+            (
+                AddressRange::new(radio, radio + 2 * 4096),
+                RegionRetention::PreserveAcrossFirmwareUpdate,
+            )
+        );
+        assert_eq!(
+            region(RegionRole::RemoteControlIdentity).range.start(),
+            identity
+        );
+        assert_eq!(region(RegionRole::NodeIdentity).range.start(), node);
+        assert_eq!(
+            region(RegionRole::Journal).range,
+            AddressRange::new(journal_start, journal_end)
+        );
+        let firmware = region(RegionRole::FirmwareImage).range;
+        assert_eq!(firmware.end(), radio);
+        assert!(matches!(
+            profile.validate_firmware_image(AddressRange::new(firmware.start(), radio + 1,)),
+            Err(ArtifactError::OutsideFirmwareOwnedRegion { .. })
+        ));
+    }
 }

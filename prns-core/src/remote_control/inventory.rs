@@ -33,6 +33,12 @@ pub const REMOTE_CONTROL_INTERFACE_NAME_CAP: usize = 32;
 pub const REMOTE_CONTROL_INTERFACE_GROUP_CAP: usize = 32;
 pub const REMOTE_CONTROL_INTERFACE_CONFIG_CAP: usize = 48;
 pub const REMOTE_CONTROL_BUILD_VERSION_CAP: usize = 48;
+/// A node's human-facing name, as announced to other Reticulum nodes and apps.
+pub const REMOTE_CONTROL_NODE_NAME_CAP: usize = 64;
+/// Version byte that prefixes a persisted node name record.
+pub const NODE_NAME_SNAPSHOT_VERSION: u8 = 1;
+/// A persisted node name: version byte, length byte, then the UTF-8 name.
+pub const NODE_NAME_SNAPSHOT_MAX_LEN: usize = 2 + REMOTE_CONTROL_NODE_NAME_CAP;
 pub const REMOTE_CONTROL_WIFI_SSID_CAP: usize = 32;
 pub const REMOTE_CONTROL_WIFI_PASSWORD_CAP: usize = 64;
 pub const REMOTE_CONTROL_WIFI_STATION_INVENTORY_PREFIX: &str = "W,";
@@ -1366,6 +1372,86 @@ impl RemoteControlBuildVersion {
         if let Some(target) = rest.get_mut(..usize::from(self.len)) {
             target.copy_from_slice(self.as_bytes());
         }
+    }
+}
+
+/// A node name a controller may set: 1..=64 bytes of UTF-8 without control characters and
+/// without surrounding whitespace, so what other nodes display is exactly what was entered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteControlNodeName {
+    bytes: [u8; REMOTE_CONTROL_NODE_NAME_CAP],
+    len: u8,
+}
+
+impl RemoteControlNodeName {
+    pub const MAX_ENCODED_LEN: usize = 1usize.saturating_add(REMOTE_CONTROL_NODE_NAME_CAP);
+
+    #[must_use]
+    pub fn new(text: &str) -> Option<Self> {
+        let bytes = text.as_bytes();
+        if bytes.is_empty()
+            || bytes.len() > REMOTE_CONTROL_NODE_NAME_CAP
+            || text.trim() != text
+            || text.chars().any(char::is_control)
+        {
+            return None;
+        }
+        let mut stored = [0u8; REMOTE_CONTROL_NODE_NAME_CAP];
+        stored.get_mut(..bytes.len())?.copy_from_slice(bytes);
+        Some(Self {
+            bytes: stored,
+            len: u8::try_from(bytes.len()).ok()?,
+        })
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.bytes
+            .get(..usize::from(self.len))
+            .and_then(|bytes| core::str::from_utf8(bytes).ok())
+            .unwrap_or("")
+    }
+
+    #[must_use]
+    pub const fn encoded_body_len(self) -> usize {
+        1usize.saturating_add(self.len as usize)
+    }
+
+    pub(crate) fn write_body(self, out: &mut [u8]) {
+        let Some((len, rest)) = out.split_first_mut() else {
+            return;
+        };
+        *len = self.len;
+        if let Some(target) = rest.get_mut(..usize::from(self.len)) {
+            target.copy_from_slice(self.as_str().as_bytes());
+        }
+    }
+
+    /// Parse a length-prefixed name body; the body must hold exactly one name.
+    #[must_use]
+    pub fn parse_body(body: &[u8]) -> Option<Self> {
+        let (len, rest) = body.split_first()?;
+        if usize::from(*len) != rest.len() {
+            return None;
+        }
+        Self::new(core::str::from_utf8(rest).ok()?)
+    }
+
+    /// Encode the durable record: [`NODE_NAME_SNAPSHOT_VERSION`] then the name body.
+    pub fn encode_snapshot(self, out: &mut [u8; NODE_NAME_SNAPSHOT_MAX_LEN]) -> usize {
+        out[0] = NODE_NAME_SNAPSHOT_VERSION;
+        self.write_body(&mut out[1..]);
+        1usize.saturating_add(self.encoded_body_len())
+    }
+
+    /// Decode a durable record; unknown versions and malformed names are refused.
+    #[must_use]
+    pub fn decode_snapshot(bytes: &[u8]) -> Option<Self> {
+        let (version, body) = bytes.split_first()?;
+        if *version != NODE_NAME_SNAPSHOT_VERSION {
+            return None;
+        }
+        Self::parse_body(body)
     }
 }
 

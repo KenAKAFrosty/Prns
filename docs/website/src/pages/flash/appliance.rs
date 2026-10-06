@@ -1,7 +1,6 @@
 use dioxus::prelude::*;
 
 use crate::components::MarkdownBody;
-use crate::routes::Route;
 
 const G4_SLUG: &str = "thinknode-g4";
 const HELTEC_SLUG: &str = "heltec-ht-hd01-v2";
@@ -20,42 +19,43 @@ impl Appliance {
         }
     }
 
-    fn guide(&self) -> &'static str {
+    fn quick_guide(&self) -> &'static str {
         match self {
-            Self::ThinkNodeG4 => G4_GUIDE,
-            Self::HeltecHtHd01V2 => HELTEC_GUIDE,
+            Self::ThinkNodeG4 => G4_QUICK_GUIDE,
+            Self::HeltecHtHd01V2 => HELTEC_QUICK_GUIDE,
+        }
+    }
+
+    fn extended_guide(&self) -> &'static str {
+        match self {
+            Self::ThinkNodeG4 => G4_EXTENDED_GUIDE,
+            Self::HeltecHtHd01V2 => HELTEC_EXTENDED_GUIDE,
         }
     }
 }
 
-const G4_GUIDE: &str =
+const G4_QUICK_GUIDE: &str =
+    include_str!("../../../../../personal-hopspot/headless/docs/g4-quick-installation.md");
+const HELTEC_QUICK_GUIDE: &str =
+    include_str!("../../../../../personal-hopspot/headless/docs/heltec-quick-installation.md");
+const SHARED_QUICK_GUIDE: &str =
+    include_str!("../../../../../personal-hopspot/headless/docs/halow-quick-installation.md");
+const G4_EXTENDED_GUIDE: &str =
     include_str!("../../../../../personal-hopspot/headless/docs/g4-installation.md");
-const HELTEC_GUIDE: &str =
+const HELTEC_EXTENDED_GUIDE: &str =
     include_str!("../../../../../personal-hopspot/headless/docs/heltec-installation.md");
-const SHARED_GUIDE: &str =
+const SHARED_EXTENDED_GUIDE: &str =
     include_str!("../../../../../personal-hopspot/appliance/docs/guided-installation.md");
 
 pub(super) fn installation_guide(appliance: &Appliance) -> Element {
-    rsx! { MarkdownBody { source: format!("{}\n\n{SHARED_GUIDE}", appliance.guide()) } }
-}
-
-#[component]
-pub(super) fn LinuxApplianceCard() -> Element {
     rsx! {
-        section { class: "mt-10 rounded-card border border-line/60 bg-layer/40 p-5",
-            h2 { class: "text-xl font-semibold text-paper", "Linux appliances" }
-            p { class: "mt-3 leading-relaxed text-soft",
-                "Install Hopspot as an application on a device's existing Linux system."
+        MarkdownBody { heading_offset: 1, source: format!("{}\n\n{SHARED_QUICK_GUIDE}", appliance.quick_guide()) }
+        details { class: "mt-10",
+            summary { class: "cursor-pointer text-sm text-soft hover:text-accent transition-colors",
+                "Extended guide: every check, every failure case, and the reasoning behind each step"
             }
-            Link {
-                to: Route::FlashBoardPage { board: G4_SLUG.to_string() },
-                class: "mt-4 inline-block text-accent hover:underline",
-                "ThinkNode G4 — development installation guide"
-            }
-            Link {
-                to: Route::FlashBoardPage { board: HELTEC_SLUG.to_string() },
-                class: "mt-4 block text-accent hover:underline",
-                "Heltec HT-HD01-V2 — development installation guide"
+            div { class: "mt-6",
+                MarkdownBody { heading_offset: 1, source: format!("{}\n\n{SHARED_EXTENDED_GUIDE}", appliance.extended_guide()) }
             }
         }
     }

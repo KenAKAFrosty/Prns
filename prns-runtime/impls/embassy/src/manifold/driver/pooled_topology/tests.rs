@@ -90,7 +90,7 @@ fn dedicated_lanes_own_the_source_id_but_fleet_lanes_preserve_the_member_stamp()
 }
 
 impl<S: StorageLayout> ManifoldPersistence<S> for AlwaysDuePersistence {
-    fn has_pending_discovery_group_change(&self) -> bool {
+    fn has_pending_configuration_change(&self) -> bool {
         false
     }
 

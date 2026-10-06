@@ -11,6 +11,11 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = tuple(sorted((ROOT / ".github" / "workflows").glob("*.yml")))
+LOCAL_ACTIONS = tuple(sorted(
+    path
+    for pattern in ("action.yml", "action.yaml")
+    for path in (ROOT / ".github" / "actions").rglob(pattern)
+))
 ACTION_PATTERN = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", re.MULTILINE)
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 JOB_PATTERN = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\n")
@@ -156,7 +161,7 @@ def validate() -> list[str]:
         return ["release/flash/action-pins.json has an unsupported shape"]
 
     used: set[str] = set()
-    for workflow in WORKFLOWS:
+    for workflow in (*WORKFLOWS, *LOCAL_ACTIONS):
         text = workflow.read_text(encoding="utf-8")
         errors.extend(validate_resource_bounds(workflow, text))
         for reference in ACTION_PATTERN.findall(text):
@@ -454,7 +459,7 @@ def validate() -> list[str]:
         "release-embedded-resources-${{ matrix.id }}-${{ github.run_id }}",
         "release-readiness-embedded-*-${{ github.run_id }}",
         "release-embedded-assurance-${{ github.sha }}",
-        "needs: [inventory, qualify, embedded-assurance]",
+        "needs: [inventory, qualify, qualify-emulated, embedded-assurance]",
     ):
         if assurance_gate not in readiness:
             errors.append(
@@ -807,8 +812,8 @@ def validate() -> list[str]:
             rf'(?ms)^\[\[suite\]\]\nid = "{re.escape(pilot)}"\n(.*?)(?=^\[\[suite\]\]|\Z)',
             manifest_document,
         )
-        if pilot_block is None or 'enforcement = "advisory"' not in pilot_block.group(1):
-            errors.append(f"{pilot} is not explicitly advisory")
+        if pilot_block is None or 'enforcement = "required"' not in pilot_block.group(1):
+            errors.append(f"{pilot} is not a required automated release check")
     esp_resources = re.search(
         r'(?ms)^\[\[suite\]\]\nid = "esp32-firmware-check"\n(.*?)(?=^\[\[suite\]\]|\Z)',
         manifest_document,
@@ -1091,6 +1096,13 @@ def validate() -> list[str]:
         ROOT / ".github" / "workflows" / "flasher-finalize-evidence.yml"
     ).read_text(encoding="utf-8")
     for finalization_gate in (
+        "Verify automated release-readiness workflow custody",
+        ".software_validation.workflow_run_id",
+        ".software_validation.sha256",
+        '.head_sha == $sha and .conclusion == "success"',
+        '.event == "workflow_dispatch" and .path == ".github/workflows/release-readiness.yml"',
+        '--name "release-readiness-manifest-${source_commit}"',
+        'cmp "target/qualification-evidence/${digest}" target/readiness-custody/release-manifest.json',
         "qualification_evidence_sha256:",
         'PYTHONDONTWRITEBYTECODE: "1"',
         "qualification-evidence-v${RELEASE_VERSION}.tar.gz",

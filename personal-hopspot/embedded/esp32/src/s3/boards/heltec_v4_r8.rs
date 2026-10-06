@@ -19,7 +19,7 @@ use personal_hopspot_core as screen;
 use super::heltec_frontend;
 use crate::s3::{
     self, BoardFace, Esp32S3Board, ImmediateBoardDisplay, ImmediateDisplayDevice, NoGnss,
-    S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
+    S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware, S3UsbHardware,
 };
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
@@ -270,7 +270,7 @@ impl Esp32S3Board for HeltecV4R8Board {
             },
             gnss: NoGnss,
             interface_hardware: S3InterfaceHardware {
-                usb_device: p.USB_DEVICE,
+                usb: S3UsbHardware::SerialJtag(p.USB_DEVICE),
                 lora_radio,
                 wifi: p.WIFI,
                 bluetooth: p.BT,

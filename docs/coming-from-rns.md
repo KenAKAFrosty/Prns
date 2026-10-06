@@ -1,6 +1,6 @@
 # Coming from RNS
 
-Your config, your identity file, and your apps carry over unchanged. The interoperability suite proves it against real RNS 1.4.2 nodes in CI. Everything below is what's new.
+Your config, your identity file, and your apps carry over unchanged. The interoperability suite proves it against real RNS 1.5.4 nodes in CI. Everything below is what's new.
 
 ## Brand-new interfaces
 
@@ -98,7 +98,9 @@ Once you've got this repo cloned and your toolchain set up, see [the observabili
 
 ## Performance you can measure yourself
 
-The benchmark harness runs Prns and stock RNS side by side on your machine, under identical workloads, and records conformance, throughput, latency, CPU, memory, and optionally energy. The [canonical published results](../benchmarks/RESULTS.md) peak at 89× the throughput, 48× smaller peak-memory footprint, and 33× the energy efficiency of stock RNS 1.4.2. Those are peaks, but most throughput scenarios land between 3× and 20× depending on host and workload.
+The benchmark harness runs Prns and stock interpreted RNS 1.5.4 side by side under the same scenario-owned workloads, recording conformance, throughput, latency, CPU, memory, and optional energy. The [canonical published results](../benchmarks/RESULTS.md) peak at **110.22× throughput** for single-packet delivery on an Apple M4. Across 30 published host/scenario comparisons, the middle half is roughly **5×–25×**, with a **9.62× median** and a **1.02×–110.22× full range**.
+
+Memory and energy peaks come from different Linux workloads: the sender in the matched-policy 64-segment stream uses **about 97% less peak memory than stock RNS**, while request/response uses **about 98% less processor energy per request**. Energy measures the processor package above idle, not whole-device power or battery life. These are loopback results on three named machines; see the [summary and measurement scope](../benchmarks/README.md#published-performance-summary) before applying them to your workload.
 
 ```console
 ./tools/prns doctor benchmarks
@@ -135,5 +137,5 @@ By default, `prnsd` will find the active Reticulum configuration automatically; 
 
 ## Verify it yourself
 
-- [Run the interoperability suite](validation.md): real stock RNS 1.4.2 nodes against Prns nodes, on your own machine. Encodings are checked byte for byte against stock RNS, and live sessions are proven by outcome: paths resolve, proofs land, transferred files arrive byte-identical.
+- [Run the interoperability suite](validation.md): real stock RNS 1.5.4 nodes against Prns nodes, on your own machine. Encodings are checked byte for byte against stock RNS, and live sessions are proven by outcome: paths resolve, proofs land, transferred files arrive byte-identical.
 - [Read the benchmark methodology](../benchmarks/README.md): how runs are calibrated, qualified, and published before any number becomes a claim.

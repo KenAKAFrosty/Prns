@@ -115,7 +115,7 @@ pub fn campaign(cases: Vec<Case>, name: &str) {
                 continue;
             }
             reduce(&binary, &artifact, &directory).write(&directory.join("reduced.json"));
-            panic!("core qualification failed: {}; replay with ./tools/prns repo.simulation.core-work.replay --case {}", directory.join("original.json").display(), directory.join("case.json").display());
+            panic!("core qualification failed: {:?}; artifact {}; replay with ./tools/prns repo.simulation.core-work.replay --case {}", artifact.failure().expect("failed qualification"), directory.join("original.json").display(), directory.join("case.json").display());
         }
         if (batch + 1).is_multiple_of(8) {
             eprintln!("{name}: {} cases qualified", (batch + 1) * WORKERS);

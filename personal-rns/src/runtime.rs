@@ -102,8 +102,9 @@ pub use prns_runtime_tokio::runtime::ProcessCommands;
 pub use prns_runtime_embassy::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity,
     restored_discovery_group_configuration, restored_discovery_group_configuration_now,
-    restored_discovery_groups, restored_discovery_groups_now, store_discovery_group_configuration,
-    CompletionPool, DiscoveryGroupConfigurationChange, EmbassyFleet, EmbassyInterfaceStore,
+    restored_discovery_groups, restored_discovery_groups_now, restored_node_name,
+    restored_node_name_now, store_discovery_group_configuration, store_node_name, CompletionPool,
+    DiscoveryGroupConfigurationChange, EmbassyFleet, EmbassyInterfaceStore,
     EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
     EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
     EmbeddedPersistenceTarget, EmbeddedRemoteControlControllerPairingFinalization,
@@ -121,8 +122,9 @@ pub use prns_runtime_embassy::runtime::{
 pub use prns_runtime_embassy::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity,
     restored_discovery_group_configuration, restored_discovery_group_configuration_now,
-    restored_discovery_groups, restored_discovery_groups_now, store_discovery_group_configuration,
-    CompletionPool, DiscoveryGroupConfigurationChange, EmbassyFleet, EmbassyInterfaceStore,
+    restored_discovery_groups, restored_discovery_groups_now, restored_node_name,
+    restored_node_name_now, store_discovery_group_configuration, store_node_name, CompletionPool,
+    DiscoveryGroupConfigurationChange, EmbassyFleet, EmbassyInterfaceStore,
     EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
     EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
     EmbeddedPersistenceTarget, EmbeddedRemoteControlControllerPairingFinalization,

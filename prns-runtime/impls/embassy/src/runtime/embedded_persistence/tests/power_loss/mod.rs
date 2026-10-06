@@ -1,5 +1,9 @@
 use super::*;
 
+#[macro_use]
+mod partitions;
+use partitions::FaultPartition;
+
 mod cancellation;
 mod compaction_budget;
 mod compaction_commit;
@@ -7,6 +11,7 @@ mod compaction_steps;
 mod continuation;
 mod flash;
 mod grants;
+mod names;
 mod settlement;
 mod transaction;
 use flash::{Control, Cut, Flash, Operation};
@@ -181,15 +186,16 @@ async fn reboot(image: [u8; CAPACITY]) -> DiscoveryGroupConfigurationSnapshot {
 
 #[test]
 fn queued_group_append_recovers_at_every_torn_io_boundary() {
-    campaign(Campaign::Append);
+    campaign(Campaign::Append, FaultPartition::All);
 }
 
-#[test]
-fn queued_group_compaction_recovers_at_every_torn_io_boundary() {
-    campaign(Campaign::CompactThenAppend);
-}
+partitioned_campaign!(
+    queued_group_compaction_recovers_at_every_torn_io_boundary,
+    campaign,
+    Campaign::CompactThenAppend,
+);
 
-fn campaign(campaign: Campaign) {
+fn campaign(campaign: Campaign, partition: FaultPartition) {
     embassy_futures::block_on(async {
         let image = baseline(campaign).await;
         let reference = write(image, Fault::None).await;
@@ -216,6 +222,7 @@ fn campaign(campaign: Campaign) {
             Operation::Write { len: 4, .. }
         ));
         let mut cuts = 0;
+        let mut boundary = 0;
         let mut deferred = 0;
         for (operation, event) in reference.trace.iter().enumerate() {
             let prefixes: Vec<_> = match event {
@@ -224,6 +231,11 @@ fn campaign(campaign: Campaign) {
                 Operation::Erase { len, .. } => (0..=*len).collect(),
             };
             for completed_bytes in prefixes {
+                let selected = partition.includes(boundary);
+                boundary += 1;
+                if !selected {
+                    continue;
+                }
                 let cut = Cut {
                     operation,
                     completed_bytes,
@@ -272,6 +284,7 @@ fn campaign(campaign: Campaign) {
             Campaign::Append => assert_eq!(deferred, 0),
             Campaign::CompactThenAppend => assert!(deferred > 0 && deferred < cuts),
         }
+        assert!(cuts > 0);
         std::eprintln!(
             "verified {cuts} queued-owner {campaign:?} cuts with both fault modes and follow-up writes ({deferred} cooldowns)"
         );

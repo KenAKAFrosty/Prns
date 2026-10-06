@@ -52,6 +52,9 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let mut web_usb = use_signal(|| WebUsbCapability::Checking);
     let mut nrf_entry = use_signal(|| NrfSerialDfuEntry::ManagedApplication);
     let mut nrf_recovery = use_signal(|| false);
+    let mut hand_off_active = use_signal(|| false);
+    let enrollment_active = use_signal(|| false);
+    let mut hand_off_status = use_signal(String::new);
     let mut uf2_identity = use_signal(|| None::<prns_flash_manifest::Uf2BootloaderIdentity>);
     let mut uf2_identity_status = use_signal(|| {
         "Select INFO_UF2.TXT from the mounted bootloader drive to detect its SoftDevice foundation."
@@ -96,7 +99,10 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
         }
     });
 
-    let busy = preparation_active() || bridge::is_busy(phase());
+    let busy = preparation_active()
+        || hand_off_active()
+        || enrollment_active()
+        || bridge::is_busy(phase());
     let device_operation_active = busy && !preparation_active();
     let nrf_recovery_selected = is_nrf && nrf_recovery();
     let direct_serial_selected = flash_target.uses_web_serial() && !nrf_recovery_selected;
@@ -122,6 +128,14 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
             ..
         } if nrf_recovery_selected => Some(recovery_mount_label),
         _ => None,
+    };
+    let nrf_hand_off = match flash_target {
+        BoardFlashTarget::NrfSerialDfu {
+            recovery_mount_label,
+            managed_application,
+            ..
+        } => Some((recovery_mount_label, managed_application)),
+        BoardFlashTarget::EspSerial { .. } | BoardFlashTarget::Uf2MassStorage { .. } => None,
     };
     let destructive_action_permitted = destructive_confirmation().permits(install_mode());
     let can_prepare = confirmed()
@@ -396,6 +410,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                 }
                             }
                         }
+
                     }
                 }
 
@@ -788,7 +803,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     },
                     "{action_label}"
                 }
-                if busy {
+                if busy && !hand_off_active() && !enrollment_active() {
                     if phase() == BridgePhase::AwaitingBootloaderPort {
                         button {
                             r#type: "button",
@@ -828,6 +843,80 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                         } else {
                             "Cancellation unavailable after erase begins"
                         }
+                    }
+                }
+            }
+        }
+        if !is_esp {
+            super::enrollment::ControllerEnrollment {
+                board_slug: target.slug, busy, active: enrollment_active,
+                on_start: {
+                    let event_state = state.clone();
+                    move |_| invalidate_preparation(event_state.clone(), "Controller setup selected. Prepare a release again before installing firmware.")
+                }
+            }
+        }
+        if let Some((recovery_mount_label, managed_application)) = nrf_hand_off {
+            section {
+                id: "flash-recovery",
+                class: "flash-recovery-panel mt-5 rounded-card border border-line/60 bg-layer/40 p-5 text-sm text-soft",
+                "aria-labelledby": "flash-recovery-title",
+                h2 { id: "flash-recovery-title", class: "text-lg font-semibold text-paper", "Recovery" }
+                p { class: "mt-2",
+                    "Restart your T1000-E into recovery mode to reinstall firmware or switch to Meshtastic."
+                }
+                button {
+                    r#type: "button",
+                    class: "mt-4 rounded-lg border border-line px-4 py-3 text-sm font-semibold text-paper transition-colors hover:border-accent/60 disabled:cursor-not-allowed disabled:opacity-50",
+                    disabled: busy || hand_off_active() || web_usb() != WebUsbCapability::Supported,
+                    onclick: {
+                        let event_state = state.clone();
+                        move |_| {
+                            invalidate_preparation(event_state.clone(), "Recovery entry selected. Prepare a release again before installing Hopspot.");
+                            let request = bridge::Uf2HandOffRequest::new(target.slug, managed_application);
+                            hand_off_active.set(true);
+                            hand_off_status.set("Select your Personal Hopspot tracker in the USB picker…".to_string());
+                            spawn(async move {
+                                let outcome = bridge::hand_off_to_uf2(request).await;
+                                hand_off_status.set(match outcome {
+                                    Ok(()) => format!("Recovery requested. Wait for the {recovery_mount_label} drive to appear before copying firmware."),
+                                    Err(message) => message,
+                                });
+                                hand_off_active.set(false);
+                            });
+                        }
+                    },
+                    "Restart into recovery"
+                }
+                if !hand_off_status().is_empty() {
+                    p { class: "mt-2 text-xs text-soft", role: "status", "aria-live": "polite", "{hand_off_status}" }
+                }
+                p { class: "mt-2 text-xs text-soft",
+                    "For trackers running Hopspot. Restarting keeps your firmware and settings in place."
+                }
+                if web_usb() == WebUsbCapability::Unavailable {
+                    p { class: "mt-2 text-xs text-soft",
+                        "Open this page in desktop Chrome or Edge to use the recovery button, or use the device button below."
+                    }
+                }
+                div { class: "mt-5 grid gap-4 border-t border-line/60 pt-4",
+                    details {
+                        summary { class: "cursor-pointer font-semibold text-paper", "Recover with the device button" }
+                        ol { class: "mt-3 list-decimal space-y-2 pl-5",
+                            li { "Keep the USB end connected to your computer and remove the magnetic connector from the tracker." }
+                            li { "Hold the upper button near the lanyard and reconnect the magnetic connector. Keep holding for at least 6 seconds, until the T1000-E drive appears." }
+                        }
+                        p { class: "mt-3 text-xs text-soft",
+                            "If the drive does not appear, keep holding the button and quickly disconnect and reconnect the magnetic connector. Older firmware may need several attempts. Check for the drive on your computer; a green light alone does not confirm recovery."
+                        }
+                        a { href: "https://wiki.seeedstudio.com/sensecap_t1000_e/", target: "_blank", rel: "noopener noreferrer", class: "mt-3 inline-block underline", "Seeed recovery instructions" }
+                    }
+                    details {
+                        summary { class: "cursor-pointer font-semibold text-paper", "Install Meshtastic" }
+                        p { class: "mt-3",
+                            "Once the T1000-E drive appears, follow Meshtastic’s erase and install guide. Choose the erase utility that matches the SoftDevice version in INFO_UF2.TXT, then install the T1000-E firmware. Erasing removes your device settings."
+                        }
+                        a { href: "https://meshtastic.org/docs/getting-started/flashing-firmware/nrf52/nrf52-erase/", target: "_blank", rel: "noopener noreferrer", class: "mt-3 inline-block underline", "Meshtastic erase and install guide" }
                     }
                 }
             }
@@ -925,7 +1014,7 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
                 }
                 p { class: "flash-board-silicon font-mono text-xs", "{board.silicon}" }
             }
-            if board.is_flashable() && included {
+            if board.is_linux_appliance() || (board.is_flashable() && included) {
                 div { class: "mt-5 flex justify-end",
                     if selected {
                         span { class: "py-2.5 text-xs font-bold uppercase tracking-wider text-accent", "Selected" }
@@ -933,7 +1022,7 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
                         Link {
                             to: Route::FlashBoardPage { board: board.slug.to_string() },
                             class: "flash-card-action",
-                            "Flash "
+                            if board.is_linux_appliance() { "Set up " } else { "Flash " }
                             span { class: "flash-card-action__arrow", "→" }
                         }
                     }
@@ -945,10 +1034,10 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
             } else {
                 p { class: "flash-interfaces-pending mt-4",
                     match board.tier {
-                        Tier::Qualification => "Hardware qualification in progress",
+                        Tier::Qualification => "Release preparation in progress",
                         Tier::BringUp => "Bring-up in progress",
                         Tier::Roadmap => "Planned",
-                        Tier::Shipping | Tier::SdkPreview | Tier::Flashable => "Coming later",
+                        Tier::Shipping | Tier::SdkPreview | Tier::Flashable | Tier::InstallationPreview => "Coming later",
                     }
                 }
             }
@@ -974,7 +1063,7 @@ pub(super) fn UnavailablePanel() -> Element {
     rsx! {
         section { class: "rounded-card border border-line/60 bg-layer/40 p-5",
             h2 { class: "text-xl font-semibold text-paper", "Not flashable yet" }
-            p { class: "mt-3 text-soft", "This target is still in hardware qualification, bring-up, or roadmap tracking. It becomes flashable here once its signed release lane opens." }
+            p { class: "mt-3 text-soft", "Flashing support for this target is still in development." }
         }
     }
 }

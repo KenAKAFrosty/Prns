@@ -238,6 +238,7 @@ impl Adapter {
     }
 
     fn configure_rustflags(&self, command: &mut Command, intent: BuildIntent) {
+        command.env_remove("RUSTFLAGS");
         command
             .env_remove(cargo_rustflags_environment(self.rust_target()))
             .env_remove("RUSTC_BOOTSTRAP");
@@ -283,7 +284,26 @@ impl Adapter {
     }
 }
 
-pub const ADAPTERS: [&Adapter; 3] = [&thumbv7em::ADAPTER, &riscv32imac::ADAPTER, &xtensa::ADAPTER];
+pub const ADAPTERS: [&Adapter; 4] = [
+    &thumbv7em::ADAPTER,
+    &riscv32imac::ADAPTER,
+    &xtensa::ADAPTER,
+    &thumbv7em::SERIAL_DFU_ADAPTER,
+];
+
+/// Uses the baseline nRF52840 compiler policy for serial DFU builds.
+///
+/// This retains the compiler defaults used by the developer UF2 build. The
+/// additional Thumb size optimizations are not qualified for this boot path.
+pub fn nrf52840_serial_dfu_adapter(rust_target: &str) -> Result<&'static Adapter, BuildError> {
+    let adapter = &thumbv7em::SERIAL_DFU_ADAPTER;
+    if rust_target != adapter.rust_target() {
+        return Err(BuildError::Toolchain(format!(
+            "unsupported Nordic serial DFU Rust target {rust_target:?}"
+        )));
+    }
+    Ok(adapter)
+}
 
 #[must_use]
 pub const fn adapter_for(architecture: ProcessorArchitecture) -> &'static Adapter {

@@ -84,6 +84,7 @@ pub enum FlashJournalRecordKind {
     RemoteControlControllerGrants = 5,
     RemoteControlTargetAccesses = 6,
     DiscoveryGroupConfigurations = 7,
+    NodeName = 8,
 }
 
 impl FlashJournalRecordKind {
@@ -96,6 +97,7 @@ impl FlashJournalRecordKind {
             5 => Some(Self::RemoteControlControllerGrants),
             6 => Some(Self::RemoteControlTargetAccesses),
             7 => Some(Self::DiscoveryGroupConfigurations),
+            8 => Some(Self::NodeName),
             _ => None,
         }
     }

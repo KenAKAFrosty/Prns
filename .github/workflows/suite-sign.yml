@@ -288,6 +288,9 @@ jobs:
           stage target/flasher/candidate/qualification/validate-flasher-tester-roster.py
           stage target/flasher/candidate/qualification/flasher_tester_roster.py
           stage target/flasher/candidate/qualification/package-flasher-qualification-evidence.py
+          stage target/flasher/candidate/qualification/flasher_software_acceptance.py
+          stage target/flasher/candidate/qualification/validation_runner.py
+          stage target/flasher/candidate/qualification/validation-manifest.toml
           stage target/flasher/candidate/qualification/tester-roster.json
           stage target/flasher/candidate/audit/release-audit-evidence.md
           stage target/flasher/candidate/metadata/build.json

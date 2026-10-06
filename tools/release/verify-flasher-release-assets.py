@@ -140,6 +140,10 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         "reproducibility.json": candidate / "metadata" / "reproducibility.json",
         "release-history.json": candidate / "metadata" / "release-history.json",
     }
+    for helper in ("flasher_software_acceptance.py", "validation_runner.py", "validation-manifest.toml"):
+        helper_path = candidate / "qualification" / helper
+        if helper_path.is_file():
+            sources[helper] = helper_path
     if schema >= 3:
         manifest_helper = candidate / "qualification" / "flasher_manifest.py"
         sources["flasher_manifest.py"] = manifest_helper

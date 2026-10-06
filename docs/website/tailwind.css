@@ -318,6 +318,9 @@ html, body {
     -webkit-mask: var(--logo) center / contain no-repeat;
     mask: var(--logo) center / contain no-repeat;
 }
+.platform-chip__icon--logotype {
+    width: 4.25rem;
+}
 /* Marquee chips tile via margin (not gap) so two copies loop seamlessly; the
    platforms-page grid spaces with gap instead, so scope the margin here. */
 .platform-marquee__track .platform-chip {
@@ -493,6 +496,10 @@ html, body {
 }
 .flash-flasher-panel__action {
     width: 100%;
+}
+.flash-recovery-panel {
+    width: fit-content;
+    max-width: min(100%, 44rem);
 }
 .flash-local-panel {
     max-width: 44rem;
@@ -951,6 +958,8 @@ html, body {
     height: 4.75rem;
     flex: none;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     place-items: center;
     padding: 0.4rem;
     border-radius: 0.7rem;

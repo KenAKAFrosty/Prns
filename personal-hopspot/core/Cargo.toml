@@ -18,6 +18,7 @@ host = ["personal-rns/tokio-host"]
 remote-control-pairing = []
 source-archive = ["personal-rns/large-static-responses"]
 compact-node-pages = []
+omit-coming-from-rns = []
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["flash"] }

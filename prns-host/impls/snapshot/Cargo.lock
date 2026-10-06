@@ -411,7 +411,7 @@ dependencies = [
 
 [[package]]
 name = "personal-rns"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -444,7 +444,7 @@ checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
 
 [[package]]
 name = "prns-core"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "aes",
  "cbc",
@@ -467,14 +467,14 @@ dependencies = [
 
 [[package]]
 name = "prns-host"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "prns-runtime",
 ]
 
 [[package]]
 name = "prns-host-snapshot"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "personal-rns",
  "prns-host",
@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "prns-interfaces-tokio"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "cfg-if",
  "heapless",
@@ -492,11 +492,11 @@ dependencies = [
 
 [[package]]
 name = "prns-macros"
-version = "0.3.7"
+version = "0.3.8"
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "prns-runtime-tokio"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "futures-util",
  "getrandom",

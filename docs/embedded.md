@@ -19,9 +19,10 @@ These commands prepare an ordinary developer workstation. Release builds use the
 ```console
 cd personal-hopspot/embedded/esp32
 cargo c6 --locked
+cargo heltec-v3 --locked
 ```
 
-That shortcut expands to the `hopspot-xiao-esp32-c6` release build for `riscv32imac-unknown-none-elf`, including `-Zbuild-std=core,alloc`. The workspace has its own lockfile and selects the `esp` toolchain through `personal-hopspot/embedded/esp32/rust-toolchain.toml`.
+Those shortcuts expand to release builds for `hopspot-xiao-esp32-c6` on `riscv32imac-unknown-none-elf` and `hopspot-heltec-v3` on `xtensa-esp32s3-none-elf`, including `-Zbuild-std=core,alloc`. The workspace has its own lockfile and selects the `esp` toolchain through `personal-hopspot/embedded/esp32/rust-toolchain.toml`.
 
 ## Follow the recipe through the board
 

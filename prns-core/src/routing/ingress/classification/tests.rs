@@ -77,9 +77,32 @@ fn rejected_packets_never_expose_a_canonical_hash() {
 }
 
 #[test]
+fn header_only_packets_are_rejected_without_exposing_a_hash() {
+    // Every unmasked flag combination covers both header lengths, all four
+    // packet/destination types, propagation, and context flags.
+    for flags in 0u8..128 {
+        let length = if flags & 0x40 == 0 {
+            HEADER_MIN_LEN
+        } else {
+            crate::wire::HEADER_MAX_LEN
+        };
+        let mut bytes = vec![0u8; length];
+        bytes[0] = flags;
+        let classified = ClassifiedInboundPacket::classify(InboundPacket {
+            arrived_at: InstantMillis(9),
+            source_interface: iface(0x02),
+            bytes: &mut bytes,
+        });
+        assert!(classified.is_malformed(), "flags {flags:#04x}");
+        assert_eq!(classified.packet_hash(), None, "flags {flags:#04x}");
+    }
+}
+
+#[test]
 fn recognized_non_announce_packets_classify_from_the_header() {
     for packet_type in [PacketType::Data, PacketType::LinkRequest, PacketType::Proof] {
-        let mut bytes = header_bytes(packet_type);
+        let mut bytes = header_bytes(packet_type).to_vec();
+        bytes.push(0xa5);
         let expected_hash = PacketHash::of_wire_packet(&bytes).unwrap();
         let packet = InboundPacket {
             arrived_at: InstantMillis(9),
@@ -111,7 +134,9 @@ fn packets_at_the_pathfinder_boundary_are_rejected_before_classification() {
         let mut bytes = match packet_type {
             PacketType::Announce => bytes_from_hex(RNS_1_4_2_ANNOUNCE),
             PacketType::Data | PacketType::LinkRequest | PacketType::Proof => {
-                header_bytes(packet_type).to_vec()
+                let mut bytes = header_bytes(packet_type).to_vec();
+                bytes.push(0xa5);
+                bytes
             }
         };
         bytes[1] = MAX_HOP_COUNT;
@@ -201,7 +226,7 @@ fn data_packets_classify_for_every_destination_type() {
             address: WireAddress::new([0xA5; 16]),
             context: WireContext::None,
         };
-        let mut bytes = [0u8; HEADER_MIN_LEN];
+        let mut bytes = [0u8; HEADER_MIN_LEN + 1];
         assert_eq!(header.write(&mut bytes).unwrap(), HEADER_MIN_LEN);
         let packet = InboundPacket {
             arrived_at: InstantMillis(23),
@@ -213,7 +238,7 @@ fn data_packets_classify_for_every_destination_type() {
             panic!("data packets to any destination type classify as data");
         };
         assert_eq!(data.header.destination_type, destination_type);
-        assert!(data.payload.is_empty());
+        assert_eq!(data.payload, &[0]);
     }
 }
 

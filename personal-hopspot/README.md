@@ -1,5 +1,9 @@
 # Personal Hopspot
 
+For T1000-E users switching back to Meshtastic or another application, see
+[firmware recovery](embedded/nrf52840/RECOVERY.md). Compatible Hopspot firmware
+supports recovery entry from the web flasher and a held-button startup path.
+
 Personal Hopspot is one Reticulum-based node application across desktop, mobile,
 and embedded platforms. It provides a status and control surface where the
 platform has a display or interactive shell.
@@ -74,6 +78,7 @@ compatibility aliases.
 ESP32 firmware, from `embedded/esp32/` with the board on USB:
 
     cargo heltec-e290-flash
+    cargo heltec-v3-flash
     cargo heltec-v4-flash
     cargo heltec-v4-r8-flash
     cargo tbeam-supreme-flash
@@ -97,6 +102,26 @@ control faces, Bluetooth Auto, and a 60-second display auto-off:
 
     ./tools/prns build hopspot t096
     ./tools/prns build hopspot t114
+
+Heltec V3/V3.1 is available in the website flasher with BLE Auto, LoRa,
+USB Auto through its CP2102 adapter, and the OLED face. Its no-PSRAM
+firmware leaves Wi-Fi, TCP Client, and ESP-NOW disabled.
+
+Seeed Wio Tracker L1 / L1 Pro firmware is available in the website flasher and drives the 128×64 OLED status
+face (SSD1306 or SH1106, detected at boot), the user button and five-way
+joystick, the L76K GNSS, and Bluetooth Auto on the factory S140 7.3.0 UF2
+bootloader. Double-tap reset and copy the UF2 onto the bootloader drive:
+
+    ./tools/prns build hopspot wio-tracker-l1
+
+The website image is for the standard-radio OLED models, not the E-Ink or
+1 W variants. Confirm the model label even when INFO_UF2.TXT reports the
+shared `TRACKER L1` identity.
+
+The L1 Pro 1W has its own developer build, which powers the radio's 1 W amplifier rail
+and maps requested output power through the amplifier's gain curve:
+
+    ./tools/prns build hopspot wio-tracker-l1-pro-1w
 
 ## Local developer web flasher
 
@@ -139,3 +164,98 @@ LoRa-capable firmware persists the selected radio profile in a dedicated two-pag
 Every embedded Hopspot board target journals learned routes and retained self-ratchet history. Route writes are batched to conserve flash and battery, while critical ratchet state receives the shorter durability window. T114 uses the established T096 journal map, MeshTower V2 reserves its own six-page journal below the existing profile and identity pages, and the muzi Base Duo shares that MeshTower V2 map because both sit on the same S140 6.1.1 UF2 bootloader layout. Their first persistence-capable update starts with empty learned state; later reboots and sparse firmware updates restore it. A full-chip erase clears it.
 
 The first firmware update carrying the board-sized flash layout moves learned-state persistence on the 16 MiB Heltec V4 and V4 R8 from the lower 8 MiB region to the physical flash tail. Node identity, Bluetooth identity, and Wi-Fi provisioning remain intact, but learned routes and retained self-ratchet history from older firmware are reset once and rebuild from network activity. The 8 MiB T-Beam Supreme journal remains in place. T-Echo keeps its journal timebase and arena starts while reserving the former final arena page, reducing the second arena from 20 pages to 19.
+
+### SenseCAP Solar Node P1 / P1-Pro
+
+`./tools/prns build hopspot sensecap-solar-node` builds the headless nRF52840 / Wio-SX1262 release UF2. The P1-Pro GNSS adapter controls the L76K receiver; LoRa starts unconfigured and uses the current Remote Control regional configuration rather than a board-wide fixed European channel. The node page announces after 15 seconds and every six hours.
+
+The port adapts [PR #227](https://github.com/KenAKAFrosty/Prns/pull/227) to the shared memory-profile and Remote Control owners. Its firmware participates in the resource and architecture assurance matrix. The contributor's historical physical-board observations are recorded in that PR; automated evidence does not prove GNSS, RF, power, or physical-board behavior. The public catalog primarily identifies the contributor’s recorded Solar bootloader: `SENSECAP`, Board-ID `nRF52840-SeeedSenseCAPSolarP1-v1`, bootloader `0.9.2-OTAFIX2.2-BP1.3`, S140 7.3.0. It also accepts the exact Seeed recovery identity `nRF52840-SeeedXiao-v1` on `XIAO-BOOT`, verified against the [official Seeed recovery package](https://files.seeedstudio.com/wiki/SenseCAP/Meshtastic/xiao_nrf52840_ble_bootloader.zip) linked by the [Solar Node guide](https://wiki.seeedstudio.com/get_started_with_meshtastic_solar_node/). The application runs without the SoftDevice at `0x27000`; browser recovery requests set the UF2 flag directly before resetting. Confirm the Solar enclosure label because other XIAO products share that bootloader identity.
+
+### XIAO ESP32-S3 with Wio-SX1262
+
+The `hopspot-xiao-esp32s3-wio-sx1262` ESP workspace package builds the headless 8 MiB flash / 8 MiB Octal PSRAM board. Its flash catalog and memory profile use the normal ESP32-S3 resource and assurance gates. The SX1262 receive-enable pin and GPIO48 activity LED use the shared driver lifecycle callbacks, including cancellation cleanup.
+
+The board port comes from [PR #239](https://github.com/KenAKAFrosty/Prns/pull/239). Current Remote Control owns regional radio configuration; the PR's older standalone flasher `configure` command and radio-profile storage format are not imported. That PR therefore still contains separate provisioning work beyond this board integration.
+
+### RAK WisMesh 1W
+
+`./tools/prns build hopspot rak10724` builds the RAK3401 / RAK13302 release UF2 adapted from [PR #247](https://github.com/KenAKAFrosty/Prns/pull/247). It uses the current S140 6.1.1 startup and regional radio controls, with the contributor's SKY66122 power mapping. Its memory profile participates in the canonical resource and architecture assurance matrix. The public catalog uses the shared `RAK4631` volume and `WisBlock-RAK4631-Board` identity with S140 6.1.1. The website requires kit confirmation because the WisBlock RAK4631 and WisMesh 1W recipes have different radio hardware and USB application identities.
+
+The nRF runtime now loads the contributor's optional factory controller grant from the Remote Control identity vault. Retained permission snapshots replace initial grants before the node starts, including an empty table after revocation. This supports pre-provisioned identity pages; it does not provision a controller during an ordinary browser firmware installation. For ordinary browser installs, use the USB controller authorization flow below. The PR's unsigned developer-artifact flasher path is also separate from the signed public-release flow.
+
+### USB replies and retained radio configuration
+
+The nRF USB lane retains an announce and its control reply together, including
+T-Echo and MeshPocket as well as the headless runtime. This incorporates the
+fault identified and hardware-tested by Idan in [PR #261](https://github.com/KenAKAFrosty/Prns/pull/261).
+Both USB endpoints advertise the packet size that the current USB Auto protocol
+actually encodes; nRF lane buffers follow that same bound. The ESP runtimes
+already reserve larger outbound bursts and enforce this minimum too.
+
+The screenless RAK4631, WisMesh 1W, MeshTower V2, muzi Base Duo, T1000-E and
+SenseCAP Solar Node now save remotely selected LoRa profiles and restore them
+at startup, extending the RAK prototype from [issue #260](https://github.com/KenAKAFrosty/Prns/issues/260).
+A successful change confirms durable storage. Failed writes restore the previous
+radio profile; an uncertain commit also requires durably restoring that previous
+profile before reporting a recovered failure. An unsuccessful rollback is
+reported explicitly.
+
+The memory profiles reserve two radio pages at `0xE0000..0xE2000` for the
+RAK/MeshTower/Base Duo family and `0xE7000..0xE9000` for T1000-E/Solar.
+Firmware bounds and flasher validation exclude these pages. Identity, journal,
+factory and bootloader addresses stay fixed; the former unused single radio
+page on the RAK/MeshTower family remains reserved. Display-equipped nRF and
+ESP boards already retain profiles; all nRF and ESP remote profile changes now use the
+same tested persistence and rollback implementation. This handles failed writes;
+it does not add a timed confirmation protocol for changes made over the radio.
+
+### Persistent node names and Wio OLED updates
+
+All nRF Hopspot boards expose `SetNodeName` and `DescribeNodeName` through
+authorized Remote Control, incorporating [PR #263](https://github.com/KenAKAFrosty/Prns/pull/263).
+Names accept 1–64 UTF-8 bytes without control characters or surrounding
+whitespace, including the existing longer factory names. The current journal
+retains the name across reboot and compaction without moving identity or storage
+regions. A successful command confirms persistence and updates both the LXMF
+delivery and node-page announcements. Retrying after an announcement failure
+reapplies both announcements even when the name is already durable. ESP32
+firmware does not yet advertise these two commands.
+
+The Wio Tracker L1 and Pro 1W incorporate the OLED update from
+[PR #259](https://github.com/KenAKAFrosty/Prns/pull/259): only changed panel pages
+are transferred, with a full redraw after an uncertain or partial I2C write.
+The integration keeps the page cache statically allocated. Host tests inject
+partial transfers at every page and check retry recovery; these do not replace
+physical display or bus testing.
+
+### First controller on an nRF board
+
+Install Hopspot, let it start, then use **Connect your controller** on that
+board's flasher page in desktop Chrome or Edge. Paste the controller's full
+128-character public key and choose **Authorize controller over USB**. The USB
+picker checks the selected board's Hopspot application identity. Setup grants
+that controller Administrator access, including radio configuration and grant
+management. It reports success only after the existing authorization journal
+has durably saved the grant. Save the returned board public key in the controller
+to pin the target identity. Neither private key leaves its owning device.
+
+A persistent development controller can print its public key using the
+[headless controller example](headless/docs/remote-control.md#provision-and-operate).
+Retain the controller's private state directory; generating another identity
+requires authorizing its new public key. USB Auto carries the subsequent
+identity-authenticated Remote Control traffic. A radio starts unconfigured until
+its region/profile is explicitly selected by an authorized controller.
+
+USB enrollment is an explicit local administrative operation, available whenever
+a trusted host has access to the board's USB control interface. It does not open
+radio pairing or accept unauthenticated network requests. It can also authorize
+a replacement controller without erasing firmware, identities, or other grants.
+A disconnected or timed-out browser must not infer success; reconnect and retry
+with the same public key. Repeating the operation is idempotent. Revoked grants
+stay revoked across ordinary restarts and firmware updates; only an explicit
+new authorization can restore access.
+
+This requires the 0.3.8 USB enrollment implementation. Automated tests exercise
+its wire contract, browser failure handling, and the journal's power-loss and
+revocation behavior. Physical USB behavior remains outside simulator/emulator
+coverage.

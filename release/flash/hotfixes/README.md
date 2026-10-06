@@ -1,5 +1,11 @@
 # Flasher hotfix specifications
 
+From 0.3.8 until 1.0, use `"qualification": {"mode": "automated"}` in the
+hotfix specification. The complete exact-source automated release gate is
+required, with no physical-board assignment or hardware-deferral approval.
+The physical matrices described below apply to historical hotfixes through
+0.3.7 only. See [acceptance policy](../../acceptance/README.md#pre-10-automated-release-gate).
+
 A file named `SUITE_VERSION-hotfix.N.json` authorizes one immutable, scoped flasher release.
 The repository `VERSION` remains the suite version. The specification pins the exact current stable
 base and lists every board whose firmware must be rebuilt.

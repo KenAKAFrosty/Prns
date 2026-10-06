@@ -20,7 +20,7 @@ use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpe
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
 use personal_rns::remote_control::{
-    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
+    RemoteControlControllerGrant, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::StorageLayout;
@@ -120,8 +120,12 @@ pub async fn run(spawner: Spawner) -> ! {
     let identity_startup_notice =
         board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
+    let crate::boards::RemoteControlIdentityLoad {
+        bootstrap,
+        factory_grant,
+    } = remote_control_bootstrap;
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
-        remote_control_bootstrap.into_parts();
+        bootstrap.into_parts();
     let ble_identity = Some(ble_bootstrap.into_identity());
 
     let EarlyHardware {
@@ -154,7 +158,12 @@ pub async fn run(spawner: Spawner) -> ! {
     static USB_STATE: StaticCell<WebUsbAutoState> = StaticCell::new();
     let class = WebUsbAutoClass::new(
         &mut builder,
-        USB_STATE.init(WebUsbAutoState::new(super::bootloader_entry::webusb_entry())),
+        USB_STATE.init(
+            WebUsbAutoState::new(super::bootloader_entry::webusb_entry())
+                .with_controller_enrollment(super::controller_enrollment::webusb_enrollment(
+                    &remote_control_identity_secrets,
+                )),
+        ),
         WEBUSB_AUTO_PACKET_SIZE,
     );
     let mut usb = builder.build();
@@ -215,10 +224,15 @@ pub async fn run(spawner: Spawner) -> ! {
     )
     .destination_hashes()
     .expect("the hopspot destination names are valid");
+    super::node_name::set_destinations(destination_hashes);
     let node_page_destination = destination_hashes.node_page;
+    static FACTORY_GRANT_STORAGE: StaticCell<Option<[RemoteControlControllerGrant; 1]>> =
+        StaticCell::new();
+    let initial_controller_grants =
+        crate::boards::initial_controller_grants(factory_grant, FACTORY_GRANT_STORAGE.init(None));
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
-        RemoteControlInitialControllerGrants::Nobody,
+        initial_controller_grants,
         RemoteControlSelfAnnouncement::Destination(node_page_destination),
         super::remote_control::capabilities(),
     );
@@ -350,6 +364,7 @@ pub async fn run(spawner: Spawner) -> ! {
 
     let ui_handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let render = async move {
+        super::node_name::restore().await;
         let mut battery_probe = battery;
         let mut display = display.into_runtime(board::retained_policy());
         let mut ui_state = hopspot::UiState::new(hopspot::UiConfiguration {
@@ -736,7 +751,10 @@ pub async fn run(spawner: Spawner) -> ! {
         usb_dev.run(usb_seam),
         heartbeat,
         board::drive_controls(controls),
-        super::bootloader_entry::wait(),
+        embassy_futures::join::join(
+            super::bootloader_entry::wait(),
+            super::controller_enrollment::run(PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION)),
+        ),
     );
     let ble_plane = async move {
         if let Some(groups) =

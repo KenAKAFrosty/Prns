@@ -70,10 +70,10 @@ def positive_integer(value: str) -> int:
 
 
 def default_parallelism() -> tuple[int, int]:
-    logical_cpus = os.cpu_count() or 2
-    workspace_jobs = max(1, min(8, logical_cpus // 2))
-    cargo_jobs = max(1, logical_cpus // workspace_jobs)
-    return workspace_jobs, cargo_jobs
+    # All workspaces share one target directory to reuse dependencies. Cargo locks
+    # that directory, so competing processes only wait while the active compiler
+    # gets a fraction of the machine. Give one Cargo invocation the full CPU budget.
+    return 1, max(1, os.cpu_count() or 2)
 
 
 def load_plan(root: Path = ROOT, manifest_path: Path = MANIFEST_PATH) -> CargoCheckPlan:

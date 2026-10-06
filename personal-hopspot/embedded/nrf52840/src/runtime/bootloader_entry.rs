@@ -1,92 +1,87 @@
 use personal_rns::usb_auto::WebUsbBootloaderEntry;
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
+use personal_rns::usb_auto::WebUsbBootloaderMode;
+
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
+pub(crate) fn enter_bare_metal_bootloader(mode: WebUsbBootloaderMode) -> ! {
+    #[cfg(feature = "board-t1000e")]
+    const ADAFRUIT_SERIAL_ONLY_DFU_GPREGRET: u8 = 0x4e;
+    const ADAFRUIT_UF2_DFU_GPREGRET: u8 = 0x57;
+    let magic = match mode {
+        #[cfg(feature = "board-t1000e")]
+        WebUsbBootloaderMode::PrnsFlasher => ADAFRUIT_SERIAL_ONLY_DFU_GPREGRET,
+        #[cfg(feature = "board-sensecap-solar-node")]
+        WebUsbBootloaderMode::PrnsFlasher => ADAFRUIT_UF2_DFU_GPREGRET,
+        WebUsbBootloaderMode::Uf2HandOff => ADAFRUIT_UF2_DFU_GPREGRET,
+    };
+    embassy_nrf::pac::POWER
+        .gpregret()
+        .write(|register| register.set_gpregret(magic));
+    cortex_m::peripheral::SCB::sys_reset()
+}
 
 #[cfg(any(
     feature = "board-t096",
+    feature = "board-wio-tracker-l1",
     feature = "board-t1000e",
+    feature = "board-sensecap-solar-node",
     feature = "board-mesh-pocket",
     feature = "board-muzi-base-duo",
-    feature = "board-rak4631"
+    any(feature = "board-rak4631", feature = "board-rak10724")
 ))]
 mod request {
-    use core::sync::atomic::{AtomicBool, Ordering};
-
+    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+    use embassy_sync::signal::Signal;
     use embassy_time::{Duration, Timer};
+    use personal_rns::usb_auto::WebUsbBootloaderMode;
 
-    const REQUEST_POLL_INTERVAL: Duration = Duration::from_millis(25);
     const CONTROL_RESPONSE_GRACE_PERIOD: Duration = Duration::from_millis(100);
 
-    enum ResetPreparation {
-        Ready,
-        #[cfg(any(
-            feature = "board-t096",
-            feature = "board-mesh-pocket",
-            feature = "board-muzi-base-duo",
-            feature = "board-rak4631"
-        ))]
-        Rejected,
+    static REQUESTED: Signal<CriticalSectionRawMutex, WebUsbBootloaderMode> = Signal::new();
+
+    pub fn request(mode: WebUsbBootloaderMode) {
+        REQUESTED.signal(mode);
     }
 
-    static REQUESTED: AtomicBool = AtomicBool::new(false);
-
-    pub fn request() {
-        REQUESTED.store(true, Ordering::SeqCst);
+    #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
+    pub async fn wait() -> ! {
+        let mode = REQUESTED.wait().await;
+        Timer::after(CONTROL_RESPONSE_GRACE_PERIOD).await;
+        super::enter_bare_metal_bootloader(mode)
     }
 
+    #[cfg(not(any(feature = "board-t1000e", feature = "board-sensecap-solar-node")))]
     pub async fn wait() -> ! {
         loop {
-            if REQUESTED.swap(false, Ordering::SeqCst) {
-                Timer::after(CONTROL_RESPONSE_GRACE_PERIOD).await;
-                match prepare_bootloader_reset() {
-                    ResetPreparation::Ready => cortex_m::peripheral::SCB::sys_reset(),
-                    #[cfg(any(
-                        feature = "board-t096",
-                        feature = "board-mesh-pocket",
-                        feature = "board-muzi-base-duo",
-                        feature = "board-rak4631"
-                    ))]
-                    ResetPreparation::Rejected => {}
-                }
+            let _mode = REQUESTED.wait().await;
+            Timer::after(CONTROL_RESPONSE_GRACE_PERIOD).await;
+            if prepare_bootloader_reset().is_ok() {
+                cortex_m::peripheral::SCB::sys_reset();
             }
-            Timer::after(REQUEST_POLL_INTERVAL).await;
         }
     }
 
-    #[cfg(feature = "board-t1000e")]
-    fn prepare_bootloader_reset() -> ResetPreparation {
-        const ADAFRUIT_SERIAL_ONLY_DFU_GPREGRET: u8 = 0x4e;
-        embassy_nrf::pac::POWER
-            .gpregret()
-            .write(|register| register.set_gpregret(ADAFRUIT_SERIAL_ONLY_DFU_GPREGRET));
-        ResetPreparation::Ready
-    }
-
-    #[cfg(any(
-        feature = "board-t096",
-        feature = "board-mesh-pocket",
-        feature = "board-muzi-base-duo",
-        feature = "board-rak4631"
-    ))]
-    fn prepare_bootloader_reset() -> ResetPreparation {
+    #[cfg(not(any(feature = "board-t1000e", feature = "board-sensecap-solar-node")))]
+    fn prepare_bootloader_reset() -> Result<(), nrf_softdevice::RawError> {
         const ADAFRUIT_UF2_DFU_GPREGRET: u32 = 0x57;
         // SAFETY: The enabled S140 SoftDevice owns POWER. This synchronous SVC is the Nordic API
         // for setting GPREGRET while the SoftDevice is active; register 0 and the one-byte UF2
         // bootloader request are valid inputs.
         let result =
             unsafe { nrf_softdevice::raw::sd_power_gpregret_set(0, ADAFRUIT_UF2_DFU_GPREGRET) };
-        match nrf_softdevice::RawError::convert(result) {
-            Ok(()) => ResetPreparation::Ready,
-            Err(_) => ResetPreparation::Rejected,
-        }
+        nrf_softdevice::RawError::convert(result)
     }
 }
 
 pub const fn webusb_entry() -> WebUsbBootloaderEntry {
     #[cfg(any(
         feature = "board-t096",
+        feature = "board-wio-tracker-l1",
         feature = "board-t1000e",
+        feature = "board-sensecap-solar-node",
         feature = "board-mesh-pocket",
         feature = "board-muzi-base-duo",
-        feature = "board-rak4631"
+        any(feature = "board-rak4631", feature = "board-rak10724")
     ))]
     return WebUsbBootloaderEntry::Supported {
         request: request::request,
@@ -94,10 +89,12 @@ pub const fn webusb_entry() -> WebUsbBootloaderEntry {
 
     #[cfg(not(any(
         feature = "board-t096",
+        feature = "board-wio-tracker-l1",
         feature = "board-t1000e",
+        feature = "board-sensecap-solar-node",
         feature = "board-mesh-pocket",
         feature = "board-muzi-base-duo",
-        feature = "board-rak4631"
+        any(feature = "board-rak4631", feature = "board-rak10724")
     )))]
     WebUsbBootloaderEntry::Unsupported
 }
@@ -105,19 +102,23 @@ pub const fn webusb_entry() -> WebUsbBootloaderEntry {
 pub async fn wait() -> ! {
     #[cfg(any(
         feature = "board-t096",
+        feature = "board-wio-tracker-l1",
         feature = "board-t1000e",
+        feature = "board-sensecap-solar-node",
         feature = "board-mesh-pocket",
         feature = "board-muzi-base-duo",
-        feature = "board-rak4631"
+        any(feature = "board-rak4631", feature = "board-rak10724")
     ))]
     request::wait().await;
 
     #[cfg(not(any(
         feature = "board-t096",
+        feature = "board-wio-tracker-l1",
         feature = "board-t1000e",
+        feature = "board-sensecap-solar-node",
         feature = "board-mesh-pocket",
         feature = "board-muzi-base-duo",
-        feature = "board-rak4631"
+        any(feature = "board-rak4631", feature = "board-rak10724")
     )))]
     core::future::pending().await
 }

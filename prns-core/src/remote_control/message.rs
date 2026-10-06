@@ -11,11 +11,11 @@ use super::inventory::{
     RemoteControlGroupOutcome, RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
     RemoteControlInterfaceInventory, RemoteControlInterfacePeersOutcome,
     RemoteControlInterfacePower, RemoteControlLoRaOutcome, RemoteControlLoRaProfile,
-    RemoteControlModeOutcome, RemoteControlPowerOutcome, RemoteControlRevokeControllerOutcome,
-    RemoteControlSleepOutcome, RemoteControlWifiStation, RemoteControlWifiStationOutcome,
-    REMOTE_CONTROL_BUILD_VERSION_CAP, REMOTE_CONTROL_INTERFACE_CONFIG_CAP,
-    REMOTE_CONTROL_INTERFACE_ENTRY_ENCODED_LEN, REMOTE_CONTROL_INTERFACE_GROUP_CAP,
-    REMOTE_CONTROL_INTERFACE_INVENTORY_CAP,
+    RemoteControlModeOutcome, RemoteControlNodeName, RemoteControlPowerOutcome,
+    RemoteControlRevokeControllerOutcome, RemoteControlSleepOutcome, RemoteControlWifiStation,
+    RemoteControlWifiStationOutcome, REMOTE_CONTROL_BUILD_VERSION_CAP,
+    REMOTE_CONTROL_INTERFACE_CONFIG_CAP, REMOTE_CONTROL_INTERFACE_ENTRY_ENCODED_LEN,
+    REMOTE_CONTROL_INTERFACE_GROUP_CAP, REMOTE_CONTROL_INTERFACE_INVENTORY_CAP,
     REMOTE_CONTROL_INTERFACE_INVENTORY_CONTINUATION_MAX_ENCODED_LEN,
     REMOTE_CONTROL_WIFI_PASSWORD_CAP, REMOTE_CONTROL_WIFI_SSID_CAP,
 };
@@ -128,6 +128,8 @@ prns_macros::iterable_enum! {
         ReplaceInterfaceDiscoveryGroups = 0x1E,
         AppMessage = 0x1F,
         WatchInterfaces = 0x20,
+        SetNodeName = 0x21,
+        DescribeNodeName = 0x22,
     }
 }
 
@@ -226,6 +228,10 @@ impl RemoteControlRequestKind {
                 RemoteControlBuildVersion::MAX_ENCODED_LEN,
                 RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
             )),
+            Self::DescribeNodeName => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
+                RemoteControlNodeName::MAX_ENCODED_LEN,
+                RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
+            )),
             Self::DescribePower => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
                 PowerSnapshot::ENCODED_LEN,
                 RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
@@ -240,6 +246,7 @@ impl RemoteControlRequestKind {
             | Self::SetGnssPower
             | Self::SetDisplayVisibility
             | Self::SetDisplayAutoOff
+            | Self::SetNodeName
             | Self::SetStationUplink
             | Self::SetEspRadioMode
             | Self::ActivateWifiCredentials
@@ -326,6 +333,8 @@ prns_macros::iterable_enum! {
         ReplaceInterfaceDiscoveryGroups = 0x1E,
         AppMessage = 0x1F,
         WatchInterfaces = 0x20,
+        SetNodeName = 0x21,
+        DescribeNodeName = 0x22,
         ProtocolError = 0xFF,
     }
 }
@@ -488,6 +497,10 @@ pub enum RemoteControlRequest {
         revision: RemoteControlWifiCredentialRevision,
     },
     InspectWifiTransaction,
+    SetNodeName {
+        name: RemoteControlNodeName,
+    },
+    DescribeNodeName,
 }
 
 impl RemoteControlRequest {
@@ -552,6 +565,8 @@ impl RemoteControlRequest {
             Self::ConfirmWifiCredentials { .. } => RemoteControlRequestKind::ConfirmWifiCredentials,
             Self::CancelWifiCredentials { .. } => RemoteControlRequestKind::CancelWifiCredentials,
             Self::InspectWifiTransaction => RemoteControlRequestKind::InspectWifiTransaction,
+            Self::SetNodeName { .. } => RemoteControlRequestKind::SetNodeName,
+            Self::DescribeNodeName => RemoteControlRequestKind::DescribeNodeName,
         }
     }
 
@@ -564,7 +579,11 @@ impl RemoteControlRequest {
             | Self::DescribePower
             | Self::SleepRadios
             | Self::WakeRadios
-            | Self::InspectWifiTransaction => MESSAGE_HEADER_ENCODED_LEN,
+            | Self::InspectWifiTransaction
+            | Self::DescribeNodeName => MESSAGE_HEADER_ENCODED_LEN,
+            Self::SetNodeName { name } => {
+                MESSAGE_HEADER_ENCODED_LEN.saturating_add(name.encoded_body_len())
+            }
             Self::AppMessage(payload) => MESSAGE_HEADER_ENCODED_LEN.saturating_add(payload.len()),
             Self::WatchInterfaces { .. } => MESSAGE_HEADER_ENCODED_LEN.saturating_add(2),
             Self::SetSystemPower { .. }
@@ -657,6 +676,12 @@ impl RemoteControlRequest {
             RemoteControlRequestKind::AuthorizeController => parse_authorize_controller(body),
             RemoteControlRequestKind::RevokeController => parse_revoke_controller(body),
             RemoteControlRequestKind::DescribeBuild if body.is_empty() => Ok(Self::DescribeBuild),
+            RemoteControlRequestKind::DescribeNodeName if body.is_empty() => {
+                Ok(Self::DescribeNodeName)
+            }
+            RemoteControlRequestKind::SetNodeName => RemoteControlNodeName::parse_body(body)
+                .map(|name| Self::SetNodeName { name })
+                .ok_or(RemoteControlRequestParseError::Malformed),
             RemoteControlRequestKind::DescribePower if body.is_empty() => Ok(Self::DescribePower),
             RemoteControlRequestKind::SleepRadios if body.is_empty() => Ok(Self::SleepRadios),
             RemoteControlRequestKind::WakeRadios if body.is_empty() => Ok(Self::WakeRadios),
@@ -703,6 +728,7 @@ impl RemoteControlRequest {
             RemoteControlRequestKind::Describe
             | RemoteControlRequestKind::AnnounceSelf
             | RemoteControlRequestKind::DescribeBuild
+            | RemoteControlRequestKind::DescribeNodeName
             | RemoteControlRequestKind::DescribePower
             | RemoteControlRequestKind::SleepRadios
             | RemoteControlRequestKind::WakeRadios
@@ -732,7 +758,8 @@ impl RemoteControlRequest {
             | Self::DescribePower
             | Self::SleepRadios
             | Self::WakeRadios => {}
-            Self::InspectWifiTransaction => {}
+            Self::InspectWifiTransaction | Self::DescribeNodeName => {}
+            Self::SetNodeName { name } => name.write_body(body),
             Self::AppMessage(payload) => body.copy_from_slice(payload.as_slice()),
             Self::WatchInterfaces { stream_id } => {
                 body.copy_from_slice(&stream_id.get().to_be_bytes())
@@ -1662,6 +1689,8 @@ pub enum RemoteControlResponse {
     ConfirmWifiCredentials(RemoteControlApplyOutcome),
     CancelWifiCredentials(RemoteControlApplyOutcome),
     InspectWifiTransaction(RemoteControlWifiTransactionStatus),
+    SetNodeName(RemoteControlApplyOutcome),
+    DescribeNodeName(RemoteControlNodeName),
     ProtocolError(RemoteControlProtocolError),
 }
 
@@ -1746,6 +1775,8 @@ impl RemoteControlResponse {
             Self::SetGnssPower(_) => RemoteControlResponseKind::SetGnssPower,
             Self::SetDisplayVisibility(_) => RemoteControlResponseKind::SetDisplayVisibility,
             Self::SetDisplayAutoOff(_) => RemoteControlResponseKind::SetDisplayAutoOff,
+            Self::SetNodeName(_) => RemoteControlResponseKind::SetNodeName,
+            Self::DescribeNodeName(_) => RemoteControlResponseKind::DescribeNodeName,
             Self::SetStationUplink(_) => RemoteControlResponseKind::SetStationUplink,
             Self::SetEspRadioMode(_) => RemoteControlResponseKind::SetEspRadioMode,
             Self::StageWifiCredentials(_) => RemoteControlResponseKind::StageWifiCredentials,
@@ -1782,12 +1813,14 @@ impl RemoteControlResponse {
             Self::AuthorizeController(_) => RemoteControlAuthorizeControllerOutcome::ENCODED_LEN,
             Self::RevokeController(_) => RemoteControlRevokeControllerOutcome::ENCODED_LEN,
             Self::DescribeBuild(version) => version.encoded_body_len(),
+            Self::DescribeNodeName(name) => name.encoded_body_len(),
             Self::DescribePower(snapshot) => snapshot.encoded_body_len(),
             Self::SleepRadios(_) | Self::WakeRadios(_) => RemoteControlSleepOutcome::ENCODED_LEN,
             Self::SetSystemPower(_)
             | Self::SetGnssPower(_)
             | Self::SetDisplayVisibility(_)
             | Self::SetDisplayAutoOff(_)
+            | Self::SetNodeName(_)
             | Self::SetStationUplink(_)
             | Self::SetEspRadioMode(_)
             | Self::ActivateWifiCredentials(_)
@@ -1897,6 +1930,12 @@ impl RemoteControlResponse {
             RemoteControlResponseKind::SetDisplayAutoOff => {
                 parse_apply_outcome(body).map(Self::SetDisplayAutoOff)
             }
+            RemoteControlResponseKind::SetNodeName => {
+                parse_apply_outcome(body).map(Self::SetNodeName)
+            }
+            RemoteControlResponseKind::DescribeNodeName => RemoteControlNodeName::parse_body(body)
+                .map(Self::DescribeNodeName)
+                .ok_or(RemoteControlResponseParseError::Malformed),
             RemoteControlResponseKind::SetStationUplink => {
                 parse_apply_outcome(body).map(Self::SetStationUplink)
             }
@@ -1964,6 +2003,7 @@ impl RemoteControlResponse {
             }
             Self::RevokeController(outcome) => write_revoke_controller_outcome(*outcome, body),
             Self::DescribeBuild(version) => write_build_version(*version, body),
+            Self::DescribeNodeName(name) => name.write_body(body),
             Self::DescribePower(snapshot) => write_power_snapshot(*snapshot, body),
             Self::SleepRadios(outcome) | Self::WakeRadios(outcome) => {
                 write_sleep_outcome(*outcome, body)
@@ -1972,6 +2012,7 @@ impl RemoteControlResponse {
             | Self::SetGnssPower(outcome)
             | Self::SetDisplayVisibility(outcome)
             | Self::SetDisplayAutoOff(outcome)
+            | Self::SetNodeName(outcome)
             | Self::SetStationUplink(outcome)
             | Self::SetEspRadioMode(outcome)
             | Self::ActivateWifiCredentials(outcome)

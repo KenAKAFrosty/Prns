@@ -3,8 +3,9 @@ use embassy_nrf::gpio::Output;
 enum Polarity {
     #[cfg(any(
         feature = "board-t096",
-        feature = "board-t1000e",
-        feature = "board-rak4631"
+        any(feature = "board-t1000e", feature = "board-sensecap-solar-node"),
+        any(feature = "board-rak4631", feature = "board-rak10724"),
+        feature = "board-wio-tracker-l1"
     ))]
     ActiveHigh,
     #[cfg(any(
@@ -23,8 +24,9 @@ pub(crate) struct StatusLed {
 impl StatusLed {
     #[cfg(any(
         feature = "board-t096",
-        feature = "board-t1000e",
-        feature = "board-rak4631"
+        any(feature = "board-t1000e", feature = "board-sensecap-solar-node"),
+        any(feature = "board-rak4631", feature = "board-rak10724"),
+        feature = "board-wio-tracker-l1"
     ))]
     pub(crate) fn active_high(output: Output<'static>) -> Self {
         Self {
@@ -49,8 +51,9 @@ impl StatusLed {
         match self.polarity {
             #[cfg(any(
                 feature = "board-t096",
-                feature = "board-t1000e",
-                feature = "board-rak4631"
+                any(feature = "board-t1000e", feature = "board-sensecap-solar-node"),
+                any(feature = "board-rak4631", feature = "board-rak10724"),
+                feature = "board-wio-tracker-l1"
             ))]
             Polarity::ActiveHigh => self.output.set_high(),
             #[cfg(any(
@@ -66,8 +69,9 @@ impl StatusLed {
         match self.polarity {
             #[cfg(any(
                 feature = "board-t096",
-                feature = "board-t1000e",
-                feature = "board-rak4631"
+                any(feature = "board-t1000e", feature = "board-sensecap-solar-node"),
+                any(feature = "board-rak4631", feature = "board-rak10724"),
+                feature = "board-wio-tracker-l1"
             ))]
             Polarity::ActiveHigh => self.output.set_low(),
             #[cfg(any(
@@ -80,7 +84,7 @@ impl StatusLed {
     }
 
     /// Two short flashes make successful runtime entry visible on the headless RAK4631.
-    #[cfg(feature = "board-rak4631")]
+    #[cfg(any(feature = "board-rak4631", feature = "board-rak10724"))]
     pub(crate) async fn boot_splash(&mut self) {
         use embassy_time::Timer;
 

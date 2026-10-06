@@ -142,8 +142,65 @@ pub fn hopspot_destination_hashes(
     })
 }
 
+/// The largest LXMF delivery announce app data a node name can produce.
+pub const NAMED_DELIVERY_ANNOUNCE_APP_DATA_CAP: usize =
+    3 + personal_rns::remote_control::REMOTE_CONTROL_NODE_NAME_CAP + 1;
+
+/// LXMF delivery announce app data for a display name: msgpack `[bin name, nil]`,
+/// the same shape every board's built-in `ANNOUNCE_APP_DATA` uses.
+#[must_use]
+pub fn named_delivery_announce_app_data(
+    name: &personal_rns::remote_control::RemoteControlNodeName,
+) -> heapless::Vec<u8, NAMED_DELIVERY_ANNOUNCE_APP_DATA_CAP> {
+    let bytes = name.as_str().as_bytes();
+    let mut out = heapless::Vec::new();
+    let _ = out.extend_from_slice(&[0x92, 0xc4, bytes.len() as u8]);
+    let _ = out.extend_from_slice(bytes);
+    let _ = out.push(0xc0);
+    out
+}
+
+/// Node page announce app data for a display name: the UTF-8 name itself.
+#[must_use]
+pub fn named_node_announce_app_data(
+    name: &personal_rns::remote_control::RemoteControlNodeName,
+) -> &[u8] {
+    name.as_str().as_bytes()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn long_factory_names_and_maximum_custom_names_fit_both_announces() {
+        use personal_rns::remote_control::{RemoteControlNodeName, REMOTE_CONTROL_NODE_NAME_CAP};
+        for text in [
+            "Personal Hopspot Wio Tracker L1 Pro 1W",
+            &"n".repeat(REMOTE_CONTROL_NODE_NAME_CAP),
+        ] {
+            let name = RemoteControlNodeName::new(text).unwrap();
+            let delivery = super::named_delivery_announce_app_data(&name);
+            assert_eq!(&delivery[..3], &[0x92, 0xc4, text.len() as u8]);
+            assert_eq!(&delivery[3..delivery.len() - 1], text.as_bytes());
+            assert_eq!(delivery.last(), Some(&0xc0));
+            assert_eq!(super::named_node_announce_app_data(&name), text.as_bytes());
+        }
+    }
+
+    #[test]
+    fn named_announce_app_data_matches_the_built_in_shape() {
+        let name =
+            personal_rns::remote_control::RemoteControlNodeName::new("Personal Hopspot RAK4631")
+                .unwrap();
+        assert_eq!(
+            super::named_delivery_announce_app_data(&name).as_slice(),
+            b"\x92\xc4\x18Personal Hopspot RAK4631\xc0",
+        );
+        assert_eq!(
+            super::named_node_announce_app_data(&name),
+            b"Personal Hopspot RAK4631",
+        );
+    }
+
     use super::*;
 
     const DELIVERY_DATA: &[u8] = b"delivery";

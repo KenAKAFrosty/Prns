@@ -8,7 +8,7 @@ use personal_hopspot_memory::ProcessorArchitecture;
 use super::*;
 
 #[test]
-fn registry_has_one_stable_adapter_per_architecture() {
+fn registry_has_unique_adapter_ids() {
     let ids = ADAPTERS
         .iter()
         .map(|adapter| adapter.id().as_str())
@@ -20,9 +20,42 @@ fn registry_has_one_stable_adapter_per_architecture() {
         BTreeSet::from([
             "riscv32imac-rust-lld",
             "thumbv7em-rust-lld",
+            "thumbv7em-serial-dfu-rust-lld",
             "xtensa-esp32s3-gnu-ld",
         ])
     );
+}
+
+#[test]
+fn serial_dfu_policy_preserves_the_baseline_and_stack_evidence() -> Result<(), BuildError> {
+    let adapter = nrf52840_serial_dfu_adapter("thumbv7em-none-eabihf")?;
+    assert!(adapter.firmware_rustflags().is_empty());
+    assert_eq!(
+        adapter.rustflags(BuildIntent::ResourceReport {
+            lto: crate::LtoMode::Configured,
+        }),
+        ["-Z", "emit-stack-sizes=yes"]
+    );
+    let mut command = Command::new("cargo");
+    command.env("RUSTFLAGS", "-C llvm-args=-enable-machine-outliner");
+    command.env(
+        cargo_rustflags_environment(adapter.rust_target()),
+        "-C link-arg=--icf=all",
+    );
+    adapter.configure_rustflags(&mut command, BuildIntent::Firmware);
+    assert_eq!(
+        command.get_envs().collect::<Vec<_>>(),
+        [
+            (
+                OsStr::new("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS"),
+                None
+            ),
+            (OsStr::new("RUSTC_BOOTSTRAP"), None),
+            (OsStr::new("RUSTFLAGS"), None),
+        ]
+    );
+    assert!(nrf52840_serial_dfu_adapter("riscv32imac-unknown-none-elf").is_err());
+    Ok(())
 }
 
 #[test]
@@ -39,8 +72,6 @@ fn adapters_define_target_and_linker_identity() {
                 "link-arg=--icf=all",
                 "-C",
                 "llvm-args=-enable-machine-outliner",
-                "-C",
-                "llvm-args=-machine-outliner-reruns=2",
                 "--cfg",
                 "sha2_backend_soft=\"compact\"",
             ][..],
@@ -144,7 +175,7 @@ fn thumb_codegen_policy_is_applied_to_cargo() {
             .find(|(key, _)| *key == OsStr::new("RUSTFLAGS"))
             .and_then(|(_, value)| value),
         Some(OsStr::new(
-            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2 --cfg sha2_backend_soft=\"compact\""
+            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner --cfg sha2_backend_soft=\"compact\""
         ))
     );
     assert_eq!(
@@ -175,7 +206,7 @@ fn resource_intent_adds_stack_evidence_without_changing_firmware_policy() {
             .find(|(key, _)| *key == OsStr::new("RUSTFLAGS"))
             .and_then(|(_, value)| value),
         Some(OsStr::new(
-            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2 --cfg sha2_backend_soft=\"compact\""
+            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner --cfg sha2_backend_soft=\"compact\""
         ))
     );
     assert_eq!(
@@ -184,7 +215,7 @@ fn resource_intent_adds_stack_evidence_without_changing_firmware_policy() {
             .find(|(key, _)| *key == OsStr::new("RUSTFLAGS"))
             .and_then(|(_, value)| value),
         Some(OsStr::new(
-            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2 --cfg sha2_backend_soft=\"compact\" -Z emit-stack-sizes=yes"
+            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner --cfg sha2_backend_soft=\"compact\" -Z emit-stack-sizes=yes"
         ))
     );
     assert_eq!(
