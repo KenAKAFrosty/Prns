@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import importlib.util
 import json
 import os
@@ -24,6 +25,58 @@ SPEC.loader.exec_module(contracts)
 
 
 class SuiteFinalizationCustodyTests(unittest.TestCase):
+    def test_anonymous_pulls_bind_both_platforms_to_the_verified_index(self) -> None:
+        workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
+        block = workflow.split("      - name: Prove public anonymous pulls on both architectures\n", 1)[1]
+        script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("      - uses:", 1)[0])
+        manifests = [{"platform": {"os": "linux", "architecture": architecture},
+            "digest": "sha256:" + character * 64}
+            for architecture, character in [("amd64", "a"), ("arm64", "b"), ("unknown", "c")]]
+        cases = {"both-platforms": manifests, "missing-arm64": manifests[:1],
+            "duplicate-amd64": manifests + [manifests[0]], "wrong-index-digest": manifests}
+        for name, descriptors in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                index = root / "index.json"
+                index.write_text(json.dumps({"schemaVersion": 2, "manifests": descriptors}))
+                digest = "sha256:" + hashlib.sha256(index.read_bytes()).hexdigest()
+                expected = "sha256:" + "d" * 64 if name == "wrong-index-digest" else digest
+                skopeo = root / "skopeo"
+                skopeo.write_text('#!/bin/sh\ncat "$IMAGE_INDEX_FIXTURE"\n')
+                skopeo.chmod(0o700)
+                store = root / "docker-store.json"
+                docker = root / "docker"
+                docker.write_text("#!" + sys.executable + "\n" + textwrap.dedent('''\
+                    import json, os, sys
+                    from pathlib import Path
+                    args = sys.argv[1:]
+                    if args == ['logout', 'ghcr.io']:
+                        raise SystemExit(0)
+                    if len(args) != 4 or args[:2] != ['pull', '--platform']:
+                        raise SystemExit('unexpected Docker operation')
+                    path = Path(os.environ['DOCKER_STORE_FIXTURE'])
+                    stored = json.loads(path.read_text()) if path.exists() else {}
+                    platform, reference = args[2:]
+                    if reference in stored and stored[reference] != platform:
+                        raise SystemExit('cannot overwrite digest ' + reference)
+                    stored[reference] = platform
+                    path.write_text(json.dumps(stored))
+                    '''))
+                docker.chmod(0o700)
+                result = subprocess.run(["bash", "-e", "-c",
+                    script.replace("${{ inputs.image_digest }}", expected)], cwd=root,
+                    capture_output=True, text=True, env={**os.environ,
+                        "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                        "RUNNER_TEMP": directory, "IMAGE_INDEX_FIXTURE": str(index),
+                        "DOCKER_STORE_FIXTURE": str(store)})
+                self.assertEqual(result.returncode == 0, name == "both-platforms", result.stderr)
+                if name == "both-platforms":
+                    self.assertEqual(json.loads(store.read_text()), {
+                        "ghcr.io/kenakafrosty/prnsd@sha256:" + "a" * 64: "linux/amd64",
+                        "ghcr.io/kenakafrosty/prnsd@sha256:" + "b" * 64: "linux/arm64"})
+                else:
+                    self.assertFalse(store.exists(), result.stderr)
+
     def test_prerelease_assets_are_staged_in_a_fresh_checkout(self) -> None:
         workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
         block = workflow.split("      - name: Verify exact prerelease identity and download all assets\n", 1)[1]
