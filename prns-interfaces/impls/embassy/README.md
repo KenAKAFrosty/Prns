@@ -84,3 +84,15 @@ tests; native controllers and board firmware have separate assurance paths.
 ```console
 python3 validation/run.py run --suite bluetooth-auto-embassy --suite virtual-device-simulation
 ```
+
+## Radio transaction firmware size
+
+Radio transactions borrow the caller's immutable previous configuration while
+staging and publishing changes. They still own the staged configuration and
+compare it with the previous snapshot before restoring traffic. Command checks
+that only distinguish `Quiesce` or `Resume` match their variants directly.
+
+The [T-Echo measurement](measurements/radio-transaction-flash.md) compares this
+internal change with the exact prior implementation under the configured
+firmware recipe. Radio initialization, publication acknowledgement, failure
+recovery, and Base Duo 2.4 GHz support retain their existing contracts.

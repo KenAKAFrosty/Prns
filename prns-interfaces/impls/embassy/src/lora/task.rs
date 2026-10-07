@@ -65,7 +65,7 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                         &mut radio,
                                         &control,
                                         request.id,
-                                        LoRaRuntimeConfiguration::Unconfigured,
+                                        &LoRaRuntimeConfiguration::Unconfigured,
                                         airtime_policy,
                                         &mut current_id,
                                         status,
@@ -231,14 +231,14 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                         .await
                         {
                             Either3::First(request)
-                                if request.command == LoRaConfigurationCommand::Quiesce =>
+                                if matches!(request.command, LoRaConfigurationCommand::Quiesce) =>
                             {
                                 reset_reassembly(&mut reassembler, status);
                                 configuration = configuration::transact(
                                     &mut radio,
                                     &control,
                                     request.id,
-                                    LoRaRuntimeConfiguration::Configured {
+                                    &LoRaRuntimeConfiguration::Configured {
                                         profile,
                                         duty: duty_cycle,
                                     },
@@ -301,13 +301,13 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                         {
                             Either3::First(()) => continue 'serving,
                             Either3::Second(request) => {
-                                if request.command == LoRaConfigurationCommand::Quiesce {
+                                if matches!(request.command, LoRaConfigurationCommand::Quiesce) {
                                     reset_reassembly(&mut reassembler, status);
                                     configuration = configuration::transact(
                                         &mut radio,
                                         &control,
                                         request.id,
-                                        LoRaRuntimeConfiguration::Configured {
+                                        &LoRaRuntimeConfiguration::Configured {
                                             profile,
                                             duty: duty_cycle,
                                         },
@@ -475,13 +475,13 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                     .await
                     {
                         Either5::First(request) => {
-                            if request.command == LoRaConfigurationCommand::Quiesce {
+                            if matches!(request.command, LoRaConfigurationCommand::Quiesce) {
                                 reset_reassembly(&mut reassembler, status);
                                 configuration = configuration::transact(
                                     &mut radio,
                                     &control,
                                     request.id,
-                                    LoRaRuntimeConfiguration::Configured {
+                                    &LoRaRuntimeConfiguration::Configured {
                                         profile,
                                         duty: duty_cycle,
                                     },
@@ -946,13 +946,13 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                     .await
                     {
                         Either4::First(request) => {
-                            if request.command == LoRaConfigurationCommand::Quiesce {
+                            if matches!(request.command, LoRaConfigurationCommand::Quiesce) {
                                 reset_reassembly(&mut reassembler, status);
                                 configuration = configuration::transact(
                                     &mut radio,
                                     &control,
                                     request.id,
-                                    LoRaRuntimeConfiguration::Configured {
+                                    &LoRaRuntimeConfiguration::Configured {
                                         profile,
                                         duty: duty_cycle,
                                     },
