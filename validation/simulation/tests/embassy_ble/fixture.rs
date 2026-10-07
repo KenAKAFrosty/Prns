@@ -24,7 +24,7 @@ pub(super) const ADVERTISING_INTERVAL_MS: u64 = 60_000;
 pub(super) const GATT_VALUE_BYTES: usize = 20;
 pub(super) const GATT_QUEUE_DEPTH: usize = 4;
 pub(super) type RawMutex = CriticalSectionRawMutex;
-pub(super) type Lifecycle = Channel<RawMutex, InterfaceLifecycle, 4>;
+pub(super) type Lifecycle = Channel<RawMutex, InterfaceLifecycle<'static>, 4>;
 pub(super) type Fleet<const DEPTH: usize = 2> = EmbassyFleet<RawMutex, BLE_HW_MTU, DEPTH, 4>;
 pub(super) type Supervisor = BluetoothAuto<GatedBackend, MAX_PEERS>;
 
