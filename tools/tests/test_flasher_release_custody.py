@@ -5,6 +5,7 @@ import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 
@@ -1750,6 +1752,83 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             "verify-flasher-release-assets.py", *arguments, environment=self.environment
         )
         self.assertEqual(suite_verified.returncode, 0, suite_verified.stderr)
+
+        helper = assets / "flasher_hotfix.py"
+        helper_bytes = helper.read_bytes()
+        helper.unlink()
+        standalone_sums = suite_sums.read_bytes()
+        standalone_signature = suite_signature.read_bytes()
+        suite_sums.write_bytes(candidate_sums)
+        suite_signature.write_bytes(candidate_signature)
+        standalone_missing = run_script("verify-flasher-release-assets.py", *arguments)
+        self.assertNotEqual(standalone_missing.returncode, 0)
+        self.assertIn("missing signed release assets", standalone_missing.stderr)
+        suite_sums.write_bytes(standalone_sums)
+        suite_signature.write_bytes(standalone_signature)
+        original_bundle = signed_bundle.read_bytes()
+        review_path = assets / f"public-review-v{VERSION}-run-{workflow_run_id}-attempt-2.json"
+        original_review = review_path.read_bytes()
+
+        def bundled_inventory(payload: bytes, *, copies: int = 1, symlink: bool = False) -> list[str]:
+            with tarfile.open(signed_bundle, "w:gz") as archive:
+                for _ in range(copies):
+                    member = tarfile.TarInfo("qualification/flasher_hotfix.py")
+                    member.size = len(payload)
+                    if symlink:
+                        member.type = tarfile.SYMTYPE
+                        member.linkname = "other-helper.py"
+                        member.size = 0
+                    archive.addfile(member, None if symlink else io.BytesIO(payload))
+            review = json.loads(original_review)
+            review["signed_candidate_sha256"] = sha256(signed_bundle)
+            write_json(review_path, review)
+            return [*inventory_lines, f"{sha256(signed_bundle)}  {signed_bundle.name}\n"]
+
+        bundled_lines = bundled_inventory(helper_bytes)
+        sign_suite_inventory(bundled_lines)
+        bundled_verified = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+        self.assertEqual(bundled_verified.returncode, 0, bundled_verified.stderr)
+        sign_suite_inventory(inventory_lines)
+        unauthenticated = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+        self.assertNotEqual(unauthenticated.returncode, 0)
+        self.assertIn("does not authenticate the helper bundle", unauthenticated.stderr)
+        sign_suite_inventory([*inventory_lines, f"{'0' * 64}  {signed_bundle.name}\n"])
+        wrong_bundle = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+        self.assertNotEqual(wrong_bundle.returncode, 0)
+        self.assertIn("does not authenticate the helper bundle", wrong_bundle.stderr)
+        sign_suite_inventory([*bundled_lines, f"{sha256(self.fixture.root / 'qualification/flasher_hotfix.py')}  flasher_hotfix.py\n"])
+        required_standalone = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+        self.assertNotEqual(required_standalone.returncode, 0)
+        self.assertIn("missing signed release assets", required_standalone.stderr)
+        for payload, copies, symlink, message in (
+            (b"tampered helper", 1, False, "differs from the signed candidate"),
+            (bytes([helper_bytes[0] ^ 1]) + helper_bytes[1:], 1, False, "differs from the signed candidate"),
+            (helper_bytes, 0, False, "one regular qualification helper"),
+            (helper_bytes, 2, False, "one regular qualification helper"),
+            (helper_bytes, 1, True, "one regular qualification helper"),
+        ):
+            with self.subTest(copies=copies, symlink=symlink, payload=payload[:20]):
+                sign_suite_inventory(bundled_inventory(payload, copies=copies, symlink=symlink))
+                rejected = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn(message, rejected.stderr)
+        sign_suite_inventory(bundled_inventory(helper_bytes))
+        hotfix_metadata = self.fixture.root / "metadata/hotfix.json"
+        write_json(hotfix_metadata, {})
+        write_json(assets / f"hotfix-inheritance-v{VERSION}.json", {})
+        write_json(self.fixture.root / "qualification/hotfix.json", {})
+        write_json(assets / f"hotfix-spec-v{VERSION}.json", {})
+        hotfix_missing = run_script("verify-flasher-release-assets.py", *arguments, environment=self.environment)
+        self.assertNotEqual(hotfix_missing.returncode, 0)
+        self.assertIn("missing signed release assets", hotfix_missing.stderr)
+        hotfix_metadata.unlink()
+        (self.fixture.root / "qualification/hotfix.json").unlink()
+        (assets / f"hotfix-inheritance-v{VERSION}.json").unlink()
+        (assets / f"hotfix-spec-v{VERSION}.json").unlink()
+        helper.write_bytes(helper_bytes)
+        signed_bundle.write_bytes(original_bundle)
+        review_path.write_bytes(original_review)
+        sign_suite_inventory(inventory_lines)
 
         contradicting_lines = list(inventory_lines)
         contradicting_lines[1] = f"{'0' * 64}  install.sh\n"
