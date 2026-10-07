@@ -332,8 +332,21 @@ jobs:
           skopeo inspect --raw "docker://${candidate}" > "${RUNNER_TEMP}/anonymous.json"
           actual="sha256:$(sha256sum "${RUNNER_TEMP}/anonymous.json" | awk '{print $1}')"
           test "$actual" = "${{ inputs.image_digest }}"
-          docker pull --platform linux/amd64 "$candidate"
-          docker pull --platform linux/arm64 "$candidate"
+          jq -er '
+            ["amd64", "arm64"][] as $architecture
+            | [.manifests[] | select(
+                .platform.os == "linux" and .platform.architecture == $architecture
+              )] as $matches
+            | if ($matches | length) == 1
+                and ($matches[0].digest | test("^sha256:[0-9a-f]{64}$"))
+              then [$architecture, $matches[0].digest] | @tsv
+              else error("expected one valid Linux manifest for " + $architecture)
+              end
+          ' "${RUNNER_TEMP}/anonymous.json" > "${RUNNER_TEMP}/anonymous-platforms.tsv"
+          while IFS=$'\t' read -r architecture manifest; do
+            docker pull --platform "linux/${architecture}" \
+              "ghcr.io/kenakafrosty/prnsd@${manifest}"
+          done < "${RUNNER_TEMP}/anonymous-platforms.tsv"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
           version: v0.35.0
