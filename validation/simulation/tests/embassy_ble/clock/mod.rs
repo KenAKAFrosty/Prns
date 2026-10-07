@@ -150,6 +150,16 @@ impl<'driver> EmbassyTasks<'driver> {
         budget: CompletionBudget,
         future: impl Future<Output = T> + 'static,
     ) -> T {
+        self.complete_with_budget_before_advance(budget, future, || {})
+    }
+
+    #[track_caller]
+    fn complete_with_budget_before_advance<T: 'static>(
+        &mut self,
+        budget: CompletionBudget,
+        future: impl Future<Output = T> + 'static,
+        mut before_advance: impl FnMut(),
+    ) -> T {
         let before = self.snapshot();
         assert!(budget.deadline >= before.tick);
         let (send, mut result) = tokio::sync::oneshot::channel();
@@ -181,7 +191,16 @@ impl<'driver> EmbassyTasks<'driver> {
                         now < budget.deadline.get(),
                         "operation stalled before completion"
                     );
-                    self.advance_to_next_wake(budget.deadline).unwrap();
+                    before_advance();
+                    match self.advance_to_next_wake(budget.deadline) {
+                        Ok(_) => {}
+                        // Idle is an observation; an external wake can arrive before
+                        // the clock guard. Poll it at this tick within the same budget.
+                        Err(ClockAdvanceError::Manual(ManualTimeError::ReadyTasks { .. })) => {
+                            continue;
+                        }
+                        Err(error) => panic!("clock advancement failed: {error:?}"),
+                    }
                     if self.snapshot().tick.get() != now {
                         polls_at_tick = 0;
                     }
