@@ -25,6 +25,10 @@ SPEC.loader.exec_module(contracts)
 
 
 class SuiteFinalizationCustodyTests(unittest.TestCase):
+    def test_suite_sign_stages_the_bundled_hotfix_qualification_helper(self) -> None:
+        workflow = (ROOT / ".github/workflows/suite-sign.yml").read_text()
+        self.assertIn("stage target/flasher/candidate/qualification/flasher_hotfix.py", workflow)
+
     def test_stable_promotion_compares_canonical_inventory_and_rejects_changes(self) -> None:
         workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
         initial = workflow.split("      - name: Verify exact prerelease identity and download all assets\n", 1)[1]

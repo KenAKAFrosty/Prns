@@ -67,6 +67,10 @@ Download these assets from the same `vVERSION` GitHub prerelease:
 - `SHA256SUMS.txt`, `SHA256SUMS.txt.minisig`, and `minisign.pub`
 
 Record the signed archive SHA-256 shown in the prerelease notes and require it to match the file.
+Unified suite releases authenticate the archive through their signed custody inventory.
+The 0.3.8 suite delivers `flasher_hotfix.py` inside that archive; release asset verification
+authenticates the archive and compares the bundled helper with the candidate bytes.
+Standalone flasher releases and hotfix releases still require the separate helper asset.
 Record the exact GitHub `publishedAt` value; every counted observation must use a full UTC
 `completed_at` timestamp at or after that instant:
 
