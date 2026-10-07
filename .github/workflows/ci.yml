@@ -643,6 +643,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: embedded-target-isa
+      - uses: ./.github/actions/setup-linux-apt
       - name: install emulator build and runtime dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential libgcrypt20 libglib2.0-dev libpixman-1-dev libsdl2-2.0-0 libslirp0 ninja-build pkg-config python3-setuptools python3-venv xz-utils
       - name: install checksum-pinned ESP compiler and tools
@@ -801,6 +802,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
+      - uses: ./.github/actions/setup-linux-apt
       - name: Install Linux native development packages
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
