@@ -68,6 +68,7 @@ i2p = ["personal-rns/i2p"]
 weave = ["personal-rns/weave"]
 shared-instance = ["personal-rns/shared-instance"]
 lora = ["personal-rns/lora"]
+lora-2g4 = ["personal-rns/lora-2g4"]
 esp-now = ["personal-rns/esp-now"]
 
 [dependencies]
