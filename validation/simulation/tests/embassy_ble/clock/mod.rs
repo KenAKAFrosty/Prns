@@ -192,15 +192,18 @@ impl<'driver> EmbassyTasks<'driver> {
                         "operation stalled before completion"
                     );
                     before_advance();
-                    match self.advance_to_next_wake(budget.deadline) {
-                        Ok(_) => {}
-                        // Idle is an observation; an external wake can arrive before
-                        // the clock guard. Poll it at this tick within the same budget.
-                        Err(ClockAdvanceError::Manual(ManualTimeError::ReadyTasks { .. })) => {
-                            continue;
-                        }
-                        Err(error) => panic!("clock advancement failed: {error:?}"),
+                    let advancement = self.advance_to_next_wake(budget.deadline);
+                    // Idle is an observation; an external wake can arrive before
+                    // the clock guard. Poll it at this tick within the same budget.
+                    if matches!(
+                        advancement,
+                        Err(ClockAdvanceError::Manual(
+                            ManualTimeError::ReadyTasks { .. }
+                        ))
+                    ) {
+                        continue;
                     }
+                    advancement.unwrap();
                     if self.snapshot().tick.get() != now {
                         polls_at_tick = 0;
                     }
