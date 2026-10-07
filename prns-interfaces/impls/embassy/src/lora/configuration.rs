@@ -76,7 +76,7 @@ pub(super) async fn transact<'a, R: LoRaRadio, S: InterfaceSeam>(
     radio: &mut R,
     control: &LoRaControlTarget<'a>,
     quiesce_id: u64,
-    previous: LoRaRuntimeConfiguration,
+    previous: &LoRaRuntimeConfiguration,
     airtime_policy: AirtimePolicy,
     current_id: &mut InterfaceId,
     status: &EmbassyInterfaceStatus,
@@ -91,7 +91,7 @@ pub(super) async fn transact<'a, R: LoRaRadio, S: InterfaceSeam>(
             *radio_state = LoRaRadioState::Idle;
             control.complete(quiesce_id, LoRaApplyOutcome::Applied);
             StagedConfiguration::Confirmed {
-                configuration: previous,
+                configuration: *previous,
                 activation: RadioActivation::Inactive,
             }
         }
@@ -138,7 +138,8 @@ pub(super) async fn transact<'a, R: LoRaRadio, S: InterfaceSeam>(
                     control.complete(request.id, LoRaApplyOutcome::Rejected);
                     continue;
                 };
-                if request.command == LoRaConfigurationCommand::Resume && configuration != previous
+                if matches!(request.command, LoRaConfigurationCommand::Resume)
+                    && configuration != *previous
                 {
                     control.complete(request.id, LoRaApplyOutcome::Rejected);
                     continue;
@@ -308,7 +309,7 @@ mod tests {
                         &mut radio,
                         &target,
                         request.id,
-                        LoRaRuntimeConfiguration::Unconfigured,
+                        &LoRaRuntimeConfiguration::Unconfigured,
                         AirtimePolicy::Regional,
                         &mut id,
                         &status,
