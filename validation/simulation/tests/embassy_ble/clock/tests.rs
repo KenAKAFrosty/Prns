@@ -23,6 +23,68 @@ fn clock() -> ManualTimeDriver {
 }
 
 #[test]
+fn wake_after_idle_completes_without_advancing_either_clock() {
+    use std::{cell::RefCell, rc::Rc, task::Poll};
+
+    let lease = ClockLease::acquire();
+    let mut driver = clock();
+    let mut tasks = EmbassyTasks::new(&mut driver, lease);
+    let before = tasks.snapshot();
+    let wake = Rc::new(RefCell::new(None::<std::task::Waker>));
+    let captured = wake.clone();
+    let mut polled = false;
+    let operation = std::future::poll_fn(move |context| {
+        if polled {
+            return Poll::Ready(Instant::now().as_millis());
+        }
+        polled = true;
+        *captured.borrow_mut() = Some(context.waker().clone());
+        Poll::Pending
+    });
+    let mut wakes = 0;
+    let completed_at = tasks.complete_with_budget_before_advance(
+        CompletionBudget {
+            deadline: SimulationTick::from_ticks(10),
+            polls_per_tick: NonZeroUsize::new(4).unwrap(),
+        },
+        operation,
+        || {
+            wakes += 1;
+            wake.borrow().as_ref().unwrap().wake_by_ref();
+        },
+    );
+    assert_eq!((completed_at, wakes), (0, 1));
+    assert_eq!(tasks.snapshot(), before);
+}
+
+#[test]
+#[should_panic(expected = "operation failed to yield within its per-tick poll budget")]
+fn repeated_wakes_after_idle_still_exhaust_the_per_tick_poll_budget() {
+    use std::{cell::RefCell, rc::Rc, task::Poll};
+
+    let lease = ClockLease::acquire();
+    let mut driver = clock();
+    let mut tasks = EmbassyTasks::new(&mut driver, lease);
+    let wake = Rc::new(RefCell::new(None::<std::task::Waker>));
+    let captured = wake.clone();
+    let operation = std::future::poll_fn(move |context| {
+        *captured.borrow_mut() = Some(context.waker().clone());
+        Poll::<()>::Pending
+    });
+    tasks.complete_with_budget_before_advance(
+        CompletionBudget {
+            deadline: SimulationTick::from_ticks(10),
+            polls_per_tick: NonZeroUsize::new(4).unwrap(),
+        },
+        operation,
+        || {
+            assert_eq!(Instant::now().as_millis(), 0);
+            wake.borrow().as_ref().unwrap().wake_by_ref();
+        },
+    );
+}
+
+#[test]
 fn distinct_waiters_beyond_the_old_capacity_sleep_until_their_deadline() {
     const WAITERS: usize = 128;
     let lease = ClockLease::acquire();
