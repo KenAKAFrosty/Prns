@@ -1177,8 +1177,12 @@ def validate() -> list[str]:
         "./tools/prns release verify --",
         "./tools/prns release public-review -- verify",
         "gh attestation verify \"$bundle\"",
-        "docker pull --platform linux/amd64",
-        "docker pull --platform linux/arm64",
+        'test "$actual" = "${{ inputs.image_digest }}"',
+        '["amd64", "arm64"][] as $architecture',
+        '.platform.os == "linux" and .platform.architecture == $architecture',
+        'if ($matches | length) == 1',
+        'docker pull --platform "linux/${architecture}"',
+        'ghcr.io/kenakafrosty/prnsd@${manifest}',
         "Promote semver and latest only to the verified digest",
     ):
         if suite_gate not in suite_promotion:
