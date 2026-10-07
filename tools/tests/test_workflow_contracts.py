@@ -24,6 +24,39 @@ SPEC.loader.exec_module(contracts)
 
 
 class SuiteFinalizationCustodyTests(unittest.TestCase):
+    def test_prerelease_assets_are_staged_in_a_fresh_checkout(self) -> None:
+        workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
+        block = workflow.split("      - name: Verify exact prerelease identity and download all assets\n", 1)[1]
+        script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        commit = "a" * 40
+        for source in [commit, "b" * 40]:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                checkout = root / "checkout"
+                checkout.mkdir()
+                (checkout / "VERSION").write_text("0.3.8\n")
+                fixture = root / "release.json"
+                assets = [{"name": "native.tar.gz", "size": 7, "digest": "sha256:" + "c" * 64}]
+                fixture.write_text(json.dumps({"isDraft": False, "isPrerelease": True,
+                    "targetCommitish": source, "assets": assets}))
+                archive = root / "native.tar.gz"
+                archive.write_bytes(b"archive")
+                gh = root / "gh"
+                gh.write_text('#!/bin/sh\ncase "$1 $2" in\n'
+                    '  "release view") cat "$RELEASE_FIXTURE" ;;\n'
+                    '  "release download") cp "$ASSET_FIXTURE" "$5/native.tar.gz" ;;\n'
+                    '  *) exit 2 ;;\nesac\n')
+                gh.chmod(0o700)
+                result = subprocess.run(["bash", "-e", "-c", script], cwd=checkout,
+                    capture_output=True, text=True, env={**os.environ,
+                        "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                        "SOURCE_COMMIT": commit, "RELEASE_FIXTURE": str(fixture),
+                        "ASSET_FIXTURE": str(archive)})
+                self.assertEqual(result.returncode == 0, source == commit, result.stderr)
+                if source == commit:
+                    self.assertEqual(json.loads((checkout / "target/assets-before.json").read_text()), assets)
+                    self.assertEqual((checkout / "target/release-assets/native.tar.gz").read_bytes(), b"archive")
+
     def test_run_custody_uses_real_api_fields_without_dispatch_inputs(self) -> None:
         workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
         block = workflow.split("      - name: Verify protected flasher release finalization custody\n", 1)[1]
