@@ -7,6 +7,8 @@ inputs:
 runs:
   using: composite
   steps:
+    - uses: ./.github/actions/setup-linux-apt
+      if: runner.os == 'Linux'
     - name: Import verified Swiftly signing key
       if: runner.os == 'Linux'
       shell: bash
