@@ -49,6 +49,8 @@ class SuiteFinalizationCustodyTests(unittest.TestCase):
                         raise SystemExit(0)
                     if args[:2] != ['release', 'view']:
                         raise SystemExit('unexpected operation')
+                    if len(args) not in [5, 7] or args[3] != '--json' or len(args) == 7 and args[5] != '--jq':
+                        raise SystemExit('unsupported release view arguments')
                     fields = args[args.index('--json') + 1]
                     assets = json.loads(os.environ['ASSET_FIXTURE'])
                     changed = os.environ['CHANGE_FIXTURE']
