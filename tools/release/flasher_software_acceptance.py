@@ -11,10 +11,21 @@ import tomllib
 
 from flasher_acceptance_contract import (
     SOFTWARE_ACCEPTANCE_SCHEMA,
-    parse_utc_timestamp,
     sha256,
     software_qualification,
 )
+
+
+def readiness_timestamp(value: object, label: str) -> datetime:
+    if not isinstance(value, str) or re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+        r"(?:\.[0-9]{1,6})?(?:Z|\+00:00)", value
+    ) is None:
+        raise ValueError(f"{label} must be a full UTC ISO-8601 timestamp")
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(f"{label} must be a valid UTC timestamp") from error
 
 
 def validation_contract():
@@ -50,7 +61,7 @@ def readiness_errors(document: object, commit: str, now: datetime) -> list[str]:
     if set(results) != set(required):
         errors.append(f"automated suite inventory differs: missing={sorted(set(required) - set(results))}, unexpected={sorted(set(results) - set(required))}")
     try:
-        generated = parse_utc_timestamp(document.get("generated_at"), "automated evidence generated_at")
+        generated = readiness_timestamp(document.get("generated_at"), "automated evidence generated_at")
         if generated > now:
             errors.append("automated evidence generation cannot be in the future")
     except ValueError as error:
@@ -74,7 +85,7 @@ def readiness_errors(document: object, commit: str, now: datetime) -> list[str]:
         ):
             errors.append(f"{name}: result platform differs from the inventory")
         try:
-            finished = parse_utc_timestamp(result.get("finished_at"), f"{name} finished_at")
+            finished = readiness_timestamp(result.get("finished_at"), f"{name} finished_at")
             if finished > generated:
                 errors.append(f"{name}: result finishes after evidence generation")
         except ValueError as error:
