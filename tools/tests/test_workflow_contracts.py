@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import importlib.util
 import json
 import os
@@ -21,6 +22,127 @@ assert SPEC is not None and SPEC.loader is not None
 contracts = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = contracts
 SPEC.loader.exec_module(contracts)
+
+
+class SuiteFinalizationCustodyTests(unittest.TestCase):
+    def test_anonymous_pulls_bind_both_platforms_to_the_verified_index(self) -> None:
+        workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
+        block = workflow.split("      - name: Prove public anonymous pulls on both architectures\n", 1)[1]
+        script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("      - uses:", 1)[0])
+        manifests = [{"platform": {"os": "linux", "architecture": architecture},
+            "digest": "sha256:" + character * 64}
+            for architecture, character in [("amd64", "a"), ("arm64", "b"), ("unknown", "c")]]
+        cases = {"both-platforms": manifests, "missing-arm64": manifests[:1],
+            "duplicate-amd64": manifests + [manifests[0]], "wrong-index-digest": manifests}
+        for name, descriptors in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                index = root / "index.json"
+                index.write_text(json.dumps({"schemaVersion": 2, "manifests": descriptors}))
+                digest = "sha256:" + hashlib.sha256(index.read_bytes()).hexdigest()
+                expected = "sha256:" + "d" * 64 if name == "wrong-index-digest" else digest
+                skopeo = root / "skopeo"
+                skopeo.write_text('#!/bin/sh\ncat "$IMAGE_INDEX_FIXTURE"\n')
+                skopeo.chmod(0o700)
+                store = root / "docker-store.json"
+                docker = root / "docker"
+                docker.write_text("#!" + sys.executable + "\n" + textwrap.dedent('''\
+                    import json, os, sys
+                    from pathlib import Path
+                    args = sys.argv[1:]
+                    if args == ['logout', 'ghcr.io']:
+                        raise SystemExit(0)
+                    if len(args) != 4 or args[:2] != ['pull', '--platform']:
+                        raise SystemExit('unexpected Docker operation')
+                    path = Path(os.environ['DOCKER_STORE_FIXTURE'])
+                    stored = json.loads(path.read_text()) if path.exists() else {}
+                    platform, reference = args[2:]
+                    if reference in stored and stored[reference] != platform:
+                        raise SystemExit('cannot overwrite digest ' + reference)
+                    stored[reference] = platform
+                    path.write_text(json.dumps(stored))
+                    '''))
+                docker.chmod(0o700)
+                result = subprocess.run(["bash", "-e", "-c",
+                    script.replace("${{ inputs.image_digest }}", expected)], cwd=root,
+                    capture_output=True, text=True, env={**os.environ,
+                        "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                        "RUNNER_TEMP": directory, "IMAGE_INDEX_FIXTURE": str(index),
+                        "DOCKER_STORE_FIXTURE": str(store)})
+                self.assertEqual(result.returncode == 0, name == "both-platforms", result.stderr)
+                if name == "both-platforms":
+                    self.assertEqual(json.loads(store.read_text()), {
+                        "ghcr.io/kenakafrosty/prnsd@sha256:" + "a" * 64: "linux/amd64",
+                        "ghcr.io/kenakafrosty/prnsd@sha256:" + "b" * 64: "linux/arm64"})
+                else:
+                    self.assertFalse(store.exists(), result.stderr)
+
+    def test_prerelease_assets_are_staged_in_a_fresh_checkout(self) -> None:
+        workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
+        block = workflow.split("      - name: Verify exact prerelease identity and download all assets\n", 1)[1]
+        script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        commit = "a" * 40
+        for source in [commit, "b" * 40]:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                checkout = root / "checkout"
+                checkout.mkdir()
+                (checkout / "VERSION").write_text("0.3.8\n")
+                fixture = root / "release.json"
+                assets = [{"name": "native.tar.gz", "size": 7, "digest": "sha256:" + "c" * 64}]
+                fixture.write_text(json.dumps({"isDraft": False, "isPrerelease": True,
+                    "targetCommitish": source, "assets": assets}))
+                archive = root / "native.tar.gz"
+                archive.write_bytes(b"archive")
+                gh = root / "gh"
+                gh.write_text('#!/bin/sh\ncase "$1 $2" in\n'
+                    '  "release view") cat "$RELEASE_FIXTURE" ;;\n'
+                    '  "release download") cp "$ASSET_FIXTURE" "$5/native.tar.gz" ;;\n'
+                    '  *) exit 2 ;;\nesac\n')
+                gh.chmod(0o700)
+                result = subprocess.run(["bash", "-e", "-c", script], cwd=checkout,
+                    capture_output=True, text=True, env={**os.environ,
+                        "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                        "SOURCE_COMMIT": commit, "RELEASE_FIXTURE": str(fixture),
+                        "ASSET_FIXTURE": str(archive)})
+                self.assertEqual(result.returncode == 0, source == commit, result.stderr)
+                if source == commit:
+                    self.assertEqual(json.loads((checkout / "target/assets-before.json").read_text()), assets)
+                    self.assertEqual((checkout / "target/release-assets/native.tar.gz").read_bytes(), b"archive")
+
+    def test_run_custody_uses_real_api_fields_without_dispatch_inputs(self) -> None:
+        workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
+        block = workflow.split("      - name: Verify protected flasher release finalization custody\n", 1)[1]
+        script = textwrap.dedent(block.split("        run: |\n", 1)[1].split("          gh api \\\n", 1)[0])
+        commit = "a" * 40
+        script = script.replace("${{ inputs.flasher_finalization_run_id }}", "123")
+        script = script.replace("${{ inputs.flasher_acceptance_commit }}", commit)
+        run = {
+            "id": 123, "path": ".github/workflows/flasher-finalize-evidence.yml",
+            "event": "workflow_dispatch", "status": "completed", "conclusion": "success",
+            "head_repository": {"full_name": "owner/repo"},
+            "head_branch": "main", "head_sha": commit,
+        }
+        changes = {
+            "correct": {}, "id": {"id": 124}, "commit": {"head_sha": "b" * 40},
+            "branch": {"head_branch": "trunk"}, "repository": {"head_repository": {"full_name": "other/repo"}},
+            "path": {"path": ".github/workflows/other.yml"}, "event": {"event": "pull_request"},
+            "pending": {"status": "in_progress"}, "failed": {"conclusion": "failure"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gh = root / "gh"
+            gh.write_text('#!/bin/sh\ncat "$WORKFLOW_RUN_FIXTURE"\n')
+            gh.chmod(0o700)
+            fixture = root / "run.json"
+            for name, change in changes.items():
+                fixture.write_text(json.dumps({**run, **change}))
+                with self.subTest(change=name):
+                    result = subprocess.run(["bash", "-e", "-c", script], capture_output=True, text=True,
+                        env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                             "RUNNER_TEMP": directory, "GITHUB_REPOSITORY": "owner/repo",
+                             "WORKFLOW_RUN_FIXTURE": str(fixture)})
+                    self.assertEqual(result.returncode == 0, name == "correct", result.stderr)
 
 
 class WorkflowCompilerEnvironmentTests(unittest.TestCase):

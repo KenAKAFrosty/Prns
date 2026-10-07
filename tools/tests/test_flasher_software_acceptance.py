@@ -67,12 +67,67 @@ class SoftwareAcceptanceTests(unittest.TestCase):
         (self.args.evidence_root / digest).write_bytes(self.args.readiness_manifest.read_bytes())
         return json.loads(self.args.output.read_text())
 
+    def test_bundled_gate_uses_candidate_version_and_committed_inventory(self):
+        repository = Path(__file__).resolve().parents[2]
+        root = Path(self.temp.name) / "candidate"
+        qualification = root / "qualification"
+        qualification.mkdir(parents=True)
+        for source, destination in (("validation/run.py", "validation_runner.py"),
+                                    ("validation/manifest.toml", "validation-manifest.toml")):
+            (qualification / destination).write_bytes((repository / source).read_bytes())
+        for version in ("0.3.8", "0.3.8-hotfix.1", "0.3.9"):
+            (root / "VERSION").write_text(version + "\n")
+            with self.subTest(version=version), patch.object(software, "__file__", str(qualification / "flasher_software_acceptance.py")):
+                runner, inventory = software.validation_contract()
+                suites = runner.selected_suites(inventory, [], None, "release")
+                proofs = {suite["id"] for suite in suites if suite["domain"] == "kani"}
+                self.assertEqual(proofs, set() if version == "0.3.8" else {
+                    "kani-" + proof["name"] for proof in inventory["kani"]
+                })
+                self.assertIn("core-work-simulation-extended", {suite["id"] for suite in suites})
+                errors = software.readiness_errors(self.evidence, COMMIT, NOW)
+                self.assertEqual(bool(errors), version != "0.3.8")
+
     def test_complete_automated_release_needs_no_physical_rows(self):
         record = self.create()
         self.assertEqual(record["schema"], 7)
         self.assertEqual(record["physical_qualification"], "not-required-pre-1.0")
         self.assertNotIn("runs", record)
         self.assertEqual(VALIDATOR.validate(self.args, NOW), [])
+
+    def test_runner_timestamps_round_trip_without_rewriting_evidence(self):
+        for suffix in [".123456+00:00", ".123456Z", "+00:00"]:
+            with self.subTest(suffix=suffix):
+                document = deepcopy(self.evidence)
+                document["generated_at"] = document["generated_at"][:-1] + suffix
+                for result in document["results"].values():
+                    for field in ["started_at", "finished_at"]:
+                        result[field] = result[field][:-1] + suffix
+                original = json.dumps(document).encode()
+                self.args.readiness_manifest.write_bytes(original)
+                self.args.output.unlink(missing_ok=True)
+                record = self.create()
+                self.assertEqual(VALIDATOR.validate(self.args, NOW), [])
+                self.assertEqual(self.args.readiness_manifest.read_bytes(), original)
+                self.assertEqual(record["software_validation"]["sha256"], hashlib.sha256(original).hexdigest())
+                (self.args.evidence_root / record["software_validation"]["sha256"]).unlink()
+
+    def test_readiness_ordering_retains_fractional_precision(self):
+        document = deepcopy(self.evidence)
+        document["generated_at"] = "2026-10-03T03:00:00.100000+00:00"
+        document["results"]["virtual-device-simulation"]["finished_at"] = "2026-10-03T03:00:00.200000+00:00"
+        self.assertIn("virtual-device-simulation: result finishes after evidence generation", software.readiness_errors(document, COMMIT, NOW))
+
+    def test_readiness_timestamps_require_valid_explicit_utc(self):
+        for value in [None, "2026-10-03T03:00:00", "2026-10-03T03:00:00+01:00", "2026-10-03T03:00:00-01:00", "2026-10-03", "2026-02-30T03:00:00+00:00"]:
+            for field in ["generated_at", "finished_at"]:
+                with self.subTest(value=value, field=field):
+                    document = deepcopy(self.evidence)
+                    if field == "generated_at":
+                        document[field] = value
+                    else:
+                        document["results"]["virtual-device-simulation"][field] = value
+                    self.assertTrue(software.readiness_errors(document, COMMIT, NOW))
 
     def test_automated_hotfix_uses_its_suite_release_owner(self):
         self.manifest["release"]["version"] = "0.3.8-hotfix.1"

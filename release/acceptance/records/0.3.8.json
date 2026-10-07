@@ -1,0 +1,19 @@
+{
+  "candidate": {
+    "channel": "stable",
+    "manifest_sha256": "42b67b94b263fc5b3a66af2bcfba7d83d222928efe6d3109c086807a26643cef",
+    "manifest_signature_sha256": "db92ad660b06b5b238b262bad5c9f446699642cec05460daa4b5d0529e6857d2",
+    "prerelease_published_at": "2026-10-07T03:22:33Z",
+    "signed_candidate_sha256": "c5ec687efeaa8c52db165991fa76a4c0537bb1358ababc1ea92c73c08677d2fa",
+    "signing_key_id": "1BF5C4D8B140811A",
+    "source_commit": "f4d5dcb8ffaaa0b87e96974c4cd8676b11c7a82a",
+    "version": "0.3.8"
+  },
+  "physical_qualification": "not-required-pre-1.0",
+  "schema": 7,
+  "software_validation": {
+    "reference": "artifact://qualification/732389eb09470e4336c5f8effbfb034aac3f9e8b30fce473acce60429504498b",
+    "sha256": "732389eb09470e4336c5f8effbfb034aac3f9e8b30fce473acce60429504498b",
+    "workflow_run_id": "37557458937"
+  }
+}
