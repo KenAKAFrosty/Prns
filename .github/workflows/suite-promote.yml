@@ -153,6 +153,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          mkdir -p target/release-assets
           version="$(cat VERSION)"
           tag="v${version}"
           gh release view "$tag" \
@@ -161,7 +162,6 @@ jobs:
           test "$(jq -r '.isDraft' target/prerelease.json)" = "false"
           test "$(jq -r '.isPrerelease' target/prerelease.json)" = "true"
           test "$(jq -r '.targetCommitish' target/prerelease.json)" = "$SOURCE_COMMIT"
-          mkdir -p target/release-assets
           gh release download "$tag" --dir target/release-assets
           jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             target/prerelease.json > target/assets-before.json
