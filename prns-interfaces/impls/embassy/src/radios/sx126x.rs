@@ -9,13 +9,13 @@ use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::{Operation, SpiDevice};
 
 use prns_core::interfaces::lora::{
-    CodingRate as ProfileCodingRate, LoRaNetwork, LoraBandwidth as ProfileBandwidth,
+    CodingRate as ProfileCodingRate, LoRaNetwork, LoRaProfile, LoraBandwidth as ProfileBandwidth,
     Modulation as ProfileModulation, RadioProfile, RadioProfileCompatibilityError,
     SpreadingFactor as ProfileSpreadingFactor, RNODE_LORA_SYNC_WORD,
 };
 use prns_core::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
 
-use super::{LoRaRadio, RadioRecovery};
+use super::{BandRadioError, LoRaRadio, RadioRecovery};
 pub use super::{RadioEvent, ReceivedAirFrame};
 
 #[allow(dead_code)]
@@ -913,6 +913,20 @@ where
         Sx126x::init(self, radio_config(profile)?).await
     }
 
+    async fn initialize_band(
+        &mut self,
+        profile: LoRaProfile,
+    ) -> Result<(), BandRadioError<Self::Error>> {
+        let profile = match profile {
+            LoRaProfile::SubG(profile) => profile,
+            #[cfg(feature = "lora-2g4")]
+            LoRaProfile::Ghz24(_) => return Err(BandRadioError::UnsupportedBand),
+        };
+        Sx126x::init(self, radio_config(profile).map_err(BandRadioError::Radio)?)
+            .await
+            .map_err(BandRadioError::Radio)
+    }
+
     async fn idle(&mut self) -> Result<(), Self::Error> {
         self.standby().await
     }
@@ -1365,6 +1379,55 @@ mod tests {
                 return v;
             }
         }
+    }
+
+    #[test]
+    fn band_adapter_preserves_subg_initialization_commands() {
+        let legacy_log: Log = Rc::new(RefCell::new(Vec::new()));
+        let band_log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut legacy = Sx126x::new(
+            MockSpi::new(legacy_log.clone()),
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        let mut band = Sx126x::new(
+            MockSpi::new(band_log.clone()),
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        assert_eq!(block_on(legacy.initialize(US915_AUTO_LORA_PROFILE)), Ok(()));
+        assert_eq!(
+            block_on(band.initialize_band(LoRaProfile::SubG(US915_AUTO_LORA_PROFILE))),
+            Ok(())
+        );
+        assert_eq!(*band_log.borrow(), *legacy_log.borrow());
+    }
+
+    #[cfg(feature = "lora-2g4")]
+    #[test]
+    fn band_adapter_rejects_high_frequency_before_spi_access() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi::new(log.clone()),
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        assert_eq!(
+            block_on(radio.initialize_band(LoRaProfile::Ghz24(
+                prns_core::interfaces::lora::GHZ24_BALANCED_PROFILE,
+            ))),
+            Err(BandRadioError::UnsupportedBand),
+        );
+        assert!(log.borrow().is_empty());
     }
 
     #[test]

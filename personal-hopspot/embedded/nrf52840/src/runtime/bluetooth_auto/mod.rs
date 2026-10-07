@@ -100,40 +100,10 @@ const L2CAP_POOL: usize = MEMBERS + 4;
 const L2CAP_HANDSHAKE_WINDOW: Duration = Duration::from_secs(5);
 const L2CAP_SETUP_RETRY: Duration = Duration::from_millis(150);
 
-struct L2capPool {
-    buffers: [UnsafeCell<[u8; L2CAP_MTU]>; L2CAP_POOL],
-    free: [AtomicBool; L2CAP_POOL],
-}
+mod l2cap_pool;
+use l2cap_pool::L2capPool;
 
-// SAFETY: A slot is handed out only after its AtomicBool changes true -> false with AcqRel, and it
-// returns to the pool only when its unique L2capPacket is dropped. No two threads can access the
-// same UnsafeCell while it is claimed.
-unsafe impl Sync for L2capPool {}
-
-static L2CAP_POOL_STORE: L2capPool = L2capPool {
-    buffers: [const { UnsafeCell::new([0u8; L2CAP_MTU]) }; L2CAP_POOL],
-    free: [const { AtomicBool::new(true) }; L2CAP_POOL],
-};
-
-impl L2capPool {
-    fn claim(&self) -> Option<NonNull<u8>> {
-        for slot in 0..L2CAP_POOL {
-            if self.free[slot].swap(false, Ordering::AcqRel) {
-                return NonNull::new(self.buffers[slot].get().cast());
-            }
-        }
-        None
-    }
-
-    fn release(&self, ptr: NonNull<u8>) {
-        let base = self.buffers.as_ptr() as usize;
-        let slot =
-            (ptr.as_ptr() as usize - base) / core::mem::size_of::<UnsafeCell<[u8; L2CAP_MTU]>>();
-        if slot < L2CAP_POOL {
-            self.free[slot].store(true, Ordering::Release);
-        }
-    }
-}
+static L2CAP_POOL_STORE: L2capPool<L2CAP_MTU, L2CAP_POOL> = L2capPool::new();
 
 pub(super) struct L2capPacket {
     ptr: NonNull<u8>,
