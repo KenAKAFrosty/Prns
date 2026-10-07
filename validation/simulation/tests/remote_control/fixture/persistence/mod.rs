@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use personal_rns::persistence::{
@@ -13,7 +12,8 @@ use personal_rns::runtime::{
 use tokio::sync::oneshot;
 
 const MAX_IO_EVENTS: usize = 4096;
-static DIRECTORY_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+mod directory;
+use directory::Directory;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
@@ -180,14 +180,6 @@ impl PersistenceIo for ControlledIo {
     }
 }
 
-struct Directory(PathBuf);
-
-impl Drop for Directory {
-    fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.0).expect("remove scenario storage");
-    }
-}
-
 #[derive(Clone)]
 pub struct Storage {
     directory: Arc<Directory>,
@@ -196,12 +188,9 @@ pub struct Storage {
 
 impl Storage {
     pub fn new() -> Self {
-        let sequence = DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let directory =
-            std::env::temp_dir().join(format!("prns-rc-sim-{}-{sequence}", std::process::id()));
-        std::fs::create_dir(&directory).expect("isolated scenario storage");
+        let directory = Directory::new();
         Self {
-            directory: Arc::new(Directory(directory)),
+            directory: Arc::new(directory),
             io: ControlledIo::default(),
         }
     }
