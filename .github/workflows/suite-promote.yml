@@ -163,7 +163,7 @@ jobs:
           test "$(jq -r '.isPrerelease' target/prerelease.json)" = "true"
           test "$(jq -r '.targetCommitish' target/prerelease.json)" = "$SOURCE_COMMIT"
           gh release download "$tag" --dir target/release-assets
-          jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+          jq -c '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             target/prerelease.json > target/assets-before.json
       - name: Install exact release verifier and registry transport
         run: |
@@ -211,7 +211,7 @@ jobs:
             gh release upload "v${version}" "$evidence"
           fi
           gh release view "v${version}" --json assets \
-            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            --jq -c '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             > target/assets-before.json
       - name: Independently verify flasher release acceptance and evidence
         env:
@@ -380,12 +380,12 @@ jobs:
         run: |
           version="$(cat VERSION)"
           gh release view "v${version}" --json assets \
-            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            --jq -c '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             > target/assets-immediately-before.json
           cmp target/assets-before.json target/assets-immediately-before.json
           gh release edit "v${version}" --prerelease=false --latest=true
           test "$(gh release view "v${version}" --json isPrerelease --jq '.isPrerelease')" = "false"
           gh release view "v${version}" --json assets \
-            --jq '[.assets[] | {name, size, digest}] | sort_by(.name)' \
+            --jq -c '[.assets[] | {name, size, digest}] | sort_by(.name)' \
             > target/assets-after.json
           cmp target/assets-before.json target/assets-after.json

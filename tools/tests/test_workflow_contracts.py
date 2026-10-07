@@ -25,6 +25,52 @@ SPEC.loader.exec_module(contracts)
 
 
 class SuiteFinalizationCustodyTests(unittest.TestCase):
+    def test_stable_promotion_compares_canonical_inventory_and_rejects_changes(self) -> None:
+        workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
+        initial = workflow.split("      - name: Verify exact prerelease identity and download all assets\n", 1)[1]
+        initial = textwrap.dedent(initial.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        final = workflow.split("      - name: Mark the verified GitHub Release stable without replacing assets\n", 1)[1]
+        final = textwrap.dedent(final.split("        run: |\n", 1)[1])
+        assets = [{"name": "native.tar.gz", "size": 7, "digest": "sha256:" + "c" * 64}]
+        for changed in ["unchanged", "before", "after"]:
+            with self.subTest(change=changed), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "VERSION").write_text("0.3.8\n")
+                gh = root / "gh"
+                gh.write_text("#!" + sys.executable + "\n" + textwrap.dedent('''\
+                    import json, os, sys
+                    from pathlib import Path
+                    args = sys.argv[1:]
+                    marker = Path('edited')
+                    if args[:2] == ['release', 'download']:
+                        raise SystemExit(0)
+                    if args[:2] == ['release', 'edit']:
+                        marker.write_text('edited')
+                        raise SystemExit(0)
+                    if args[:2] != ['release', 'view']:
+                        raise SystemExit('unexpected operation')
+                    fields = args[args.index('--json') + 1]
+                    assets = json.loads(os.environ['ASSET_FIXTURE'])
+                    changed = os.environ['CHANGE_FIXTURE']
+                    if fields == 'assets' and (changed == 'before' or changed == 'after' and marker.exists()):
+                        assets[0]['size'] += 1
+                    data = {'isDraft': False, 'isPrerelease': not marker.exists(),
+                        'targetCommitish': 'a' * 40, 'assets': assets}
+                    if '--jq' in args:
+                        value = data['isPrerelease'] if fields == 'isPrerelease' else assets
+                    else:
+                        value = {field: data[field] for field in fields.split(',')}
+                    print(json.dumps(value, separators=(',', ':')))
+                    '''))
+                gh.chmod(0o700)
+                result = subprocess.run(["bash", "-e", "-c", initial + "\n" + final], cwd=root,
+                    capture_output=True, text=True, env={**os.environ,
+                        "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                        "SOURCE_COMMIT": "a" * 40, "ASSET_FIXTURE": json.dumps(assets),
+                        "CHANGE_FIXTURE": changed})
+                self.assertEqual(result.returncode == 0, changed == "unchanged", result.stderr)
+                self.assertEqual((root / "edited").exists(), changed != "before")
+
     def test_anonymous_pulls_bind_both_platforms_to_the_verified_index(self) -> None:
         workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
         block = workflow.split("      - name: Prove public anonymous pulls on both architectures\n", 1)[1]
