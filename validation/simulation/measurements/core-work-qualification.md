@@ -179,3 +179,12 @@ in `personal-hopspot/headless/scripts/network-lab/{lease.sh,prepare.py,radio.sh}
 The task-runner tests encounter the same existing hygiene issue. This slice did
 not relocate those files. The newly registered replay task executes successfully,
 and `python3 validation/run.py verify` passes.
+
+The Tokio storage fixture reserves each scenario directory with atomic
+`create_dir`, skipping occupied process-ID/counter names within a 10,000-attempt
+limit. Reused process IDs and retained files from interrupted workers therefore
+remain isolated from a new scenario. Reservation leaves occupied paths intact
+and propagates every filesystem error other than `AlreadyExists`. Component
+tests force a collision, exhaustion and a missing parent without changing the
+process environment. Scenario teardown removes only its successfully reserved
+directory.
