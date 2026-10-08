@@ -24,8 +24,14 @@ default = []
 wifi-halow = ["personal-rns/wifi-halow"]
 websocket = ["personal-rns/websocket-server"]
 wifi-auto = ["personal-rns/wifi-auto-mdns"]
+usb-config = ["personal-rns/usb"]
+
+[[example]]
+name = "usb_config"
+required-features = ["usb-config"]
 
 [dev-dependencies]
+personal-hopspot-memory = { path = "../memory" }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
 tempfile = "3"
