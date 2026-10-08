@@ -85,4 +85,3 @@ internal class GattServerOwners<T : Any>(private val capacity: Int) {
         ) slots.remove(address)
     }
 }
-
