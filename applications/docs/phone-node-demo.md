@@ -1,0 +1,408 @@
+# Two-phone local-node demo plan
+
+This is the bounded direct-message BLE baseline, not the full product scope or
+the current priority order. The [October 1 scope](product-scope.md) centers direct
+and group messaging with a required reusable library, while leaving protocol and
+multi-device design open. Use the [roadmap](roadmap.md) to select new work; the
+implementation details and recorded acceptance below describe this demo only.
+
+Status: Connections, persisted messaging names, bounded Saved/Discovered contacts,
+recipient selection and native recipient resolution are implemented. The
+[September 30 checkpoint](../checkpoints/2026-09-30-mobile-liveness.md) records
+retained-data builds, an Apple restored-service upgrade repair and successful
+isolated app restarts in both directions, followed by verified saved-contact
+delivery. No manual announce, Bluetooth reset or restart of the other phone was
+needed in those final trials. Later checks passed Android node Stop/Start and
+system-radio recovery, iOS interface off/on, and receipt with each app off-screen
+for more than five minutes. Competing-connection churn remains a stability
+follow-up; silent-peer expiry, iOS OS-radio recovery, permission denial and broader
+background/idle qualification remain open.
+
+Earlier [Connections acceptance](../checkpoints/2026-09-24-local-bluetooth.md)
+records persisted app-off launches, Android radio recovery and larger-text checks.
+The [messaging checkpoint](../checkpoints/2026-09-24-messaging-discovery.md) records
+reciprocal discovery, proof-backed delivery and discovery-clear sends. Historical
+restart failures and their recoverable drafts remain in the
+[September 29 checkpoint](../checkpoints/2026-09-29-mobile-persistence-recovery.md);
+the [shared recovery notes](../../docs/bluetooth-session-recovery.md) describe the
+implemented ownership, retained controls and negotiated liveness. These dated
+results qualify only their recorded builds and scenarios.
+
+The LXMF service refreshes bounded authenticated-key retention;
+[automated checks](../checkpoints/2026-09-24-messaging-discovery.md#authenticated-key-retention-follow-up)
+passed. Broader retained-key validation remains open. A later verified receipt of
+the same message can now upgrade an earlier unverified copy in place. Learning a
+sender key without receiving the message again does not reverify saved history;
+that and unknown-sender resolution remain separate work. Delivery proof does not
+establish the sender's identity. The user accepts losing ASK's extra force-quit relaunch
+support to make the phone usable as its own node,
+without a board or per-peer authorization.
+Control Center Bluetooth-toggle recovery is another documented ASK difference;
+physical results must record it separately from ordinary background operation.
+
+The [September 23 physical checkpoint](../checkpoints/2026-09-23-ordinary-corebluetooth.md#physical-continuation-direct-unpaired-ble-messaging)
+records automatic unpaired iOS/Android connection, reciprocal announcements,
+two-way proof-backed messages, one same-process off-screen iOS receipt and its
+first resumed send on earlier binaries. That establishes transport feasibility;
+it does not substitute for the current Connections checkpoint or complete demo
+acceptance.
+
+## Outcome
+
+Open prns on iOS and Android, connect them, announce distinct
+messaging names, discover and save each other without copying hashes, and exchange
+short LXMF messages in both directions. Each phone should explain its connection,
+what it has heard, its current routes, and the evidence behind message delivery.
+
+Focus only on Bluetooth: no TCP configuration, relay, board or cross-transport
+fallback in this milestone. After normal app-level Bluetooth/platform permission
+and enabling the interface, compatible phones should discover and connect
+automatically, without choosing or authorizing each phone in a system picker,
+OS bonding, or RemoteControl pairing. USB and Metro must not be part of the
+communications path. Android 10 remains supported. TCP is deferred.
+
+Foreground success is the first checkpoint, not a foreground-only product
+decision. Preserve native background ownership and follow with separately
+recorded locked/background/recovery trials. Do not trade away pair-free discovery
+silently to improve a particular iOS restoration scenario.
+
+## Current state and gaps
+
+This demo builds on the existing services. The broader reusable direct/group
+messaging contract still needs the review described in the product scope.
+
+| Area | What exists | Gap for the demo |
+| --- | --- | --- |
+| Local node | One process-owned Rust runtime and stable primary identity; ordinary iOS Bluetooth admission; This phone appears before managed boards; retained-data cold launches passed on both platforms | Permission recovery and full physical lifecycle qualification remain |
+| Announcing | Contacts exposes a persisted messaging name, explicit Announce yourself and separate My address sharing; reciprocal discovery and Network clear/reannounce passed on rebuilt phones | Wider background discovery remains unqualified |
+| Discovery | Discovered contacts shows accepted LXMF names, age, ingress and hops; 256-entry capacity, 24-hour expiry and explicit clear | General accepted-announcement history is implemented separately; it is not another contacts list |
+| Contacts | Save / Message from discovery; saved recipients, private aliases and announced names remain distinct; discovery-clear sends and isolated restart sends passed on both platforms | Wider retained-key and lifecycle qualification remain |
+| Bluetooth | Connections shows local status, stored enable/disable and physical peers; negotiated liveness and the Apple service-upgrade repair passed bounded isolated restart trials | Competing-connection churn, silent-peer expiry, iOS OS-radio recovery, permission denial and background/long-idle qualification remain |
+| TCP (deferred) | Optional developer TCP client fixture | Not part of this milestone |
+| Inspection | Network separates physical Bluetooth connections, readable current routes and bounded accepted-announcement history, with IDs on demand; focused standalone checks passed on both phones | Conversation delivery details remain; current routes are not historical message evidence |
+
+Source anchors: [Inbox](../prns/app/src/features/inbox/inbox-screen.native.tsx),
+[local-node views](../prns/app/src/features/nodes/nodes-screen.tsx),
+[Connections](../prns/app/src/features/connections/connections-screen.tsx),
+[contacts](../prns/app/src/features/contacts/contacts-screen.tsx),
+[native composition](../prns/native-composition/src/lifecycle.rs),
+[LXMF peer owner](../services/lxmf/src/direct.rs),
+[durable messaging owner](../services/lxmf/src/mailbox.rs), and
+[iOS admission](../prns/platform/ios/PrnsBluetoothCoordinator.swift).
+
+Saved/Discovered contacts, local connections and network inspection support the
+messaging journey. The [product scope](product-scope.md) now owns their role in
+the overall experience; the old universal-app scratch plans do not set current
+priorities. Old physical results do not qualify new binaries.
+
+## Implemented Connections slice
+
+Open **Nodes → This phone → Connections** or **More → Connections**. Node state
+and Bluetooth state are separate: a running node can have Bluetooth turned off,
+and a Bluetooth connection status of Ready means no physical peers are currently
+connected. Connected counts and peer details include only connected Bluetooth
+fleet members, never routes,
+Reticulum Links, contacts or managed-board pairings. Stale peer rows are hidden
+while access is unavailable or the interface is turning off.
+
+The app stores the Bluetooth preference through its existing native database
+owner, then applies it through the shared AutoBLE supervisor. Toggling this
+interface does not restart the node or clear identity, contacts or messages.
+Startup reads the same stored preference. An unconfirmed setting result asks for
+a refresh; it does not imply that an accepted write was rolled back.
+
+The [app Bluetooth projection](../prns/native-composition/src/bluetooth.rs) uses
+physical fleet facts from the same native Host inspection capture that produces
+the canonical logical HostSnapshot. It does not duplicate that projection or
+infer physical connections from its aggregate totals. iOS status includes the
+real CoreBluetooth radio state; Android status combines supervisor facts with
+platform permission, radio and required location-service gates. Unknown or
+failed access checks do not count as ready.
+
+The [September 24 checkpoint](../checkpoints/2026-09-24-local-bluetooth.md) records
+retained-data installation, app-off cold-launch persistence and reconnect on
+both platforms, plus Android OS-radio recovery and 1.5x/2x text checks. Final
+layout builds passed Android 2x and iOS maximum-accessibility-text checks; the
+checkpoint separates those follow-up checks from the original control trials.
+iOS radio recovery, permission-denial trials and
+background/restoration qualification remain open. Messaging names and the
+Saved/Discovered journey are implemented separately below.
+
+## Transport decision: automatic connections without pairing
+
+Distinguish four mechanisms:
+
+- App-level permission allows prns to use Bluetooth; this normal OS consent stays.
+- A BLE connection is a transport session; it does not itself imply pairing or
+  bonding, and the app can manage it automatically.
+- OS pairing/bonding establishes Bluetooth-layer security keys; the current Prns
+  GATT transport does not require it.
+- AccessorySetupKit authorizes particular accessories to this app. Even without
+  an OS bond, its per-peer picker is incompatible with the requested discovery UX.
+
+Prns AutoBLE already supports pair-free connections. Android uses ordinary GATT
+permissions and insecure L2CAP sockets, without a bonding call. Apple uses
+ordinary GATT permissions; the backend deliberately avoids central-initiated
+L2CAP where that would trigger bonding. Prefer the existing GATT path for this
+demo, not encrypted-GATT requirements that introduce new system pairing prompts.
+
+The approved feasibility implementation uses ordinary CoreBluetooth authorization
+instead of AccessorySetupKit for the app's general-purpose AutoBLE interface.
+Apple's [two-device sample](https://developer.apple.com/documentation/corebluetooth/transferring-data-between-bluetooth-low-energy-devices)
+demonstrates service-filtered discovery, automatic connection and bidirectional
+GATT exchange. Use the existing Prns peer/role/session policy rather than another
+phone-only protocol. For the mixed pair, iOS as central and Android advertising
+is the preferred role arrangement; central/peripheral roles remain internal.
+
+This requires a new app configuration/admission path, not merely hiding the
+picker. Installation and acceptance of this new path must be recorded separately
+from earlier ASK binaries. The [iOS guide](ios.md) records a historical abort when constructing a
+peripheral manager with AccessorySetupKit active; it does not establish that
+ordinary non-ASK dual-role CoreBluetooth is impossible. The public
+`AutoBle::prepare_with_restoration` API already supports both managers, with
+stable app-owned restoration identifiers. Qualify that path without ASK;
+do not disable restoration or propose an unverified runtime toggle between
+incompatible permission modes. Core role selection permits iOS-to-iOS GATT too,
+but this has not been qualified with two physical iPhones.
+
+Background operation is not synonymous with relaunch after force-quit. Apple's
+[TN3115](https://developer.apple.com/documentation/technotes/tn3115-bluetooth-state-restoration-app-relaunch-rules)
+attaches the iOS 26 ASK condition to specific relaunch cases; an
+[Apple engineering clarification](https://developer.apple.com/forums/thread/818370)
+distinguishes ordinary state restoration from the force-quit exception. Ordinary
+CoreBluetooth retains background/restoration mechanisms; do not promise relaunch
+after force-quit without ASK or describe removing ASK as necessarily foreground-only.
+Validate each supported state on the current OS instead of transferring old ASK
+test results to the new permission model.
+
+iOS background peripheral advertising omits the local name and puts service UUIDs
+in an overflow area discoverable only by scanning iOS devices
+([Apple documentation](https://developer.apple.com/documentation/corebluetooth/cbperipheralmanager/startadvertising(_:))).
+This is another reason to favor iOS scanning an Android advertiser for cross-
+platform background discovery. Test initial discovery separately from maintaining
+or restoring an existing connection. Two-iPhone operation is a later physical
+qualification target, not proven by the available mixed pair.
+
+Treat automatic BLE peers as untrusted network access, not trusted contacts or
+remote controllers. Preserve Reticulum/LXMF cryptographic checks and separate
+RemoteControl grants; service UUIDs and BLE identifiers are not person identity.
+Public announces remain public, and automatic connection exposes discovery and
+traffic metadata. Keep peer/queue limits, handshake timeouts, backoff and an
+explicit interface-off control; avoiding bonding does not remove these needs.
+
+The reported Disconnected status is not enough to diagnose a fault. The logical
+Bluetooth interface can be ready with zero connected members. Determine which
+stage is missing: radio/permission, scanning or advertising, authorization,
+connection, Prns handshake, route discovery, or message delivery. USB attachment
+does not establish a Bluetooth connection.
+
+## Product model and navigation
+
+Keep existing tabs and stable routes. Add entry points to the existing local
+interface/activity routes rather than introducing another top-level tab.
+
+| Location | Implemented / planned experience |
+| --- | --- |
+| Nodes | Implemented: This phone first, Running/Stopped, concise Bluetooth summary, Connections and Network; managed boards below. Edit the messaging name in Contacts. |
+| Contacts | Saved / Discovered; prominent Announce yourself and a separate My address action for viewing/sharing the address. |
+| Discovered contact | Announced name, short address, human-readable last heard, received-via connection/hops when known; Save contact and Message. Identity details secondary. |
+| Inbox | Actual conversations, not every heard peer. New message selects a saved/discovered recipient; manual address entry remains available. Contact detail also has Message. |
+| Connections | Implemented with bounded iOS/Android retained-data acceptance: automatic Bluetooth, readable state, app-level permission actions, stored enable/disable and physical peer details. Remaining recovery/lifecycle checks are listed in the checkpoint. No per-phone picker; local settings do not use remote-board controls. |
+| Network / Activity | Implemented at the existing Activity route: separate Connections, Routes and Announcements views; latest 200 accepted announcements and clear local history. Technical IDs remain available on demand. General connection/message event history is not included. |
+| Conversation details | Follow-up: current route availability and independently recorded delivery evidence, clearly labeled. Schedule under the messaging roadmap; no inferred historical path presented as fact. |
+
+Use Discovered, not Nearby, for announce-derived people: they may be reached over
+multiple hops, even when this phone uses only BLE. Reserve Nearby for physical
+Bluetooth discovery. Keep these concepts
+separate: Bluetooth authorization/connectivity, announcing a messaging address,
+and RemoteControl pairing. Messaging does not confer board-administration access.
+
+The local profile owns an editable, persisted messaging name. It is distinct
+from the OS Bluetooth name, a contact's private alias and cryptographic identity.
+Changing the name must update registered LXMF announce data, including path
+responses, without changing identity or discarding messages. Announced names are
+untrusted display data, not verified real-world identities.
+
+## Truthful status, announcing and discovery policy
+
+- Show local node state separately from Bluetooth state. Saved contacts and
+  mailbox remain readable with Bluetooth disabled or permission denied.
+- Present Bluetooth states such as Off, Permission needed,
+  Looking for devices, Connecting, Connected to N devices, or Failed with a
+  recovery action. Only claim scanning/advertising when actual status exposes it;
+  otherwise say Ready, no connected devices. Keep `AutomaticBluetoothLe` in
+  technical details rather than the primary heading.
+- Physical Bluetooth peers, Reticulum routes, Reticulum Links and contacts are
+  different counts. Never derive one from another. A detected peer is not
+  necessarily connected; a recent announce is not a live reachability test.
+- Make Announce yourself a first-class action with a brief explanation that it
+  publishes the messaging name/address onto enabled connected networks. Keep
+  network announce distinct from copy/share-sheet actions. Use all eligible
+  interfaces initially; transport isolation comes from connection controls.
+- Core announce completion currently means accepted for fan-out, not transmitted
+  or heard. It can succeed with no usable egress. Report no usable connection
+  explicitly and otherwise say Announcement requested unless stronger evidence
+  exists. Do not promise discovery on the other phone from this result alone.
+- Start with explicit manual announce. Add opt-in automatic announcing on a
+  usable connection only as a bounded native policy with cooldown/coalescing,
+  privacy disclosure and tests; never tie broadcasts to screen renders/polling
+  or add aggressive periodic announcements to make the demo pass.
+- Discovered messaging peers are deduplicated by destination, with bounded
+  capacity (256 entries) and monotonic age expiry (24 hours); repeated observations
+  update last heard. Network has a separate 200-row accepted-announcement feed,
+  including non-LXMF destinations. These are internal bounds, not user
+  configuration. Old-entry removal means retention loss, not radio packet loss.
+- Discovery lives for the current native node generation; Stop/Start or process
+  restart clears it. Network announcement history has the same generation
+  boundary. Saved contacts, names, connection settings and mailbox are durable.
+  Clearing observed history must not delete contacts, revoke permissions, block
+  peers or change routing. Filtering is local presentation, not a network ban.
+- Separate recent-discovery history from messaging resolution. Fresh sends
+  use authenticated cached metadata when still valid; otherwise a native
+  path/announce lookup waits at most 15 seconds before durable acceptance. At
+  most eight lookups wait concurrently. A cached route alone is insufficient.
+  Identity conflicts, unsupported stamp requirements and metadata that expires
+  while awaiting admission reject before a message is queued. The UI shows
+  Finding contact and a retryable failure. Clearing discovery hides observations
+  while preserving bounded recipient metadata; neither clearing nor restart
+  requires a manual remote announcement to initiate lookup.
+- Offer Save/Message only for recognized messaging destinations; other accepted
+  announces remain inspectable. Hide own destinations from Discovered contacts.
+  Saving rechecks authenticated identity association and retains conflict rules;
+  do not silently replace a pinned identity or overwrite a private alias.
+
+## Architecture and narrow additions
+
+Keep the current ownership: Rust owns node lifetime, profile/configuration,
+discovery, commands and durable mailbox; native adapters own OS permissions and
+platform lifecycle; generated UniFFI bindings carry typed results; React owns
+presentation. No second node, protocol scheduler or JavaScript packet/event bus.
+
+Reuse public AutoBLE composition, `announce_now`, `set_registered_announce_app_data`,
+the accepted announce observer, raw interface inventory and engine inspection.
+The accepted observer already supplies identity, interface, hops and
+monotonic time. Copy bounded data into the existing native owner; never discover
+contacts from unauthenticated diagnostic events.
+
+Extend the native projections deliberately: local messaging address/name,
+per-interface readiness and physical members, discovery provenance and ages,
+bounded activity, and operation outcomes. Keep canonical HostSnapshot unchanged
+unless a reusable core consumer needs its vocabulary expanded: it deliberately
+folds physical members into logical interfaces. Supplement it from the same raw
+capture; do not fork its projection or reconstruct physical peers from totals.
+Convert monotonic observations to ages in Rust, not phone wall-clock dates.
+
+Network's app-only snapshot uses the existing native clock for route ages,
+expiry and announcement ages. Displayed times describe the last network update;
+they do not advance using JavaScript time. An inspection failure is not an empty
+route table, and retained announcements remain visible when route inspection is
+unavailable. A logical route interface must not be presented as an exact physical
+peer. Recorded announcement ingress is resolved only against that recorded ID.
+
+The accepted-announcement observer copies fixed metadata into a generation-owned
+200-row ring and delegates to the existing LXMF observer once. It retains no
+payloads or names; display names reuse the messaging directory. A generation-bound
+clear result includes an activity revision. The UI keeps that acknowledgement
+across navigation until a native projection catches up, so stale snapshots cannot
+resurrect cleared rows and newer observations are not hidden. Clear, Stop and
+restart do not delete durable contacts or messages.
+
+The ordinary Bluetooth startup path uses app-level permission/radio state while
+preserving early native restoration preparation, one owner, Stop/reset
+cancellation and Android service ownership. The implemented BLE control and
+readiness projection reuse that ownership; permission denial leaves saved data
+available. Keep further transport configuration out of this slice. Disabling
+Bluetooth disconnects its physical peers without restarting the node; it is
+independent of stopping the node or resetting app data.
+
+Retain existing inbound interface, arrival and Link ID evidence instead of
+discarding it in the mailbox projection. Outbound Link ID and measured RTT can
+also be retained app-side, but exact outbound interface attribution needs a
+narrow upstream inspection/result seam: current settlement and Host snapshots
+do not expose it. Propose that extension with tests on a separate upstream branch
+if exact outbound path display is required; until then label it unavailable.
+Never attach today's route to an old message and call it its delivery route. A
+known isolated test plus counters is test evidence, not a general per-message
+tracing feature.
+
+If per-message connection evidence is retained across restart, persist it with
+the corresponding attempt/result. Otherwise label it as session-only and show
+Not recorded for older messages. Do not reconstruct missing history from current
+routes or counters.
+
+## Ordered implementation slices
+
+1. **Pair-free connection feasibility and status (bounded device acceptance passed).**
+   Earlier builds established automatic unpaired transport feasibility. The
+   Connections UI, stored interface control and physical-peer projection are now
+   implemented. The September 24 checkpoint records retained data, app-off cold
+   launches and reconnect on both platforms, plus Android radio recovery and
+   larger-text checks on both platforms. Complete the listed iOS radio and
+   permission-denial gaps;
+   keep background/restoration and USB-unplugged trials separately bounded and
+   recorded. This slice did not repeat message-delivery acceptance.
+2. **Complete the messaging journey over BLE (implemented; bounded restart checks passed).**
+   Persisted name, explicit announce, bounded Discovered list, Save/Message actions
+   and contact recipient selection are implemented. Reciprocal discovery and
+   proof-backed messages without typing addresses passed, as did discovery-clear
+   sending on both phones and Android cold-launch sending without a remote
+   manual announce. The September 30 checkpoint adds isolated app restart sends
+   in both directions and preserves earlier failed attempts.
+3. **Settled Bluetooth link recovery (sufficient for feature development).**
+   Retained control ownership, correlated writes and negotiated liveness are
+   implemented. Preserve keeper/authentication policy and late-callback fencing.
+   Track silent-peer expiry, wider platform recovery and repeated competing
+   connections as reliability follow-ups. Cooperative shutdown notification
+   remains implementation work, not a property of the current Stop behavior.
+   These do not block network inspection unless a new failure prevents normal use.
+4. **Network explainability (first slice passed focused phone checks).** Physical Bluetooth connections,
+   readable route age/expiry and bounded accepted-announcement inspection are in
+   the rebuilt standalone apps. Readable tabs, clear/reannounce, retained routes
+   and contacts, and two-way messaging passed on both phones; see the
+   [build and validation record](validation.md#standalone-phone-builds-and-focused-acceptance).
+   Conversation delivery details remain a follow-up under the broader messaging
+   roadmap, using independently recorded evidence.
+   Add a narrow upstream seam only where existing public evidence cannot answer
+   the UI's question. Clearly separate current routes from actual message paths.
+5. **Repeatable device acceptance and recovery.** Test out-of-range, reconnect,
+   restart, Stop/Start and permission denial. Follow with background/locked trials,
+   ordinary restoration versus force-quit, and OS-specific limitations. Check real
+   keyboards, retained data and 1.5x/2x text on both phones.
+
+For each slice: focused native/SDK/UI tests, regenerated bindings where needed,
+retained-data builds, exact binary/device evidence and a logical commit. Keep
+generic upstream fixes on separate branches. No publishing is implied by this
+plan, and no historical phone test substitutes for the new two-phone journey.
+
+## Demo acceptance and deferred scope
+
+The demo passes when a user can complete the following using only the app UI:
+
+1. See each phone's distinct name and whether it has a usable connection.
+2. Connect iOS/Android automatically over BLE after app-level permission, with
+   no OS bond, per-peer system picker, RemoteControl grant or board.
+3. Announce both ways, see each other under Discovered and save contacts.
+4. Send and reply; show Delivered only on the existing proof-backed result,
+   distinguish it from read status, and preserve messages after restart. A saved
+   contact remains usable through native resolution after discovery history is
+   cleared or the app restarts; failure must give a useful reason, not require
+   unexplained manual announce rituals.
+5. Inspect the actual BLE peers, relevant routes, heard announces and traffic.
+6. Recover from one interrupted connection with clear state and no duplicate
+   messages or automatic replay of an uncertain user operation. Reuse the
+   existing explicit retry/cancel policy rather than inventing fallback sends.
+
+Background receipt, first request after wake and OS restoration receive their
+own pass/fail records; foreground demo success must not be called full background
+qualification. Preserve background support as a requirement, not a guarantee of
+an always-running iOS daemon.
+
+Within this BLE demo, defer TCP and other transport configuration, LXMF
+Resources/attachments, propagation, opportunistic delivery, push notifications,
+full persistent packet history, graph visualizations, group messaging
+implementation, multi-endpoint contact merging, identity export/sync, new
+desktop/browser providers and additional board-control features. Existing board qualification
+and firmware faults remain tracked separately; they do not gate a board-free
+phone-to-phone demo unless a shared dependency is actually involved.
+These are limits of this acceptance slice, not the product roadmap: group
+messaging is primary scope, and device/sync questions are active design work.

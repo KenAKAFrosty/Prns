@@ -1234,7 +1234,7 @@ mod tests {
                         reason:
                             RemoteControlTargetPairingBeginRejection::RequestUnsupportedForVersion {
                                 version: crate::remote_control::RemoteControlPairingProtocolVersion::V2,
-                                request: RemoteControlRequestKind::Describe,
+                                request: RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
                             },
                     },
                     "Pairing(BeginRequestUnsupportedForVersion)",

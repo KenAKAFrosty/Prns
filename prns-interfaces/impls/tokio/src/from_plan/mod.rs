@@ -243,6 +243,11 @@ impl PlanRuntimeContext {
         }
     }
 
+    /// Public identity used by a prepared native Bluetooth transport attachment.
+    pub const fn ble_identity(&self) -> Option<BleIdentity> {
+        self.ble_identity
+    }
+
     pub fn with_ble_identity(mut self, identity: BleIdentity) -> Self {
         self.ble_identity = Some(identity);
         self
@@ -695,7 +700,17 @@ async fn stand_up<'a>(
         PlannedMedium::Pipe {
             command,
             respawn_delay,
-        } => pipe::stand_up(construction, command, *respawn_delay),
+        } => {
+            #[cfg(feature = "pipe")]
+            {
+                pipe::stand_up(construction, command, *respawn_delay)
+            }
+            #[cfg(not(feature = "pipe"))]
+            {
+                let _ = (command, respawn_delay);
+                Err(PlanFailure::InterfaceNotBuilt(PlannedInterfaceKind::Pipe))
+            }
+        }
         PlannedMedium::I2p {
             peers,
             reachability,

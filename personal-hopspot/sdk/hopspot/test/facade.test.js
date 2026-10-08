@@ -25,6 +25,8 @@ test("contains only transparent module forwarding", async () => {
     "contract.js": "export * from \"personal-rns/contract\";\n",
     "contract.cjs": "module.exports = require(\"personal-rns/contract\");\n",
     "contract.d.ts": "export * from \"personal-rns/contract\";\n",
+    "remote-control.js": "export * from \"personal-rns/remote-control\";\n",
+    "remote-control.d.ts": "export * from \"personal-rns/remote-control\";\n",
     "native.js": "export * from \"personal-rns/native\";\n",
     "native.cjs": "module.exports = require(\"personal-rns/native\");\n",
     "native.d.ts": "export * from \"personal-rns/native\";\n",

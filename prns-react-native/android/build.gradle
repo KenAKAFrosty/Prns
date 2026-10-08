@@ -1,0 +1,41 @@
+import groovy.json.JsonSlurper
+
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'rs.reticulum.prns.host'
+version = '0.3.7'
+def selection = new JsonSlurper().parse(file('../native-image.json'))
+def image = selection.libraryName
+if (!(image ==~ /[a-z][a-z0-9_]*/)) throw new GradleException('Invalid PRNS image name')
+def libraries = fileTree('src/main/jniLibs') { include '**/*.so' }.files
+if (libraries.empty || libraries.any { it.name != "lib${image}.so" }) {
+  throw new GradleException("PRNS requires exactly one selected image per ABI: lib${image}.so; build the selected provider first")
+}
+
+android {
+  namespace 'rs.reticulum.prns.expo'
+  defaultConfig {
+    minSdkVersion 29
+    versionCode 1
+    versionName '0.3.7'
+    consumerProguardFiles 'consumer-rules.pro'
+  }
+  sourceSets.main {
+    java.srcDirs += ['generated']
+    jniLibs.srcDirs = ['src/main/jniLibs']
+  }
+  packagingOptions.jniLibs.pickFirsts += [
+    '**/libfbjni.so', '**/libreactnative.so', '**/libjsi.so', '**/libc++_shared.so',
+  ]
+}
+
+dependencies {
+  implementation project(':ubjs_react-native')
+  implementation 'net.java.dev.jna:jna:5.18.1@aar'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.mockito:mockito-core:5.14.2'
+}

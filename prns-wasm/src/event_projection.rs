@@ -254,17 +254,21 @@ pub(crate) fn capture_journaled(journaled: Journaled<'_>) -> CapturedJournal {
                 ),
             ],
         )),
-        Journaled::Delivered(Delivery::Link(delivery)) => CapturedJournal::Event(project(
-            ApplicationEventKind::LinkDelivery,
-            [
+        Journaled::Delivered(Delivery::Link(delivery)) => {
+            let mut fields = vec![
                 bytes(EventField::LinkId, delivery.link_id.as_bytes()),
                 bytes(EventField::Plaintext, delivery.plaintext),
                 bytes(
                     EventField::SourceInterface,
                     delivery.source_interface.as_bytes(),
                 ),
-            ],
-        )),
+                u64(EventField::ArrivedAtMillis, delivery.arrived_at.0),
+            ];
+            if let Some(destination) = delivery.local_destination {
+                fields.push(bytes(EventField::LocalDestination, destination.as_bytes()));
+            }
+            CapturedJournal::Event(project(ApplicationEventKind::LinkDelivery, fields))
+        }
         Journaled::Delivered(Delivery::Plain(delivery)) => CapturedJournal::Event(project(
             DiagnosticEventKind::Delivered,
             [text(EventField::Detail, &format!("{delivery:?}"))],
@@ -383,9 +387,9 @@ fn remote_control_diagnostic(kind: &str, detail: String) -> CapturedJournal {
     ))
 }
 
-fn project<const FIELD_COUNT: usize>(
+fn project(
     kind: impl Into<prns_host::EventProjectionKind>,
-    fields: [EventProjectionField; FIELD_COUNT],
+    fields: impl IntoIterator<Item = EventProjectionField>,
 ) -> EventProjection {
     let mut event = EventProjection::new(kind.into());
     for field in fields {

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "description": "Generator-only template corrections over the exact source-lock runtime tree. Runtime archives and their build provenance remain unchanged.",
+  "patches": [
+    {
+      "file": "patches/0005-strict-error-override.patch",
+      "sha256": "7092a98f5ad9ff251d6630abe8c3a89c38159e9892400f0e8cdb4065b002661e"
+    }
+  ]
+}
