@@ -1,0 +1,641 @@
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
+index 46a1a71..12b037c 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
+@@ -689,6 +689,7 @@ pub(super) fn build_object(
+         ffi_clone,
+         ffi_free,
+         supports_finalization_registry,
++        supports_player_object_guard: matches!(flavor, AbiFlavor::Jsi2),
+         has_callback_interface,
+         strict_object_types,
+         force_async,
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/nodes.rs b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/nodes.rs
+index 1ec9145..4d3210a 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/nodes.rs
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/nodes.rs
+@@ -238,6 +238,7 @@ pub(crate) struct TsObject {
+     pub ffi_clone: String,
+     pub ffi_free: String,
+     pub supports_finalization_registry: bool,
++    pub supports_player_object_guard: bool,
+     pub has_callback_interface: bool,
+     pub strict_object_types: bool,
+     /// `forceAsync` names this type. Kept so validation can reject a
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/ObjectTemplate.ts b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/ObjectTemplate.ts
+index fc2b7df..38eef2c 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/ObjectTemplate.ts
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/ObjectTemplate.ts
+@@ -81,9 +81,12 @@ export class {{ obj.impl_class_name }} extends UniffiAbstractObject
+         const ptr = (this as any)[destructorGuardSymbol];
+         if (ptr !== undefined) {
+             const pointer = {{ obj.obj_factory }}.pointer(this);
+-            {{ obj.obj_factory }}.freePointer(pointer);
+-            {{ obj.obj_factory }}.unbless(ptr);
+-            delete (this as any)[destructorGuardSymbol];
++            try {
++                {{ obj.obj_factory }}.freePointer(pointer);
++            } finally {
++                {{ obj.obj_factory }}.unbless(ptr);
++                delete (this as any)[destructorGuardSymbol];
++            }
+         }
+     }
+ 
+@@ -120,6 +123,11 @@ const {{ obj.obj_factory }}: UniffiObjectFactory<{{ obj.protocol_name }}> = (()
+ 
+     {% if obj.supports_finalization_registry %}
+     bless(p: UniffiHandle): UniffiGcObject {
++        {% if obj.supports_player_object_guard %}
++        // Native guards also release objects when the JS runtime is replaced.
++        const bless = nativeModule().$uniffiBlessPointer;
++        if (bless !== undefined) return bless(p, "{{ obj.ffi_free }}");
++        {% endif %}
+         const ptr = {
+             p, // make sure this object doesn't get optimized away.
+             markDestroyed: () => undefined,
+@@ -131,6 +139,7 @@ const {{ obj.obj_factory }}: UniffiObjectFactory<{{ obj.protocol_name }}> = (()
+     },
+ 
+     unbless(ptr_: UniffiGcObject) {
++        ptr_.markDestroyed();
+         if (registry) {
+             registry.unregister(ptr_);
+         }
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/wrapper-ffi-player.ts b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/wrapper-ffi-player.ts
+index 9f213ae..4ff995f 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/wrapper-ffi-player.ts
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/wrapper-ffi-player.ts
+@@ -82,6 +82,8 @@ interface NativeModuleInterface {
+     // module exposes them as method properties.
+     rustbuffer_alloc(n: number): Uint8Array;
+     rustbuffer_free(view: Uint8Array): void;
++    // The JSI player owns object guards even without FinalizationRegistry.
++    $uniffiBlessPointer?(pointer: bigint, freeSymbol: string): UniffiGcObject;
+ }
+ 
+ let _nativeModule: NativeModuleInterface | undefined;
+diff --git a/fixtures/reload-safety/src/lib.rs b/fixtures/reload-safety/src/lib.rs
+index 5b9566b..3cc51ae 100644
+--- a/fixtures/reload-safety/src/lib.rs
++++ b/fixtures/reload-safety/src/lib.rs
+@@ -152,3 +152,103 @@ pub fn active_query_count() -> u32 {
+ pub fn process_work_completed() -> u32 {
+     PROCESS_WORK_COMPLETED.load(Ordering::SeqCst)
+ }
++
++static OBJECTS_CREATED: AtomicU32 = AtomicU32::new(0);
++static OBJECTS_DROPPED: AtomicU32 = AtomicU32::new(0);
++static OBJECT_CLAIMED: AtomicBool = AtomicBool::new(false);
++static OBJECT_WAITS_STARTED: AtomicU32 = AtomicU32::new(0);
++static OBJECT_WAITS_DROPPED: AtomicU32 = AtomicU32::new(0);
++
++/// An object whose last native reference owns an exclusive process-wide claim.
++/// The claim deliberately survives JS replacement unless every object/future
++/// reference from the old runtime is released.
++#[derive(uniffi::Object)]
++pub struct ReloadObject {
++    serial: u32,
++    claimed: bool,
++}
++
++impl ReloadObject {
++    fn create(claimed: bool) -> Arc<Self> {
++        Arc::new(Self {
++            serial: OBJECTS_CREATED.fetch_add(1, Ordering::SeqCst) + 1,
++            claimed,
++        })
++    }
++}
++
++impl Drop for ReloadObject {
++    fn drop(&mut self) {
++        if self.claimed {
++            OBJECT_CLAIMED.store(false, Ordering::SeqCst);
++        }
++        OBJECTS_DROPPED.fetch_add(1, Ordering::SeqCst);
++    }
++}
++
++struct PendingObjectWait;
++
++impl Drop for PendingObjectWait {
++    fn drop(&mut self) {
++        OBJECT_WAITS_DROPPED.fetch_add(1, Ordering::SeqCst);
++    }
++}
++
++#[uniffi::export]
++impl ReloadObject {
++    #[uniffi::constructor]
++    pub fn new() -> Arc<Self> {
++        Self::create(false)
++    }
++
++    pub fn serial(&self) -> u32 {
++        self.serial
++    }
++
++    /// Only cancellation or runtime teardown can finish this wait. No worker or
++    /// deadline can release its captured object and conceal a teardown leak.
++    pub async fn wait(&self) -> u32 {
++        OBJECT_WAITS_STARTED.fetch_add(1, Ordering::SeqCst);
++        let _wait = PendingObjectWait;
++        std::future::pending::<()>().await;
++        self.serial
++    }
++}
++
++#[uniffi::export]
++pub fn try_claim_reload_object() -> Option<Arc<ReloadObject>> {
++    OBJECT_CLAIMED
++        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
++        .ok()
++        .map(|_| ReloadObject::create(true))
++}
++
++#[uniffi::export]
++pub fn clone_reload_object(object: Arc<ReloadObject>) -> Arc<ReloadObject> {
++    object
++}
++
++#[uniffi::export]
++pub fn active_object_count() -> u32 {
++    OBJECTS_CREATED.load(Ordering::SeqCst) - OBJECTS_DROPPED.load(Ordering::SeqCst)
++}
++
++#[uniffi::export]
++pub fn object_drop_count() -> u32 {
++    OBJECTS_DROPPED.load(Ordering::SeqCst)
++}
++
++#[uniffi::export]
++pub fn object_created_count() -> u32 {
++    OBJECTS_CREATED.load(Ordering::SeqCst)
++}
++
++#[uniffi::export]
++pub fn object_claim_available() -> bool {
++    !OBJECT_CLAIMED.load(Ordering::SeqCst)
++}
++
++#[uniffi::export]
++pub fn active_object_wait_count() -> u32 {
++    OBJECT_WAITS_STARTED.load(Ordering::SeqCst) - OBJECT_WAITS_DROPPED.load(Ordering::SeqCst)
++}
+diff --git a/fixtures/reload-safety/tests/test_bindings.rs b/fixtures/reload-safety/tests/test_bindings.rs
+index 2539bd1..bd5e769 100644
+--- a/fixtures/reload-safety/tests/test_bindings.rs
++++ b/fixtures/reload-safety/tests/test_bindings.rs
+@@ -14,4 +14,5 @@ ubrn_macros::build_foreign_language_testcases! {
+     "tests/bindings/test_reload_root_pinned.ts" => [Jsi2],
+     "tests/bindings/test_reload_parked_worker.ts" => [Jsi2],
+     "tests/bindings/test_reload_pending_async.ts" => [Jsi2],
++    "tests/bindings/test_reload_objects.ts" => [Jsi2],
+ }
+diff --git a/runtimes/jsi/cpp/callbacks.h b/runtimes/jsi/cpp/callbacks.h
+index af33124..7f581c4 100644
+--- a/runtimes/jsi/cpp/callbacks.h
++++ b/runtimes/jsi/cpp/callbacks.h
+@@ -22,6 +22,7 @@
+ #include <condition_variable>
+ #include <cstdint>
+ #include <cstring>
++#include <functional>
+ #include <map>
+ #include <memory>
+ #include <mutex>
+@@ -200,6 +201,10 @@ struct ModuleCallbackInfo {
+   // mutates this map; root teardown consumes it after stopping callbacks.
+   std::map<uint64_t, std::string> pendingRustFutures;
+ 
++  // Native object guards share the player's queue-safe teardown boundary.
++  // false closes their registry without calling Rust on an unproven queue.
++  std::function<void(bool)> closeRustObjects;
++
+   // Copied off the runtime-scoped root at registration and handed to every
+   // trampoline this module builds; see CbUserData for why they are not global.
+   std::shared_ptr<facebook::react::CallInvoker> callInvoker;
+diff --git a/runtimes/jsi/cpp/shim.cpp b/runtimes/jsi/cpp/shim.cpp
+index 06d34cf..ec28392 100644
+--- a/runtimes/jsi/cpp/shim.cpp
++++ b/runtimes/jsi/cpp/shim.cpp
+@@ -12,6 +12,8 @@
+ #include <cstring>
+ #include <deque>
+ #include <memory>
++#include <mutex>
++#include <stdexcept>
+ #include <string>
+ #include <thread>
+ #include <vector>
+@@ -84,6 +86,152 @@ void freePendingRustFutures(ubrn_cb::ModuleCallbackInfo &info) {
+   info.pendingRustFutures.clear();
+ }
+ 
++// One registration is one owned Arc reference, even when several wrappers
++// contain the same pointer. Entries, rather than JS finalizers, own cleanup.
++class RustObjectRegistry : public std::enable_shared_from_this<RustObjectRegistry> {
++  struct Entry {
++    uint64_t pointer;
++    std::string freeName;
++  };
++
++public:
++  RustObjectRegistry(UbrnJsiModule *module,
++                     std::shared_ptr<facebook::react::CallInvoker> invoker,
++                     std::weak_ptr<void> root)
++      : module_(module), invoker_(std::move(invoker)), root_(std::move(root)) {}
++
++  uint64_t add(uint64_t pointer, std::string freeName) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    if (closed_) {
++      throw std::logic_error("uniffi jsi player: object registry is closed");
++    }
++    const auto id = ++nextId_;
++    entries_.emplace(id, Entry{pointer, std::move(freeName)});
++    return id;
++  }
++
++  // Called after generated JS explicitly consumed the Arc. The guard may be
++  // finalized much later, including after the module was disarmed.
++  void forget(uint64_t id) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    entries_.erase(id);
++  }
++
++  // A HostObject finalizer can run inside GC on any thread. It must not call
++  // Rust (whose Drop could call JS) there. Queue ordinary collection instead;
++  // root teardown drains anything whose queued callback is discarded.
++  void abandon(uint64_t id) {
++    {
++      std::lock_guard<std::mutex> lock(mutex_);
++      if (closed_ || entries_.find(id) == entries_.end()) {
++        return;
++      }
++    }
++    std::weak_ptr<RustObjectRegistry> weak = shared_from_this();
++    invoker_->invokeAsync([weak, id]() {
++      if (auto registry = weak.lock()) {
++        registry->release(id);
++      }
++    });
++  }
++
++  // Only the JS thread or a host with a stopped/joined JS queue may release
++  // native ownership. The conservative off-thread path still closes the
++  // registry so later finalizers cannot call a disarmed module.
++  void close(bool releaseNative) {
++    std::map<uint64_t, Entry> entries;
++    {
++      std::lock_guard<std::mutex> lock(mutex_);
++      if (closed_) {
++        return;
++      }
++      closed_ = true;
++      entries.swap(entries_);
++    }
++    if (releaseNative) {
++      for (const auto &[id, entry] : entries) {
++        free(entry);
++      }
++    }
++  }
++
++private:
++  void release(uint64_t id) {
++    // Pin the player only while this queued callback executes, never while it
++    // sits in the invoker. Otherwise a dead queue could retain its own root.
++    const auto root = root_.lock();
++    if (!root) {
++      return;
++    }
++    Entry entry;
++    {
++      std::lock_guard<std::mutex> lock(mutex_);
++      const auto found = entries_.find(id);
++      if (found == entries_.end()) {
++        return;
++      }
++      entry = std::move(found->second);
++      entries_.erase(found);
++    }
++    // Queue-safe close cannot race this JS-thread native call. Do not hold
++    // the registry lock over Rust, whose destructor can call back into JS.
++    free(entry);
++  }
++
++  void free(const Entry &entry) {
++    const void *args[] = {&entry.pointer};
++    const size_t sizes[] = {sizeof(entry.pointer)};
++    RustCallStatus status{};
++    ubrn_jsi_call(module_, entry.freeName.c_str(), args, sizes, 1, &status,
++                  nullptr, 0);
++    // A native Drop panic has already consumed the Arc. Destructors cannot
++    // throw into JS, but its panic buffer must still be released.
++    if (status.error_buf.data != nullptr) {
++      ubrn_jsi_rustbuffer_free(module_, status.error_buf);
++    }
++  }
++
++  UbrnJsiModule *module_;
++  std::shared_ptr<facebook::react::CallInvoker> invoker_;
++  std::weak_ptr<void> root_;
++  std::mutex mutex_;
++  uint64_t nextId_ = 0;
++  bool closed_ = false;
++  std::map<uint64_t, Entry> entries_;
++};
++
++class RustObjectGuard : public jsi::HostObject {
++public:
++  RustObjectGuard(std::shared_ptr<RustObjectRegistry> registry, uint64_t id)
++      : registry_(std::move(registry)), id_(id) {}
++
++  ~RustObjectGuard() override {
++    try {
++      registry_->abandon(id_);
++    } catch (...) {
++      // A stopped invoker can reject scheduling. The root still owns the
++      // registration and releases it at its queue-safe teardown boundary.
++    }
++  }
++
++  jsi::Value get(jsi::Runtime &rt, const jsi::PropNameID &name) override {
++    if (name.utf8(rt) != "markDestroyed") {
++      return jsi::Value::undefined();
++    }
++    return jsi::Function::createFromHostFunction(
++        rt, jsi::PropNameID::forAscii(rt, "markDestroyed"), 0,
++        [registry = registry_, id = id_](jsi::Runtime &, const jsi::Value &,
++                                        const jsi::Value *, size_t) {
++          registry->forget(id);
++          return jsi::Value::undefined();
++        });
++  }
++
++private:
++  std::shared_ptr<RustObjectRegistry> registry_;
++  uint64_t id_;
++};
++
+ // A jsi buffer that owns the std::string holding its bytes.
+ //
+ // Used by string_to_buffer: `jsi::String::utf8()` already returns a string
+@@ -152,6 +300,39 @@ buildModuleObject(jsi::Runtime &rt, UbrnJsiModule *handle,
+                   std::shared_ptr<UniffiPlayerRoot> root) {
+   jsi::Object mod(rt);
+   identifyFutureFunctions(*fns);
++  auto objects = std::make_shared<RustObjectRegistry>(handle, cbInfo->callInvoker, root);
++  cbInfo->closeRustObjects = [objects](bool releaseNative) {
++    objects->close(releaseNative);
++  };
++  mod.setProperty(
++      rt, "$uniffiBlessPointer",
++      jsi::Function::createFromHostFunction(
++          rt, jsi::PropNameID::forAscii(rt, "$uniffiBlessPointer"), 2,
++          [objects, fns, root](jsi::Runtime &rt, const jsi::Value &,
++                               const jsi::Value *args, size_t count) -> jsi::Value {
++            if (count < 2 || !args[1].isString()) {
++              throw jsi::JSError(rt, "uniffi jsi player: bless needs pointer and free symbol");
++            }
++            const auto freeName = args[1].asString(rt).utf8(rt);
++            bool valid = false;
++            for (const auto &fn : *fns) {
++              if (fn.name == freeName && fn.name.find("_fn_free_") != std::string::npos &&
++                  fn.args.size() == 1 && fn.args[0].tag == UBRN_TY_HANDLE &&
++                  fn.retTag == UBRN_TY_VOID && fn.hasRcs) {
++                valid = true;
++                break;
++              }
++            }
++            if (!valid) {
++              throw jsi::JSError(rt, "uniffi jsi player: invalid object free symbol");
++            }
++            uint64_t pointer;
++            scalarToBytes(rt, UBRN_TY_HANDLE, args[0],
++                          reinterpret_cast<uint8_t *>(&pointer));
++            const auto id = objects->add(pointer, freeName);
++            return jsi::Object::createFromHostObject(
++                rt, std::make_shared<RustObjectGuard>(objects, id));
++          }));
+   for (const auto &fn : *fns) {
+     FnInfo info = fn; // copy into the closure
+     auto hostFn = jsi::Function::createFromHostFunction(
+@@ -537,16 +718,27 @@ private:
+         }
+       }
+     }
++    // Keep all namespaces armed while their native references are released:
++    // a future or object destructor can reach another registered namespace.
++    if (queueStoppedOrOnJsThread) {
++      for (const auto &info : modules_) {
++        try {
++          freePendingRustFutures(*info);
++        } catch (...) {
++        }
++      }
++    }
+     for (const auto &info : modules_) {
+-      // Per module, because one that fails must not strand the rest still
+-      // armed — and because a destructor that throws terminates.
+       try {
+-        // Release native ownership only when queued callbacks cannot run: JS
+-        // teardown on its own thread, or an explicitly stopped/joined queue.
+-        // An arbitrary off-thread GC has neither guarantee, so disarm alone.
+-        if (queueStoppedOrOnJsThread) {
+-          freePendingRustFutures(*info);
++        if (info->closeRustObjects) {
++          info->closeRustObjects(queueStoppedOrOnJsThread);
+         }
++      } catch (...) {
++      }
++    }
++    for (const auto &info : modules_) {
++      // One failed module must not strand the others armed.
++      try {
+         ubrn_jsi_disarm(info->module);
+       } catch (...) {
+       }
+diff --git a/fixtures/reload-safety/tests/bindings/test_reload_objects.ts b/fixtures/reload-safety/tests/bindings/test_reload_objects.ts
+new file mode 100644
+index 0000000..19f588b
+--- /dev/null
++++ b/fixtures/reload-safety/tests/bindings/test_reload_objects.ts
+@@ -0,0 +1,176 @@
++/*
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/
++ */
++import { asyncTest } from "@/asserts";
++import theModule, {
++  activeObjectCount,
++  activeObjectWaitCount,
++  cloneReloadObject,
++  noteIteration,
++  objectClaimAvailable,
++  objectCreatedCount,
++  objectDropCount,
++  ReloadObject,
++  tryClaimReloadObject,
++} from "@/generated/reload_safety";
++
++theModule.initialize();
++
++declare const __testRequestReload: () => void;
++const delay = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
++const gc = (globalThis as any).__hermesGc as (() => void) | undefined;
++
++function claimedObject(): ReloadObject {
++  const object = tryClaimReloadObject();
++  if (!(object instanceof ReloadObject)) {
++    throw new Error("Previous runtime still owns the native object claim");
++  }
++  return object;
++}
++
++function abandonObject(): void {
++  const object = new ReloadObject();
++  if (object.serial() === 0) throw new Error("Object was not constructed");
++}
++
++void asyncTest(
++  "native objects release once across GC and runtime replacement",
++  async (t) => {
++    const iteration = noteIteration();
++    t.assertEqual(
++      activeObjectCount(),
++      0,
++      "old runtime released every object reference",
++    );
++    t.assertEqual(
++      activeObjectWaitCount(),
++      0,
++      "old runtime released pending object methods",
++    );
++    t.assertTrue(
++      objectClaimAvailable(),
++      "old runtime released its exclusive claim",
++    );
++    t.assertEqual(
++      objectCreatedCount(),
++      objectDropCount(),
++      "each old object dropped exactly once",
++    );
++
++    const beforeExplicit = objectDropCount();
++    const explicit = new ReloadObject();
++    explicit.uniffiDestroy();
++    explicit.uniffiDestroy();
++    t.assertEqual(activeObjectCount(), 0);
++    t.assertEqual(
++      objectDropCount(),
++      beforeExplicit + 1,
++      "explicit destroy is idempotent",
++    );
++
++    const original = new ReloadObject();
++    const alias = cloneReloadObject(original);
++    if (!(alias instanceof ReloadObject))
++      throw new Error("Clone did not produce an object wrapper");
++    const serial = original.serial();
++    original.uniffiDestroy();
++    t.assertEqual(
++      activeObjectCount(),
++      1,
++      "each wrapper owns its own native reference",
++    );
++    t.assertEqual(
++      alias.serial(),
++      serial,
++      "two wrappers may share the same Arc pointer",
++    );
++    alias.uniffiDestroy();
++    t.assertEqual(activeObjectCount(), 0);
++    t.assertEqual(objectDropCount(), beforeExplicit + 2);
++
++    // The asynchronous method owns a separate Arc. Releasing the JS object must
++    // not invalidate it; cancelling and freeing the future releases the last Arc.
++    const borrowed = claimedObject();
++    const abort = new AbortController();
++    const pending = borrowed.wait({ signal: abort.signal });
++    t.assertEqual(activeObjectWaitCount(), 1);
++    borrowed.uniffiDestroy();
++    borrowed.uniffiDestroy();
++    t.assertEqual(activeObjectCount(), 1);
++    t.assertFalse(objectClaimAvailable());
++    abort.abort();
++    let aborted = false;
++    try {
++      await pending;
++    } catch (error) {
++      aborted = (error as Error).name === "AbortError";
++    }
++    t.assertTrue(aborted);
++    t.assertEqual(activeObjectWaitCount(), 0);
++    t.assertEqual(activeObjectCount(), 0);
++    t.assertTrue(objectClaimAvailable());
++    t.assertEqual(objectDropCount(), beforeExplicit + 3);
++
++    if (gc !== undefined) {
++      const beforeGc = objectDropCount();
++      abandonObject();
++      t.assertEqual(activeObjectCount(), 1);
++      for (
++        let attempt = 0;
++        attempt < 10 && activeObjectCount() !== 0;
++        attempt++
++      ) {
++        gc();
++        await delay();
++      }
++      t.assertEqual(
++        activeObjectCount(),
++        0,
++        "ordinary GC releases abandoned object",
++      );
++      t.assertEqual(
++        objectDropCount(),
++        beforeGc + 1,
++        "GC releases exactly one reference",
++      );
++      gc();
++      await delay();
++      t.assertEqual(
++        objectDropCount(),
++        beforeGc + 1,
++        "later GC does not free destroyed handles again",
++      );
++    }
++
++    const held = new ReloadObject();
++    const claimed = claimedObject();
++    const waiting = claimed.wait();
++    // These are deliberately reachable until runtime destruction. Ordinary GC
++    // must not hide an omitted runtime-level cleanup step.
++    (globalThis as any).__abandonedReloadObjects = {
++      held,
++      claimed,
++      waiting,
++      explicit,
++      borrowed,
++      original,
++      alias,
++    };
++    t.assertEqual(activeObjectCount(), 2);
++    t.assertEqual(activeObjectWaitCount(), 1);
++    t.assertFalse(objectClaimAvailable());
++    t.assertEqual(
++      tryClaimReloadObject(),
++      undefined,
++      "a live object's claim remains exclusive",
++    );
++    console.info(
++      `iteration ${iteration}: exact-once destroy/GC passed; 2 objects and 1 method abandoned`,
++    );
++    t.end();
++    __testRequestReload();
++  },
++  10000,
++);

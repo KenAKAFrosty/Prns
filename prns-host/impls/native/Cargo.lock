@@ -1859,6 +1859,7 @@ version = "0.3.8"
 dependencies = [
  "dbus",
  "personal-rns",
+ "prns-ffi",
  "prns-host",
  "prns-host-snapshot",
  "tokio",

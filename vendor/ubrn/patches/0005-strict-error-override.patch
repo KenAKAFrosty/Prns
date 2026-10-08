@@ -1,0 +1,12 @@
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/TaggedEnumTemplate.ts b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/TaggedEnumTemplate.ts
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/TaggedEnumTemplate.ts
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/TaggedEnumTemplate.ts
+@@ -76,7 +76,7 @@
+         }
+         {%- endif %}
+ 
+-        static instanceOf(obj: any): obj is {{ variant_class }} {
++        static {% if e.is_error %}override {% endif %}instanceOf(obj: any): obj is {{ variant_class }} {
+             return obj.tag === {{ variant_tag }};
+         }
+ 

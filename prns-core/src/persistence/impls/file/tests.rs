@@ -26,6 +26,20 @@ impl Drop for TempDir {
     }
 }
 
+#[cfg(unix)]
+struct RestorePermissions {
+    path: PathBuf,
+    permissions: fs::Permissions,
+}
+
+#[cfg(unix)]
+impl Drop for RestorePermissions {
+    fn drop(&mut self) {
+        // Restore traversal and removal permissions even if a regression panics.
+        let _ = fs::set_permissions(&self.path, self.permissions.clone());
+    }
+}
+
 const HIGH_WATER: InstantMillis = InstantMillis(1_770_000_000_000);
 
 fn sealed_timebase() -> Vec<u8> {
@@ -51,6 +65,168 @@ fn a_stored_snapshot_round_trips_through_the_trait() {
         .unwrap()
         .unwrap();
     assert_eq!(read_timebase_snapshot(loaded).unwrap(), HIGH_WATER);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_existing_store_beneath_a_search_only_ancestor_can_save() {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let temp = TempDir::new();
+    let directory = temp.path.join("store");
+    fs::create_dir_all(&directory).unwrap();
+    let ancestor = fs::metadata(&temp.path).unwrap();
+    if ancestor.uid() == 0 {
+        // A root-created fixture cannot exercise owner read-permission denial.
+        return;
+    }
+    let _restore = RestorePermissions {
+        path: temp.path.clone(),
+        permissions: ancestor.permissions(),
+    };
+    fs::set_permissions(&temp.path, fs::Permissions::from_mode(0o111)).unwrap();
+    assert_eq!(
+        fs::File::open(&temp.path).unwrap_err().kind(),
+        ErrorKind::PermissionDenied,
+    );
+
+    // A sandbox may allow the owned store while denying reads of a parent.
+    let probe = directory.join("write-probe");
+    let mut file = fs::File::create(&probe).unwrap();
+    file.write_all(b"writable owned directory").unwrap();
+    file.sync_all().unwrap();
+    drop(file);
+    fs::remove_file(probe).unwrap();
+
+    let mut store = FileStore::new(&directory);
+    let sealed = sealed_timebase();
+    store.store(SnapshotRegion::Timebase, &sealed).unwrap();
+    let mut loaded = [0; TIMEBASE_SNAPSHOT_LEN];
+    assert_eq!(
+        store.load(SnapshotRegion::Timebase, &mut loaded).unwrap(),
+        Some(sealed.as_slice()),
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_nested_new_store_stops_confirmation_at_its_existing_writable_parent() {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let temp = TempDir::new();
+    let app_directory = temp.path.join("app");
+    fs::create_dir_all(&app_directory).unwrap();
+    let ancestor = fs::metadata(&temp.path).unwrap();
+    if ancestor.uid() == 0 {
+        // A root-created fixture cannot exercise owner read-permission denial.
+        return;
+    }
+    let _restore = RestorePermissions {
+        path: temp.path.clone(),
+        permissions: ancestor.permissions(),
+    };
+    fs::set_permissions(&temp.path, fs::Permissions::from_mode(0o111)).unwrap();
+    assert_eq!(
+        fs::File::open(&temp.path).unwrap_err().kind(),
+        ErrorKind::PermissionDenied,
+    );
+
+    let directory = app_directory.join("nested/store");
+    assert!(!directory.exists());
+    let mut store = FileStore::new(&directory);
+    store.prepare_directory().unwrap();
+    assert!(directory.is_dir());
+
+    let sealed = sealed_timebase();
+    store.store(SnapshotRegion::Timebase, &sealed).unwrap();
+    let mut loaded = [0; TIMEBASE_SNAPSHOT_LEN];
+    assert_eq!(
+        store.load(SnapshotRegion::Timebase, &mut loaded).unwrap(),
+        Some(sealed.as_slice()),
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_initial_confirmation_retries_the_original_creation_boundary() {
+    let temp = TempDir::new();
+    fs::create_dir(&temp.path).unwrap();
+    let existing = fs::canonicalize(&temp.path).unwrap();
+    let parent = existing.join("nested");
+    let directory = parent.join("store");
+    let mut store = FileStore::new(&directory);
+    let mut attempted = Vec::new();
+    let error = store
+        .prepare_directory_with(|path| {
+            attempted.push(path.to_path_buf());
+            if path == parent {
+                return Err(std::io::Error::from(ErrorKind::Other));
+            }
+            confirm_directory(path)
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        FileStoreError::DurabilityUnconfirmed(error) if error.kind() == ErrorKind::Other
+    ));
+    assert_eq!(attempted, [directory.clone(), parent.clone()]);
+    assert!(directory.is_dir());
+
+    // Creation has already happened, but its original parent obligations remain.
+    let mut retried = Vec::new();
+    store
+        .prepare_directory_with(|path| {
+            retried.push(path.to_path_buf());
+            confirm_directory(path)
+        })
+        .unwrap();
+    assert_eq!(retried, [directory, parent, existing]);
+    store
+        .prepare_directory_with(|_| panic!("successful preparation must cache readiness"))
+        .unwrap();
+
+    store
+        .store(SnapshotRegion::Timebase, &sealed_timebase())
+        .unwrap();
+}
+
+#[test]
+fn io_error_conversion_preserves_kind_and_typed_failure() {
+    for (failure, expected_kind) in [
+        (
+            FileStoreError::Io(std::io::Error::from(ErrorKind::PermissionDenied)),
+            ErrorKind::PermissionDenied,
+        ),
+        (
+            FileStoreError::DurabilityUnconfirmed(std::io::Error::from(ErrorKind::Other)),
+            ErrorKind::Other,
+        ),
+        (
+            FileStoreError::PublishedDurabilityUnconfirmed(std::io::Error::from(
+                ErrorKind::Interrupted,
+            )),
+            ErrorKind::Interrupted,
+        ),
+        (
+            FileStoreError::SnapshotOutgrewBuffer {
+                snapshot_len: 10,
+                buffer_len: 1,
+            },
+            ErrorKind::InvalidData,
+        ),
+    ] {
+        let variant = std::mem::discriminant(&failure);
+        let detail = failure.to_string();
+        let converted = std::io::Error::from(failure);
+        assert_eq!(converted.kind(), expected_kind);
+        let retained = converted
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<FileStoreError>()
+            .unwrap();
+        assert_eq!(std::mem::discriminant(retained), variant);
+        assert_eq!(retained.to_string(), detail);
+    }
 }
 
 #[test]

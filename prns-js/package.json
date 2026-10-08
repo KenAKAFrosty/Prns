@@ -50,6 +50,10 @@
       "import": "./dist/contract.js",
       "require": "./dist-cjs/contract.js"
     },
+    "./remote-control": {
+      "types": "./dist/remote-control.generated.d.ts",
+      "import": "./dist/remote-control.generated.js"
+    },
     "./native": {
       "types": "./dist/native/index.d.ts",
       "import": "./dist/native/index.js",
@@ -97,7 +101,7 @@
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.casework-cjs.json --noEmit && tsc -p tsconfig.qwik.json --noEmit --emitDeclarationOnly false && tsc -p tsconfig.examples.json",
     "test": "npm run build:code && npm run test:built",
     "test:browser": "npm run build:browser && npm run test:browser:built",
-    "test:browser:full": "npm --prefix ../prns-wasm run build:wasm && npm run test:browser",
+    "test:browser:full": "npm --prefix ../prns-wasm run test:build && npm --prefix ../prns-wasm run build:wasm && npm run test:browser",
     "test:native": "npm run build:native && npm run test:native:built",
     "test:native:full": "npm --prefix ../prns-napi run build:debug && npm run test:native",
     "test:bun": "npm run build:native && npm run test:bun:built",

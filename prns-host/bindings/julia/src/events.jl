@@ -324,12 +324,16 @@ function decode_application_event(event::Ptr{Cvoid})
             event_bytes(event, EventFieldPlaintext),
         )
     end
-    kind == ApplicationEventKindLinkDelivery &&
+    if kind == ApplicationEventKindLinkDelivery
+        local_destination = optional_event_bytes(event, EventFieldLocalDestination)
         return ApplicationEventLinkDelivery(
             LinkId(event_bytes(event, EventFieldLinkId)),
             InterfaceId(event_bytes(event, EventFieldSourceInterface)),
             event_bytes(event, EventFieldPlaintext),
+            local_destination === nothing ? nothing : DestinationHash(local_destination),
+            event_u64(event, EventFieldArrivedAtMillis),
         )
+    end
     kind == ApplicationEventKindRequest && return ApplicationEventRequest(
         DestinationHash(event_bytes(event, EventFieldDestination)),
         LinkId(event_bytes(event, EventFieldLinkId)),

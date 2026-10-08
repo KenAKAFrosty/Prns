@@ -273,10 +273,28 @@ func decodeApplicationEvent(event nativeEvent) (ApplicationEvent, error) {
 		if err != nil {
 			return nil, err
 		}
+		local, err := optionalBytes(event, EventFieldLocalDestination)
+		if err != nil {
+			return nil, err
+		}
+		var localDestination *DestinationHash
+		if local != nil {
+			if len(local) != DestinationHashLength {
+				return nil, StatusError{Operation: "decode local destination", Status: StatusBackendFailed}
+			}
+			destination := DestinationHash(local)
+			localDestination = &destination
+		}
+		arrivedAtMillis, err := requiredU64(event, EventFieldArrivedAtMillis)
+		if err != nil {
+			return nil, err
+		}
 		return ApplicationEventLinkDelivery{
-			LinkId:          linkID,
-			SourceInterface: source,
-			Plaintext:       plaintext,
+			LinkId:           linkID,
+			SourceInterface:  source,
+			Plaintext:        plaintext,
+			LocalDestination: localDestination,
+			ArrivedAtMillis:  arrivedAtMillis,
 		}, nil
 	case ApplicationEventKindRequest:
 		return decodeRequest(event)

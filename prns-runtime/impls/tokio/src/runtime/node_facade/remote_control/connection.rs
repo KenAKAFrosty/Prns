@@ -23,10 +23,11 @@ use prns_core::remote_control::{
     RemoteControlInterfaceGroup, RemoteControlInterfaceInventory, RemoteControlInterfacePage,
     RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
     RemoteControlLoRaProfile, RemoteControlModeOutcome, RemoteControlPeerPage,
-    RemoteControlPowerOutcome, RemoteControlRequestKind, RemoteControlRequestSet,
-    RemoteControlRevokeControllerOutcome, RemoteControlSleepOutcome, RemoteControlStationUplink,
-    RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
-    RemoteControlWifiStation, RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
+    RemoteControlPowerOutcome, RemoteControlRequest, RemoteControlRequestKind,
+    RemoteControlRequestSet, RemoteControlResponse, RemoteControlRevokeControllerOutcome,
+    RemoteControlSleepOutcome, RemoteControlStationUplink, RemoteControlSystemPower,
+    RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome, RemoteControlWifiStation,
+    RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
 };
 use prns_core::remote_control::{
     RemoteControlRadioConfiguration, RemoteControlRadioOutcome, RemoteControlRadioStatus,
@@ -100,6 +101,18 @@ impl RemoteControlTargetHandle<'_> {
         self.connection
             .admit(RemoteControlRequestKind::WatchInterfaces)?;
         self.remote_control.watch_interfaces(stream_id).await
+    }
+
+    /// Execute a typed request after checking the persisted target grant.
+    pub async fn exchange(
+        &self,
+        request: RemoteControlRequest,
+    ) -> Result<(RemoteControlResponse, RttMillis), RemoteControlTargetOperationError> {
+        self.connection.admit(request.kind())?;
+        self.remote_control
+            .exchange(request)
+            .await
+            .map_err(Into::into)
     }
 
     remote_control_target_apply_method!(
