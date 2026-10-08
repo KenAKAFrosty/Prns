@@ -72,6 +72,26 @@
       "target": "aarch64-apple-ios"
     },
     {
+      "manifest": "prns-host/impls/native/Cargo.toml",
+      "name": "sdk-native-linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "manifest": "prns-host/bindings/uniffi/image/Cargo.toml",
+      "name": "expo-host-linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "manifest": "prns-host/bindings/uniffi/image/Cargo.toml",
+      "name": "expo-android",
+      "target": "aarch64-linux-android"
+    },
+    {
+      "manifest": "prns-host/bindings/uniffi/image/Cargo.toml",
+      "name": "expo-ios",
+      "target": "aarch64-apple-ios"
+    },
+    {
       "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
       "name": "nrf52840",
       "target": "thumbv7em-none-eabihf"
@@ -180,6 +200,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -187,6 +210,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "aes",
@@ -491,6 +515,32 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "anyhow",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 68,
+        "externs": 1,
+        "functions": 32,
+        "impls": 2,
+        "tokens": 108
+      },
+      "version": "1.0.104"
+    },
+    {
+      "graphs": {
         "daemon-linux": [],
         "desktop-linux": []
       },
@@ -543,7 +593,8 @@
         "desktop-linux": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "async-trait",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -555,6 +606,23 @@
         "tokens": 12
       },
       "version": "0.1.91"
+    },
+    {
+      "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "async-trait",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 0,
+        "functions": 4,
+        "impls": 1,
+        "tokens": 12
+      },
+      "version": "0.1.92"
     },
     {
       "graphs": {
@@ -574,12 +642,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "autocfg",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -716,6 +788,21 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "alloc",
           "default",
@@ -727,6 +814,11 @@
           "std"
         ],
         "host-c-windows": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "default",
           "std"
@@ -793,6 +885,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "alloc"
         ],
+        "expo-android": [
+          "alloc"
+        ],
+        "expo-host-linux": [
+          "alloc"
+        ],
+        "expo-ios": [
+          "alloc"
+        ],
         "halow-appliance-manager": [
           "alloc"
         ],
@@ -812,6 +913,9 @@
           "alloc"
         ],
         "nrf52840": [
+          "alloc"
+        ],
+        "sdk-native-linux": [
           "alloc"
         ]
       },
@@ -991,11 +1095,15 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "ios": []
+        "ios": [],
+        "sdk-native-linux": []
       },
       "name": "bitflags",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1125,6 +1233,15 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "std"
+        ],
+        "expo-host-linux": [
+          "std"
+        ],
+        "expo-ios": [
+          "std"
+        ],
         "host-c-linux": [
           "std"
         ],
@@ -1132,6 +1249,9 @@
           "std"
         ],
         "host-c-windows": [
+          "std"
+        ],
+        "sdk-native-linux": [
           "std"
         ]
       },
@@ -1176,11 +1296,15 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "block-buffer",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1243,6 +1367,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "zeroize"
         ],
+        "expo-android": [
+          "zeroize"
+        ],
+        "expo-host-linux": [
+          "zeroize"
+        ],
+        "expo-ios": [
+          "zeroize"
+        ],
         "halow-appliance-manager": [
           "zeroize"
         ],
@@ -1262,6 +1395,9 @@
           "zeroize"
         ],
         "nrf52840": [
+          "zeroize"
+        ],
+        "sdk-native-linux": [
           "zeroize"
         ],
         "wasm": [
@@ -1297,6 +1433,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -1304,6 +1443,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "block-padding",
@@ -1322,6 +1462,10 @@
         "daemon-macos": [
           "alloc",
           "default",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
           "std"
         ],
         "host-c-macos": [
@@ -1348,6 +1492,11 @@
           "std"
         ],
         "desktop-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-ios": [
           "alloc",
           "default",
           "std"
@@ -1402,7 +1551,33 @@
           "pin-project",
           "tokio-stream"
         ],
+        "expo-host-linux": [
+          "bluetoothd",
+          "custom_debug",
+          "dbus",
+          "dbus-crossroads",
+          "dbus-tokio",
+          "default",
+          "displaydoc",
+          "l2cap",
+          "lazy_static",
+          "pin-project",
+          "tokio-stream"
+        ],
         "host-c-linux": [
+          "bluetoothd",
+          "custom_debug",
+          "dbus",
+          "dbus-crossroads",
+          "dbus-tokio",
+          "default",
+          "displaydoc",
+          "l2cap",
+          "lazy_static",
+          "pin-project",
+          "tokio-stream"
+        ],
+        "sdk-native-linux": [
           "bluetoothd",
           "custom_debug",
           "dbus",
@@ -1430,7 +1605,9 @@
     {
       "graphs": {
         "daemon-linux": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "bluez-async",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1446,7 +1623,9 @@
     {
       "graphs": {
         "daemon-linux": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "bluez-generated",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1537,9 +1716,13 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "btleplug",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1723,6 +1906,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -1730,6 +1916,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "byteorder",
@@ -1871,6 +2058,18 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "default",
           "std"
@@ -1884,6 +2083,10 @@
           "std"
         ],
         "host-c-windows": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -1949,6 +2152,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "default"
         ],
+        "expo-android": [
+          "default"
+        ],
+        "expo-host-linux": [
+          "default"
+        ],
+        "expo-ios": [
+          "default"
+        ],
         "halow-headless": [
           "default"
         ],
@@ -1967,6 +2179,9 @@
         "nrf52840": [
           "default"
         ],
+        "sdk-native-linux": [
+          "default"
+        ],
         "wasm": [
           "default"
         ]
@@ -1981,6 +2196,23 @@
         "tokens": 18
       },
       "version": "0.6.1"
+    },
+    {
+      "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "camino",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 32,
+        "externs": 0,
+        "functions": 4,
+        "impls": 0,
+        "tokens": 36
+      },
+      "version": "1.2.5"
     },
     {
       "graphs": {
@@ -2032,6 +2264,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "block-padding"
         ],
+        "expo-android": [
+          "block-padding"
+        ],
+        "expo-host-linux": [
+          "block-padding"
+        ],
+        "expo-ios": [
+          "block-padding"
+        ],
         "halow-appliance-manager": [
           "block-padding"
         ],
@@ -2051,6 +2292,9 @@
           "block-padding"
         ],
         "nrf52840": [
+          "block-padding"
+        ],
+        "sdk-native-linux": [
           "block-padding"
         ],
         "wasm": [
@@ -2112,7 +2356,8 @@
       "graphs": {
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "cc",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2127,7 +2372,25 @@
     },
     {
       "graphs": {
-        "android": []
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "cc",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 13,
+        "externs": 0,
+        "functions": 2,
+        "impls": 2,
+        "tokens": 17
+      },
+      "version": "1.4.3"
+    },
+    {
+      "graphs": {
+        "android": [],
+        "expo-android": []
       },
       "name": "cesu8",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2158,6 +2421,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -2165,6 +2431,7 @@
         "ios": [],
         "nrf-dfu-browser": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "cfg-if",
@@ -2214,8 +2481,10 @@
     },
     {
       "graphs": {
+        "expo-host-linux": [],
         "halow-headless": [],
-        "host-c-linux": []
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "cfg_aliases",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2294,6 +2563,18 @@
           "rng",
           "zeroize"
         ],
+        "expo-android": [
+          "rng",
+          "zeroize"
+        ],
+        "expo-host-linux": [
+          "rng",
+          "zeroize"
+        ],
+        "expo-ios": [
+          "rng",
+          "zeroize"
+        ],
         "halow-appliance-manager": [
           "rng",
           "zeroize"
@@ -2319,6 +2600,10 @@
           "zeroize"
         ],
         "nrf52840": [
+          "rng",
+          "zeroize"
+        ],
+        "sdk-native-linux": [
           "rng",
           "zeroize"
         ],
@@ -2388,6 +2673,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "block-padding"
         ],
+        "expo-android": [
+          "block-padding"
+        ],
+        "expo-host-linux": [
+          "block-padding"
+        ],
+        "expo-ios": [
+          "block-padding"
+        ],
         "halow-appliance-manager": [
           "block-padding"
         ],
@@ -2407,6 +2701,9 @@
           "block-padding"
         ],
         "nrf52840": [
+          "block-padding"
+        ],
+        "sdk-native-linux": [
           "block-padding"
         ],
         "wasm": [
@@ -2667,6 +2964,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -2674,6 +2974,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "cmov",
@@ -2725,6 +3026,26 @@
         "tokens": 15
       },
       "version": "4.6.7"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "alloc",
+          "bytes",
+          "default",
+          "std"
+        ]
+      },
+      "name": "combine",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 12,
+        "externs": 0,
+        "functions": 3,
+        "impls": 0,
+        "tokens": 15
+      },
+      "version": "4.6.8"
     },
     {
       "graphs": {
@@ -2787,13 +3108,17 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "const-oid",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3049,10 +3374,14 @@
         "desktop-macos": [],
         "desktop-windows": [],
         "engine": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "ios": []
+        "ios": [],
+        "sdk-native-linux": []
       },
       "name": "cpufeatures",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3078,7 +3407,8 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "ios": []
+        "ios": [],
+        "sdk-native-linux": []
       },
       "name": "cpufeatures",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3090,6 +3420,23 @@
         "tokens": 11
       },
       "version": "0.3.0"
+    },
+    {
+      "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "cpufeatures",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 8,
+        "externs": 0,
+        "functions": 3,
+        "impls": 0,
+        "tokens": 11
+      },
+      "version": "0.3.1"
     },
     {
       "graphs": {
@@ -3181,6 +3528,10 @@
           "default",
           "std"
         ],
+        "sdk-native-linux": [
+          "default",
+          "std"
+        ],
         "wasm": [
           "default",
           "std"
@@ -3196,6 +3547,32 @@
         "tokens": 6
       },
       "version": "1.5.0"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "crc32fast",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 13,
+        "impls": 0,
+        "tokens": 15
+      },
+      "version": "1.5.1"
     },
     {
       "graphs": {
@@ -3252,6 +3629,9 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "restore-state-u32"
         ],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -3259,7 +3639,8 @@
         "ios": [],
         "nrf52840": [
           "restore-state-bool"
-        ]
+        ],
+        "sdk-native-linux": []
       },
       "name": "critical-section",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3346,6 +3727,18 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "default",
           "std"
@@ -3359,6 +3752,10 @@
           "std"
         ],
         "ios": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -3404,6 +3801,18 @@
           "alloc",
           "std"
         ],
+        "expo-android": [
+          "alloc",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "std"
+        ],
         "host-c-linux": [
           "alloc",
           "std"
@@ -3417,6 +3826,10 @@
           "std"
         ],
         "ios": [
+          "alloc",
+          "std"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "std"
         ]
@@ -3476,6 +3889,18 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "default",
           "std"
@@ -3489,6 +3914,10 @@
           "std"
         ],
         "ios": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -3532,6 +3961,15 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [
+          "std"
+        ],
+        "expo-host-linux": [
+          "std"
+        ],
+        "expo-ios": [
+          "std"
+        ],
         "halow-appliance-manager": [
           "std"
         ],
@@ -3549,6 +3987,9 @@
         ],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [
+          "std"
+        ],
         "wasm": []
       },
       "name": "crypto-common",
@@ -3612,6 +4053,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "rand_core"
         ],
+        "expo-android": [
+          "rand_core"
+        ],
+        "expo-host-linux": [
+          "rand_core"
+        ],
+        "expo-ios": [
+          "rand_core"
+        ],
         "halow-appliance-manager": [
           "rand_core"
         ],
@@ -3631,6 +4081,9 @@
           "rand_core"
         ],
         "nrf52840": [
+          "rand_core"
+        ],
+        "sdk-native-linux": [
           "rand_core"
         ],
         "wasm": []
@@ -3664,6 +4117,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -3671,6 +4127,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "ctutils",
@@ -3822,6 +4279,27 @@
           "rand_core",
           "zeroize"
         ],
+        "expo-android": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
+        "expo-ios": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "digest",
@@ -3871,6 +4349,13 @@
           "rand_core",
           "zeroize"
         ],
+        "sdk-native-linux": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
         "wasm": [
           "digest",
           "precomputed-tables",
@@ -3895,8 +4380,10 @@
         "desktop-linux": [],
         "desktop-windows": [],
         "engine": [],
+        "expo-host-linux": [],
         "host-c-linux": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "curve25519-dalek-derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3913,7 +4400,9 @@
       "graphs": {
         "daemon-linux": [],
         "desktop-linux": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "custom_debug",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3930,7 +4419,9 @@
       "graphs": {
         "daemon-linux": [],
         "desktop-linux": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "custom_debug_derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4023,11 +4514,19 @@
           "default",
           "suggestions"
         ],
+        "expo-host-linux": [
+          "default",
+          "suggestions"
+        ],
         "host-c-linux": [
           "default",
           "suggestions"
         ],
         "nrf52840": [
+          "default",
+          "suggestions"
+        ],
+        "sdk-native-linux": [
           "default",
           "suggestions"
         ]
@@ -4191,11 +4690,19 @@
           "strsim",
           "suggestions"
         ],
+        "expo-host-linux": [
+          "strsim",
+          "suggestions"
+        ],
         "host-c-linux": [
           "strsim",
           "suggestions"
         ],
         "nrf52840": [
+          "strsim",
+          "suggestions"
+        ],
+        "sdk-native-linux": [
           "strsim",
           "suggestions"
         ]
@@ -4311,8 +4818,10 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-host-linux": [],
         "host-c-linux": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "darling_macro",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4374,9 +4883,13 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "dashmap",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4420,6 +4933,11 @@
           "alloc",
           "default",
           "std"
+        ],
+        "sdk-native-linux": [
+          "alloc",
+          "default",
+          "std"
         ]
       },
       "name": "data-encoding",
@@ -4435,6 +4953,21 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "default",
@@ -4479,7 +5012,19 @@
     },
     {
       "graphs": {
+        "expo-host-linux": [
+          "futures",
+          "futures-channel",
+          "futures-util",
+          "vendored"
+        ],
         "host-c-linux": [
+          "futures",
+          "futures-channel",
+          "futures-util",
+          "vendored"
+        ],
+        "sdk-native-linux": [
           "futures",
           "futures-channel",
           "futures-util",
@@ -4501,7 +5046,9 @@
       "graphs": {
         "daemon-linux": [],
         "desktop-linux": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "dbus-crossroads",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4518,7 +5065,9 @@
       "graphs": {
         "daemon-linux": [],
         "desktop-linux": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "dbus-tokio",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4664,6 +5213,11 @@
           "alloc",
           "oid",
           "zeroize"
+        ],
+        "sdk-native-linux": [
+          "alloc",
+          "oid",
+          "zeroize"
         ]
       },
       "name": "der",
@@ -4679,6 +5233,21 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "expo-ios": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
         "halow-headless": [
           "alloc",
           "oid",
@@ -4780,6 +5349,27 @@
           "block-buffer",
           "core-api"
         ],
+        "expo-android": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "block-buffer",
@@ -4809,6 +5399,13 @@
           "std"
         ],
         "host-c-windows": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "block-buffer",
           "core-api",
@@ -4943,6 +5540,27 @@
           "rand_core",
           "zeroize"
         ],
+        "expo-android": [
+          "block-api",
+          "default",
+          "mac",
+          "rand_core",
+          "zeroize"
+        ],
+        "expo-host-linux": [
+          "block-api",
+          "default",
+          "mac",
+          "rand_core",
+          "zeroize"
+        ],
+        "expo-ios": [
+          "block-api",
+          "default",
+          "mac",
+          "rand_core",
+          "zeroize"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "block-api",
@@ -4994,6 +5612,13 @@
           "rand_core",
           "zeroize"
         ],
+        "sdk-native-linux": [
+          "block-api",
+          "default",
+          "mac",
+          "rand_core",
+          "zeroize"
+        ],
         "wasm": [
           "block-api",
           "default",
@@ -5038,6 +5663,14 @@
           "std"
         ],
         "desktop-macos": [
+          "alloc",
+          "block2",
+          "default",
+          "libc",
+          "objc2",
+          "std"
+        ],
+        "expo-ios": [
           "alloc",
           "block2",
           "default",
@@ -5172,6 +5805,10 @@
         "host-c-linux": [
           "default",
           "std"
+        ],
+        "sdk-native-linux": [
+          "default",
+          "std"
         ]
       },
       "name": "displaydoc",
@@ -5187,7 +5824,26 @@
     },
     {
       "graphs": {
-        "android": []
+        "expo-host-linux": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "displaydoc",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.2.7"
+    },
+    {
+      "graphs": {
+        "android": [],
+        "expo-android": []
       },
       "name": "dlopen2",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -5294,6 +5950,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "default"
         ],
+        "expo-android": [
+          "default"
+        ],
+        "expo-host-linux": [
+          "default"
+        ],
+        "expo-ios": [
+          "default"
+        ],
         "halow-headless": [
           "default"
         ],
@@ -5310,6 +5975,9 @@
           "default"
         ],
         "nrf52840": [
+          "default"
+        ],
+        "sdk-native-linux": [
           "default"
         ]
       },
@@ -5404,6 +6072,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "alloc"
         ],
+        "expo-android": [
+          "alloc"
+        ],
+        "expo-host-linux": [
+          "alloc"
+        ],
+        "expo-ios": [
+          "alloc"
+        ],
         "halow-appliance-manager": [
           "alloc"
         ],
@@ -5423,6 +6100,9 @@
           "alloc"
         ],
         "nrf52840": [
+          "alloc"
+        ],
+        "sdk-native-linux": [
           "alloc"
         ],
         "wasm": []
@@ -5584,6 +6264,33 @@
           "strobe-rs",
           "zeroize"
         ],
+        "expo-android": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
+        "expo-ios": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "batch",
@@ -5639,6 +6346,15 @@
           "zeroize"
         ],
         "nrf52840": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "batch",
           "fast",
@@ -5707,6 +6423,10 @@
         "host-c-windows": [
           "std",
           "use_std"
+        ],
+        "sdk-native-linux": [
+          "std",
+          "use_std"
         ]
       },
       "name": "either",
@@ -5719,6 +6439,32 @@
         "tokens": 2
       },
       "version": "1.17.0"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "std",
+          "use_std"
+        ],
+        "expo-host-linux": [
+          "std",
+          "use_std"
+        ],
+        "expo-ios": [
+          "std",
+          "use_std"
+        ]
+      },
+      "name": "either",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "1.18.0"
     },
     {
       "graphs": {
@@ -5857,13 +6603,17 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embassy-futures",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6062,6 +6812,30 @@
           "tcp",
           "udp"
         ],
+        "expo-android": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "expo-host-linux": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "expo-ios": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
         "halow-headless": [
           "medium-ethernet",
           "multicast",
@@ -6100,6 +6874,14 @@
           "proto-ipv6",
           "tcp",
           "udp"
+        ],
+        "sdk-native-linux": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
         ]
       },
       "name": "embassy-net",
@@ -6131,12 +6913,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embassy-net-driver",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6166,10 +6952,14 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embassy-net-driver-channel",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6277,12 +7067,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embassy-sync",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6316,12 +7110,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embassy-time",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6370,6 +7168,9 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "tick-hz-1_000_000"
         ],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -6377,7 +7178,8 @@
         "ios": [],
         "nrf52840": [
           "tick-hz-32_768"
-        ]
+        ],
+        "sdk-native-linux": []
       },
       "name": "embassy-time-driver",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6434,13 +7236,17 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "nrf52840": [
           "default",
           "usbd-hid"
-        ]
+        ],
+        "sdk-native-linux": []
       },
       "name": "embassy-usb",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6470,10 +7276,14 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embassy-usb-driver",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6730,6 +7540,9 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "unproven"
         ],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -6737,7 +7550,8 @@
         "ios": [],
         "nrf52840": [
           "unproven"
-        ]
+        ],
+        "sdk-native-linux": []
       },
       "name": "embedded-hal",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6768,12 +7582,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embedded-hal",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6804,12 +7622,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embedded-hal-async",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6877,10 +7699,14 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embedded-io",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6911,12 +7737,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embedded-io",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6946,10 +7776,14 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embedded-io-async",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6980,12 +7814,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "embedded-io-async",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7016,11 +7854,15 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "ios": []
+        "ios": [],
+        "sdk-native-linux": []
       },
       "name": "embedded-nal",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7051,11 +7893,15 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "ios": []
+        "ios": [],
+        "sdk-native-linux": []
       },
       "name": "embedded-nal-async",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7086,12 +7932,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "embedded-storage",
@@ -7138,12 +7988,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "embedded-storage-async",
@@ -7340,6 +8194,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-macos": []
       },
       "name": "equivalent",
@@ -7378,6 +8235,18 @@
         "engine": [
           "std"
         ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "halow-appliance-manager": [
           "std"
         ],
@@ -7394,6 +8263,10 @@
           "std"
         ],
         "ios": [
+          "std"
+        ],
+        "sdk-native-linux": [
+          "default",
           "std"
         ]
       },
@@ -8965,6 +9838,21 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "default",
@@ -8986,6 +9874,11 @@
           "std"
         ],
         "ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "default",
           "std"
@@ -9022,6 +9915,23 @@
     },
     {
       "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "find-msvc-tools",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 40,
+        "externs": 7,
+        "functions": 6,
+        "impls": 2,
+        "tokens": 55
+      },
+      "version": "0.1.11"
+    },
+    {
+      "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -9030,7 +9940,8 @@
         "desktop-windows": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "find-msvc-tools",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9286,6 +10197,10 @@
           "default",
           "std"
         ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
         "halow-appliance-manager": [
           "default",
           "std"
@@ -9295,6 +10210,10 @@
           "std"
         ],
         "nrf52840": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -9389,6 +10308,23 @@
         "tokens": 2
       },
       "version": "1.2.2"
+    },
+    {
+      "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "fs-err",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "2.11.0"
     },
     {
       "graphs": {
@@ -9595,6 +10531,14 @@
           "executor",
           "futures-executor",
           "std"
+        ],
+        "sdk-native-linux": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
         ]
       },
       "name": "futures",
@@ -9607,6 +10551,44 @@
         "tokens": 0
       },
       "version": "0.3.33"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ]
+      },
+      "name": "futures",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.34"
     },
     {
       "graphs": {
@@ -9763,6 +10745,13 @@
           "futures-sink",
           "sink",
           "std"
+        ],
+        "sdk-native-linux": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
         ]
       },
       "name": "futures-channel",
@@ -9775,6 +10764,41 @@
         "tokens": 22
       },
       "version": "0.3.33"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ]
+      },
+      "name": "futures-channel",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 11,
+        "externs": 0,
+        "functions": 3,
+        "impls": 8,
+        "tokens": 22
+      },
+      "version": "0.3.34"
     },
     {
       "graphs": {
@@ -9900,6 +10924,11 @@
           "alloc",
           "default",
           "std"
+        ],
+        "sdk-native-linux": [
+          "alloc",
+          "default",
+          "std"
         ]
       },
       "name": "futures-core",
@@ -9915,6 +10944,21 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "std"
@@ -10007,6 +11051,9 @@
         ],
         "host-c-windows": [
           "std"
+        ],
+        "sdk-native-linux": [
+          "std"
         ]
       },
       "name": "futures-executor",
@@ -10019,6 +11066,29 @@
         "tokens": 9
       },
       "version": "0.3.33"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "std"
+        ],
+        "expo-host-linux": [
+          "std"
+        ],
+        "expo-ios": [
+          "std"
+        ]
+      },
+      "name": "futures-executor",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 4,
+        "externs": 0,
+        "functions": 3,
+        "impls": 2,
+        "tokens": 9
+      },
+      "version": "0.3.34"
     },
     {
       "graphs": {
@@ -10134,6 +11204,9 @@
         ],
         "host-c-windows": [
           "std"
+        ],
+        "sdk-native-linux": [
+          "std"
         ]
       },
       "name": "futures-io",
@@ -10146,6 +11219,29 @@
         "tokens": 0
       },
       "version": "0.3.33"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "std"
+        ],
+        "expo-host-linux": [
+          "std"
+        ],
+        "expo-ios": [
+          "std"
+        ]
+      },
+      "name": "futures-io",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.34"
     },
     {
       "graphs": {
@@ -10211,7 +11307,8 @@
       "graphs": {
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "futures-macro",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -10223,6 +11320,23 @@
         "tokens": 2
       },
       "version": "0.3.33"
+    },
+    {
+      "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "futures-macro",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "0.3.34"
     },
     {
       "graphs": {
@@ -10327,6 +11441,11 @@
           "alloc",
           "default",
           "std"
+        ],
+        "sdk-native-linux": [
+          "alloc",
+          "default",
+          "std"
         ]
       },
       "name": "futures-sink",
@@ -10342,6 +11461,21 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "halow-headless": []
       },
       "name": "futures-sink",
@@ -10458,6 +11592,10 @@
         "host-c-windows": [
           "alloc",
           "std"
+        ],
+        "sdk-native-linux": [
+          "alloc",
+          "std"
         ]
       },
       "name": "futures-task",
@@ -10473,6 +11611,18 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "alloc",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "std"
@@ -10843,6 +11993,21 @@
           "sink",
           "slab",
           "std"
+        ],
+        "sdk-native-linux": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
         ]
       },
       "name": "futures-util",
@@ -10858,6 +12023,51 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "futures-sink",
@@ -10949,6 +12159,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "more_lengths"
         ],
+        "expo-android": [
+          "more_lengths"
+        ],
+        "expo-host-linux": [
+          "more_lengths"
+        ],
+        "expo-ios": [
+          "more_lengths"
+        ],
         "halow-appliance-manager": [
           "more_lengths"
         ],
@@ -10968,6 +12187,9 @@
           "more_lengths"
         ],
         "nrf52840": [
+          "more_lengths"
+        ],
+        "sdk-native-linux": [
           "more_lengths"
         ],
         "wasm": [
@@ -11017,12 +12239,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "getrandom",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11049,6 +12275,15 @@
         "engine": [
           "std"
         ],
+        "expo-android": [
+          "std"
+        ],
+        "expo-host-linux": [
+          "std"
+        ],
+        "expo-ios": [
+          "std"
+        ],
         "halow-appliance-manager": [
           "std"
         ],
@@ -11062,6 +12297,9 @@
           "std"
         ],
         "host-c-windows": [
+          "std"
+        ],
+        "sdk-native-linux": [
           "std"
         ]
       },
@@ -11115,12 +12353,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "getrandom",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11166,6 +12408,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -11173,6 +12418,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "hash32",
@@ -11216,6 +12462,15 @@
         "daemon-windows": [
           "raw"
         ],
+        "expo-android": [
+          "raw"
+        ],
+        "expo-host-linux": [
+          "raw"
+        ],
+        "expo-ios": [
+          "raw"
+        ],
         "host-c-linux": [
           "raw"
         ],
@@ -11223,6 +12478,9 @@
           "raw"
         ],
         "host-c-windows": [
+          "raw"
+        ],
+        "sdk-native-linux": [
           "raw"
         ]
       },
@@ -11252,6 +12510,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-macos": []
       },
       "name": "hashbrown",
@@ -11283,6 +12544,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -11290,6 +12554,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "heapless",
@@ -11321,12 +12586,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "heapless",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11376,9 +12645,13 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
-        "host-c-linux": []
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "heck",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11403,6 +12676,11 @@
           "default",
           "std"
         ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "default",
@@ -11414,6 +12692,11 @@
           "std"
         ],
         "host-c-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "default",
           "std"
@@ -11448,6 +12731,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -11455,6 +12741,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "hkdf",
@@ -11518,6 +12805,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "zeroize"
         ],
+        "expo-android": [
+          "zeroize"
+        ],
+        "expo-host-linux": [
+          "zeroize"
+        ],
+        "expo-ios": [
+          "zeroize"
+        ],
         "halow-appliance-manager": [
           "zeroize"
         ],
@@ -11537,6 +12833,9 @@
           "zeroize"
         ],
         "nrf52840": [
+          "zeroize"
+        ],
+        "sdk-native-linux": [
           "zeroize"
         ],
         "wasm": [
@@ -11559,9 +12858,13 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "home",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11736,6 +13039,18 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "default",
           "std"
@@ -11749,6 +13064,10 @@
           "std"
         ],
         "host-c-windows": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -11778,6 +13097,18 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "default",
           "std"
@@ -11791,6 +13122,10 @@
           "std"
         ],
         "host-c-windows": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -11888,6 +13223,9 @@
         "host-c-windows": [
           "zeroize"
         ],
+        "sdk-native-linux": [
+          "zeroize"
+        ],
         "wasm": [
           "zeroize"
         ]
@@ -11902,6 +13240,29 @@
         "tokens": 38
       },
       "version": "0.4.13"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "zeroize"
+        ],
+        "expo-host-linux": [
+          "zeroize"
+        ],
+        "expo-ios": [
+          "zeroize"
+        ]
+      },
+      "name": "hybrid-array",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 30,
+        "externs": 0,
+        "functions": 2,
+        "impls": 5,
+        "tokens": 38
+      },
+      "version": "0.4.14"
     },
     {
       "graphs": {
@@ -12095,8 +13456,10 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-host-linux": [],
         "host-c-linux": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "ident_case",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12186,10 +13549,14 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "ios": []
+        "ios": [],
+        "sdk-native-linux": []
       },
       "name": "if-addrs",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12320,6 +13687,32 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "indexmap",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 13,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 13
+      },
+      "version": "2.14.2"
+    },
+    {
+      "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -12390,6 +13783,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "block-padding"
         ],
+        "expo-android": [
+          "block-padding"
+        ],
+        "expo-host-linux": [
+          "block-padding"
+        ],
+        "expo-ios": [
+          "block-padding"
+        ],
         "halow-appliance-manager": [
           "block-padding"
         ],
@@ -12409,6 +13811,9 @@
           "block-padding"
         ],
         "nrf52840": [
+          "block-padding"
+        ],
+        "sdk-native-linux": [
           "block-padding"
         ],
         "wasm": [
@@ -12527,6 +13932,14 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "default",
           "std"
@@ -12536,6 +13949,10 @@
           "std"
         ],
         "host-c-windows": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -12608,7 +14025,17 @@
           "use_alloc",
           "use_std"
         ],
+        "expo-host-linux": [
+          "default",
+          "use_alloc",
+          "use_std"
+        ],
         "host-c-linux": [
+          "default",
+          "use_alloc",
+          "use_std"
+        ],
+        "sdk-native-linux": [
           "default",
           "use_alloc",
           "use_std"
@@ -12640,11 +14067,15 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "itoa",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12705,7 +14136,27 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default"
+        ]
+      },
+      "name": "jni",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 32,
+        "externs": 0,
+        "functions": 7,
+        "impls": 4,
+        "tokens": 43
+      },
+      "version": "0.19.0"
+    },
+    {
+      "graphs": {
         "android": [
+          "default"
+        ],
+        "expo-android": [
           "default"
         ]
       },
@@ -12724,6 +14175,9 @@
       "graphs": {
         "android": [
           "default"
+        ],
+        "expo-android": [
+          "default"
         ]
       },
       "name": "jni-sys",
@@ -12739,7 +14193,8 @@
     },
     {
       "graphs": {
-        "android": []
+        "android": [],
+        "expo-android": []
       },
       "name": "jni-sys",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12754,7 +14209,8 @@
     },
     {
       "graphs": {
-        "android": []
+        "android": [],
+        "expo-android": []
       },
       "name": "jni-sys-macros",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12821,13 +14277,17 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "keccak",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12907,7 +14367,9 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "lazy_static",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -12970,6 +14432,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "rust-allocator"
         ],
+        "expo-android": [
+          "rust-allocator"
+        ],
+        "expo-host-linux": [
+          "rust-allocator"
+        ],
+        "expo-ios": [
+          "rust-allocator"
+        ],
         "halow-headless": [
           "rust-allocator"
         ],
@@ -12986,6 +14457,9 @@
           "rust-allocator"
         ],
         "nrf52840": [
+          "rust-allocator"
+        ],
+        "sdk-native-linux": [
           "rust-allocator"
         ],
         "wasm": [
@@ -13104,6 +14578,21 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
         "halow-headless": [
           "default",
           "extra_traits",
@@ -13115,6 +14604,11 @@
           "std"
         ],
         "host-c-macos": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "extra_traits",
           "std"
@@ -13143,7 +14637,19 @@
           "default",
           "pkg-config"
         ],
+        "expo-host-linux": [
+          "cc",
+          "default",
+          "pkg-config",
+          "vendored"
+        ],
         "host-c-linux": [
+          "cc",
+          "default",
+          "pkg-config",
+          "vendored"
+        ],
+        "sdk-native-linux": [
           "cc",
           "default",
           "pkg-config",
@@ -13260,6 +14766,34 @@
           "std",
           "xdp"
         ],
+        "expo-android": [
+          "auxvec",
+          "default",
+          "elf",
+          "errno",
+          "general",
+          "if_ether",
+          "ioctl",
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
+        ],
+        "expo-host-linux": [
+          "auxvec",
+          "default",
+          "elf",
+          "errno",
+          "general",
+          "if_ether",
+          "ioctl",
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
+        ],
         "halow-appliance-manager": [
           "auxvec",
           "default",
@@ -13283,6 +14817,20 @@
           "no_std"
         ],
         "host-c-linux": [
+          "auxvec",
+          "default",
+          "elf",
+          "errno",
+          "general",
+          "if_ether",
+          "ioctl",
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
+        ],
+        "sdk-native-linux": [
           "auxvec",
           "default",
           "elf",
@@ -13344,12 +14892,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "litrs",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -13424,6 +14976,18 @@
           "atomic_usize",
           "default"
         ],
+        "expo-android": [
+          "atomic_usize",
+          "default"
+        ],
+        "expo-host-linux": [
+          "atomic_usize",
+          "default"
+        ],
+        "expo-ios": [
+          "atomic_usize",
+          "default"
+        ],
         "host-c-linux": [
           "atomic_usize",
           "default"
@@ -13433,6 +14997,10 @@
           "default"
         ],
         "host-c-windows": [
+          "atomic_usize",
+          "default"
+        ],
+        "sdk-native-linux": [
           "atomic_usize",
           "default"
         ]
@@ -13542,6 +15110,9 @@
         ],
         "host-c-windows": [
           "std"
+        ],
+        "sdk-native-linux": [
+          "std"
         ]
       },
       "name": "log",
@@ -13557,6 +15128,18 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "alloc",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "std"
+        ],
         "halow-headless": []
       },
       "name": "log",
@@ -13632,6 +15215,14 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "default",
           "std"
@@ -13641,6 +15232,10 @@
           "std"
         ],
         "host-c-windows": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -13666,7 +15261,15 @@
           "default",
           "std"
         ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
         "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -13755,6 +15358,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "map"
         ],
+        "expo-android": [
+          "map"
+        ],
+        "expo-host-linux": [
+          "map"
+        ],
+        "expo-ios": [
+          "map"
+        ],
         "halow-headless": [
           "map"
         ],
@@ -13768,6 +15380,9 @@
           "map"
         ],
         "ios": [
+          "map"
+        ],
+        "sdk-native-linux": [
           "map"
         ]
       },
@@ -14127,6 +15742,21 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "std"
@@ -14142,6 +15772,11 @@
           "std"
         ],
         "host-c-windows": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "default",
           "std"
@@ -14375,6 +16010,11 @@
           "net",
           "os-ext",
           "os-poll"
+        ],
+        "sdk-native-linux": [
+          "net",
+          "os-ext",
+          "os-poll"
         ]
       },
       "name": "mio",
@@ -14390,6 +16030,21 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "expo-host-linux": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "expo-ios": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
         "halow-headless": [
           "net",
           "os-ext",
@@ -14521,6 +16176,9 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "unstable"
         ],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -14528,7 +16186,8 @@
         "ios": [],
         "nrf52840": [
           "unstable"
-        ]
+        ],
+        "sdk-native-linux": []
       },
       "name": "nb",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14559,12 +16218,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "nb",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14579,7 +16242,8 @@
     },
     {
       "graphs": {
-        "android": []
+        "android": [],
+        "expo-android": []
       },
       "name": "ndk-context",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14684,6 +16348,18 @@
           "default",
           "gateway"
         ],
+        "expo-android": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "expo-host-linux": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
         "host-c-linux": [
           "android-extra",
           "apple-system-configuration-extra",
@@ -14697,6 +16373,12 @@
           "gateway"
         ],
         "host-c-windows": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "sdk-native-linux": [
           "android-extra",
           "apple-system-configuration-extra",
           "default",
@@ -14719,7 +16401,10 @@
         "android": [],
         "daemon-linux": [],
         "desktop-linux": [],
-        "host-c-linux": []
+        "expo-android": [],
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "netlink-packet-core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14737,7 +16422,10 @@
         "android": [],
         "daemon-linux": [],
         "desktop-linux": [],
-        "host-c-linux": []
+        "expo-android": [],
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "netlink-packet-route",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -14761,7 +16449,16 @@
         "desktop-linux": [
           "default"
         ],
+        "expo-android": [
+          "default"
+        ],
+        "expo-host-linux": [
+          "default"
+        ],
         "host-c-linux": [
+          "default"
+        ],
+        "sdk-native-linux": [
           "default"
         ]
       },
@@ -14784,7 +16481,13 @@
         "desktop-linux": [
           "ioctl"
         ],
+        "expo-host-linux": [
+          "ioctl"
+        ],
         "host-c-linux": [
+          "ioctl"
+        ],
+        "sdk-native-linux": [
           "ioctl"
         ]
       },
@@ -14822,11 +16525,19 @@
           "signal",
           "time"
         ],
+        "expo-host-linux": [
+          "process",
+          "sched"
+        ],
         "halow-headless": [
           "process",
           "sched"
         ],
         "host-c-linux": [
+          "process",
+          "sched"
+        ],
+        "sdk-native-linux": [
           "process",
           "sched"
         ]
@@ -15033,7 +16744,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "num-derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -15161,6 +16874,18 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "halow-appliance-manager": [
           "default",
           "std"
@@ -15182,6 +16907,10 @@
           "std"
         ],
         "nrf52840": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -15277,6 +17006,9 @@
         "daemon-windows": [
           "tokio"
         ],
+        "expo-host-linux": [
+          "tokio"
+        ],
         "host-c-linux": [
           "tokio"
         ],
@@ -15284,6 +17016,9 @@
           "tokio"
         ],
         "host-c-windows": [
+          "tokio"
+        ],
+        "sdk-native-linux": [
           "tokio"
         ]
       },
@@ -15301,6 +17036,10 @@
     {
       "graphs": {
         "daemon-macos": [
+          "alloc",
+          "std"
+        ],
+        "expo-ios": [
           "alloc",
           "std"
         ],
@@ -15328,6 +17067,11 @@
           "relax-sign-encoding",
           "std"
         ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "host-c-macos": [
           "alloc",
           "default",
@@ -15353,6 +17097,11 @@
           "std"
         ],
         "desktop-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-ios": [
           "alloc",
           "default",
           "std"
@@ -15501,6 +17250,22 @@
           "bitflags",
           "std"
         ],
+        "expo-ios": [
+          "CBAdvertisementData",
+          "CBAttribute",
+          "CBCentralManager",
+          "CBCentralManagerConstants",
+          "CBCharacteristic",
+          "CBDescriptor",
+          "CBManager",
+          "CBPeer",
+          "CBPeripheral",
+          "CBService",
+          "CBUUID",
+          "alloc",
+          "bitflags",
+          "std"
+        ],
         "host-c-macos": [
           "CBAdvertisementData",
           "CBAttribute",
@@ -15558,6 +17323,32 @@
           "std"
         ],
         "desktop-macos": [
+          "CBATTRequest",
+          "CBAdvertisementData",
+          "CBAttribute",
+          "CBCentral",
+          "CBCentralManager",
+          "CBCentralManagerConstants",
+          "CBCharacteristic",
+          "CBDefines",
+          "CBDescriptor",
+          "CBError",
+          "CBL2CAPChannel",
+          "CBManager",
+          "CBPeer",
+          "CBPeripheral",
+          "CBPeripheralManager",
+          "CBPeripheralManagerConstants",
+          "CBService",
+          "CBUUID",
+          "alloc",
+          "bitflags",
+          "default",
+          "dispatch2",
+          "objc2-core-foundation",
+          "std"
+        ],
+        "expo-ios": [
           "CBATTRequest",
           "CBAdvertisementData",
           "CBAttribute",
@@ -15724,6 +17515,61 @@
           "std"
         ],
         "desktop-macos": [
+          "CFArray",
+          "CFAttributedString",
+          "CFAvailability",
+          "CFBag",
+          "CFBinaryHeap",
+          "CFBitVector",
+          "CFBundle",
+          "CFByteOrder",
+          "CFCGTypes",
+          "CFCalendar",
+          "CFCharacterSet",
+          "CFData",
+          "CFDate",
+          "CFDateFormatter",
+          "CFDictionary",
+          "CFError",
+          "CFFileDescriptor",
+          "CFFileSecurity",
+          "CFLocale",
+          "CFMachPort",
+          "CFMessagePort",
+          "CFNotificationCenter",
+          "CFNumber",
+          "CFNumberFormatter",
+          "CFPlugIn",
+          "CFPlugInCOM",
+          "CFPreferences",
+          "CFPropertyList",
+          "CFRunLoop",
+          "CFSet",
+          "CFSocket",
+          "CFStream",
+          "CFString",
+          "CFStringEncodingExt",
+          "CFStringTokenizer",
+          "CFTimeZone",
+          "CFTree",
+          "CFURL",
+          "CFURLAccess",
+          "CFURLEnumerator",
+          "CFUUID",
+          "CFUserNotification",
+          "CFUtilities",
+          "CFXMLNode",
+          "CFXMLParser",
+          "alloc",
+          "bitflags",
+          "block2",
+          "default",
+          "dispatch2",
+          "libc",
+          "objc2",
+          "std"
+        ],
+        "expo-ios": [
           "CFArray",
           "CFAttributedString",
           "CFAvailability",
@@ -16025,6 +17871,10 @@
           "alloc",
           "std"
         ],
+        "expo-ios": [
+          "alloc",
+          "std"
+        ],
         "host-c-macos": [
           "alloc",
           "std"
@@ -16092,6 +17942,21 @@
           "block2",
           "default",
           "dispatch",
+          "std"
+        ],
+        "expo-ios": [
+          "NSArray",
+          "NSData",
+          "NSDictionary",
+          "NSEnumerator",
+          "NSError",
+          "NSObject",
+          "NSString",
+          "NSUUID",
+          "NSValue",
+          "alloc",
+          "bitflags",
+          "block2",
           "std"
         ],
         "host-c-macos": [
@@ -16303,6 +18168,185 @@
           "std"
         ],
         "desktop-macos": [
+          "FoundationErrors",
+          "FoundationLegacySwiftCompatibility",
+          "NSAffineTransform",
+          "NSAppleEventDescriptor",
+          "NSAppleEventManager",
+          "NSAppleScript",
+          "NSArchiver",
+          "NSArray",
+          "NSAttributedString",
+          "NSAutoreleasePool",
+          "NSBackgroundActivityScheduler",
+          "NSBundle",
+          "NSByteCountFormatter",
+          "NSByteOrder",
+          "NSCache",
+          "NSCalendar",
+          "NSCalendarDate",
+          "NSCharacterSet",
+          "NSClassDescription",
+          "NSCoder",
+          "NSComparisonPredicate",
+          "NSCompoundPredicate",
+          "NSConnection",
+          "NSData",
+          "NSDate",
+          "NSDateComponentsFormatter",
+          "NSDateFormatter",
+          "NSDateInterval",
+          "NSDateIntervalFormatter",
+          "NSDebug",
+          "NSDecimal",
+          "NSDecimalNumber",
+          "NSDictionary",
+          "NSDistantObject",
+          "NSDistributedLock",
+          "NSDistributedNotificationCenter",
+          "NSEnergyFormatter",
+          "NSEnumerator",
+          "NSError",
+          "NSException",
+          "NSExpression",
+          "NSExtensionContext",
+          "NSExtensionItem",
+          "NSExtensionRequestHandling",
+          "NSFileCoordinator",
+          "NSFileHandle",
+          "NSFileManager",
+          "NSFilePresenter",
+          "NSFileVersion",
+          "NSFileWrapper",
+          "NSFormatter",
+          "NSGarbageCollector",
+          "NSGeometry",
+          "NSHFSFileTypes",
+          "NSHTTPCookie",
+          "NSHTTPCookieStorage",
+          "NSHashTable",
+          "NSHost",
+          "NSISO8601DateFormatter",
+          "NSIndexPath",
+          "NSIndexSet",
+          "NSInflectionRule",
+          "NSInvocation",
+          "NSItemProvider",
+          "NSJSONSerialization",
+          "NSKeyValueCoding",
+          "NSKeyValueObserving",
+          "NSKeyValueSharedObservers",
+          "NSKeyedArchiver",
+          "NSLengthFormatter",
+          "NSLinguisticTagger",
+          "NSListFormatter",
+          "NSLocale",
+          "NSLocalizedNumberFormatRule",
+          "NSLock",
+          "NSMapTable",
+          "NSMassFormatter",
+          "NSMeasurement",
+          "NSMeasurementFormatter",
+          "NSMetadata",
+          "NSMetadataAttributes",
+          "NSMethodSignature",
+          "NSMorphology",
+          "NSNetServices",
+          "NSNotification",
+          "NSNotificationQueue",
+          "NSNull",
+          "NSNumberFormatter",
+          "NSObjCRuntime",
+          "NSObject",
+          "NSObjectScripting",
+          "NSOperation",
+          "NSOrderedCollectionChange",
+          "NSOrderedCollectionDifference",
+          "NSOrderedSet",
+          "NSOrthography",
+          "NSPathUtilities",
+          "NSPersonNameComponents",
+          "NSPersonNameComponentsFormatter",
+          "NSPointerArray",
+          "NSPointerFunctions",
+          "NSPort",
+          "NSPortCoder",
+          "NSPortMessage",
+          "NSPortNameServer",
+          "NSPredicate",
+          "NSProcessInfo",
+          "NSProgress",
+          "NSPropertyList",
+          "NSProtocolChecker",
+          "NSProxy",
+          "NSRange",
+          "NSRegularExpression",
+          "NSRelativeDateTimeFormatter",
+          "NSRunLoop",
+          "NSScanner",
+          "NSScriptClassDescription",
+          "NSScriptCoercionHandler",
+          "NSScriptCommand",
+          "NSScriptCommandDescription",
+          "NSScriptExecutionContext",
+          "NSScriptKeyValueCoding",
+          "NSScriptObjectSpecifiers",
+          "NSScriptStandardSuiteCommands",
+          "NSScriptSuiteRegistry",
+          "NSScriptWhoseTests",
+          "NSSet",
+          "NSSortDescriptor",
+          "NSSpellServer",
+          "NSStream",
+          "NSString",
+          "NSTask",
+          "NSTermOfAddress",
+          "NSTextCheckingResult",
+          "NSThread",
+          "NSTimeZone",
+          "NSTimer",
+          "NSURL",
+          "NSURLAuthenticationChallenge",
+          "NSURLCache",
+          "NSURLConnection",
+          "NSURLCredential",
+          "NSURLCredentialStorage",
+          "NSURLDownload",
+          "NSURLError",
+          "NSURLHandle",
+          "NSURLProtectionSpace",
+          "NSURLProtocol",
+          "NSURLRequest",
+          "NSURLResponse",
+          "NSURLSession",
+          "NSUUID",
+          "NSUbiquitousKeyValueStore",
+          "NSUndoManager",
+          "NSUnit",
+          "NSUserActivity",
+          "NSUserDefaults",
+          "NSUserNotification",
+          "NSUserScriptTask",
+          "NSValue",
+          "NSValueTransformer",
+          "NSXMLDTD",
+          "NSXMLDTDNode",
+          "NSXMLDocument",
+          "NSXMLElement",
+          "NSXMLNode",
+          "NSXMLNodeOptions",
+          "NSXMLParser",
+          "NSXPCConnection",
+          "NSZone",
+          "alloc",
+          "bitflags",
+          "block2",
+          "default",
+          "libc",
+          "objc2-core-foundation",
+          "std"
+        ],
+        "expo-ios": [
           "FoundationErrors",
           "FoundationLegacySwiftCompatibility",
           "NSAffineTransform",
@@ -16865,6 +18909,12 @@
           "serial",
           "std"
         ],
+        "expo-ios": [
+          "alloc",
+          "libc",
+          "serial",
+          "std"
+        ],
         "host-c-macos": [
           "alloc",
           "libc",
@@ -17117,6 +19167,24 @@
           "race",
           "std"
         ],
+        "expo-android": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "default",
@@ -17158,6 +19226,12 @@
           "race",
           "std"
         ],
+        "sdk-native-linux": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
         "wasm": []
       },
       "name": "once_cell",
@@ -17191,7 +19265,11 @@
     {
       "graphs": {
         "daemon-linux": [],
-        "host-c-linux": []
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "openssl-probe",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -17305,9 +19383,13 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "parking_lot_core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -17333,7 +19415,10 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
-        "host-c-linux": []
+        "expo-android": [],
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "paste",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18019,6 +20104,78 @@
           "usb",
           "wifi-auto"
         ],
+        "expo-android": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
+        "expo-ios": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
         "halow-headless": [
           "alloc",
           "flash",
@@ -18117,6 +20274,30 @@
           "lora",
           "usb"
         ],
+        "sdk-native-linux": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
         "wasm": [
           "alloc",
           "flash",
@@ -18139,7 +20320,9 @@
         "daemon-linux": [],
         "desktop-linux": [],
         "engine": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "pin-project",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18157,7 +20340,9 @@
         "daemon-linux": [],
         "desktop-linux": [],
         "engine": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "pin-project-internal",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18188,12 +20373,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "pin-project-lite",
@@ -18257,6 +20446,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "alloc"
         ],
+        "expo-android": [
+          "alloc"
+        ],
+        "expo-host-linux": [
+          "alloc"
+        ],
+        "expo-ios": [
+          "alloc"
+        ],
         "halow-appliance-manager": [
           "alloc"
         ],
@@ -18277,6 +20475,9 @@
         ],
         "nrf52840": [
           "alloc"
+        ],
+        "sdk-native-linux": [
+          "alloc"
         ]
       },
       "name": "pkcs8",
@@ -18296,7 +20497,8 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "host-c-linux": []
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "pkg-config",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18308,6 +20510,21 @@
         "tokens": 0
       },
       "version": "0.3.33"
+    },
+    {
+      "graphs": {
+        "expo-host-linux": []
+      },
+      "name": "pkg-config",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.34"
     },
     {
       "graphs": {
@@ -18510,6 +20727,12 @@
           "default",
           "fallback",
           "std"
+        ],
+        "sdk-native-linux": [
+          "critical-section",
+          "default",
+          "fallback",
+          "std"
         ]
       },
       "name": "portable-atomic",
@@ -18525,6 +20748,24 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "critical-section",
+          "default",
+          "fallback",
+          "std"
+        ],
+        "expo-host-linux": [
+          "critical-section",
+          "default",
+          "fallback",
+          "std"
+        ],
+        "expo-ios": [
+          "critical-section",
+          "default",
+          "fallback",
+          "std"
+        ],
         "halow-headless": [
           "critical-section",
           "default",
@@ -18666,6 +20907,18 @@
           "simd",
           "std"
         ],
+        "expo-android": [
+          "simd",
+          "std"
+        ],
+        "expo-host-linux": [
+          "simd",
+          "std"
+        ],
+        "expo-ios": [
+          "simd",
+          "std"
+        ],
         "halow-appliance-manager": [
           "simd",
           "std"
@@ -18683,6 +20936,10 @@
           "std"
         ],
         "host-c-windows": [
+          "simd",
+          "std"
+        ],
+        "sdk-native-linux": [
           "simd",
           "std"
         ]
@@ -18703,9 +20960,13 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "prns-config",
       "source": "prns-config",
@@ -18944,6 +21205,51 @@
           "std",
           "tokio-host"
         ],
+        "expo-android": [
+          "alloc",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "tokio-host"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "tokio-host"
+        ],
+        "expo-ios": [
+          "alloc",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "tokio-host"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "default",
@@ -19039,6 +21345,21 @@
           "std",
           "tokio-host"
         ],
+        "sdk-native-linux": [
+          "alloc",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "tokio-host"
+        ],
         "wasm": [
           "alloc",
           "flash",
@@ -19055,6 +21376,21 @@
         "functions": 0,
         "impls": 0,
         "tokens": 3
+      },
+      "version": "0.3.8"
+    },
+    {
+      "graphs": {
+        "expo-android": []
+      },
+      "name": "prns-expo-android",
+      "source": "prns-react-native/platform/android",
+      "unsafe": {
+        "blocks": 11,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 11
       },
       "version": "0.3.8"
     },
@@ -19084,21 +21420,25 @@
         "engine": [
           "linux-packet"
         ],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [
           "default"
-        ]
+        ],
+        "sdk-native-linux": []
       },
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 173,
+        "blocks": 174,
         "externs": 7,
         "functions": 0,
         "impls": 21,
-        "tokens": 233
+        "tokens": 234
       },
       "version": "0.3.8"
     },
@@ -19119,9 +21459,13 @@
     },
     {
       "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "prns-host",
@@ -19144,11 +21488,11 @@
       "name": "prns-host-c",
       "source": "prns-host/abi/c",
       "unsafe": {
-        "blocks": 295,
+        "blocks": 297,
         "externs": 70,
         "functions": 18,
         "impls": 2,
-        "tokens": 385
+        "tokens": 387
       },
       "version": "0.3.8"
     },
@@ -19169,9 +21513,30 @@
     },
     {
       "graphs": {
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": []
+        "expo-android": [
+          "android-platform",
+          "default"
+        ],
+        "expo-host-linux": [
+          "android-platform",
+          "default"
+        ],
+        "expo-ios": [
+          "android-platform",
+          "default"
+        ],
+        "host-c-linux": [
+          "default"
+        ],
+        "host-c-macos": [
+          "default"
+        ],
+        "host-c-windows": [
+          "default"
+        ],
+        "sdk-native-linux": [
+          "default"
+        ]
       },
       "name": "prns-host-native",
       "source": "prns-host/impls/native",
@@ -19186,12 +21551,50 @@
     },
     {
       "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "prns-host-snapshot",
       "source": "prns-host/impls/snapshot",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.8"
+    },
+    {
+      "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "prns-host-uniffi",
+      "source": "prns-host/bindings/uniffi",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.8"
+    },
+    {
+      "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "prns-host-uniffi-image",
+      "source": "prns-host/bindings/uniffi/image",
       "unsafe": {
         "blocks": 0,
         "externs": 0,
@@ -19344,6 +21747,24 @@
           "usb",
           "wifi-auto"
         ],
+        "expo-android": [
+          "bluetooth-auto",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "expo-host-linux": [
+          "bluetooth-auto",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "expo-ios": [
+          "bluetooth-auto",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
         "halow-headless": [
           "tcp"
         ],
@@ -19374,6 +21795,12 @@
           "bluetooth-auto",
           "lora",
           "usb"
+        ],
+        "sdk-native-linux": [
+          "bluetooth-auto",
+          "tcp",
+          "usb",
+          "wifi-auto"
         ]
       },
       "name": "prns-interfaces-embassy",
@@ -19604,6 +22031,69 @@
           "usb",
           "wifi-auto"
         ],
+        "expo-android": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
+        "expo-host-linux": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
+        "expo-ios": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
         "halow-headless": [
           "tcp"
         ],
@@ -19684,6 +22174,27 @@
           "serial",
           "tcp",
           "usb"
+        ],
+        "sdk-native-linux": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
         ]
       },
       "name": "prns-interfaces-tokio",
@@ -19715,6 +22226,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -19722,6 +22236,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "prns-macros",
@@ -19903,6 +22418,30 @@
           "resource-bzip2",
           "std"
         ],
+        "expo-android": [
+          "alloc",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
+          "resource-bzip2",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
+          "resource-bzip2",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
+          "resource-bzip2",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "movable-frame-forwarding",
@@ -19943,6 +22482,14 @@
         "nrf52840": [
           "alloc",
           "movable-frame-forwarding",
+          "resource-bzip2",
+          "std"
+        ],
+        "sdk-native-linux": [
+          "alloc",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -20027,12 +22574,16 @@
           "alloc",
           "log"
         ],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "prns-runtime-embassy",
       "source": "prns-runtime/impls/embassy",
@@ -20103,6 +22654,21 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash"
+        ],
+        "expo-host-linux": [
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash"
+        ],
+        "expo-ios": [
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash"
+        ],
         "halow-headless": [],
         "host-c-linux": [
           "interface-discovery",
@@ -20123,7 +22689,12 @@
           "parallel-persistence",
           "parallel-resource-hash"
         ],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": [
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash"
+        ]
       },
       "name": "prns-runtime-tokio",
       "source": "prns-runtime/impls/tokio",
@@ -20405,6 +22976,18 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default",
+          "proc-macro"
+        ],
+        "expo-host-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "expo-ios": [
+          "default",
+          "proc-macro"
+        ],
         "halow-headless": [
           "default",
           "proc-macro"
@@ -20418,6 +23001,10 @@
           "proc-macro"
         ],
         "host-c-windows": [
+          "default",
+          "proc-macro"
+        ],
+        "sdk-native-linux": [
           "default",
           "proc-macro"
         ]
@@ -20687,6 +23274,18 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default",
+          "proc-macro"
+        ],
+        "expo-host-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "expo-ios": [
+          "default",
+          "proc-macro"
+        ],
         "halow-headless": [
           "default",
           "proc-macro"
@@ -20700,6 +23299,10 @@
           "proc-macro"
         ],
         "host-c-windows": [
+          "default",
+          "proc-macro"
+        ],
+        "sdk-native-linux": [
           "default",
           "proc-macro"
         ]
@@ -20790,6 +23393,33 @@
           "std_rng",
           "thread_rng"
         ],
+        "expo-android": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
         "halow-headless": [
           "alloc",
           "default",
@@ -20818,6 +23448,15 @@
           "thread_rng"
         ],
         "host-c-windows": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "default",
           "os_rng",
@@ -20852,6 +23491,15 @@
         "engine": [
           "std"
         ],
+        "expo-android": [
+          "std"
+        ],
+        "expo-host-linux": [
+          "std"
+        ],
+        "expo-ios": [
+          "std"
+        ],
         "halow-appliance-manager": [
           "std"
         ],
@@ -20865,6 +23513,9 @@
           "std"
         ],
         "host-c-windows": [
+          "std"
+        ],
+        "sdk-native-linux": [
           "std"
         ]
       },
@@ -20897,6 +23548,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -20904,6 +23558,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "rand_core",
@@ -20977,6 +23632,18 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [
+          "os_rng",
+          "std"
+        ],
+        "expo-host-linux": [
+          "os_rng",
+          "std"
+        ],
+        "expo-ios": [
+          "os_rng",
+          "std"
+        ],
         "halow-appliance-manager": [
           "os_rng",
           "std"
@@ -20997,7 +23664,11 @@
           "os_rng",
           "std"
         ],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": [
+          "os_rng",
+          "std"
+        ]
       },
       "name": "rand_core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -21035,10 +23706,14 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "ios": []
+        "ios": [],
+        "sdk-native-linux": []
       },
       "name": "rayon",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -21060,10 +23735,14 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "ios": []
+        "ios": [],
+        "sdk-native-linux": []
       },
       "name": "rayon-core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -21281,6 +23960,21 @@
           "default",
           "dev_urandom_fallback"
         ],
+        "expo-android": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
         "host-c-linux": [
           "alloc",
           "default",
@@ -21292,6 +23986,11 @@
           "dev_urandom_fallback"
         ],
         "host-c-windows": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "default",
           "dev_urandom_fallback"
@@ -21462,13 +24161,17 @@
           "default",
           "std"
         ],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [
           "default",
           "std"
         ],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "rmp",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -21515,6 +24218,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -21522,6 +24228,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "roaring",
@@ -21553,12 +24260,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "rtrb",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -21604,6 +24315,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -21611,6 +24325,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "rustc_version",
@@ -21671,6 +24386,36 @@
           "std",
           "time"
         ],
+        "expo-android": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "default",
@@ -21706,6 +24451,16 @@
           "default",
           "fs",
           "std"
+        ],
+        "sdk-native-linux": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
         ]
       },
       "name": "rustix",
@@ -21753,6 +24508,18 @@
           "ring",
           "std"
         ],
+        "expo-android": [
+          "ring",
+          "std"
+        ],
+        "expo-host-linux": [
+          "ring",
+          "std"
+        ],
+        "expo-ios": [
+          "ring",
+          "std"
+        ],
         "host-c-linux": [
           "ring",
           "std"
@@ -21762,6 +24529,10 @@
           "std"
         ],
         "host-c-windows": [
+          "ring",
+          "std"
+        ],
+        "sdk-native-linux": [
           "ring",
           "std"
         ]
@@ -21782,9 +24553,13 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "rustls-native-certs",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -21828,6 +24603,21 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "alloc",
           "default",
@@ -21839,6 +24629,11 @@
           "std"
         ],
         "host-c-windows": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "default",
           "std"
@@ -21872,6 +24667,21 @@
           "ring",
           "std"
         ],
+        "expo-android": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "ring",
+          "std"
+        ],
         "host-c-linux": [
           "alloc",
           "ring",
@@ -21883,6 +24693,11 @@
           "std"
         ],
         "host-c-windows": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "ring",
           "std"
@@ -21914,6 +24729,7 @@
         "host-c-linux": [],
         "nrf-dfu-browser": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "rustversion",
@@ -21926,6 +24742,21 @@
         "tokens": 2
       },
       "version": "1.0.22"
+    },
+    {
+      "graphs": {
+        "expo-host-linux": []
+      },
+      "name": "rustversion",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 1,
+        "externs": 0,
+        "functions": 1,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "1.0.23"
     },
     {
       "graphs": {
@@ -21973,7 +24804,8 @@
     },
     {
       "graphs": {
-        "android": []
+        "android": [],
+        "expo-android": []
       },
       "name": "same-file",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -22019,9 +24851,13 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "scopeguard",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -22267,6 +25103,18 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "halow-appliance-manager": [
           "default",
           "std"
@@ -22292,6 +25140,10 @@
           "std"
         ],
         "nrf52840": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ],
@@ -22475,6 +25327,27 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
         "halow-headless": [
           "alloc"
         ],
@@ -22493,6 +25366,13 @@
           "std"
         ],
         "host-c-windows": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "default",
           "derive",
@@ -22535,7 +25415,9 @@
     {
       "graphs": {
         "daemon-linux": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "serde-xml-rs",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -22661,6 +25543,21 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "result",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "result",
@@ -22677,6 +25574,11 @@
           "std"
         ],
         "host-c-windows": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "result",
           "std"
@@ -22766,6 +25668,15 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default"
+        ],
+        "expo-host-linux": [
+          "default"
+        ],
+        "expo-ios": [
+          "default"
+        ],
         "host-c-linux": [
           "default"
         ],
@@ -22773,6 +25684,9 @@
           "default"
         ],
         "host-c-windows": [
+          "default"
+        ],
+        "sdk-native-linux": [
           "default"
         ]
       },
@@ -22827,11 +25741,19 @@
     },
     {
       "graphs": {
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "default",
           "std"
         ],
         "host-c-linux": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -22876,6 +25798,21 @@
           "std"
         ],
         "daemon-windows": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "expo-android": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "expo-ios": [
           "alloc",
           "serde",
           "std"
@@ -22934,7 +25871,8 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "serial2",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -22946,6 +25884,23 @@
         "tokens": 49
       },
       "version": "0.2.37"
+    },
+    {
+      "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "serial2",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 47,
+        "externs": 0,
+        "functions": 2,
+        "impls": 0,
+        "tokens": 49
+      },
+      "version": "0.2.38"
     },
     {
       "graphs": {
@@ -22967,7 +25922,8 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "serial2-tokio",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -22982,6 +25938,23 @@
     },
     {
       "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "serial2-tokio",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 11,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 11
+      },
+      "version": "0.1.25"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "default",
           "std"
@@ -22991,6 +25964,18 @@
           "std"
         ],
         "daemon-windows": [
+          "default",
+          "std"
+        ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
           "default",
           "std"
         ],
@@ -23007,6 +25992,10 @@
           "std"
         ],
         "host-c-windows": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -23105,6 +26094,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "zeroize"
         ],
+        "expo-android": [
+          "zeroize"
+        ],
+        "expo-host-linux": [
+          "zeroize"
+        ],
+        "expo-ios": [
+          "zeroize"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "default",
@@ -23127,6 +26125,9 @@
           "zeroize"
         ],
         "nrf52840": [
+          "zeroize"
+        ],
+        "sdk-native-linux": [
           "zeroize"
         ],
         "wasm": [
@@ -23178,6 +26179,18 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "default",
           "std"
@@ -23187,6 +26200,10 @@
           "std"
         ],
         "host-c-windows": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -23228,6 +26245,18 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "default",
           "std"
@@ -23237,6 +26266,10 @@
           "std"
         ],
         "host-c-windows": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ]
@@ -23259,9 +26292,13 @@
         "daemon-macos": [],
         "desktop-linux": [],
         "desktop-macos": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
-        "host-c-macos": []
+        "host-c-macos": [],
+        "sdk-native-linux": []
       },
       "name": "signal-hook-registry",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -23340,6 +26377,18 @@
           "alloc",
           "rand_core"
         ],
+        "expo-android": [
+          "alloc",
+          "rand_core"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "rand_core"
+        ],
+        "expo-ios": [
+          "alloc",
+          "rand_core"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "rand_core"
@@ -23365,6 +26414,10 @@
           "rand_core"
         ],
         "nrf52840": [
+          "alloc",
+          "rand_core"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "rand_core"
         ],
@@ -23432,6 +26485,32 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "siphasher",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 11,
+        "externs": 0,
+        "functions": 1,
+        "impls": 0,
+        "tokens": 12
+      },
+      "version": "1.0.3"
+    },
+    {
+      "graphs": {
         "android": [
           "default",
           "std"
@@ -23496,6 +26575,18 @@
           "default",
           "std"
         ],
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "std"
         ],
@@ -23515,6 +26606,10 @@
           "std"
         ],
         "nrf52840": [
+          "default",
+          "std"
+        ],
+        "sdk-native-linux": [
           "default",
           "std"
         ],
@@ -23584,7 +26679,8 @@
         ],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "smallvec",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -23596,6 +26692,23 @@
         "tokens": 72
       },
       "version": "1.15.2"
+    },
+    {
+      "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "smallvec",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 48,
+        "externs": 0,
+        "functions": 15,
+        "impls": 8,
+        "tokens": 72
+      },
+      "version": "1.16.0"
     },
     {
       "graphs": {
@@ -23812,6 +26925,36 @@
           "socket-tcp",
           "socket-udp"
         ],
+        "expo-android": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "expo-host-linux": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "expo-ios": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
         "halow-headless": [
           "async",
           "medium-ethernet",
@@ -23852,6 +26995,16 @@
           "socket-udp"
         ],
         "ios": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "sdk-native-linux": [
           "async",
           "medium-ethernet",
           "multicast",
@@ -23960,6 +27113,15 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "all"
+        ],
+        "expo-host-linux": [
+          "all"
+        ],
+        "expo-ios": [
+          "all"
+        ],
         "halow-headless": [
           "all"
         ],
@@ -23970,6 +27132,9 @@
           "all"
         ],
         "host-c-windows": [
+          "all"
+        ],
+        "sdk-native-linux": [
           "all"
         ]
       },
@@ -24125,6 +27290,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "alloc"
         ],
+        "expo-android": [
+          "alloc"
+        ],
+        "expo-host-linux": [
+          "alloc"
+        ],
+        "expo-ios": [
+          "alloc"
+        ],
         "halow-appliance-manager": [
           "alloc"
         ],
@@ -24144,6 +27318,9 @@
           "alloc"
         ],
         "nrf52840": [
+          "alloc"
+        ],
+        "sdk-native-linux": [
           "alloc"
         ]
       },
@@ -24243,6 +27420,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [
           "alloc",
           "std"
@@ -24253,6 +27433,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "stable_deref_trait",
@@ -24275,10 +27456,14 @@
         "desktop-macos": [],
         "desktop-windows": [],
         "engine": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "static_assertions",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -24309,12 +27494,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "static_cell",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -24377,6 +27566,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "default"
         ],
+        "expo-android": [
+          "default"
+        ],
+        "expo-host-linux": [
+          "default"
+        ],
+        "expo-ios": [
+          "default"
+        ],
         "halow-appliance-manager": [
           "default"
         ],
@@ -24396,6 +27594,9 @@
           "default"
         ],
         "nrf52840": [
+          "default"
+        ],
+        "sdk-native-linux": [
           "default"
         ]
       },
@@ -24442,10 +27643,12 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-host-linux": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "strsim",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -24472,7 +27675,19 @@
           "std",
           "strum_macros"
         ],
+        "expo-host-linux": [
+          "default",
+          "derive",
+          "std",
+          "strum_macros"
+        ],
         "host-c-linux": [
+          "default",
+          "derive",
+          "std",
+          "strum_macros"
+        ],
+        "sdk-native-linux": [
           "default",
           "derive",
           "std",
@@ -24540,7 +27755,9 @@
       "graphs": {
         "daemon-linux": [],
         "desktop-linux": [],
-        "host-c-linux": []
+        "expo-host-linux": [],
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "strum_macros",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -24625,6 +27842,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "const-generics"
         ],
+        "expo-android": [
+          "const-generics"
+        ],
+        "expo-host-linux": [
+          "const-generics"
+        ],
+        "expo-ios": [
+          "const-generics"
+        ],
         "halow-appliance-manager": [
           "const-generics"
         ],
@@ -24644,6 +27870,9 @@
           "const-generics"
         ],
         "nrf52840": [
+          "const-generics"
+        ],
+        "sdk-native-linux": [
           "const-generics"
         ],
         "wasm": [
@@ -25112,6 +28341,42 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "expo-host-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "expo-ios": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
         "halow-headless": [
           "clone-impls",
           "default",
@@ -25148,6 +28413,18 @@
           "visit-mut"
         ],
         "host-c-windows": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "sdk-native-linux": [
           "clone-impls",
           "default",
           "derive",
@@ -25220,6 +28497,16 @@
           "printing",
           "proc-macro",
           "visit-mut"
+        ],
+        "sdk-native-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
         ]
       },
       "name": "syn",
@@ -25256,6 +28543,50 @@
         "tokens": 78
       },
       "version": "3.0.4"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ],
+        "expo-host-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ],
+        "expo-ios": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ]
+      },
+      "name": "syn",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 39,
+        "externs": 0,
+        "functions": 2,
+        "impls": 3,
+        "tokens": 78
+      },
+      "version": "3.0.5"
     },
     {
       "graphs": {
@@ -25298,11 +28629,19 @@
           "default",
           "proc-macro"
         ],
+        "expo-host-linux": [
+          "default",
+          "proc-macro"
+        ],
         "halow-appliance-manager": [
           "default",
           "proc-macro"
         ],
         "host-c-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "sdk-native-linux": [
           "default",
           "proc-macro"
         ]
@@ -25355,6 +28694,18 @@
           "default",
           "getrandom"
         ],
+        "expo-android": [
+          "default",
+          "getrandom"
+        ],
+        "expo-host-linux": [
+          "default",
+          "getrandom"
+        ],
+        "expo-ios": [
+          "default",
+          "getrandom"
+        ],
         "halow-appliance-manager": [
           "default",
           "getrandom"
@@ -25376,6 +28727,10 @@
           "getrandom"
         ],
         "ios": [
+          "default",
+          "getrandom"
+        ],
+        "sdk-native-linux": [
           "default",
           "getrandom"
         ]
@@ -25415,7 +28770,8 @@
     },
     {
       "graphs": {
-        "android": []
+        "android": [],
+        "expo-android": []
       },
       "name": "thiserror",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -25483,6 +28839,10 @@
         "host-c-windows": [
           "default",
           "std"
+        ],
+        "sdk-native-linux": [
+          "default",
+          "std"
         ]
       },
       "name": "thiserror",
@@ -25498,6 +28858,18 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "default",
           "std"
@@ -25516,7 +28888,8 @@
     },
     {
       "graphs": {
-        "android": []
+        "android": [],
+        "expo-android": []
       },
       "name": "thiserror-impl",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -25554,7 +28927,8 @@
       "graphs": {
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "thiserror-impl",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -25569,6 +28943,9 @@
     },
     {
       "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": []
       },
       "name": "thiserror-impl",
@@ -26129,6 +29506,63 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
+        "expo-host-linux": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
+        "expo-ios": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
         "halow-headless": [
           "bytes",
           "default",
@@ -26204,6 +29638,25 @@
           "time",
           "tokio-macros",
           "windows-sys"
+        ],
+        "sdk-native-linux": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
         ]
       },
       "name": "tokio",
@@ -26253,7 +29706,8 @@
       "graphs": {
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "tokio-macros",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -26268,6 +29722,9 @@
     },
     {
       "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": []
       },
       "name": "tokio-macros",
@@ -26286,9 +29743,13 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "tokio-rustls",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -26339,6 +29800,24 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "expo-host-linux": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "expo-ios": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
         "host-c-linux": [
           "default",
           "sync",
@@ -26352,6 +29831,12 @@
           "tokio-util"
         ],
         "host-c-windows": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "sdk-native-linux": [
           "default",
           "sync",
           "time",
@@ -26404,6 +29889,39 @@
           "stream",
           "tokio-rustls"
         ],
+        "expo-android": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
+        ],
+        "expo-host-linux": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
+        ],
+        "expo-ios": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
+        ],
         "halow-headless": [
           "connect",
           "handshake",
@@ -26432,6 +29950,17 @@
           "tokio-rustls"
         ],
         "host-c-windows": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
+        ],
+        "sdk-native-linux": [
           "__rustls-tls",
           "connect",
           "handshake",
@@ -26494,6 +30023,15 @@
     },
     {
       "graphs": {
+        "expo-android": [
+          "default"
+        ],
+        "expo-host-linux": [
+          "default"
+        ],
+        "expo-ios": [
+          "default"
+        ],
         "host-c-linux": [
           "default"
         ],
@@ -26501,6 +30039,9 @@
           "default"
         ],
         "host-c-windows": [
+          "default"
+        ],
+        "sdk-native-linux": [
           "default"
         ]
       },
@@ -26514,6 +30055,41 @@
         "tokens": 29
       },
       "version": "0.7.19"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "expo-host-linux": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "expo-ios": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ]
+      },
+      "name": "toml",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.9.12+spec-1.1.0"
     },
     {
       "graphs": {
@@ -26549,6 +30125,35 @@
         "tokens": 0
       },
       "version": "1.1.4+spec-1.1.0"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "serde",
+          "std"
+        ]
+      },
+      "name": "toml_datetime",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.7.5+spec-1.1.0"
     },
     {
       "graphs": {
@@ -26746,6 +30351,18 @@
           "alloc",
           "default",
           "std"
+        ],
+        "expo-android": [
+          "alloc",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "std"
+        ],
+        "expo-ios": [
+          "alloc",
+          "std"
         ]
       },
       "name": "toml_parser",
@@ -26770,6 +30387,18 @@
           "std"
         ],
         "daemon-windows": [
+          "alloc",
+          "std"
+        ],
+        "expo-android": [
+          "alloc",
+          "std"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "std"
+        ],
+        "expo-ios": [
           "alloc",
           "std"
         ]
@@ -27358,6 +30987,36 @@
           "rustls-pki-types",
           "sha1"
         ],
+        "expo-android": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
+        ],
+        "expo-host-linux": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
+        ],
+        "expo-ios": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
+        ],
         "halow-headless": [
           "data-encoding",
           "handshake",
@@ -27386,6 +31045,16 @@
           "sha1"
         ],
         "host-c-windows": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
+        ],
+        "sdk-native-linux": [
           "__rustls-tls",
           "data-encoding",
           "handshake",
@@ -27474,6 +31143,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "const-generics"
         ],
+        "expo-android": [
+          "const-generics"
+        ],
+        "expo-host-linux": [
+          "const-generics"
+        ],
+        "expo-ios": [
+          "const-generics"
+        ],
         "halow-headless": [
           "const-generics"
         ],
@@ -27490,6 +31168,9 @@
           "const-generics"
         ],
         "nrf52840": [
+          "const-generics"
+        ],
+        "sdk-native-linux": [
           "const-generics"
         ],
         "wasm": [
@@ -27599,6 +31280,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -27606,6 +31290,7 @@
         "ios": [],
         "nrf-dfu-browser": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "unicode-ident",
@@ -27711,6 +31396,126 @@
     },
     {
       "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "uniffi",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.31.2"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "default"
+        ],
+        "expo-host-linux": [
+          "default"
+        ],
+        "expo-ios": [
+          "default"
+        ]
+      },
+      "name": "uniffi_core",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 30,
+        "externs": 0,
+        "functions": 23,
+        "impls": 34,
+        "tokens": 97
+      },
+      "version": "0.31.2"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "default"
+        ],
+        "expo-host-linux": [
+          "default"
+        ],
+        "expo-ios": [
+          "default"
+        ]
+      },
+      "name": "uniffi_internal_macros",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.31.2"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "default"
+        ],
+        "expo-host-linux": [
+          "default"
+        ],
+        "expo-ios": [
+          "default"
+        ]
+      },
+      "name": "uniffi_macros",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 11,
+        "externs": 13,
+        "functions": 0,
+        "impls": 3,
+        "tokens": 61
+      },
+      "version": "0.31.2"
+    },
+    {
+      "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "uniffi_meta",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.31.2"
+    },
+    {
+      "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "uniffi_pipeline",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.31.2"
+    },
+    {
+      "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -27736,9 +31541,13 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "untrusted",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -27854,10 +31663,14 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "sdk-native-linux": []
       },
       "name": "utf-8",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -28080,6 +31893,12 @@
           "rng",
           "std",
           "v4"
+        ],
+        "sdk-native-linux": [
+          "default",
+          "rng",
+          "std",
+          "v4"
         ]
       },
       "name": "uuid",
@@ -28092,6 +31911,38 @@
         "tokens": 15
       },
       "version": "1.24.0"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "expo-host-linux": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "expo-ios": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ]
+      },
+      "name": "uuid",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 13,
+        "externs": 0,
+        "functions": 2,
+        "impls": 0,
+        "tokens": 15
+      },
+      "version": "1.26.0"
     },
     {
       "graphs": {
@@ -28151,6 +32002,9 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -28158,6 +32012,7 @@
         "host-c-windows": [],
         "ios": [],
         "nrf52840": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "version_check",
@@ -28189,12 +32044,16 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "sdk-native-linux": []
       },
       "name": "void",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -28240,7 +32099,8 @@
     },
     {
       "graphs": {
-        "android": []
+        "android": [],
+        "expo-android": []
       },
       "name": "walkdir",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -29088,6 +32948,23 @@
     },
     {
       "graphs": {
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
+      },
+      "name": "winnow",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 26,
+        "externs": 0,
+        "functions": 20,
+        "impls": 0,
+        "tokens": 46
+      },
+      "version": "0.7.15"
+    },
+    {
+      "graphs": {
         "esp32-c6": [
           "alloc",
           "ascii",
@@ -29197,7 +33074,10 @@
           "default",
           "parser",
           "std"
-        ]
+        ],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": []
       },
       "name": "winnow",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -29294,6 +33174,18 @@
           "precomputed-tables",
           "static_secrets"
         ],
+        "expo-android": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "expo-host-linux": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "expo-ios": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
         "halow-appliance-manager": [
           "precomputed-tables",
           "static_secrets"
@@ -29322,6 +33214,10 @@
           "precomputed-tables",
           "static_secrets"
         ],
+        "sdk-native-linux": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
         "wasm": [
           "precomputed-tables",
           "static_secrets"
@@ -29341,7 +33237,8 @@
     {
       "graphs": {
         "daemon-linux": [],
-        "host-c-linux": []
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "xml",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -29353,6 +33250,21 @@
         "tokens": 0
       },
       "version": "1.3.0"
+    },
+    {
+      "graphs": {
+        "expo-host-linux": []
+      },
+      "name": "xml",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "1.4.0"
     },
     {
       "graphs": {
@@ -29655,6 +33567,9 @@
         ],
         "host-c-windows": [
           "simd"
+        ],
+        "sdk-native-linux": [
+          "simd"
         ]
       },
       "name": "zerocopy",
@@ -29667,6 +33582,29 @@
         "tokens": 564
       },
       "version": "0.8.55"
+    },
+    {
+      "graphs": {
+        "expo-android": [
+          "simd"
+        ],
+        "expo-host-linux": [
+          "simd"
+        ],
+        "expo-ios": [
+          "simd"
+        ]
+      },
+      "name": "zerocopy",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 299,
+        "externs": 1,
+        "functions": 58,
+        "impls": 107,
+        "tokens": 564
+      },
+      "version": "0.8.56"
     },
     {
       "graphs": {
@@ -29874,6 +33812,24 @@
           "derive",
           "zeroize_derive"
         ],
+        "expo-android": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
+        "expo-host-linux": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
+        "expo-ios": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
         "halow-headless": [
           "alloc",
           "default",
@@ -29893,6 +33849,12 @@
           "zeroize_derive"
         ],
         "host-c-windows": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
+        "sdk-native-linux": [
           "alloc",
           "default",
           "derive",
@@ -29950,10 +33912,14 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "expo-android": [],
+        "expo-host-linux": [],
+        "expo-ios": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "sdk-native-linux": [],
         "wasm": []
       },
       "name": "zeroize_derive",
@@ -30067,8 +34033,10 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
+        "expo-host-linux": [],
         "halow-headless": [],
-        "host-c-linux": []
+        "host-c-linux": [],
+        "sdk-native-linux": []
       },
       "name": "zmij",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -30153,6 +34121,7 @@
     "personal-hopspot-esp32",
     "personal-hopspot-ios",
     "prns-core",
+    "prns-expo-android",
     "prns-ffi",
     "prns-host-c",
     "prns-runtime",

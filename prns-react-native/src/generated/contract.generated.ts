@@ -1,2 +1,2 @@
 // Generated canonical host fingerprint.
-export const HOST_SEMANTIC_FINGERPRINT = "b5ca02be1ea5d61771f3a75eacb4d44447f99754adbeb02b6cd98537ed2fa239";
+export const HOST_SEMANTIC_FINGERPRINT = "300d77d158eca0f1b473e4c8d3204d1f2da3031427a64cbd7ee3a8339c3c67ff";

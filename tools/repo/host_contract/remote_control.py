@@ -59,7 +59,8 @@ def inventory(root):
              'prns-core/src/routing/delivery/send_plain.rs':'prns_core::routing::delivery::send_plain',
              'prns-core/src/storage/core.rs':'prns_core::storage',
              'prns-core/src/routing/links/resources/build_outgoing.rs':'prns_core::routing::links::resources::build_outgoing',
-             'prns-core/src/crypto/token.rs':'prns_core::crypto'}
+             'prns-core/src/crypto/token.rs':'prns_core::crypto',
+             'prns-core/src/routing/links/channel/byte_stream.rs':'prns_core::routing::links::channel::byte_stream'}
     paths = list((root / 'prns-core/src/remote_control').rglob('*.rs'))
     paths += list((root / 'prns-core/src/interfaces').rglob('*.rs'))
     paths += [root / 'prns-core/src/capabilities/power.rs']
@@ -94,7 +95,7 @@ def inventory(root):
                 item['fields'] = fields(body) if opener == '{' else [{'name':'value','type':body.removeprefix('pub ').strip(),'public':body.startswith('pub ')}]
                 for field in item['fields']:
                     field['borrowed']=bool(re.search(r'fn '+field['name']+r'\(\s*&self\s*\)\s*->\s*&',source))
-            if name in result and result[name] != item: continue
+            if name in result and result[name] != item and str(path.relative_to(root)) not in extra: continue
             result[name] = item
         for match in re.finditer(r'pub struct (\w+)\s*;', source):
             result[match[1]] = {'name':match[1], 'kind':'struct', 'namespace':namespace,
@@ -160,6 +161,9 @@ CUSTOM = {
     'RemoteControlPairingAttemptTimeout': [('value','u64')],
     'RemoteControlPairingExpiresAfter': [('value','u64')],
     'RemoteControlPairingPublicAppDataBytes': [('value','Bytes')],
+    'RemoteControlAppMessage': [('value','Bytes')],
+    'StreamId': [('value','u16')],
+    'RemoteControlNodeName': [('value','String')],
 }
 
 
@@ -182,7 +186,7 @@ def load(root):
         all_types[name]['custom'] = True
     found = {}
     def visit(name, direction):
-        if name in ('u8','u16','u32','u64','i8','i16','i32','i64','usize','bool','String','Bytes','IdentityConfig') or name.startswith('heapless::String<'): return
+        if name in ('u8','u16','u32','u64','i8','i16','i32','i64','usize','bool','String','Bytes','IdentityConfig','NonZeroU32') or name.startswith('heapless::String<'): return
         if inner(name): return visit(inner(name), direction)
         if name in all_types and all_types[name]['kind']=='alias':
             alias=all_types[name]
@@ -238,6 +242,7 @@ def generate(root):
     types = load(root)
     def typ(t):
         if t=='IdentityConfig': return 'crate::transport::IdentityConfig'
+        if t=='NonZeroU32': return 'u32'
         if t == 'usize': return 'u64'
         if t == 'Bytes': return 'Vec<u8>'
         if t.startswith('heapless::String<'): return 'String'
@@ -245,6 +250,7 @@ def generate(root):
         return foreign(t) if t in types else t
     def convert(t, expression, direction):
         if t=='IdentityConfig': return f'{expression}.try_into()?'
+        if t=='NonZeroU32': return f'core::num::NonZeroU32::new({expression}).ok_or_else(|| invalid("NonZeroU32"))?' if direction=='input' else f'{expression}.get()'
         if t == 'usize': return f'usize::try_from({expression}).map_err(|_| invalid("usize"))?' if direction=='input' else f'{expression} as u64'
         elem = inner(t)
         if elem:
@@ -363,6 +369,12 @@ def custom_conversion(name, path, input):
         return 'Self { value: value.as_bytes().to_vec() }'
     if name in ('RemoteControlPairingAttemptTimeout','RemoteControlPairingExpiresAfter'):
         return f'{path}::try_from(prns_core::units::DurationMillis(value.value)).map_err(|_| invalid("{name}"))?' if input else 'Self { value: value.duration().0 }'
+    if name=='RemoteControlNodeName':
+        return f'{path}::new(&value.value).ok_or_else(|| invalid("{name}"))?' if input else 'Self { value: value.as_str().to_owned() }'
+    if name=='StreamId':
+        return f'{path}::new(value.value).map_err(|_| invalid("{name}"))?' if input else 'Self { value: value.get() }'
+    if name=='RemoteControlAppMessage':
+        return f'{path}::from_slice(value.value.as_slice()).map_err(|_| invalid("{name}"))?' if input else 'Self { value: value.as_slice().to_vec() }'
     if name=='RemoteControlPairingPublicAppDataBytes':
         return f'{path}::try_from(value.value.as_slice()).map_err(|_| invalid("{name}"))?' if input else 'Self { value: value.as_bytes().to_vec() }'
     if name=='RemoteControlPairingInvitationCode':
@@ -383,6 +395,7 @@ def camel(name):
 def typescript(types,root):
     def typ(t):
         if t=='IdentityConfig': return 'IdentityConfig'
+        if t=='NonZeroU32': return 'number'
         if t=='Bytes' or t=='Vec<u8>' or t.startswith('heapless::Vec<u8,'): return 'Uint8Array'
         if t=='String' or t.startswith('heapless::String<'): return 'string'
         if t=='bool': return 'boolean'

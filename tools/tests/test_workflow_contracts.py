@@ -443,7 +443,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
             "hopspot-javascript-package", "javascript-browser-package", "javascript-contract",
             "wasm-auto-wifi", "wasm-casework", "wasm-events", "wasm-websocket",
             "flasher-web", "esp32-firmware-check", "shipping-firmware",
-            "dependency-audit", "release-contracts",
+            "dependency-audit", "release-contracts", "react-native-sdk",
         })
         self.assertEqual(selected["uv"], {
             suite["id"] for suite in suites if suite["domain"] in {"oracles", "interop"}

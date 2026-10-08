@@ -1,6 +1,6 @@
 {
   "name": "personal-rns-expo",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "General PRNS host SDK for Expo and React Native",
   "license": "MIT OR Apache-2.0",
   "type": "module",
@@ -57,7 +57,7 @@
     "expo-modules-core": "^57.0.0",
     "react": ">=19 <20",
     "react-native": "^0.86.0",
-    "personal-rns": "0.3.7",
+    "personal-rns": "0.3.8",
     "@ubjs/core": "0.31.0-5",
     "@ubjs/react-native": "0.31.0-5"
   },

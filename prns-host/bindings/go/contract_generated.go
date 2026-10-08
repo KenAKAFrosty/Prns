@@ -3,7 +3,7 @@ package prns
 const (
 	HostContractABI uint32 = 1
 	HostSchemaVersion uint32 = 2
-	ProductVersion = "0.3.7"
+	ProductVersion = "0.3.8"
 )
 
 const DestinationHashLength = 16

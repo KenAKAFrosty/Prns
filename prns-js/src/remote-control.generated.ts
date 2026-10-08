@@ -1,9 +1,11 @@
 // Generated from public prns-core Remote Control declarations. Do not edit.
 import type { IdentityConfig } from "./contract.generated.js";
-export const REMOTE_CONTROL_SEMANTIC_FINGERPRINT = "1e391657f2f551490372385e1f85ee724e47111fb1ae26578d49c30be711f73e";
+export const REMOTE_CONTROL_SEMANTIC_FINGERPRINT = "9fd21c5520b106ebc79ed1e947291b77e1e762d31015a8fc743df514f4319957";
 export type RemoteControlRequest =
   | { readonly tag: "Describe" }
   | { readonly tag: "AnnounceSelf" }
+  | { readonly tag: "AppMessage"; readonly data: { readonly value: RemoteControlAppMessage } }
+  | { readonly tag: "WatchInterfaces"; readonly data: { readonly streamId: RemoteControlStreamId } }
   | { readonly tag: "InventoryInterfaces"; readonly data: { readonly page: RemoteControlInterfacePage } }
   | { readonly tag: "SetInterfacePower"; readonly data: { readonly id: RemoteControlInterfaceId; readonly power: RemoteControlInterfacePower } }
   | { readonly tag: "SetInterfaceMode"; readonly data: { readonly id: RemoteControlInterfaceId; readonly mode: RemoteControlInterfaceMode } }
@@ -12,6 +14,8 @@ export type RemoteControlRequest =
   | { readonly tag: "ReplaceInterfaceDiscoveryGroups"; readonly data: { readonly id: RemoteControlInterfaceId; readonly groups: RemoteControlDiscoveryGroups } }
   | { readonly tag: "InventoryInterfacePeers"; readonly data: { readonly id: RemoteControlInterfaceId; readonly page: RemoteControlPeerPage } }
   | { readonly tag: "InventoryInterfaceConfig"; readonly data: { readonly id: RemoteControlInterfaceId } }
+  | { readonly tag: "InspectRadio"; readonly data: { readonly id: RemoteControlInterfaceId } }
+  | { readonly tag: "ConfigureRadio"; readonly data: { readonly id: RemoteControlInterfaceId; readonly configuration: RemoteControlRadioConfiguration } }
   | { readonly tag: "SetInterfaceLoRaProfile"; readonly data: { readonly id: RemoteControlInterfaceId; readonly profile: RemoteControlLoRaProfile } }
   | { readonly tag: "SetInterfaceWifiStation"; readonly data: { readonly id: RemoteControlInterfaceId; readonly station: RemoteControlWifiStation } }
   | { readonly tag: "InventoryControllers"; readonly data: { readonly page: RemoteControlControllerPage } }
@@ -31,7 +35,11 @@ export type RemoteControlRequest =
   | { readonly tag: "ActivateWifiCredentials"; readonly data: { readonly revision: RemoteControlWifiCredentialRevision } }
   | { readonly tag: "ConfirmWifiCredentials"; readonly data: { readonly revision: RemoteControlWifiCredentialRevision } }
   | { readonly tag: "CancelWifiCredentials"; readonly data: { readonly revision: RemoteControlWifiCredentialRevision } }
-  | { readonly tag: "InspectWifiTransaction" };
+  | { readonly tag: "InspectWifiTransaction" }
+  | { readonly tag: "SetNodeName"; readonly data: { readonly name: RemoteControlNodeName } }
+  | { readonly tag: "DescribeNodeName" };
+export type RemoteControlAppMessage = { readonly value: Uint8Array };
+export type RemoteControlStreamId = { readonly value: number };
 export type RemoteControlInterfacePage =
   | { readonly tag: "First" }
   | { readonly tag: "After"; readonly data: { readonly value: RemoteControlInterfaceCursor } };
@@ -54,6 +62,9 @@ export type RemoteControlPeerPage =
   | { readonly tag: "First" }
   | { readonly tag: "After"; readonly data: { readonly value: RemoteControlPeerCursor } };
 export type RemoteControlPeerCursor = { readonly value: RemoteControlInterfaceId };
+export type RemoteControlRadioConfiguration =
+  | { readonly tag: "Unconfigured" }
+  | { readonly tag: "Profile"; readonly data: { readonly value: RemoteControlLoRaProfile } };
 export type RemoteControlLoRaProfile = { readonly value: string };
 export type RemoteControlWifiStation = { readonly ssid: string; readonly password: string };
 export type RemoteControlControllerPage =
@@ -93,7 +104,13 @@ export type RemoteControlRequestKind =
   | { readonly tag: "CancelWifiCredentials" }
   | { readonly tag: "InspectWifiTransaction" }
   | { readonly tag: "InventoryInterfaceDiscoveryGroups" }
-  | { readonly tag: "ReplaceInterfaceDiscoveryGroups" };
+  | { readonly tag: "ReplaceInterfaceDiscoveryGroups" }
+  | { readonly tag: "AppMessage" }
+  | { readonly tag: "WatchInterfaces" }
+  | { readonly tag: "SetNodeName" }
+  | { readonly tag: "DescribeNodeName" }
+  | { readonly tag: "InspectRadio" }
+  | { readonly tag: "ConfigureRadio" };
 export type RemoteControlSystemPower =
   | { readonly tag: "Awake" }
   | { readonly tag: "Asleep" };
@@ -113,9 +130,12 @@ export type RemoteControlEspRadioMode =
   | { readonly tag: "Bluetooth" }
   | { readonly tag: "AccessPoint" };
 export type RemoteControlWifiCredentialRevision = { readonly value: number };
+export type RemoteControlNodeName = { readonly value: string };
 export type RemoteControlResponse =
   | { readonly tag: "Describe"; readonly data: { readonly value: RemoteControlDescription } }
   | { readonly tag: "AnnounceSelf"; readonly data: { readonly value: RemoteControlAnnounceSelfOutcome } }
+  | { readonly tag: "AppMessage"; readonly data: { readonly value: RemoteControlAppMessage } }
+  | { readonly tag: "WatchInterfaces"; readonly data: { readonly streamId: RemoteControlStreamId } }
   | { readonly tag: "InventoryInterfaces"; readonly data: { readonly value: RemoteControlInterfaceInventory } }
   | { readonly tag: "SetInterfacePower"; readonly data: { readonly value: RemoteControlPowerOutcome } }
   | { readonly tag: "SetInterfaceMode"; readonly data: { readonly value: RemoteControlModeOutcome } }
@@ -124,6 +144,8 @@ export type RemoteControlResponse =
   | { readonly tag: "ReplaceInterfaceDiscoveryGroups"; readonly data: { readonly value: RemoteControlDiscoveryGroupsReplaceOutcome } }
   | { readonly tag: "InventoryInterfacePeers"; readonly data: { readonly value: RemoteControlInterfacePeersOutcome } }
   | { readonly tag: "InventoryInterfaceConfig"; readonly data: { readonly value: RemoteControlInterfaceConfigOutcome } }
+  | { readonly tag: "InspectRadio"; readonly data: { readonly value: RemoteControlRadioStatus } }
+  | { readonly tag: "ConfigureRadio"; readonly data: { readonly value: RemoteControlRadioOutcome } }
   | { readonly tag: "SetInterfaceLoRaProfile"; readonly data: { readonly value: RemoteControlLoRaOutcome } }
   | { readonly tag: "SetInterfaceWifiStation"; readonly data: { readonly value: RemoteControlWifiStationOutcome } }
   | { readonly tag: "InventoryControllers"; readonly data: { readonly value: RemoteControlControllerInventory } }
@@ -144,6 +166,8 @@ export type RemoteControlResponse =
   | { readonly tag: "ConfirmWifiCredentials"; readonly data: { readonly value: RemoteControlApplyOutcome } }
   | { readonly tag: "CancelWifiCredentials"; readonly data: { readonly value: RemoteControlApplyOutcome } }
   | { readonly tag: "InspectWifiTransaction"; readonly data: { readonly value: RemoteControlWifiTransactionStatus } }
+  | { readonly tag: "SetNodeName"; readonly data: { readonly value: RemoteControlApplyOutcome } }
+  | { readonly tag: "DescribeNodeName"; readonly data: { readonly value: RemoteControlNodeName } }
   | { readonly tag: "ProtocolError"; readonly data: { readonly value: RemoteControlProtocolError } };
 export type RemoteControlDescription = { readonly availableRequests: RemoteControlRequestSet };
 export type RemoteControlAnnounceSelfOutcome =
@@ -152,7 +176,7 @@ export type RemoteControlAnnounceSelfOutcome =
   | { readonly tag: "Rejected" }
   | { readonly tag: "WriteFailed" };
 export type RemoteControlInterfaceInventory = { readonly entries: ReadonlyArray<RemoteControlInterfaceEntry>; readonly continuation: RemoteControlInterfaceContinuation };
-export type RemoteControlInterfaceEntry = { readonly id: RemoteControlInterfaceId; readonly kind: RemoteControlInterfaceKind; readonly mode: RemoteControlInterfaceMode; readonly connection: RemoteControlConnectionState; readonly enabled: boolean; readonly txBytes: bigint; readonly rxBytes: bigint; readonly links: number; readonly rateBytesPerSec: number };
+export type RemoteControlInterfaceEntry = { readonly id: RemoteControlInterfaceId; readonly kind: RemoteControlInterfaceKind; readonly mode: RemoteControlInterfaceMode; readonly connection: RemoteControlConnectionState; readonly enabled: boolean; readonly txBytes: bigint; readonly rxBytes: bigint; readonly links: number; readonly rateBytesPerSec?: number };
 export type RemoteControlInterfaceKind =
   | { readonly tag: "Loopback" }
   | { readonly tag: "TcpClient" }
@@ -187,7 +211,10 @@ export type RemoteControlInterfaceKind =
   | { readonly tag: "I2p" }
   | { readonly tag: "I2pPeer" }
   | { readonly tag: "Weave" }
-  | { readonly tag: "WeavePeer" };
+  | { readonly tag: "WeavePeer" }
+  | { readonly tag: "WifiHaLow" }
+  | { readonly tag: "WifiHaLowPeer" }
+  | { readonly tag: "WifiHaLowBroadcast" };
 export type RemoteControlConnectionState =
   | { readonly tag: "Initializing" }
   | { readonly tag: "Connected" }
@@ -227,11 +254,12 @@ export type RemoteControlInterfacePeersOutcome =
   | { readonly tag: "Page"; readonly data: { readonly value: RemoteControlInterfacePeerPage } }
   | { readonly tag: "UnknownInterface" };
 export type RemoteControlInterfacePeerPage = { readonly id: RemoteControlInterfaceId; readonly peers: ReadonlyArray<RemoteControlInterfacePeer>; readonly continuation: RemoteControlPeerContinuation };
-export type RemoteControlInterfacePeer = { readonly id: RemoteControlInterfaceId; readonly connection: RemoteControlConnectionState; readonly txBytes: bigint; readonly rxBytes: bigint; readonly links: number; readonly destinations: number; readonly rateBytesPerSec: number; readonly radio: RemoteControlRadioIndication; readonly details: RemoteControlPeerDetails };
+export type RemoteControlInterfacePeer = { readonly id: RemoteControlInterfaceId; readonly connection: RemoteControlConnectionState; readonly txBytes: bigint; readonly rxBytes: bigint; readonly links: number; readonly destinations: number; readonly rateBytesPerSec?: number; readonly radio: RemoteControlRadioIndication; readonly details: RemoteControlPeerDetails };
 export type RemoteControlRadioIndication =
   | { readonly tag: "NotRadio" }
   | { readonly tag: "Bluetooth"; readonly data: { readonly value: RemoteControlBluetoothIndication } }
   | { readonly tag: "Wifi"; readonly data: { readonly value: RemoteControlWifiIndication } }
+  | { readonly tag: "HaLow"; readonly data: { readonly value: RemoteControlWifiIndication } }
   | { readonly tag: "LoRa"; readonly data: { readonly value: RemoteControlLoRaIndication } };
 export type RemoteControlBluetoothIndication =
   | { readonly tag: "Pending" }
@@ -259,6 +287,31 @@ export type RemoteControlInterfaceConfigOutcome =
   | { readonly tag: "Card"; readonly data: { readonly value: RemoteControlInterfaceCard } }
   | { readonly tag: "UnknownInterface" };
 export type RemoteControlInterfaceCard = { readonly name: string; readonly group: string; readonly config: string; readonly failure: string; readonly destinations: number; readonly transportedLinks: number };
+export type RemoteControlRadioStatus =
+  | { readonly tag: "UnknownInterface" }
+  | { readonly tag: "Status"; readonly data: { readonly bands: RemoteControlRadioBands; readonly operating: RemoteControlRadioOperatingState; readonly saved: RemoteControlRadioSaved } };
+export type RemoteControlRadioBands =
+  | { readonly tag: "SubG" }
+  | { readonly tag: "SubGAndGhz24" };
+export type RemoteControlRadioOperatingState =
+  | { readonly tag: "Unconfigured" }
+  | { readonly tag: "Disabled" }
+  | { readonly tag: "Operating" }
+  | { readonly tag: "Failed" }
+  | { readonly tag: "Changing" };
+export type RemoteControlRadioSaved =
+  | { readonly tag: "Unknown" }
+  | { readonly tag: "Confirmed"; readonly data: { readonly value: RemoteControlRadioConfiguration } };
+export type RemoteControlRadioOutcome =
+  | { readonly tag: "Saved" }
+  | { readonly tag: "UnknownInterface" }
+  | { readonly tag: "HardwareFailed" }
+  | { readonly tag: "PersistenceFailed" }
+  | { readonly tag: "RecoveryRequired" }
+  | { readonly tag: "Busy" }
+  | { readonly tag: "IdentityExhausted" }
+  | { readonly tag: "PublicationFailed" }
+  | { readonly tag: "InvalidConfiguration" };
 export type RemoteControlLoRaOutcome =
   | { readonly tag: "Applied" }
   | { readonly tag: "UnknownInterface" }
@@ -379,6 +432,7 @@ export type RemoteControlError =
   | { readonly tag: "Response"; readonly data: { readonly value: RemoteControlResponseParseError } }
   | { readonly tag: "Remote"; readonly data: { readonly value: RemoteControlProtocolError } }
   | { readonly tag: "UnexpectedResponse"; readonly data: { readonly expected: RemoteControlResponseKind; readonly found: RemoteControlResponseKind } }
+  | { readonly tag: "UnexpectedStream"; readonly data: { readonly expected: RemoteControlStreamId; readonly found: RemoteControlStreamId } }
   | { readonly tag: "AnnounceSelf"; readonly data: { readonly value: RemoteControlAnnounceSelfFailure } };
 export type RemoteControlMessageWriteError =
   | { readonly tag: "BufferTooShort" }
@@ -498,6 +552,12 @@ export type RemoteControlResponseKind =
   | { readonly tag: "InspectWifiTransaction" }
   | { readonly tag: "InventoryInterfaceDiscoveryGroups" }
   | { readonly tag: "ReplaceInterfaceDiscoveryGroups" }
+  | { readonly tag: "AppMessage" }
+  | { readonly tag: "WatchInterfaces" }
+  | { readonly tag: "SetNodeName" }
+  | { readonly tag: "DescribeNodeName" }
+  | { readonly tag: "InspectRadio" }
+  | { readonly tag: "ConfigureRadio" }
   | { readonly tag: "ProtocolError" };
 export type RemoteControlAnnounceSelfFailure =
   | { readonly tag: "Unavailable" }

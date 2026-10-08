@@ -3998,6 +3998,39 @@ public object FfiConverterTypeRNodeRadioConfig: FfiConverterRustBuffer<RNodeRadi
 
 
 
+data class RemoteControlAppMessage (
+    var `value`: kotlin.ByteArray
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlAppMessage: FfiConverterRustBuffer<RemoteControlAppMessage> {
+    override fun read(buf: ByteBuffer): RemoteControlAppMessage {
+        return RemoteControlAppMessage(
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteControlAppMessage) = (
+            FfiConverterByteArray.allocationSize(value.`value`)
+    )
+
+    override fun write(value: RemoteControlAppMessage, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`value`, buf)
+    }
+}
+
+
+
 data class RemoteControlApproveRemoteControlControllerPairing (
     var `attemptId`: RemoteControlPairingAttemptId
 
@@ -4882,7 +4915,7 @@ data class RemoteControlInterfaceEntry (
     ,
     var `links`: kotlin.UInt
     ,
-    var `rateBytesPerSec`: kotlin.UInt
+    var `rateBytesPerSec`: kotlin.UInt?
 
 ){
 
@@ -4907,7 +4940,7 @@ public object FfiConverterTypeRemoteControlInterfaceEntry: FfiConverterRustBuffe
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterUInt.read(buf),
-            FfiConverterUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
         )
     }
 
@@ -4920,7 +4953,7 @@ public object FfiConverterTypeRemoteControlInterfaceEntry: FfiConverterRustBuffe
             FfiConverterULong.allocationSize(value.`txBytes`) +
             FfiConverterULong.allocationSize(value.`rxBytes`) +
             FfiConverterUInt.allocationSize(value.`links`) +
-            FfiConverterUInt.allocationSize(value.`rateBytesPerSec`)
+            FfiConverterOptionalUInt.allocationSize(value.`rateBytesPerSec`)
     )
 
     override fun write(value: RemoteControlInterfaceEntry, buf: ByteBuffer) {
@@ -4932,7 +4965,7 @@ public object FfiConverterTypeRemoteControlInterfaceEntry: FfiConverterRustBuffe
             FfiConverterULong.write(value.`txBytes`, buf)
             FfiConverterULong.write(value.`rxBytes`, buf)
             FfiConverterUInt.write(value.`links`, buf)
-            FfiConverterUInt.write(value.`rateBytesPerSec`, buf)
+            FfiConverterOptionalUInt.write(value.`rateBytesPerSec`, buf)
     }
 }
 
@@ -5055,7 +5088,7 @@ data class RemoteControlInterfacePeer (
     ,
     var `destinations`: kotlin.UInt
     ,
-    var `rateBytesPerSec`: kotlin.UInt
+    var `rateBytesPerSec`: kotlin.UInt?
     ,
     var `radio`: RemoteControlRadioIndication
     ,
@@ -5082,7 +5115,7 @@ public object FfiConverterTypeRemoteControlInterfacePeer: FfiConverterRustBuffer
             FfiConverterULong.read(buf),
             FfiConverterUInt.read(buf),
             FfiConverterUInt.read(buf),
-            FfiConverterUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
             FfiConverterTypeRemoteControlRadioIndication.read(buf),
             FfiConverterTypeRemoteControlPeerDetails.read(buf),
         )
@@ -5095,7 +5128,7 @@ public object FfiConverterTypeRemoteControlInterfacePeer: FfiConverterRustBuffer
             FfiConverterULong.allocationSize(value.`rxBytes`) +
             FfiConverterUInt.allocationSize(value.`links`) +
             FfiConverterUInt.allocationSize(value.`destinations`) +
-            FfiConverterUInt.allocationSize(value.`rateBytesPerSec`) +
+            FfiConverterOptionalUInt.allocationSize(value.`rateBytesPerSec`) +
             FfiConverterTypeRemoteControlRadioIndication.allocationSize(value.`radio`) +
             FfiConverterTypeRemoteControlPeerDetails.allocationSize(value.`details`)
     )
@@ -5107,7 +5140,7 @@ public object FfiConverterTypeRemoteControlInterfacePeer: FfiConverterRustBuffer
             FfiConverterULong.write(value.`rxBytes`, buf)
             FfiConverterUInt.write(value.`links`, buf)
             FfiConverterUInt.write(value.`destinations`, buf)
-            FfiConverterUInt.write(value.`rateBytesPerSec`, buf)
+            FfiConverterOptionalUInt.write(value.`rateBytesPerSec`, buf)
             FfiConverterTypeRemoteControlRadioIndication.write(value.`radio`, buf)
             FfiConverterTypeRemoteControlPeerDetails.write(value.`details`, buf)
     }
@@ -5363,6 +5396,39 @@ public object FfiConverterTypeRemoteControlNativeRemoteControlConfirmation: FfiC
             FfiConverterTypeRemoteControlTargetIdentity.write(value.`target`, buf)
             FfiConverterTypeRemoteControlPairingPermissions.write(value.`permissions`, buf)
             FfiConverterString.write(value.`confirmationCode`, buf)
+    }
+}
+
+
+
+data class RemoteControlNodeName (
+    var `value`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlNodeName: FfiConverterRustBuffer<RemoteControlNodeName> {
+    override fun read(buf: ByteBuffer): RemoteControlNodeName {
+        return RemoteControlNodeName(
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteControlNodeName) = (
+            FfiConverterString.allocationSize(value.`value`)
+    )
+
+    override fun write(value: RemoteControlNodeName, buf: ByteBuffer) {
+            FfiConverterString.write(value.`value`, buf)
     }
 }
 
@@ -6220,6 +6286,39 @@ public object FfiConverterTypeRemoteControlSnrQuarterDb: FfiConverterRustBuffer<
 
     override fun write(value: RemoteControlSnrQuarterDb, buf: ByteBuffer) {
             FfiConverterShort.write(value.`value`, buf)
+    }
+}
+
+
+
+data class RemoteControlStreamId (
+    var `value`: kotlin.UShort
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlStreamId: FfiConverterRustBuffer<RemoteControlStreamId> {
+    override fun read(buf: ByteBuffer): RemoteControlStreamId {
+        return RemoteControlStreamId(
+            FfiConverterUShort.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteControlStreamId) = (
+            FfiConverterUShort.allocationSize(value.`value`)
+    )
+
+    override fun write(value: RemoteControlStreamId, buf: ByteBuffer) {
+            FfiConverterUShort.write(value.`value`, buf)
     }
 }
 
@@ -16136,6 +16235,16 @@ sealed class RemoteControlError {
         companion object
     }
 
+    data class UnexpectedStream(
+        val `expected`: rs.reticulum.prns.host.bindings.RemoteControlStreamId,
+        val `found`: rs.reticulum.prns.host.bindings.RemoteControlStreamId) : RemoteControlError()
+
+    {
+
+
+        companion object
+    }
+
     data class AnnounceSelf(
         val `value`: rs.reticulum.prns.host.bindings.RemoteControlAnnounceSelfFailure) : RemoteControlError()
 
@@ -16180,7 +16289,11 @@ public object FfiConverterTypeRemoteControlError : FfiConverterRustBuffer<Remote
                 FfiConverterTypeRemoteControlResponseKind.read(buf),
                 FfiConverterTypeRemoteControlResponseKind.read(buf),
                 )
-            7 -> RemoteControlError.AnnounceSelf(
+            7 -> RemoteControlError.UnexpectedStream(
+                FfiConverterTypeRemoteControlStreamId.read(buf),
+                FfiConverterTypeRemoteControlStreamId.read(buf),
+                )
+            8 -> RemoteControlError.AnnounceSelf(
                 FfiConverterTypeRemoteControlAnnounceSelfFailure.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
@@ -16231,6 +16344,14 @@ public object FfiConverterTypeRemoteControlError : FfiConverterRustBuffer<Remote
                 + FfiConverterTypeRemoteControlResponseKind.allocationSize(value.`found`)
             )
         }
+        is RemoteControlError.UnexpectedStream -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlStreamId.allocationSize(value.`expected`)
+                + FfiConverterTypeRemoteControlStreamId.allocationSize(value.`found`)
+            )
+        }
         is RemoteControlError.AnnounceSelf -> {
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
@@ -16273,8 +16394,14 @@ public object FfiConverterTypeRemoteControlError : FfiConverterRustBuffer<Remote
                 FfiConverterTypeRemoteControlResponseKind.write(value.`found`, buf)
                 Unit
             }
-            is RemoteControlError.AnnounceSelf -> {
+            is RemoteControlError.UnexpectedStream -> {
                 buf.putInt(7)
+                FfiConverterTypeRemoteControlStreamId.write(value.`expected`, buf)
+                FfiConverterTypeRemoteControlStreamId.write(value.`found`, buf)
+                Unit
+            }
+            is RemoteControlError.AnnounceSelf -> {
+                buf.putInt(8)
                 FfiConverterTypeRemoteControlAnnounceSelfFailure.write(value.`value`, buf)
                 Unit
             }
@@ -17354,7 +17481,10 @@ enum class RemoteControlInterfaceKind {
     I2P,
     I2P_PEER,
     WEAVE,
-    WEAVE_PEER;
+    WEAVE_PEER,
+    WIFI_HA_LOW,
+    WIFI_HA_LOW_PEER,
+    WIFI_HA_LOW_BROADCAST;
 
 
 
@@ -21364,6 +21494,113 @@ public object FfiConverterTypeRemoteControlProtocolError : FfiConverterRustBuffe
 
 
 
+
+enum class RemoteControlRadioBands {
+
+    SUB_G,
+    SUB_G_AND_GHZ24;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlRadioBands: FfiConverterRustBuffer<RemoteControlRadioBands> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteControlRadioBands.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteControlRadioBands) = 4UL
+
+    override fun write(value: RemoteControlRadioBands, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+sealed class RemoteControlRadioConfiguration {
+
+    object Unconfigured : RemoteControlRadioConfiguration()
+
+
+    data class Profile(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlLoRaProfile) : RemoteControlRadioConfiguration()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlRadioConfiguration : FfiConverterRustBuffer<RemoteControlRadioConfiguration>{
+    override fun read(buf: ByteBuffer): RemoteControlRadioConfiguration {
+        return when(buf.getInt()) {
+            1 -> RemoteControlRadioConfiguration.Unconfigured
+            2 -> RemoteControlRadioConfiguration.Profile(
+                FfiConverterTypeRemoteControlLoRaProfile.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteControlRadioConfiguration) = when(value) {
+        is RemoteControlRadioConfiguration.Unconfigured -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlRadioConfiguration.Profile -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlLoRaProfile.allocationSize(value.`value`)
+            )
+        }
+    }
+
+    override fun write(value: RemoteControlRadioConfiguration, buf: ByteBuffer) {
+        when(value) {
+            is RemoteControlRadioConfiguration.Unconfigured -> {
+                buf.putInt(1)
+                Unit
+            }
+            is RemoteControlRadioConfiguration.Profile -> {
+                buf.putInt(2)
+                FfiConverterTypeRemoteControlLoRaProfile.write(value.`value`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
 sealed class RemoteControlRadioIndication {
 
     object NotRadio : RemoteControlRadioIndication()
@@ -21379,6 +21616,15 @@ sealed class RemoteControlRadioIndication {
     }
 
     data class Wifi(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlWifiIndication) : RemoteControlRadioIndication()
+
+    {
+
+
+        companion object
+    }
+
+    data class HaLow(
         val `value`: rs.reticulum.prns.host.bindings.RemoteControlWifiIndication) : RemoteControlRadioIndication()
 
     {
@@ -21419,7 +21665,10 @@ public object FfiConverterTypeRemoteControlRadioIndication : FfiConverterRustBuf
             3 -> RemoteControlRadioIndication.Wifi(
                 FfiConverterTypeRemoteControlWifiIndication.read(buf),
                 )
-            4 -> RemoteControlRadioIndication.LoRa(
+            4 -> RemoteControlRadioIndication.HaLow(
+                FfiConverterTypeRemoteControlWifiIndication.read(buf),
+                )
+            5 -> RemoteControlRadioIndication.LoRa(
                 FfiConverterTypeRemoteControlLoRaIndication.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
@@ -21441,6 +21690,13 @@ public object FfiConverterTypeRemoteControlRadioIndication : FfiConverterRustBuf
             )
         }
         is RemoteControlRadioIndication.Wifi -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlWifiIndication.allocationSize(value.`value`)
+            )
+        }
+        is RemoteControlRadioIndication.HaLow -> {
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
                 4UL
@@ -21472,9 +21728,246 @@ public object FfiConverterTypeRemoteControlRadioIndication : FfiConverterRustBuf
                 FfiConverterTypeRemoteControlWifiIndication.write(value.`value`, buf)
                 Unit
             }
-            is RemoteControlRadioIndication.LoRa -> {
+            is RemoteControlRadioIndication.HaLow -> {
                 buf.putInt(4)
+                FfiConverterTypeRemoteControlWifiIndication.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlRadioIndication.LoRa -> {
+                buf.putInt(5)
                 FfiConverterTypeRemoteControlLoRaIndication.write(value.`value`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+
+enum class RemoteControlRadioOperatingState {
+
+    UNCONFIGURED,
+    DISABLED,
+    OPERATING,
+    FAILED,
+    CHANGING;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlRadioOperatingState: FfiConverterRustBuffer<RemoteControlRadioOperatingState> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteControlRadioOperatingState.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteControlRadioOperatingState) = 4UL
+
+    override fun write(value: RemoteControlRadioOperatingState, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class RemoteControlRadioOutcome {
+
+    SAVED,
+    UNKNOWN_INTERFACE,
+    HARDWARE_FAILED,
+    PERSISTENCE_FAILED,
+    RECOVERY_REQUIRED,
+    BUSY,
+    IDENTITY_EXHAUSTED,
+    PUBLICATION_FAILED,
+    INVALID_CONFIGURATION;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlRadioOutcome: FfiConverterRustBuffer<RemoteControlRadioOutcome> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteControlRadioOutcome.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteControlRadioOutcome) = 4UL
+
+    override fun write(value: RemoteControlRadioOutcome, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+sealed class RemoteControlRadioSaved {
+
+    object Unknown : RemoteControlRadioSaved()
+
+
+    data class Confirmed(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlRadioConfiguration) : RemoteControlRadioSaved()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlRadioSaved : FfiConverterRustBuffer<RemoteControlRadioSaved>{
+    override fun read(buf: ByteBuffer): RemoteControlRadioSaved {
+        return when(buf.getInt()) {
+            1 -> RemoteControlRadioSaved.Unknown
+            2 -> RemoteControlRadioSaved.Confirmed(
+                FfiConverterTypeRemoteControlRadioConfiguration.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteControlRadioSaved) = when(value) {
+        is RemoteControlRadioSaved.Unknown -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlRadioSaved.Confirmed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlRadioConfiguration.allocationSize(value.`value`)
+            )
+        }
+    }
+
+    override fun write(value: RemoteControlRadioSaved, buf: ByteBuffer) {
+        when(value) {
+            is RemoteControlRadioSaved.Unknown -> {
+                buf.putInt(1)
+                Unit
+            }
+            is RemoteControlRadioSaved.Confirmed -> {
+                buf.putInt(2)
+                FfiConverterTypeRemoteControlRadioConfiguration.write(value.`value`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class RemoteControlRadioStatus {
+
+    object UnknownInterface : RemoteControlRadioStatus()
+
+
+    data class Status(
+        val `bands`: rs.reticulum.prns.host.bindings.RemoteControlRadioBands,
+        val `operating`: rs.reticulum.prns.host.bindings.RemoteControlRadioOperatingState,
+        val `saved`: rs.reticulum.prns.host.bindings.RemoteControlRadioSaved) : RemoteControlRadioStatus()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlRadioStatus : FfiConverterRustBuffer<RemoteControlRadioStatus>{
+    override fun read(buf: ByteBuffer): RemoteControlRadioStatus {
+        return when(buf.getInt()) {
+            1 -> RemoteControlRadioStatus.UnknownInterface
+            2 -> RemoteControlRadioStatus.Status(
+                FfiConverterTypeRemoteControlRadioBands.read(buf),
+                FfiConverterTypeRemoteControlRadioOperatingState.read(buf),
+                FfiConverterTypeRemoteControlRadioSaved.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteControlRadioStatus) = when(value) {
+        is RemoteControlRadioStatus.UnknownInterface -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteControlRadioStatus.Status -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlRadioBands.allocationSize(value.`bands`)
+                + FfiConverterTypeRemoteControlRadioOperatingState.allocationSize(value.`operating`)
+                + FfiConverterTypeRemoteControlRadioSaved.allocationSize(value.`saved`)
+            )
+        }
+    }
+
+    override fun write(value: RemoteControlRadioStatus, buf: ByteBuffer) {
+        when(value) {
+            is RemoteControlRadioStatus.UnknownInterface -> {
+                buf.putInt(1)
+                Unit
+            }
+            is RemoteControlRadioStatus.Status -> {
+                buf.putInt(2)
+                FfiConverterTypeRemoteControlRadioBands.write(value.`bands`, buf)
+                FfiConverterTypeRemoteControlRadioOperatingState.write(value.`operating`, buf)
+                FfiConverterTypeRemoteControlRadioSaved.write(value.`saved`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -22690,6 +23183,24 @@ sealed class RemoteControlRequest {
     object AnnounceSelf : RemoteControlRequest()
 
 
+    data class AppMessage(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlAppMessage) : RemoteControlRequest()
+
+    {
+
+
+        companion object
+    }
+
+    data class WatchInterfaces(
+        val `streamId`: rs.reticulum.prns.host.bindings.RemoteControlStreamId) : RemoteControlRequest()
+
+    {
+
+
+        companion object
+    }
+
     data class InventoryInterfaces(
         val `page`: rs.reticulum.prns.host.bindings.RemoteControlInterfacePage) : RemoteControlRequest()
 
@@ -22760,6 +23271,25 @@ sealed class RemoteControlRequest {
 
     data class InventoryInterfaceConfig(
         val `id`: rs.reticulum.prns.host.bindings.RemoteControlInterfaceId) : RemoteControlRequest()
+
+    {
+
+
+        companion object
+    }
+
+    data class InspectRadio(
+        val `id`: rs.reticulum.prns.host.bindings.RemoteControlInterfaceId) : RemoteControlRequest()
+
+    {
+
+
+        companion object
+    }
+
+    data class ConfigureRadio(
+        val `id`: rs.reticulum.prns.host.bindings.RemoteControlInterfaceId,
+        val `configuration`: rs.reticulum.prns.host.bindings.RemoteControlRadioConfiguration) : RemoteControlRequest()
 
     {
 
@@ -22921,6 +23451,18 @@ sealed class RemoteControlRequest {
     object InspectWifiTransaction : RemoteControlRequest()
 
 
+    data class SetNodeName(
+        val `name`: rs.reticulum.prns.host.bindings.RemoteControlNodeName) : RemoteControlRequest()
+
+    {
+
+
+        companion object
+    }
+
+    object DescribeNodeName : RemoteControlRequest()
+
+
 
 
 
@@ -22939,89 +23481,106 @@ public object FfiConverterTypeRemoteControlRequest : FfiConverterRustBuffer<Remo
         return when(buf.getInt()) {
             1 -> RemoteControlRequest.Describe
             2 -> RemoteControlRequest.AnnounceSelf
-            3 -> RemoteControlRequest.InventoryInterfaces(
+            3 -> RemoteControlRequest.AppMessage(
+                FfiConverterTypeRemoteControlAppMessage.read(buf),
+                )
+            4 -> RemoteControlRequest.WatchInterfaces(
+                FfiConverterTypeRemoteControlStreamId.read(buf),
+                )
+            5 -> RemoteControlRequest.InventoryInterfaces(
                 FfiConverterTypeRemoteControlInterfacePage.read(buf),
                 )
-            4 -> RemoteControlRequest.SetInterfacePower(
+            6 -> RemoteControlRequest.SetInterfacePower(
                 FfiConverterTypeRemoteControlInterfaceId.read(buf),
                 FfiConverterTypeRemoteControlInterfacePower.read(buf),
                 )
-            5 -> RemoteControlRequest.SetInterfaceMode(
+            7 -> RemoteControlRequest.SetInterfaceMode(
                 FfiConverterTypeRemoteControlInterfaceId.read(buf),
                 FfiConverterTypeRemoteControlInterfaceMode.read(buf),
                 )
-            6 -> RemoteControlRequest.SetInterfaceGroup(
+            8 -> RemoteControlRequest.SetInterfaceGroup(
                 FfiConverterTypeRemoteControlInterfaceId.read(buf),
                 FfiConverterTypeRemoteControlInterfaceGroup.read(buf),
                 )
-            7 -> RemoteControlRequest.InventoryInterfaceDiscoveryGroups(
+            9 -> RemoteControlRequest.InventoryInterfaceDiscoveryGroups(
                 FfiConverterTypeRemoteControlInterfaceId.read(buf),
                 )
-            8 -> RemoteControlRequest.ReplaceInterfaceDiscoveryGroups(
+            10 -> RemoteControlRequest.ReplaceInterfaceDiscoveryGroups(
                 FfiConverterTypeRemoteControlInterfaceId.read(buf),
                 FfiConverterTypeRemoteControlDiscoveryGroups.read(buf),
                 )
-            9 -> RemoteControlRequest.InventoryInterfacePeers(
+            11 -> RemoteControlRequest.InventoryInterfacePeers(
                 FfiConverterTypeRemoteControlInterfaceId.read(buf),
                 FfiConverterTypeRemoteControlPeerPage.read(buf),
                 )
-            10 -> RemoteControlRequest.InventoryInterfaceConfig(
+            12 -> RemoteControlRequest.InventoryInterfaceConfig(
                 FfiConverterTypeRemoteControlInterfaceId.read(buf),
                 )
-            11 -> RemoteControlRequest.SetInterfaceLoRaProfile(
+            13 -> RemoteControlRequest.InspectRadio(
+                FfiConverterTypeRemoteControlInterfaceId.read(buf),
+                )
+            14 -> RemoteControlRequest.ConfigureRadio(
+                FfiConverterTypeRemoteControlInterfaceId.read(buf),
+                FfiConverterTypeRemoteControlRadioConfiguration.read(buf),
+                )
+            15 -> RemoteControlRequest.SetInterfaceLoRaProfile(
                 FfiConverterTypeRemoteControlInterfaceId.read(buf),
                 FfiConverterTypeRemoteControlLoRaProfile.read(buf),
                 )
-            12 -> RemoteControlRequest.SetInterfaceWifiStation(
+            16 -> RemoteControlRequest.SetInterfaceWifiStation(
                 FfiConverterTypeRemoteControlInterfaceId.read(buf),
                 FfiConverterTypeRemoteControlWifiStation.read(buf),
                 )
-            13 -> RemoteControlRequest.InventoryControllers(
+            17 -> RemoteControlRequest.InventoryControllers(
                 FfiConverterTypeRemoteControlControllerPage.read(buf),
                 )
-            14 -> RemoteControlRequest.AuthorizeController(
+            18 -> RemoteControlRequest.AuthorizeController(
                 FfiConverterTypeRemoteControlControllerIdentity.read(buf),
                 FfiConverterTypeRemoteControlRequestSet.read(buf),
                 )
-            15 -> RemoteControlRequest.RevokeController(
+            19 -> RemoteControlRequest.RevokeController(
                 FfiConverterTypeRemoteControlIdentityHash.read(buf),
                 )
-            16 -> RemoteControlRequest.DescribeBuild
-            17 -> RemoteControlRequest.DescribePower
-            18 -> RemoteControlRequest.SleepRadios
-            19 -> RemoteControlRequest.WakeRadios
-            20 -> RemoteControlRequest.SetSystemPower(
+            20 -> RemoteControlRequest.DescribeBuild
+            21 -> RemoteControlRequest.DescribePower
+            22 -> RemoteControlRequest.SleepRadios
+            23 -> RemoteControlRequest.WakeRadios
+            24 -> RemoteControlRequest.SetSystemPower(
                 FfiConverterTypeRemoteControlSystemPower.read(buf),
                 )
-            21 -> RemoteControlRequest.SetGnssPower(
+            25 -> RemoteControlRequest.SetGnssPower(
                 FfiConverterTypeRemoteControlGnssPower.read(buf),
                 )
-            22 -> RemoteControlRequest.SetDisplayVisibility(
+            26 -> RemoteControlRequest.SetDisplayVisibility(
                 FfiConverterTypeRemoteControlDisplayVisibility.read(buf),
                 )
-            23 -> RemoteControlRequest.SetDisplayAutoOff(
+            27 -> RemoteControlRequest.SetDisplayAutoOff(
                 FfiConverterTypeRemoteControlDisplayAutoOff.read(buf),
                 )
-            24 -> RemoteControlRequest.SetStationUplink(
+            28 -> RemoteControlRequest.SetStationUplink(
                 FfiConverterTypeRemoteControlInterfaceId.read(buf),
                 FfiConverterTypeRemoteControlStationUplink.read(buf),
                 )
-            25 -> RemoteControlRequest.SetEspRadioMode(
+            29 -> RemoteControlRequest.SetEspRadioMode(
                 FfiConverterTypeRemoteControlEspRadioMode.read(buf),
                 )
-            26 -> RemoteControlRequest.StageWifiCredentials(
+            30 -> RemoteControlRequest.StageWifiCredentials(
                 FfiConverterTypeRemoteControlWifiStation.read(buf),
                 )
-            27 -> RemoteControlRequest.ActivateWifiCredentials(
+            31 -> RemoteControlRequest.ActivateWifiCredentials(
                 FfiConverterTypeRemoteControlWifiCredentialRevision.read(buf),
                 )
-            28 -> RemoteControlRequest.ConfirmWifiCredentials(
+            32 -> RemoteControlRequest.ConfirmWifiCredentials(
                 FfiConverterTypeRemoteControlWifiCredentialRevision.read(buf),
                 )
-            29 -> RemoteControlRequest.CancelWifiCredentials(
+            33 -> RemoteControlRequest.CancelWifiCredentials(
                 FfiConverterTypeRemoteControlWifiCredentialRevision.read(buf),
                 )
-            30 -> RemoteControlRequest.InspectWifiTransaction
+            34 -> RemoteControlRequest.InspectWifiTransaction
+            35 -> RemoteControlRequest.SetNodeName(
+                FfiConverterTypeRemoteControlNodeName.read(buf),
+                )
+            36 -> RemoteControlRequest.DescribeNodeName
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
         }
     }
@@ -23037,6 +23596,20 @@ public object FfiConverterTypeRemoteControlRequest : FfiConverterRustBuffer<Remo
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
                 4UL
+            )
+        }
+        is RemoteControlRequest.AppMessage -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlAppMessage.allocationSize(value.`value`)
+            )
+        }
+        is RemoteControlRequest.WatchInterfaces -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlStreamId.allocationSize(value.`streamId`)
             )
         }
         is RemoteControlRequest.InventoryInterfaces -> {
@@ -23098,6 +23671,21 @@ public object FfiConverterTypeRemoteControlRequest : FfiConverterRustBuffer<Remo
             (
                 4UL
                 + FfiConverterTypeRemoteControlInterfaceId.allocationSize(value.`id`)
+            )
+        }
+        is RemoteControlRequest.InspectRadio -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlInterfaceId.allocationSize(value.`id`)
+            )
+        }
+        is RemoteControlRequest.ConfigureRadio -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlInterfaceId.allocationSize(value.`id`)
+                + FfiConverterTypeRemoteControlRadioConfiguration.allocationSize(value.`configuration`)
             )
         }
         is RemoteControlRequest.SetInterfaceLoRaProfile -> {
@@ -23239,6 +23827,19 @@ public object FfiConverterTypeRemoteControlRequest : FfiConverterRustBuffer<Remo
                 4UL
             )
         }
+        is RemoteControlRequest.SetNodeName -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlNodeName.allocationSize(value.`name`)
+            )
+        }
+        is RemoteControlRequest.DescribeNodeName -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
     }
 
     override fun write(value: RemoteControlRequest, buf: ByteBuffer) {
@@ -23251,148 +23852,178 @@ public object FfiConverterTypeRemoteControlRequest : FfiConverterRustBuffer<Remo
                 buf.putInt(2)
                 Unit
             }
-            is RemoteControlRequest.InventoryInterfaces -> {
+            is RemoteControlRequest.AppMessage -> {
                 buf.putInt(3)
+                FfiConverterTypeRemoteControlAppMessage.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlRequest.WatchInterfaces -> {
+                buf.putInt(4)
+                FfiConverterTypeRemoteControlStreamId.write(value.`streamId`, buf)
+                Unit
+            }
+            is RemoteControlRequest.InventoryInterfaces -> {
+                buf.putInt(5)
                 FfiConverterTypeRemoteControlInterfacePage.write(value.`page`, buf)
                 Unit
             }
             is RemoteControlRequest.SetInterfacePower -> {
-                buf.putInt(4)
+                buf.putInt(6)
                 FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
                 FfiConverterTypeRemoteControlInterfacePower.write(value.`power`, buf)
                 Unit
             }
             is RemoteControlRequest.SetInterfaceMode -> {
-                buf.putInt(5)
+                buf.putInt(7)
                 FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
                 FfiConverterTypeRemoteControlInterfaceMode.write(value.`mode`, buf)
                 Unit
             }
             is RemoteControlRequest.SetInterfaceGroup -> {
-                buf.putInt(6)
+                buf.putInt(8)
                 FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
                 FfiConverterTypeRemoteControlInterfaceGroup.write(value.`group`, buf)
                 Unit
             }
             is RemoteControlRequest.InventoryInterfaceDiscoveryGroups -> {
-                buf.putInt(7)
+                buf.putInt(9)
                 FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
                 Unit
             }
             is RemoteControlRequest.ReplaceInterfaceDiscoveryGroups -> {
-                buf.putInt(8)
+                buf.putInt(10)
                 FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
                 FfiConverterTypeRemoteControlDiscoveryGroups.write(value.`groups`, buf)
                 Unit
             }
             is RemoteControlRequest.InventoryInterfacePeers -> {
-                buf.putInt(9)
+                buf.putInt(11)
                 FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
                 FfiConverterTypeRemoteControlPeerPage.write(value.`page`, buf)
                 Unit
             }
             is RemoteControlRequest.InventoryInterfaceConfig -> {
-                buf.putInt(10)
+                buf.putInt(12)
                 FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
                 Unit
             }
+            is RemoteControlRequest.InspectRadio -> {
+                buf.putInt(13)
+                FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
+                Unit
+            }
+            is RemoteControlRequest.ConfigureRadio -> {
+                buf.putInt(14)
+                FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
+                FfiConverterTypeRemoteControlRadioConfiguration.write(value.`configuration`, buf)
+                Unit
+            }
             is RemoteControlRequest.SetInterfaceLoRaProfile -> {
-                buf.putInt(11)
+                buf.putInt(15)
                 FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
                 FfiConverterTypeRemoteControlLoRaProfile.write(value.`profile`, buf)
                 Unit
             }
             is RemoteControlRequest.SetInterfaceWifiStation -> {
-                buf.putInt(12)
+                buf.putInt(16)
                 FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
                 FfiConverterTypeRemoteControlWifiStation.write(value.`station`, buf)
                 Unit
             }
             is RemoteControlRequest.InventoryControllers -> {
-                buf.putInt(13)
+                buf.putInt(17)
                 FfiConverterTypeRemoteControlControllerPage.write(value.`page`, buf)
                 Unit
             }
             is RemoteControlRequest.AuthorizeController -> {
-                buf.putInt(14)
+                buf.putInt(18)
                 FfiConverterTypeRemoteControlControllerIdentity.write(value.`controller`, buf)
                 FfiConverterTypeRemoteControlRequestSet.write(value.`permittedRequests`, buf)
                 Unit
             }
             is RemoteControlRequest.RevokeController -> {
-                buf.putInt(15)
+                buf.putInt(19)
                 FfiConverterTypeRemoteControlIdentityHash.write(value.`hash`, buf)
                 Unit
             }
             is RemoteControlRequest.DescribeBuild -> {
-                buf.putInt(16)
+                buf.putInt(20)
                 Unit
             }
             is RemoteControlRequest.DescribePower -> {
-                buf.putInt(17)
+                buf.putInt(21)
                 Unit
             }
             is RemoteControlRequest.SleepRadios -> {
-                buf.putInt(18)
+                buf.putInt(22)
                 Unit
             }
             is RemoteControlRequest.WakeRadios -> {
-                buf.putInt(19)
+                buf.putInt(23)
                 Unit
             }
             is RemoteControlRequest.SetSystemPower -> {
-                buf.putInt(20)
+                buf.putInt(24)
                 FfiConverterTypeRemoteControlSystemPower.write(value.`power`, buf)
                 Unit
             }
             is RemoteControlRequest.SetGnssPower -> {
-                buf.putInt(21)
+                buf.putInt(25)
                 FfiConverterTypeRemoteControlGnssPower.write(value.`power`, buf)
                 Unit
             }
             is RemoteControlRequest.SetDisplayVisibility -> {
-                buf.putInt(22)
+                buf.putInt(26)
                 FfiConverterTypeRemoteControlDisplayVisibility.write(value.`visibility`, buf)
                 Unit
             }
             is RemoteControlRequest.SetDisplayAutoOff -> {
-                buf.putInt(23)
+                buf.putInt(27)
                 FfiConverterTypeRemoteControlDisplayAutoOff.write(value.`autoOff`, buf)
                 Unit
             }
             is RemoteControlRequest.SetStationUplink -> {
-                buf.putInt(24)
+                buf.putInt(28)
                 FfiConverterTypeRemoteControlInterfaceId.write(value.`id`, buf)
                 FfiConverterTypeRemoteControlStationUplink.write(value.`uplink`, buf)
                 Unit
             }
             is RemoteControlRequest.SetEspRadioMode -> {
-                buf.putInt(25)
+                buf.putInt(29)
                 FfiConverterTypeRemoteControlEspRadioMode.write(value.`mode`, buf)
                 Unit
             }
             is RemoteControlRequest.StageWifiCredentials -> {
-                buf.putInt(26)
+                buf.putInt(30)
                 FfiConverterTypeRemoteControlWifiStation.write(value.`station`, buf)
                 Unit
             }
             is RemoteControlRequest.ActivateWifiCredentials -> {
-                buf.putInt(27)
+                buf.putInt(31)
                 FfiConverterTypeRemoteControlWifiCredentialRevision.write(value.`revision`, buf)
                 Unit
             }
             is RemoteControlRequest.ConfirmWifiCredentials -> {
-                buf.putInt(28)
+                buf.putInt(32)
                 FfiConverterTypeRemoteControlWifiCredentialRevision.write(value.`revision`, buf)
                 Unit
             }
             is RemoteControlRequest.CancelWifiCredentials -> {
-                buf.putInt(29)
+                buf.putInt(33)
                 FfiConverterTypeRemoteControlWifiCredentialRevision.write(value.`revision`, buf)
                 Unit
             }
             is RemoteControlRequest.InspectWifiTransaction -> {
-                buf.putInt(30)
+                buf.putInt(34)
+                Unit
+            }
+            is RemoteControlRequest.SetNodeName -> {
+                buf.putInt(35)
+                FfiConverterTypeRemoteControlNodeName.write(value.`name`, buf)
+                Unit
+            }
+            is RemoteControlRequest.DescribeNodeName -> {
+                buf.putInt(36)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -23435,7 +24066,13 @@ enum class RemoteControlRequestKind {
     CANCEL_WIFI_CREDENTIALS,
     INSPECT_WIFI_TRANSACTION,
     INVENTORY_INTERFACE_DISCOVERY_GROUPS,
-    REPLACE_INTERFACE_DISCOVERY_GROUPS;
+    REPLACE_INTERFACE_DISCOVERY_GROUPS,
+    APP_MESSAGE,
+    WATCH_INTERFACES,
+    SET_NODE_NAME,
+    DESCRIBE_NODE_NAME,
+    INSPECT_RADIO,
+    CONFIGURE_RADIO;
 
 
 
@@ -23803,6 +24440,24 @@ sealed class RemoteControlResponse {
         companion object
     }
 
+    data class AppMessage(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlAppMessage) : RemoteControlResponse()
+
+    {
+
+
+        companion object
+    }
+
+    data class WatchInterfaces(
+        val `streamId`: rs.reticulum.prns.host.bindings.RemoteControlStreamId) : RemoteControlResponse()
+
+    {
+
+
+        companion object
+    }
+
     data class InventoryInterfaces(
         val `value`: rs.reticulum.prns.host.bindings.RemoteControlInterfaceInventory) : RemoteControlResponse()
 
@@ -23868,6 +24523,24 @@ sealed class RemoteControlResponse {
 
     data class InventoryInterfaceConfig(
         val `value`: rs.reticulum.prns.host.bindings.RemoteControlInterfaceConfigOutcome) : RemoteControlResponse()
+
+    {
+
+
+        companion object
+    }
+
+    data class InspectRadio(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlRadioStatus) : RemoteControlResponse()
+
+    {
+
+
+        companion object
+    }
+
+    data class ConfigureRadio(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlRadioOutcome) : RemoteControlResponse()
 
     {
 
@@ -24055,6 +24728,24 @@ sealed class RemoteControlResponse {
         companion object
     }
 
+    data class SetNodeName(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlApplyOutcome) : RemoteControlResponse()
+
+    {
+
+
+        companion object
+    }
+
+    data class DescribeNodeName(
+        val `value`: rs.reticulum.prns.host.bindings.RemoteControlNodeName) : RemoteControlResponse()
+
+    {
+
+
+        companion object
+    }
+
     data class ProtocolError(
         val `value`: rs.reticulum.prns.host.bindings.RemoteControlProtocolError) : RemoteControlResponse()
 
@@ -24086,91 +24777,109 @@ public object FfiConverterTypeRemoteControlResponse : FfiConverterRustBuffer<Rem
             2 -> RemoteControlResponse.AnnounceSelf(
                 FfiConverterTypeRemoteControlAnnounceSelfOutcome.read(buf),
                 )
-            3 -> RemoteControlResponse.InventoryInterfaces(
+            3 -> RemoteControlResponse.AppMessage(
+                FfiConverterTypeRemoteControlAppMessage.read(buf),
+                )
+            4 -> RemoteControlResponse.WatchInterfaces(
+                FfiConverterTypeRemoteControlStreamId.read(buf),
+                )
+            5 -> RemoteControlResponse.InventoryInterfaces(
                 FfiConverterTypeRemoteControlInterfaceInventory.read(buf),
                 )
-            4 -> RemoteControlResponse.SetInterfacePower(
+            6 -> RemoteControlResponse.SetInterfacePower(
                 FfiConverterTypeRemoteControlPowerOutcome.read(buf),
                 )
-            5 -> RemoteControlResponse.SetInterfaceMode(
+            7 -> RemoteControlResponse.SetInterfaceMode(
                 FfiConverterTypeRemoteControlModeOutcome.read(buf),
                 )
-            6 -> RemoteControlResponse.SetInterfaceGroup(
+            8 -> RemoteControlResponse.SetInterfaceGroup(
                 FfiConverterTypeRemoteControlGroupOutcome.read(buf),
                 )
-            7 -> RemoteControlResponse.InventoryInterfaceDiscoveryGroups(
+            9 -> RemoteControlResponse.InventoryInterfaceDiscoveryGroups(
                 FfiConverterTypeRemoteControlDiscoveryGroupsInventoryOutcome.read(buf),
                 )
-            8 -> RemoteControlResponse.ReplaceInterfaceDiscoveryGroups(
+            10 -> RemoteControlResponse.ReplaceInterfaceDiscoveryGroups(
                 FfiConverterTypeRemoteControlDiscoveryGroupsReplaceOutcome.read(buf),
                 )
-            9 -> RemoteControlResponse.InventoryInterfacePeers(
+            11 -> RemoteControlResponse.InventoryInterfacePeers(
                 FfiConverterTypeRemoteControlInterfacePeersOutcome.read(buf),
                 )
-            10 -> RemoteControlResponse.InventoryInterfaceConfig(
+            12 -> RemoteControlResponse.InventoryInterfaceConfig(
                 FfiConverterTypeRemoteControlInterfaceConfigOutcome.read(buf),
                 )
-            11 -> RemoteControlResponse.SetInterfaceLoRaProfile(
+            13 -> RemoteControlResponse.InspectRadio(
+                FfiConverterTypeRemoteControlRadioStatus.read(buf),
+                )
+            14 -> RemoteControlResponse.ConfigureRadio(
+                FfiConverterTypeRemoteControlRadioOutcome.read(buf),
+                )
+            15 -> RemoteControlResponse.SetInterfaceLoRaProfile(
                 FfiConverterTypeRemoteControlLoRaOutcome.read(buf),
                 )
-            12 -> RemoteControlResponse.SetInterfaceWifiStation(
+            16 -> RemoteControlResponse.SetInterfaceWifiStation(
                 FfiConverterTypeRemoteControlWifiStationOutcome.read(buf),
                 )
-            13 -> RemoteControlResponse.InventoryControllers(
+            17 -> RemoteControlResponse.InventoryControllers(
                 FfiConverterTypeRemoteControlControllerInventory.read(buf),
                 )
-            14 -> RemoteControlResponse.AuthorizeController(
+            18 -> RemoteControlResponse.AuthorizeController(
                 FfiConverterTypeRemoteControlAuthorizeControllerOutcome.read(buf),
                 )
-            15 -> RemoteControlResponse.RevokeController(
+            19 -> RemoteControlResponse.RevokeController(
                 FfiConverterTypeRemoteControlRevokeControllerOutcome.read(buf),
                 )
-            16 -> RemoteControlResponse.DescribeBuild(
+            20 -> RemoteControlResponse.DescribeBuild(
                 FfiConverterTypeRemoteControlBuildVersion.read(buf),
                 )
-            17 -> RemoteControlResponse.DescribePower(
+            21 -> RemoteControlResponse.DescribePower(
                 FfiConverterTypeRemoteControlPowerSnapshot.read(buf),
                 )
-            18 -> RemoteControlResponse.SleepRadios(
+            22 -> RemoteControlResponse.SleepRadios(
                 FfiConverterTypeRemoteControlSleepOutcome.read(buf),
                 )
-            19 -> RemoteControlResponse.WakeRadios(
+            23 -> RemoteControlResponse.WakeRadios(
                 FfiConverterTypeRemoteControlSleepOutcome.read(buf),
                 )
-            20 -> RemoteControlResponse.SetSystemPower(
+            24 -> RemoteControlResponse.SetSystemPower(
                 FfiConverterTypeRemoteControlApplyOutcome.read(buf),
                 )
-            21 -> RemoteControlResponse.SetGnssPower(
+            25 -> RemoteControlResponse.SetGnssPower(
                 FfiConverterTypeRemoteControlApplyOutcome.read(buf),
                 )
-            22 -> RemoteControlResponse.SetDisplayVisibility(
+            26 -> RemoteControlResponse.SetDisplayVisibility(
                 FfiConverterTypeRemoteControlApplyOutcome.read(buf),
                 )
-            23 -> RemoteControlResponse.SetDisplayAutoOff(
+            27 -> RemoteControlResponse.SetDisplayAutoOff(
                 FfiConverterTypeRemoteControlApplyOutcome.read(buf),
                 )
-            24 -> RemoteControlResponse.SetStationUplink(
+            28 -> RemoteControlResponse.SetStationUplink(
                 FfiConverterTypeRemoteControlApplyOutcome.read(buf),
                 )
-            25 -> RemoteControlResponse.SetEspRadioMode(
+            29 -> RemoteControlResponse.SetEspRadioMode(
                 FfiConverterTypeRemoteControlApplyOutcome.read(buf),
                 )
-            26 -> RemoteControlResponse.StageWifiCredentials(
+            30 -> RemoteControlResponse.StageWifiCredentials(
                 FfiConverterTypeRemoteControlWifiStageOutcome.read(buf),
                 )
-            27 -> RemoteControlResponse.ActivateWifiCredentials(
+            31 -> RemoteControlResponse.ActivateWifiCredentials(
                 FfiConverterTypeRemoteControlApplyOutcome.read(buf),
                 )
-            28 -> RemoteControlResponse.ConfirmWifiCredentials(
+            32 -> RemoteControlResponse.ConfirmWifiCredentials(
                 FfiConverterTypeRemoteControlApplyOutcome.read(buf),
                 )
-            29 -> RemoteControlResponse.CancelWifiCredentials(
+            33 -> RemoteControlResponse.CancelWifiCredentials(
                 FfiConverterTypeRemoteControlApplyOutcome.read(buf),
                 )
-            30 -> RemoteControlResponse.InspectWifiTransaction(
+            34 -> RemoteControlResponse.InspectWifiTransaction(
                 FfiConverterTypeRemoteControlWifiTransactionStatus.read(buf),
                 )
-            31 -> RemoteControlResponse.ProtocolError(
+            35 -> RemoteControlResponse.SetNodeName(
+                FfiConverterTypeRemoteControlApplyOutcome.read(buf),
+                )
+            36 -> RemoteControlResponse.DescribeNodeName(
+                FfiConverterTypeRemoteControlNodeName.read(buf),
+                )
+            37 -> RemoteControlResponse.ProtocolError(
                 FfiConverterTypeRemoteControlProtocolError.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
@@ -24190,6 +24899,20 @@ public object FfiConverterTypeRemoteControlResponse : FfiConverterRustBuffer<Rem
             (
                 4UL
                 + FfiConverterTypeRemoteControlAnnounceSelfOutcome.allocationSize(value.`value`)
+            )
+        }
+        is RemoteControlResponse.AppMessage -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlAppMessage.allocationSize(value.`value`)
+            )
+        }
+        is RemoteControlResponse.WatchInterfaces -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlStreamId.allocationSize(value.`streamId`)
             )
         }
         is RemoteControlResponse.InventoryInterfaces -> {
@@ -24246,6 +24969,20 @@ public object FfiConverterTypeRemoteControlResponse : FfiConverterRustBuffer<Rem
             (
                 4UL
                 + FfiConverterTypeRemoteControlInterfaceConfigOutcome.allocationSize(value.`value`)
+            )
+        }
+        is RemoteControlResponse.InspectRadio -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlRadioStatus.allocationSize(value.`value`)
+            )
+        }
+        is RemoteControlResponse.ConfigureRadio -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlRadioOutcome.allocationSize(value.`value`)
             )
         }
         is RemoteControlResponse.SetInterfaceLoRaProfile -> {
@@ -24388,6 +25125,20 @@ public object FfiConverterTypeRemoteControlResponse : FfiConverterRustBuffer<Rem
                 + FfiConverterTypeRemoteControlWifiTransactionStatus.allocationSize(value.`value`)
             )
         }
+        is RemoteControlResponse.SetNodeName -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlApplyOutcome.allocationSize(value.`value`)
+            )
+        }
+        is RemoteControlResponse.DescribeNodeName -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlNodeName.allocationSize(value.`value`)
+            )
+        }
         is RemoteControlResponse.ProtocolError -> {
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
@@ -24409,148 +25160,178 @@ public object FfiConverterTypeRemoteControlResponse : FfiConverterRustBuffer<Rem
                 FfiConverterTypeRemoteControlAnnounceSelfOutcome.write(value.`value`, buf)
                 Unit
             }
-            is RemoteControlResponse.InventoryInterfaces -> {
+            is RemoteControlResponse.AppMessage -> {
                 buf.putInt(3)
+                FfiConverterTypeRemoteControlAppMessage.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlResponse.WatchInterfaces -> {
+                buf.putInt(4)
+                FfiConverterTypeRemoteControlStreamId.write(value.`streamId`, buf)
+                Unit
+            }
+            is RemoteControlResponse.InventoryInterfaces -> {
+                buf.putInt(5)
                 FfiConverterTypeRemoteControlInterfaceInventory.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.SetInterfacePower -> {
-                buf.putInt(4)
+                buf.putInt(6)
                 FfiConverterTypeRemoteControlPowerOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.SetInterfaceMode -> {
-                buf.putInt(5)
+                buf.putInt(7)
                 FfiConverterTypeRemoteControlModeOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.SetInterfaceGroup -> {
-                buf.putInt(6)
+                buf.putInt(8)
                 FfiConverterTypeRemoteControlGroupOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.InventoryInterfaceDiscoveryGroups -> {
-                buf.putInt(7)
+                buf.putInt(9)
                 FfiConverterTypeRemoteControlDiscoveryGroupsInventoryOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.ReplaceInterfaceDiscoveryGroups -> {
-                buf.putInt(8)
+                buf.putInt(10)
                 FfiConverterTypeRemoteControlDiscoveryGroupsReplaceOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.InventoryInterfacePeers -> {
-                buf.putInt(9)
+                buf.putInt(11)
                 FfiConverterTypeRemoteControlInterfacePeersOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.InventoryInterfaceConfig -> {
-                buf.putInt(10)
+                buf.putInt(12)
                 FfiConverterTypeRemoteControlInterfaceConfigOutcome.write(value.`value`, buf)
                 Unit
             }
+            is RemoteControlResponse.InspectRadio -> {
+                buf.putInt(13)
+                FfiConverterTypeRemoteControlRadioStatus.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlResponse.ConfigureRadio -> {
+                buf.putInt(14)
+                FfiConverterTypeRemoteControlRadioOutcome.write(value.`value`, buf)
+                Unit
+            }
             is RemoteControlResponse.SetInterfaceLoRaProfile -> {
-                buf.putInt(11)
+                buf.putInt(15)
                 FfiConverterTypeRemoteControlLoRaOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.SetInterfaceWifiStation -> {
-                buf.putInt(12)
+                buf.putInt(16)
                 FfiConverterTypeRemoteControlWifiStationOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.InventoryControllers -> {
-                buf.putInt(13)
+                buf.putInt(17)
                 FfiConverterTypeRemoteControlControllerInventory.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.AuthorizeController -> {
-                buf.putInt(14)
+                buf.putInt(18)
                 FfiConverterTypeRemoteControlAuthorizeControllerOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.RevokeController -> {
-                buf.putInt(15)
+                buf.putInt(19)
                 FfiConverterTypeRemoteControlRevokeControllerOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.DescribeBuild -> {
-                buf.putInt(16)
+                buf.putInt(20)
                 FfiConverterTypeRemoteControlBuildVersion.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.DescribePower -> {
-                buf.putInt(17)
+                buf.putInt(21)
                 FfiConverterTypeRemoteControlPowerSnapshot.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.SleepRadios -> {
-                buf.putInt(18)
+                buf.putInt(22)
                 FfiConverterTypeRemoteControlSleepOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.WakeRadios -> {
-                buf.putInt(19)
+                buf.putInt(23)
                 FfiConverterTypeRemoteControlSleepOutcome.write(value.`value`, buf)
                 Unit
             }
             is RemoteControlResponse.SetSystemPower -> {
-                buf.putInt(20)
-                FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
-                Unit
-            }
-            is RemoteControlResponse.SetGnssPower -> {
-                buf.putInt(21)
-                FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
-                Unit
-            }
-            is RemoteControlResponse.SetDisplayVisibility -> {
-                buf.putInt(22)
-                FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
-                Unit
-            }
-            is RemoteControlResponse.SetDisplayAutoOff -> {
-                buf.putInt(23)
-                FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
-                Unit
-            }
-            is RemoteControlResponse.SetStationUplink -> {
                 buf.putInt(24)
                 FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
                 Unit
             }
-            is RemoteControlResponse.SetEspRadioMode -> {
+            is RemoteControlResponse.SetGnssPower -> {
                 buf.putInt(25)
                 FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
                 Unit
             }
-            is RemoteControlResponse.StageWifiCredentials -> {
+            is RemoteControlResponse.SetDisplayVisibility -> {
                 buf.putInt(26)
-                FfiConverterTypeRemoteControlWifiStageOutcome.write(value.`value`, buf)
+                FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
                 Unit
             }
-            is RemoteControlResponse.ActivateWifiCredentials -> {
+            is RemoteControlResponse.SetDisplayAutoOff -> {
                 buf.putInt(27)
                 FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
                 Unit
             }
-            is RemoteControlResponse.ConfirmWifiCredentials -> {
+            is RemoteControlResponse.SetStationUplink -> {
                 buf.putInt(28)
                 FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
                 Unit
             }
-            is RemoteControlResponse.CancelWifiCredentials -> {
+            is RemoteControlResponse.SetEspRadioMode -> {
                 buf.putInt(29)
                 FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
                 Unit
             }
-            is RemoteControlResponse.InspectWifiTransaction -> {
+            is RemoteControlResponse.StageWifiCredentials -> {
                 buf.putInt(30)
+                FfiConverterTypeRemoteControlWifiStageOutcome.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlResponse.ActivateWifiCredentials -> {
+                buf.putInt(31)
+                FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlResponse.ConfirmWifiCredentials -> {
+                buf.putInt(32)
+                FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlResponse.CancelWifiCredentials -> {
+                buf.putInt(33)
+                FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlResponse.InspectWifiTransaction -> {
+                buf.putInt(34)
                 FfiConverterTypeRemoteControlWifiTransactionStatus.write(value.`value`, buf)
                 Unit
             }
+            is RemoteControlResponse.SetNodeName -> {
+                buf.putInt(35)
+                FfiConverterTypeRemoteControlApplyOutcome.write(value.`value`, buf)
+                Unit
+            }
+            is RemoteControlResponse.DescribeNodeName -> {
+                buf.putInt(36)
+                FfiConverterTypeRemoteControlNodeName.write(value.`value`, buf)
+                Unit
+            }
             is RemoteControlResponse.ProtocolError -> {
-                buf.putInt(31)
+                buf.putInt(37)
                 FfiConverterTypeRemoteControlProtocolError.write(value.`value`, buf)
                 Unit
             }
@@ -24595,6 +25376,12 @@ enum class RemoteControlResponseKind {
     INSPECT_WIFI_TRANSACTION,
     INVENTORY_INTERFACE_DISCOVERY_GROUPS,
     REPLACE_INTERFACE_DISCOVERY_GROUPS,
+    APP_MESSAGE,
+    WATCH_INTERFACES,
+    SET_NODE_NAME,
+    DESCRIBE_NODE_NAME,
+    INSPECT_RADIO,
+    CONFIGURE_RADIO,
     PROTOCOL_ERROR;
 
 
@@ -28113,6 +28900,38 @@ public object FfiConverterOptionalUShort: FfiConverterRustBuffer<kotlin.UShort?>
         } else {
             buf.put(1)
             FfiConverterUShort.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalUInt: FfiConverterRustBuffer<kotlin.UInt?> {
+    override fun read(buf: ByteBuffer): kotlin.UInt? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUInt.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UInt?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUInt.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UInt?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUInt.write(value, buf)
         }
     }
 }

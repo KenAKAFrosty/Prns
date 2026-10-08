@@ -2422,6 +2422,45 @@ const FfiConverterTypeMultiRNodeMemberConfig = (() => {
     return new FFIConverter();
 })();
 
+export type RemoteControlAppMessage = {
+    value: Uint8Array
+}
+
+/**
+ * Generated factory for {@link RemoteControlAppMessage} record objects.
+ */
+export const RemoteControlAppMessage = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RemoteControlAppMessage, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RemoteControlAppMessage>,
+    });
+})();
+
+const FfiConverterTypeRemoteControlAppMessage = (() => {
+    type TypeName = RemoteControlAppMessage;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                value: FfiConverterUint8Array.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterUint8Array.writeIntoCursor(value.value, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUint8Array.allocationSize(value.value);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type RemoteControlPairingAttemptId = {
     value: Uint8Array
 }
@@ -2975,7 +3014,13 @@ export enum RemoteControlRequestKind {
     CancelWifiCredentials,
     InspectWifiTransaction,
     InventoryInterfaceDiscoveryGroups,
-    ReplaceInterfaceDiscoveryGroups
+    ReplaceInterfaceDiscoveryGroups,
+    AppMessage,
+    WatchInterfaces,
+    SetNodeName,
+    DescribeNodeName,
+    InspectRadio,
+    ConfigureRadio
 }
 
 const FfiConverterTypeRemoteControlRequestKind = (() => {
@@ -3013,6 +3058,12 @@ const FfiConverterTypeRemoteControlRequestKind = (() => {
                 case 28: return RemoteControlRequestKind.InspectWifiTransaction;
                 case 29: return RemoteControlRequestKind.InventoryInterfaceDiscoveryGroups;
                 case 30: return RemoteControlRequestKind.ReplaceInterfaceDiscoveryGroups;
+                case 31: return RemoteControlRequestKind.AppMessage;
+                case 32: return RemoteControlRequestKind.WatchInterfaces;
+                case 33: return RemoteControlRequestKind.SetNodeName;
+                case 34: return RemoteControlRequestKind.DescribeNodeName;
+                case 35: return RemoteControlRequestKind.InspectRadio;
+                case 36: return RemoteControlRequestKind.ConfigureRadio;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -3048,6 +3099,12 @@ const FfiConverterTypeRemoteControlRequestKind = (() => {
                 case RemoteControlRequestKind.InspectWifiTransaction: return c.writeI32(28);
                 case RemoteControlRequestKind.InventoryInterfaceDiscoveryGroups: return c.writeI32(29);
                 case RemoteControlRequestKind.ReplaceInterfaceDiscoveryGroups: return c.writeI32(30);
+                case RemoteControlRequestKind.AppMessage: return c.writeI32(31);
+                case RemoteControlRequestKind.WatchInterfaces: return c.writeI32(32);
+                case RemoteControlRequestKind.SetNodeName: return c.writeI32(33);
+                case RemoteControlRequestKind.DescribeNodeName: return c.writeI32(34);
+                case RemoteControlRequestKind.InspectRadio: return c.writeI32(35);
+                case RemoteControlRequestKind.ConfigureRadio: return c.writeI32(36);
             }
         }
         allocationSize(value: TypeName): number {
@@ -9907,7 +9964,10 @@ export enum RemoteControlInterfaceKind {
     I2p,
     I2pPeer,
     Weave,
-    WeavePeer
+    WeavePeer,
+    WifiHaLow,
+    WifiHaLowPeer,
+    WifiHaLowBroadcast
 }
 
 const FfiConverterTypeRemoteControlInterfaceKind = (() => {
@@ -9949,6 +10009,9 @@ const FfiConverterTypeRemoteControlInterfaceKind = (() => {
                 case 32: return RemoteControlInterfaceKind.I2pPeer;
                 case 33: return RemoteControlInterfaceKind.Weave;
                 case 34: return RemoteControlInterfaceKind.WeavePeer;
+                case 35: return RemoteControlInterfaceKind.WifiHaLow;
+                case 36: return RemoteControlInterfaceKind.WifiHaLowPeer;
+                case 37: return RemoteControlInterfaceKind.WifiHaLowBroadcast;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -9988,6 +10051,9 @@ const FfiConverterTypeRemoteControlInterfaceKind = (() => {
                 case RemoteControlInterfaceKind.I2pPeer: return c.writeI32(32);
                 case RemoteControlInterfaceKind.Weave: return c.writeI32(33);
                 case RemoteControlInterfaceKind.WeavePeer: return c.writeI32(34);
+                case RemoteControlInterfaceKind.WifiHaLow: return c.writeI32(35);
+                case RemoteControlInterfaceKind.WifiHaLowPeer: return c.writeI32(36);
+                case RemoteControlInterfaceKind.WifiHaLowBroadcast: return c.writeI32(37);
             }
         }
         allocationSize(value: TypeName): number {
@@ -10095,7 +10161,7 @@ export type RemoteControlInterfaceEntry = {
     txBytes: bigint,
     rxBytes: bigint,
     links: number,
-    rateBytesPerSec: number
+    rateBytesPerSec?: number | undefined
 }
 
 /**
@@ -10127,7 +10193,7 @@ const FfiConverterTypeRemoteControlInterfaceEntry = (() => {
                 txBytes: FfiConverterUInt64.readFromCursor(c),
                 rxBytes: FfiConverterUInt64.readFromCursor(c),
                 links: FfiConverterUInt32.readFromCursor(c),
-                rateBytesPerSec: FfiConverterUInt32.readFromCursor(c)
+                rateBytesPerSec: FfiConverterOptionalUInt32.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
@@ -10139,7 +10205,7 @@ const FfiConverterTypeRemoteControlInterfaceEntry = (() => {
             FfiConverterUInt64.writeIntoCursor(value.txBytes, c);
             FfiConverterUInt64.writeIntoCursor(value.rxBytes, c);
             FfiConverterUInt32.writeIntoCursor(value.links, c);
-            FfiConverterUInt32.writeIntoCursor(value.rateBytesPerSec, c);
+            FfiConverterOptionalUInt32.writeIntoCursor(value.rateBytesPerSec, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeRemoteControlInterfaceId.allocationSize(value.id) +
@@ -10150,7 +10216,7 @@ const FfiConverterTypeRemoteControlInterfaceEntry = (() => {
              FfiConverterUInt64.allocationSize(value.txBytes) +
              FfiConverterUInt64.allocationSize(value.rxBytes) +
              FfiConverterUInt32.allocationSize(value.links) +
-             FfiConverterUInt32.allocationSize(value.rateBytesPerSec);
+             FfiConverterOptionalUInt32.allocationSize(value.rateBytesPerSec);
 
         }
     };
@@ -10896,6 +10962,7 @@ export enum RemoteControlRadioIndication_Tags {
     NotRadio = "NotRadio",
     Bluetooth = "Bluetooth",
     Wifi = "Wifi",
+    HaLow = "HaLow",
     LoRa = "LoRa"
 }
 export const RemoteControlRadioIndication = (() => {
@@ -10986,6 +11053,37 @@ inner: {value: RemoteControlWifiIndication }): Wifi_ {
 
     }
 
+    type HaLow__interface = {
+        tag: RemoteControlRadioIndication_Tags.HaLow;
+        inner:
+Readonly<{value: RemoteControlWifiIndication}>
+    };
+    class HaLow_ extends UniffiEnum implements HaLow__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRadioIndication";
+        readonly tag = RemoteControlRadioIndication_Tags.HaLow;
+        readonly inner:
+Readonly<{value: RemoteControlWifiIndication}>;
+        constructor(
+inner: {value: RemoteControlWifiIndication }) {
+            super("RemoteControlRadioIndication", "HaLow");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlWifiIndication }): HaLow_ {
+            return new HaLow_(inner);
+        }
+
+        static instanceOf(obj: any): obj is HaLow_ {
+            return obj.tag === RemoteControlRadioIndication_Tags.HaLow;
+        }
+
+    }
+
     type LoRa__interface = {
         tag: RemoteControlRadioIndication_Tags.LoRa;
         inner:
@@ -11026,12 +11124,13 @@ inner: {value: RemoteControlLoRaIndication }): LoRa_ {
   NotRadio: NotRadio_,
   Bluetooth: Bluetooth_,
   Wifi: Wifi_,
+  HaLow: HaLow_,
   LoRa: LoRa_
     });
 
 })();
 export type RemoteControlRadioIndication = InstanceType<
-    typeof RemoteControlRadioIndication['NotRadio' | 'Bluetooth' | 'Wifi' | 'LoRa']
+    typeof RemoteControlRadioIndication['NotRadio' | 'Bluetooth' | 'Wifi' | 'HaLow' | 'LoRa']
 >;
 
 // FfiConverter for enum RemoteControlRadioIndication
@@ -11043,7 +11142,8 @@ const FfiConverterTypeRemoteControlRadioIndication = (() => {
                 case 1: return new RemoteControlRadioIndication.NotRadio();
                 case 2: return new RemoteControlRadioIndication.Bluetooth({value: FfiConverterTypeRemoteControlBluetoothIndication.readFromCursor(c) });
                 case 3: return new RemoteControlRadioIndication.Wifi({value: FfiConverterTypeRemoteControlWifiIndication.readFromCursor(c) });
-                case 4: return new RemoteControlRadioIndication.LoRa({value: FfiConverterTypeRemoteControlLoRaIndication.readFromCursor(c) });
+                case 4: return new RemoteControlRadioIndication.HaLow({value: FfiConverterTypeRemoteControlWifiIndication.readFromCursor(c) });
+                case 5: return new RemoteControlRadioIndication.LoRa({value: FfiConverterTypeRemoteControlLoRaIndication.readFromCursor(c) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -11065,8 +11165,14 @@ const FfiConverterTypeRemoteControlRadioIndication = (() => {
                     FfiConverterTypeRemoteControlWifiIndication.writeIntoCursor(inner.value, c);
                     return;
                 }
-                case RemoteControlRadioIndication_Tags.LoRa: {
+                case RemoteControlRadioIndication_Tags.HaLow: {
                     c.writeI32(4);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlWifiIndication.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlRadioIndication_Tags.LoRa: {
+                    c.writeI32(5);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlLoRaIndication.writeIntoCursor(inner.value, c);
                     return;
@@ -11088,6 +11194,12 @@ const FfiConverterTypeRemoteControlRadioIndication = (() => {
                     return size;
                 }
                 case RemoteControlRadioIndication_Tags.Wifi: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlWifiIndication.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlRadioIndication_Tags.HaLow: {
                     const inner = value.inner;
                     let size = 4;
                     size += FfiConverterTypeRemoteControlWifiIndication.allocationSize(inner.value);
@@ -11339,7 +11451,7 @@ export type RemoteControlInterfacePeer = {
     rxBytes: bigint,
     links: number,
     destinations: number,
-    rateBytesPerSec: number,
+    rateBytesPerSec?: number | undefined,
     radio: RemoteControlRadioIndication,
     details: RemoteControlPeerDetails
 }
@@ -11371,7 +11483,7 @@ const FfiConverterTypeRemoteControlInterfacePeer = (() => {
                 rxBytes: FfiConverterUInt64.readFromCursor(c),
                 links: FfiConverterUInt32.readFromCursor(c),
                 destinations: FfiConverterUInt32.readFromCursor(c),
-                rateBytesPerSec: FfiConverterUInt32.readFromCursor(c),
+                rateBytesPerSec: FfiConverterOptionalUInt32.readFromCursor(c),
                 radio: FfiConverterTypeRemoteControlRadioIndication.readFromCursor(c),
                 details: FfiConverterTypeRemoteControlPeerDetails.readFromCursor(c)
             };
@@ -11383,7 +11495,7 @@ const FfiConverterTypeRemoteControlInterfacePeer = (() => {
             FfiConverterUInt64.writeIntoCursor(value.rxBytes, c);
             FfiConverterUInt32.writeIntoCursor(value.links, c);
             FfiConverterUInt32.writeIntoCursor(value.destinations, c);
-            FfiConverterUInt32.writeIntoCursor(value.rateBytesPerSec, c);
+            FfiConverterOptionalUInt32.writeIntoCursor(value.rateBytesPerSec, c);
             FfiConverterTypeRemoteControlRadioIndication.writeIntoCursor(value.radio, c);
             FfiConverterTypeRemoteControlPeerDetails.writeIntoCursor(value.details, c);
         }
@@ -11394,7 +11506,7 @@ const FfiConverterTypeRemoteControlInterfacePeer = (() => {
              FfiConverterUInt64.allocationSize(value.rxBytes) +
              FfiConverterUInt32.allocationSize(value.links) +
              FfiConverterUInt32.allocationSize(value.destinations) +
-             FfiConverterUInt32.allocationSize(value.rateBytesPerSec) +
+             FfiConverterOptionalUInt32.allocationSize(value.rateBytesPerSec) +
              FfiConverterTypeRemoteControlRadioIndication.allocationSize(value.radio) +
              FfiConverterTypeRemoteControlPeerDetails.allocationSize(value.details);
 
@@ -12005,6 +12117,45 @@ const FfiConverterTypeRemoteControlNativeRemoteControlConfirmation = (() => {
              FfiConverterTypeRemoteControlTargetIdentity.allocationSize(value.target) +
              FfiConverterTypeRemoteControlPairingPermissions.allocationSize(value.permissions) +
              FfiConverterString.allocationSize(value.confirmationCode);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type RemoteControlNodeName = {
+    value: string
+}
+
+/**
+ * Generated factory for {@link RemoteControlNodeName} record objects.
+ */
+export const RemoteControlNodeName = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RemoteControlNodeName, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RemoteControlNodeName>,
+    });
+})();
+
+const FfiConverterTypeRemoteControlNodeName = (() => {
+    type TypeName = RemoteControlNodeName;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                value: FfiConverterString.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterString.writeIntoCursor(value.value, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.value);
 
         }
     };
@@ -12709,6 +12860,45 @@ const FfiConverterTypeRemoteControlResolvedRemoteControlTarget = (() => {
              FfiConverterTypeRemoteControlEndpoint.allocationSize(value.endpoint) +
              FfiConverterTypeRemoteControlControllerIdentity.allocationSize(value.controller) +
              FfiConverterTypeRemoteControlRequestSet.allocationSize(value.permittedRequests);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type RemoteControlStreamId = {
+    value: number
+}
+
+/**
+ * Generated factory for {@link RemoteControlStreamId} record objects.
+ */
+export const RemoteControlStreamId = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RemoteControlStreamId, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RemoteControlStreamId>,
+    });
+})();
+
+const FfiConverterTypeRemoteControlStreamId = (() => {
+    type TypeName = RemoteControlStreamId;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                value: FfiConverterUInt16.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterUInt16.writeIntoCursor(value.value, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt16.allocationSize(value.value);
 
         }
     };
@@ -29558,6 +29748,12 @@ export enum RemoteControlResponseKind {
     InspectWifiTransaction,
     InventoryInterfaceDiscoveryGroups,
     ReplaceInterfaceDiscoveryGroups,
+    AppMessage,
+    WatchInterfaces,
+    SetNodeName,
+    DescribeNodeName,
+    InspectRadio,
+    ConfigureRadio,
     ProtocolError
 }
 
@@ -29596,7 +29792,13 @@ const FfiConverterTypeRemoteControlResponseKind = (() => {
                 case 28: return RemoteControlResponseKind.InspectWifiTransaction;
                 case 29: return RemoteControlResponseKind.InventoryInterfaceDiscoveryGroups;
                 case 30: return RemoteControlResponseKind.ReplaceInterfaceDiscoveryGroups;
-                case 31: return RemoteControlResponseKind.ProtocolError;
+                case 31: return RemoteControlResponseKind.AppMessage;
+                case 32: return RemoteControlResponseKind.WatchInterfaces;
+                case 33: return RemoteControlResponseKind.SetNodeName;
+                case 34: return RemoteControlResponseKind.DescribeNodeName;
+                case 35: return RemoteControlResponseKind.InspectRadio;
+                case 36: return RemoteControlResponseKind.ConfigureRadio;
+                case 37: return RemoteControlResponseKind.ProtocolError;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -29632,7 +29834,13 @@ const FfiConverterTypeRemoteControlResponseKind = (() => {
                 case RemoteControlResponseKind.InspectWifiTransaction: return c.writeI32(28);
                 case RemoteControlResponseKind.InventoryInterfaceDiscoveryGroups: return c.writeI32(29);
                 case RemoteControlResponseKind.ReplaceInterfaceDiscoveryGroups: return c.writeI32(30);
-                case RemoteControlResponseKind.ProtocolError: return c.writeI32(31);
+                case RemoteControlResponseKind.AppMessage: return c.writeI32(31);
+                case RemoteControlResponseKind.WatchInterfaces: return c.writeI32(32);
+                case RemoteControlResponseKind.SetNodeName: return c.writeI32(33);
+                case RemoteControlResponseKind.DescribeNodeName: return c.writeI32(34);
+                case RemoteControlResponseKind.InspectRadio: return c.writeI32(35);
+                case RemoteControlResponseKind.ConfigureRadio: return c.writeI32(36);
+                case RemoteControlResponseKind.ProtocolError: return c.writeI32(37);
             }
         }
         allocationSize(value: TypeName): number {
@@ -29651,6 +29859,7 @@ export enum RemoteControlError_Tags {
     Response = "Response",
     Remote = "Remote",
     UnexpectedResponse = "UnexpectedResponse",
+    UnexpectedStream = "UnexpectedStream",
     AnnounceSelf = "AnnounceSelf"
 }
 export const RemoteControlError = (() => {
@@ -29841,6 +30050,37 @@ inner: {expected: RemoteControlResponseKind; found: RemoteControlResponseKind })
 
     }
 
+    type UnexpectedStream__interface = {
+        tag: RemoteControlError_Tags.UnexpectedStream;
+        inner:
+Readonly<{expected: RemoteControlStreamId; found: RemoteControlStreamId}>
+    };
+    class UnexpectedStream_ extends UniffiEnum implements UnexpectedStream__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlError";
+        readonly tag = RemoteControlError_Tags.UnexpectedStream;
+        readonly inner:
+Readonly<{expected: RemoteControlStreamId; found: RemoteControlStreamId}>;
+        constructor(
+inner: {expected: RemoteControlStreamId; found: RemoteControlStreamId }) {
+            super("RemoteControlError", "UnexpectedStream");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {expected: RemoteControlStreamId; found: RemoteControlStreamId }): UnexpectedStream_ {
+            return new UnexpectedStream_(inner);
+        }
+
+        static instanceOf(obj: any): obj is UnexpectedStream_ {
+            return obj.tag === RemoteControlError_Tags.UnexpectedStream;
+        }
+
+    }
+
     type AnnounceSelf__interface = {
         tag: RemoteControlError_Tags.AnnounceSelf;
         inner:
@@ -29884,12 +30124,13 @@ inner: {value: RemoteControlAnnounceSelfFailure }): AnnounceSelf_ {
   Response: Response_,
   Remote: Remote_,
   UnexpectedResponse: UnexpectedResponse_,
+  UnexpectedStream: UnexpectedStream_,
   AnnounceSelf: AnnounceSelf_
     });
 
 })();
 export type RemoteControlError = InstanceType<
-    typeof RemoteControlError['UnsupportedRequestKind' | 'Encode' | 'Request' | 'Response' | 'Remote' | 'UnexpectedResponse' | 'AnnounceSelf']
+    typeof RemoteControlError['UnsupportedRequestKind' | 'Encode' | 'Request' | 'Response' | 'Remote' | 'UnexpectedResponse' | 'UnexpectedStream' | 'AnnounceSelf']
 >;
 
 // FfiConverter for enum RemoteControlError
@@ -29904,7 +30145,8 @@ const FfiConverterTypeRemoteControlError = (() => {
                 case 4: return new RemoteControlError.Response({value: FfiConverterTypeRemoteControlResponseParseError.readFromCursor(c) });
                 case 5: return new RemoteControlError.Remote({value: FfiConverterTypeRemoteControlProtocolError.readFromCursor(c) });
                 case 6: return new RemoteControlError.UnexpectedResponse({expected: FfiConverterTypeRemoteControlResponseKind.readFromCursor(c), found: FfiConverterTypeRemoteControlResponseKind.readFromCursor(c) });
-                case 7: return new RemoteControlError.AnnounceSelf({value: FfiConverterTypeRemoteControlAnnounceSelfFailure.readFromCursor(c) });
+                case 7: return new RemoteControlError.UnexpectedStream({expected: FfiConverterTypeRemoteControlStreamId.readFromCursor(c), found: FfiConverterTypeRemoteControlStreamId.readFromCursor(c) });
+                case 8: return new RemoteControlError.AnnounceSelf({value: FfiConverterTypeRemoteControlAnnounceSelfFailure.readFromCursor(c) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -29947,8 +30189,15 @@ const FfiConverterTypeRemoteControlError = (() => {
                     FfiConverterTypeRemoteControlResponseKind.writeIntoCursor(inner.found, c);
                     return;
                 }
-                case RemoteControlError_Tags.AnnounceSelf: {
+                case RemoteControlError_Tags.UnexpectedStream: {
                     c.writeI32(7);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlStreamId.writeIntoCursor(inner.expected, c);
+                    FfiConverterTypeRemoteControlStreamId.writeIntoCursor(inner.found, c);
+                    return;
+                }
+                case RemoteControlError_Tags.AnnounceSelf: {
+                    c.writeI32(8);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlAnnounceSelfFailure.writeIntoCursor(inner.value, c);
                     return;
@@ -29995,6 +30244,13 @@ const FfiConverterTypeRemoteControlError = (() => {
                     let size = 4;
                     size += FfiConverterTypeRemoteControlResponseKind.allocationSize(inner.expected);
                     size += FfiConverterTypeRemoteControlResponseKind.allocationSize(inner.found);
+                    return size;
+                }
+                case RemoteControlError_Tags.UnexpectedStream: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlStreamId.allocationSize(inner.expected);
+                    size += FfiConverterTypeRemoteControlStreamId.allocationSize(inner.found);
                     return size;
                 }
                 case RemoteControlError_Tags.AnnounceSelf: {
@@ -30380,6 +30636,496 @@ const FfiConverterTypeRemoteControlInterfaceConfigOutcome = (() => {
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum RemoteControlRadioBands {
+    SubG,
+    SubGAndGhz24
+}
+
+const FfiConverterTypeRemoteControlRadioBands = (() => {
+    type TypeName = RemoteControlRadioBands;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return RemoteControlRadioBands.SubG;
+                case 2: return RemoteControlRadioBands.SubGAndGhz24;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value) {
+                case RemoteControlRadioBands.SubG: return c.writeI32(1);
+                case RemoteControlRadioBands.SubGAndGhz24: return c.writeI32(2);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return 4;
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum RemoteControlRadioOperatingState {
+    Unconfigured,
+    Disabled,
+    Operating,
+    Failed,
+    Changing
+}
+
+const FfiConverterTypeRemoteControlRadioOperatingState = (() => {
+    type TypeName = RemoteControlRadioOperatingState;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return RemoteControlRadioOperatingState.Unconfigured;
+                case 2: return RemoteControlRadioOperatingState.Disabled;
+                case 3: return RemoteControlRadioOperatingState.Operating;
+                case 4: return RemoteControlRadioOperatingState.Failed;
+                case 5: return RemoteControlRadioOperatingState.Changing;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value) {
+                case RemoteControlRadioOperatingState.Unconfigured: return c.writeI32(1);
+                case RemoteControlRadioOperatingState.Disabled: return c.writeI32(2);
+                case RemoteControlRadioOperatingState.Operating: return c.writeI32(3);
+                case RemoteControlRadioOperatingState.Failed: return c.writeI32(4);
+                case RemoteControlRadioOperatingState.Changing: return c.writeI32(5);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return 4;
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: RemoteControlRadioConfiguration
+export enum RemoteControlRadioConfiguration_Tags {
+    Unconfigured = "Unconfigured",
+    Profile = "Profile"
+}
+export const RemoteControlRadioConfiguration = (() => {
+
+    type Unconfigured__interface = {
+        tag: RemoteControlRadioConfiguration_Tags.Unconfigured
+    };
+    class Unconfigured_ extends UniffiEnum implements Unconfigured__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRadioConfiguration";
+        readonly tag = RemoteControlRadioConfiguration_Tags.Unconfigured;
+        constructor() {
+            super("RemoteControlRadioConfiguration", "Unconfigured");
+        }
+
+        static new(): Unconfigured_ {
+            return new Unconfigured_();
+        }
+
+        static instanceOf(obj: any): obj is Unconfigured_ {
+            return obj.tag === RemoteControlRadioConfiguration_Tags.Unconfigured;
+        }
+
+    }
+
+    type Profile__interface = {
+        tag: RemoteControlRadioConfiguration_Tags.Profile;
+        inner:
+Readonly<{value: RemoteControlLoRaProfile}>
+    };
+    class Profile_ extends UniffiEnum implements Profile__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRadioConfiguration";
+        readonly tag = RemoteControlRadioConfiguration_Tags.Profile;
+        readonly inner:
+Readonly<{value: RemoteControlLoRaProfile}>;
+        constructor(
+inner: {value: RemoteControlLoRaProfile }) {
+            super("RemoteControlRadioConfiguration", "Profile");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlLoRaProfile }): Profile_ {
+            return new Profile_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Profile_ {
+            return obj.tag === RemoteControlRadioConfiguration_Tags.Profile;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RemoteControlRadioConfiguration {
+        return obj[uniffiTypeNameSymbol] === "RemoteControlRadioConfiguration";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Unconfigured: Unconfigured_,
+  Profile: Profile_
+    });
+
+})();
+export type RemoteControlRadioConfiguration = InstanceType<
+    typeof RemoteControlRadioConfiguration['Unconfigured' | 'Profile']
+>;
+
+// FfiConverter for enum RemoteControlRadioConfiguration
+const FfiConverterTypeRemoteControlRadioConfiguration = (() => {
+    type TypeName = RemoteControlRadioConfiguration;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new RemoteControlRadioConfiguration.Unconfigured();
+                case 2: return new RemoteControlRadioConfiguration.Profile({value: FfiConverterTypeRemoteControlLoRaProfile.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case RemoteControlRadioConfiguration_Tags.Unconfigured: {
+                    c.writeI32(1);
+                    return;
+                }
+                case RemoteControlRadioConfiguration_Tags.Profile: {
+                    c.writeI32(2);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlLoRaProfile.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RemoteControlRadioConfiguration_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RemoteControlRadioConfiguration_Tags.Unconfigured: {
+                    return 4;
+                }
+                case RemoteControlRadioConfiguration_Tags.Profile: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlLoRaProfile.allocationSize(inner.value);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: RemoteControlRadioSaved
+export enum RemoteControlRadioSaved_Tags {
+    Unknown = "Unknown",
+    Confirmed = "Confirmed"
+}
+export const RemoteControlRadioSaved = (() => {
+
+    type Unknown__interface = {
+        tag: RemoteControlRadioSaved_Tags.Unknown
+    };
+    class Unknown_ extends UniffiEnum implements Unknown__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRadioSaved";
+        readonly tag = RemoteControlRadioSaved_Tags.Unknown;
+        constructor() {
+            super("RemoteControlRadioSaved", "Unknown");
+        }
+
+        static new(): Unknown_ {
+            return new Unknown_();
+        }
+
+        static instanceOf(obj: any): obj is Unknown_ {
+            return obj.tag === RemoteControlRadioSaved_Tags.Unknown;
+        }
+
+    }
+
+    type Confirmed__interface = {
+        tag: RemoteControlRadioSaved_Tags.Confirmed;
+        inner:
+Readonly<{value: RemoteControlRadioConfiguration}>
+    };
+    class Confirmed_ extends UniffiEnum implements Confirmed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRadioSaved";
+        readonly tag = RemoteControlRadioSaved_Tags.Confirmed;
+        readonly inner:
+Readonly<{value: RemoteControlRadioConfiguration}>;
+        constructor(
+inner: {value: RemoteControlRadioConfiguration }) {
+            super("RemoteControlRadioSaved", "Confirmed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlRadioConfiguration }): Confirmed_ {
+            return new Confirmed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Confirmed_ {
+            return obj.tag === RemoteControlRadioSaved_Tags.Confirmed;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RemoteControlRadioSaved {
+        return obj[uniffiTypeNameSymbol] === "RemoteControlRadioSaved";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Unknown: Unknown_,
+  Confirmed: Confirmed_
+    });
+
+})();
+export type RemoteControlRadioSaved = InstanceType<
+    typeof RemoteControlRadioSaved['Unknown' | 'Confirmed']
+>;
+
+// FfiConverter for enum RemoteControlRadioSaved
+const FfiConverterTypeRemoteControlRadioSaved = (() => {
+    type TypeName = RemoteControlRadioSaved;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new RemoteControlRadioSaved.Unknown();
+                case 2: return new RemoteControlRadioSaved.Confirmed({value: FfiConverterTypeRemoteControlRadioConfiguration.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case RemoteControlRadioSaved_Tags.Unknown: {
+                    c.writeI32(1);
+                    return;
+                }
+                case RemoteControlRadioSaved_Tags.Confirmed: {
+                    c.writeI32(2);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlRadioConfiguration.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RemoteControlRadioSaved_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RemoteControlRadioSaved_Tags.Unknown: {
+                    return 4;
+                }
+                case RemoteControlRadioSaved_Tags.Confirmed: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlRadioConfiguration.allocationSize(inner.value);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: RemoteControlRadioStatus
+export enum RemoteControlRadioStatus_Tags {
+    UnknownInterface = "UnknownInterface",
+    Status = "Status"
+}
+export const RemoteControlRadioStatus = (() => {
+
+    type UnknownInterface__interface = {
+        tag: RemoteControlRadioStatus_Tags.UnknownInterface
+    };
+    class UnknownInterface_ extends UniffiEnum implements UnknownInterface__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRadioStatus";
+        readonly tag = RemoteControlRadioStatus_Tags.UnknownInterface;
+        constructor() {
+            super("RemoteControlRadioStatus", "UnknownInterface");
+        }
+
+        static new(): UnknownInterface_ {
+            return new UnknownInterface_();
+        }
+
+        static instanceOf(obj: any): obj is UnknownInterface_ {
+            return obj.tag === RemoteControlRadioStatus_Tags.UnknownInterface;
+        }
+
+    }
+
+    type Status__interface = {
+        tag: RemoteControlRadioStatus_Tags.Status;
+        inner:
+Readonly<{bands: RemoteControlRadioBands; operating: RemoteControlRadioOperatingState; saved: RemoteControlRadioSaved}>
+    };
+    class Status_ extends UniffiEnum implements Status__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRadioStatus";
+        readonly tag = RemoteControlRadioStatus_Tags.Status;
+        readonly inner:
+Readonly<{bands: RemoteControlRadioBands; operating: RemoteControlRadioOperatingState; saved: RemoteControlRadioSaved}>;
+        constructor(
+inner: {bands: RemoteControlRadioBands; operating: RemoteControlRadioOperatingState; saved: RemoteControlRadioSaved }) {
+            super("RemoteControlRadioStatus", "Status");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {bands: RemoteControlRadioBands; operating: RemoteControlRadioOperatingState; saved: RemoteControlRadioSaved }): Status_ {
+            return new Status_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Status_ {
+            return obj.tag === RemoteControlRadioStatus_Tags.Status;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RemoteControlRadioStatus {
+        return obj[uniffiTypeNameSymbol] === "RemoteControlRadioStatus";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  UnknownInterface: UnknownInterface_,
+  Status: Status_
+    });
+
+})();
+export type RemoteControlRadioStatus = InstanceType<
+    typeof RemoteControlRadioStatus['UnknownInterface' | 'Status']
+>;
+
+// FfiConverter for enum RemoteControlRadioStatus
+const FfiConverterTypeRemoteControlRadioStatus = (() => {
+    type TypeName = RemoteControlRadioStatus;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new RemoteControlRadioStatus.UnknownInterface();
+                case 2: return new RemoteControlRadioStatus.Status({bands: FfiConverterTypeRemoteControlRadioBands.readFromCursor(c), operating: FfiConverterTypeRemoteControlRadioOperatingState.readFromCursor(c), saved: FfiConverterTypeRemoteControlRadioSaved.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case RemoteControlRadioStatus_Tags.UnknownInterface: {
+                    c.writeI32(1);
+                    return;
+                }
+                case RemoteControlRadioStatus_Tags.Status: {
+                    c.writeI32(2);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlRadioBands.writeIntoCursor(inner.bands, c);
+                    FfiConverterTypeRemoteControlRadioOperatingState.writeIntoCursor(inner.operating, c);
+                    FfiConverterTypeRemoteControlRadioSaved.writeIntoCursor(inner.saved, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RemoteControlRadioStatus_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RemoteControlRadioStatus_Tags.UnknownInterface: {
+                    return 4;
+                }
+                case RemoteControlRadioStatus_Tags.Status: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlRadioBands.allocationSize(inner.bands);
+                    size += FfiConverterTypeRemoteControlRadioOperatingState.allocationSize(inner.operating);
+                    size += FfiConverterTypeRemoteControlRadioSaved.allocationSize(inner.saved);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum RemoteControlRadioOutcome {
+    Saved,
+    UnknownInterface,
+    HardwareFailed,
+    PersistenceFailed,
+    RecoveryRequired,
+    Busy,
+    IdentityExhausted,
+    PublicationFailed,
+    InvalidConfiguration
+}
+
+const FfiConverterTypeRemoteControlRadioOutcome = (() => {
+    type TypeName = RemoteControlRadioOutcome;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return RemoteControlRadioOutcome.Saved;
+                case 2: return RemoteControlRadioOutcome.UnknownInterface;
+                case 3: return RemoteControlRadioOutcome.HardwareFailed;
+                case 4: return RemoteControlRadioOutcome.PersistenceFailed;
+                case 5: return RemoteControlRadioOutcome.RecoveryRequired;
+                case 6: return RemoteControlRadioOutcome.Busy;
+                case 7: return RemoteControlRadioOutcome.IdentityExhausted;
+                case 8: return RemoteControlRadioOutcome.PublicationFailed;
+                case 9: return RemoteControlRadioOutcome.InvalidConfiguration;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value) {
+                case RemoteControlRadioOutcome.Saved: return c.writeI32(1);
+                case RemoteControlRadioOutcome.UnknownInterface: return c.writeI32(2);
+                case RemoteControlRadioOutcome.HardwareFailed: return c.writeI32(3);
+                case RemoteControlRadioOutcome.PersistenceFailed: return c.writeI32(4);
+                case RemoteControlRadioOutcome.RecoveryRequired: return c.writeI32(5);
+                case RemoteControlRadioOutcome.Busy: return c.writeI32(6);
+                case RemoteControlRadioOutcome.IdentityExhausted: return c.writeI32(7);
+                case RemoteControlRadioOutcome.PublicationFailed: return c.writeI32(8);
+                case RemoteControlRadioOutcome.InvalidConfiguration: return c.writeI32(9);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return 4;
         }
     }
     return new FFIConverter();
@@ -30908,6 +31654,8 @@ const FfiConverterTypeRemoteControlWifiTransactionStatus = (() => {
 export enum RemoteControlResponse_Tags {
     Describe = "Describe",
     AnnounceSelf = "AnnounceSelf",
+    AppMessage = "AppMessage",
+    WatchInterfaces = "WatchInterfaces",
     InventoryInterfaces = "InventoryInterfaces",
     SetInterfacePower = "SetInterfacePower",
     SetInterfaceMode = "SetInterfaceMode",
@@ -30916,6 +31664,8 @@ export enum RemoteControlResponse_Tags {
     ReplaceInterfaceDiscoveryGroups = "ReplaceInterfaceDiscoveryGroups",
     InventoryInterfacePeers = "InventoryInterfacePeers",
     InventoryInterfaceConfig = "InventoryInterfaceConfig",
+    InspectRadio = "InspectRadio",
+    ConfigureRadio = "ConfigureRadio",
     SetInterfaceLoRaProfile = "SetInterfaceLoRaProfile",
     SetInterfaceWifiStation = "SetInterfaceWifiStation",
     InventoryControllers = "InventoryControllers",
@@ -30936,6 +31686,8 @@ export enum RemoteControlResponse_Tags {
     ConfirmWifiCredentials = "ConfirmWifiCredentials",
     CancelWifiCredentials = "CancelWifiCredentials",
     InspectWifiTransaction = "InspectWifiTransaction",
+    SetNodeName = "SetNodeName",
+    DescribeNodeName = "DescribeNodeName",
     ProtocolError = "ProtocolError"
 }
 export const RemoteControlResponse = (() => {
@@ -30998,6 +31750,68 @@ inner: {value: RemoteControlAnnounceSelfOutcome }): AnnounceSelf_ {
 
         static instanceOf(obj: any): obj is AnnounceSelf_ {
             return obj.tag === RemoteControlResponse_Tags.AnnounceSelf;
+        }
+
+    }
+
+    type AppMessage__interface = {
+        tag: RemoteControlResponse_Tags.AppMessage;
+        inner:
+Readonly<{value: RemoteControlAppMessage}>
+    };
+    class AppMessage_ extends UniffiEnum implements AppMessage__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlResponse";
+        readonly tag = RemoteControlResponse_Tags.AppMessage;
+        readonly inner:
+Readonly<{value: RemoteControlAppMessage}>;
+        constructor(
+inner: {value: RemoteControlAppMessage }) {
+            super("RemoteControlResponse", "AppMessage");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlAppMessage }): AppMessage_ {
+            return new AppMessage_(inner);
+        }
+
+        static instanceOf(obj: any): obj is AppMessage_ {
+            return obj.tag === RemoteControlResponse_Tags.AppMessage;
+        }
+
+    }
+
+    type WatchInterfaces__interface = {
+        tag: RemoteControlResponse_Tags.WatchInterfaces;
+        inner:
+Readonly<{streamId: RemoteControlStreamId}>
+    };
+    class WatchInterfaces_ extends UniffiEnum implements WatchInterfaces__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlResponse";
+        readonly tag = RemoteControlResponse_Tags.WatchInterfaces;
+        readonly inner:
+Readonly<{streamId: RemoteControlStreamId}>;
+        constructor(
+inner: {streamId: RemoteControlStreamId }) {
+            super("RemoteControlResponse", "WatchInterfaces");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {streamId: RemoteControlStreamId }): WatchInterfaces_ {
+            return new WatchInterfaces_(inner);
+        }
+
+        static instanceOf(obj: any): obj is WatchInterfaces_ {
+            return obj.tag === RemoteControlResponse_Tags.WatchInterfaces;
         }
 
     }
@@ -31246,6 +32060,68 @@ inner: {value: RemoteControlInterfaceConfigOutcome }): InventoryInterfaceConfig_
 
         static instanceOf(obj: any): obj is InventoryInterfaceConfig_ {
             return obj.tag === RemoteControlResponse_Tags.InventoryInterfaceConfig;
+        }
+
+    }
+
+    type InspectRadio__interface = {
+        tag: RemoteControlResponse_Tags.InspectRadio;
+        inner:
+Readonly<{value: RemoteControlRadioStatus}>
+    };
+    class InspectRadio_ extends UniffiEnum implements InspectRadio__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlResponse";
+        readonly tag = RemoteControlResponse_Tags.InspectRadio;
+        readonly inner:
+Readonly<{value: RemoteControlRadioStatus}>;
+        constructor(
+inner: {value: RemoteControlRadioStatus }) {
+            super("RemoteControlResponse", "InspectRadio");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlRadioStatus }): InspectRadio_ {
+            return new InspectRadio_(inner);
+        }
+
+        static instanceOf(obj: any): obj is InspectRadio_ {
+            return obj.tag === RemoteControlResponse_Tags.InspectRadio;
+        }
+
+    }
+
+    type ConfigureRadio__interface = {
+        tag: RemoteControlResponse_Tags.ConfigureRadio;
+        inner:
+Readonly<{value: RemoteControlRadioOutcome}>
+    };
+    class ConfigureRadio_ extends UniffiEnum implements ConfigureRadio__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlResponse";
+        readonly tag = RemoteControlResponse_Tags.ConfigureRadio;
+        readonly inner:
+Readonly<{value: RemoteControlRadioOutcome}>;
+        constructor(
+inner: {value: RemoteControlRadioOutcome }) {
+            super("RemoteControlResponse", "ConfigureRadio");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlRadioOutcome }): ConfigureRadio_ {
+            return new ConfigureRadio_(inner);
+        }
+
+        static instanceOf(obj: any): obj is ConfigureRadio_ {
+            return obj.tag === RemoteControlResponse_Tags.ConfigureRadio;
         }
 
     }
@@ -31870,6 +32746,68 @@ inner: {value: RemoteControlWifiTransactionStatus }): InspectWifiTransaction_ {
 
     }
 
+    type SetNodeName__interface = {
+        tag: RemoteControlResponse_Tags.SetNodeName;
+        inner:
+Readonly<{value: RemoteControlApplyOutcome}>
+    };
+    class SetNodeName_ extends UniffiEnum implements SetNodeName__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlResponse";
+        readonly tag = RemoteControlResponse_Tags.SetNodeName;
+        readonly inner:
+Readonly<{value: RemoteControlApplyOutcome}>;
+        constructor(
+inner: {value: RemoteControlApplyOutcome }) {
+            super("RemoteControlResponse", "SetNodeName");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlApplyOutcome }): SetNodeName_ {
+            return new SetNodeName_(inner);
+        }
+
+        static instanceOf(obj: any): obj is SetNodeName_ {
+            return obj.tag === RemoteControlResponse_Tags.SetNodeName;
+        }
+
+    }
+
+    type DescribeNodeName__interface = {
+        tag: RemoteControlResponse_Tags.DescribeNodeName;
+        inner:
+Readonly<{value: RemoteControlNodeName}>
+    };
+    class DescribeNodeName_ extends UniffiEnum implements DescribeNodeName__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlResponse";
+        readonly tag = RemoteControlResponse_Tags.DescribeNodeName;
+        readonly inner:
+Readonly<{value: RemoteControlNodeName}>;
+        constructor(
+inner: {value: RemoteControlNodeName }) {
+            super("RemoteControlResponse", "DescribeNodeName");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlNodeName }): DescribeNodeName_ {
+            return new DescribeNodeName_(inner);
+        }
+
+        static instanceOf(obj: any): obj is DescribeNodeName_ {
+            return obj.tag === RemoteControlResponse_Tags.DescribeNodeName;
+        }
+
+    }
+
     type ProtocolError__interface = {
         tag: RemoteControlResponse_Tags.ProtocolError;
         inner:
@@ -31909,6 +32847,8 @@ inner: {value: RemoteControlProtocolError }): ProtocolError_ {
         instanceOf,
   Describe: Describe_,
   AnnounceSelf: AnnounceSelf_,
+  AppMessage: AppMessage_,
+  WatchInterfaces: WatchInterfaces_,
   InventoryInterfaces: InventoryInterfaces_,
   SetInterfacePower: SetInterfacePower_,
   SetInterfaceMode: SetInterfaceMode_,
@@ -31917,6 +32857,8 @@ inner: {value: RemoteControlProtocolError }): ProtocolError_ {
   ReplaceInterfaceDiscoveryGroups: ReplaceInterfaceDiscoveryGroups_,
   InventoryInterfacePeers: InventoryInterfacePeers_,
   InventoryInterfaceConfig: InventoryInterfaceConfig_,
+  InspectRadio: InspectRadio_,
+  ConfigureRadio: ConfigureRadio_,
   SetInterfaceLoRaProfile: SetInterfaceLoRaProfile_,
   SetInterfaceWifiStation: SetInterfaceWifiStation_,
   InventoryControllers: InventoryControllers_,
@@ -31937,12 +32879,14 @@ inner: {value: RemoteControlProtocolError }): ProtocolError_ {
   ConfirmWifiCredentials: ConfirmWifiCredentials_,
   CancelWifiCredentials: CancelWifiCredentials_,
   InspectWifiTransaction: InspectWifiTransaction_,
+  SetNodeName: SetNodeName_,
+  DescribeNodeName: DescribeNodeName_,
   ProtocolError: ProtocolError_
     });
 
 })();
 export type RemoteControlResponse = InstanceType<
-    typeof RemoteControlResponse['Describe' | 'AnnounceSelf' | 'InventoryInterfaces' | 'SetInterfacePower' | 'SetInterfaceMode' | 'SetInterfaceGroup' | 'InventoryInterfaceDiscoveryGroups' | 'ReplaceInterfaceDiscoveryGroups' | 'InventoryInterfacePeers' | 'InventoryInterfaceConfig' | 'SetInterfaceLoRaProfile' | 'SetInterfaceWifiStation' | 'InventoryControllers' | 'AuthorizeController' | 'RevokeController' | 'DescribeBuild' | 'DescribePower' | 'SleepRadios' | 'WakeRadios' | 'SetSystemPower' | 'SetGnssPower' | 'SetDisplayVisibility' | 'SetDisplayAutoOff' | 'SetStationUplink' | 'SetEspRadioMode' | 'StageWifiCredentials' | 'ActivateWifiCredentials' | 'ConfirmWifiCredentials' | 'CancelWifiCredentials' | 'InspectWifiTransaction' | 'ProtocolError']
+    typeof RemoteControlResponse['Describe' | 'AnnounceSelf' | 'AppMessage' | 'WatchInterfaces' | 'InventoryInterfaces' | 'SetInterfacePower' | 'SetInterfaceMode' | 'SetInterfaceGroup' | 'InventoryInterfaceDiscoveryGroups' | 'ReplaceInterfaceDiscoveryGroups' | 'InventoryInterfacePeers' | 'InventoryInterfaceConfig' | 'InspectRadio' | 'ConfigureRadio' | 'SetInterfaceLoRaProfile' | 'SetInterfaceWifiStation' | 'InventoryControllers' | 'AuthorizeController' | 'RevokeController' | 'DescribeBuild' | 'DescribePower' | 'SleepRadios' | 'WakeRadios' | 'SetSystemPower' | 'SetGnssPower' | 'SetDisplayVisibility' | 'SetDisplayAutoOff' | 'SetStationUplink' | 'SetEspRadioMode' | 'StageWifiCredentials' | 'ActivateWifiCredentials' | 'ConfirmWifiCredentials' | 'CancelWifiCredentials' | 'InspectWifiTransaction' | 'SetNodeName' | 'DescribeNodeName' | 'ProtocolError']
 >;
 
 // FfiConverter for enum RemoteControlResponse
@@ -31953,35 +32897,41 @@ const FfiConverterTypeRemoteControlResponse = (() => {
             switch (c.readI32()) {
                 case 1: return new RemoteControlResponse.Describe({value: FfiConverterTypeRemoteControlDescription.readFromCursor(c) });
                 case 2: return new RemoteControlResponse.AnnounceSelf({value: FfiConverterTypeRemoteControlAnnounceSelfOutcome.readFromCursor(c) });
-                case 3: return new RemoteControlResponse.InventoryInterfaces({value: FfiConverterTypeRemoteControlInterfaceInventory.readFromCursor(c) });
-                case 4: return new RemoteControlResponse.SetInterfacePower({value: FfiConverterTypeRemoteControlPowerOutcome.readFromCursor(c) });
-                case 5: return new RemoteControlResponse.SetInterfaceMode({value: FfiConverterTypeRemoteControlModeOutcome.readFromCursor(c) });
-                case 6: return new RemoteControlResponse.SetInterfaceGroup({value: FfiConverterTypeRemoteControlGroupOutcome.readFromCursor(c) });
-                case 7: return new RemoteControlResponse.InventoryInterfaceDiscoveryGroups({value: FfiConverterTypeRemoteControlDiscoveryGroupsInventoryOutcome.readFromCursor(c) });
-                case 8: return new RemoteControlResponse.ReplaceInterfaceDiscoveryGroups({value: FfiConverterTypeRemoteControlDiscoveryGroupsReplaceOutcome.readFromCursor(c) });
-                case 9: return new RemoteControlResponse.InventoryInterfacePeers({value: FfiConverterTypeRemoteControlInterfacePeersOutcome.readFromCursor(c) });
-                case 10: return new RemoteControlResponse.InventoryInterfaceConfig({value: FfiConverterTypeRemoteControlInterfaceConfigOutcome.readFromCursor(c) });
-                case 11: return new RemoteControlResponse.SetInterfaceLoRaProfile({value: FfiConverterTypeRemoteControlLoRaOutcome.readFromCursor(c) });
-                case 12: return new RemoteControlResponse.SetInterfaceWifiStation({value: FfiConverterTypeRemoteControlWifiStationOutcome.readFromCursor(c) });
-                case 13: return new RemoteControlResponse.InventoryControllers({value: FfiConverterTypeRemoteControlControllerInventory.readFromCursor(c) });
-                case 14: return new RemoteControlResponse.AuthorizeController({value: FfiConverterTypeRemoteControlAuthorizeControllerOutcome.readFromCursor(c) });
-                case 15: return new RemoteControlResponse.RevokeController({value: FfiConverterTypeRemoteControlRevokeControllerOutcome.readFromCursor(c) });
-                case 16: return new RemoteControlResponse.DescribeBuild({value: FfiConverterTypeRemoteControlBuildVersion.readFromCursor(c) });
-                case 17: return new RemoteControlResponse.DescribePower({value: FfiConverterTypeRemoteControlPowerSnapshot.readFromCursor(c) });
-                case 18: return new RemoteControlResponse.SleepRadios({value: FfiConverterTypeRemoteControlSleepOutcome.readFromCursor(c) });
-                case 19: return new RemoteControlResponse.WakeRadios({value: FfiConverterTypeRemoteControlSleepOutcome.readFromCursor(c) });
-                case 20: return new RemoteControlResponse.SetSystemPower({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
-                case 21: return new RemoteControlResponse.SetGnssPower({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
-                case 22: return new RemoteControlResponse.SetDisplayVisibility({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
-                case 23: return new RemoteControlResponse.SetDisplayAutoOff({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
-                case 24: return new RemoteControlResponse.SetStationUplink({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
-                case 25: return new RemoteControlResponse.SetEspRadioMode({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
-                case 26: return new RemoteControlResponse.StageWifiCredentials({value: FfiConverterTypeRemoteControlWifiStageOutcome.readFromCursor(c) });
-                case 27: return new RemoteControlResponse.ActivateWifiCredentials({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
-                case 28: return new RemoteControlResponse.ConfirmWifiCredentials({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
-                case 29: return new RemoteControlResponse.CancelWifiCredentials({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
-                case 30: return new RemoteControlResponse.InspectWifiTransaction({value: FfiConverterTypeRemoteControlWifiTransactionStatus.readFromCursor(c) });
-                case 31: return new RemoteControlResponse.ProtocolError({value: FfiConverterTypeRemoteControlProtocolError.readFromCursor(c) });
+                case 3: return new RemoteControlResponse.AppMessage({value: FfiConverterTypeRemoteControlAppMessage.readFromCursor(c) });
+                case 4: return new RemoteControlResponse.WatchInterfaces({streamId: FfiConverterTypeRemoteControlStreamId.readFromCursor(c) });
+                case 5: return new RemoteControlResponse.InventoryInterfaces({value: FfiConverterTypeRemoteControlInterfaceInventory.readFromCursor(c) });
+                case 6: return new RemoteControlResponse.SetInterfacePower({value: FfiConverterTypeRemoteControlPowerOutcome.readFromCursor(c) });
+                case 7: return new RemoteControlResponse.SetInterfaceMode({value: FfiConverterTypeRemoteControlModeOutcome.readFromCursor(c) });
+                case 8: return new RemoteControlResponse.SetInterfaceGroup({value: FfiConverterTypeRemoteControlGroupOutcome.readFromCursor(c) });
+                case 9: return new RemoteControlResponse.InventoryInterfaceDiscoveryGroups({value: FfiConverterTypeRemoteControlDiscoveryGroupsInventoryOutcome.readFromCursor(c) });
+                case 10: return new RemoteControlResponse.ReplaceInterfaceDiscoveryGroups({value: FfiConverterTypeRemoteControlDiscoveryGroupsReplaceOutcome.readFromCursor(c) });
+                case 11: return new RemoteControlResponse.InventoryInterfacePeers({value: FfiConverterTypeRemoteControlInterfacePeersOutcome.readFromCursor(c) });
+                case 12: return new RemoteControlResponse.InventoryInterfaceConfig({value: FfiConverterTypeRemoteControlInterfaceConfigOutcome.readFromCursor(c) });
+                case 13: return new RemoteControlResponse.InspectRadio({value: FfiConverterTypeRemoteControlRadioStatus.readFromCursor(c) });
+                case 14: return new RemoteControlResponse.ConfigureRadio({value: FfiConverterTypeRemoteControlRadioOutcome.readFromCursor(c) });
+                case 15: return new RemoteControlResponse.SetInterfaceLoRaProfile({value: FfiConverterTypeRemoteControlLoRaOutcome.readFromCursor(c) });
+                case 16: return new RemoteControlResponse.SetInterfaceWifiStation({value: FfiConverterTypeRemoteControlWifiStationOutcome.readFromCursor(c) });
+                case 17: return new RemoteControlResponse.InventoryControllers({value: FfiConverterTypeRemoteControlControllerInventory.readFromCursor(c) });
+                case 18: return new RemoteControlResponse.AuthorizeController({value: FfiConverterTypeRemoteControlAuthorizeControllerOutcome.readFromCursor(c) });
+                case 19: return new RemoteControlResponse.RevokeController({value: FfiConverterTypeRemoteControlRevokeControllerOutcome.readFromCursor(c) });
+                case 20: return new RemoteControlResponse.DescribeBuild({value: FfiConverterTypeRemoteControlBuildVersion.readFromCursor(c) });
+                case 21: return new RemoteControlResponse.DescribePower({value: FfiConverterTypeRemoteControlPowerSnapshot.readFromCursor(c) });
+                case 22: return new RemoteControlResponse.SleepRadios({value: FfiConverterTypeRemoteControlSleepOutcome.readFromCursor(c) });
+                case 23: return new RemoteControlResponse.WakeRadios({value: FfiConverterTypeRemoteControlSleepOutcome.readFromCursor(c) });
+                case 24: return new RemoteControlResponse.SetSystemPower({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
+                case 25: return new RemoteControlResponse.SetGnssPower({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
+                case 26: return new RemoteControlResponse.SetDisplayVisibility({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
+                case 27: return new RemoteControlResponse.SetDisplayAutoOff({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
+                case 28: return new RemoteControlResponse.SetStationUplink({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
+                case 29: return new RemoteControlResponse.SetEspRadioMode({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
+                case 30: return new RemoteControlResponse.StageWifiCredentials({value: FfiConverterTypeRemoteControlWifiStageOutcome.readFromCursor(c) });
+                case 31: return new RemoteControlResponse.ActivateWifiCredentials({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
+                case 32: return new RemoteControlResponse.ConfirmWifiCredentials({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
+                case 33: return new RemoteControlResponse.CancelWifiCredentials({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
+                case 34: return new RemoteControlResponse.InspectWifiTransaction({value: FfiConverterTypeRemoteControlWifiTransactionStatus.readFromCursor(c) });
+                case 35: return new RemoteControlResponse.SetNodeName({value: FfiConverterTypeRemoteControlApplyOutcome.readFromCursor(c) });
+                case 36: return new RemoteControlResponse.DescribeNodeName({value: FfiConverterTypeRemoteControlNodeName.readFromCursor(c) });
+                case 37: return new RemoteControlResponse.ProtocolError({value: FfiConverterTypeRemoteControlProtocolError.readFromCursor(c) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -31999,176 +32949,212 @@ const FfiConverterTypeRemoteControlResponse = (() => {
                     FfiConverterTypeRemoteControlAnnounceSelfOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
-                case RemoteControlResponse_Tags.InventoryInterfaces: {
+                case RemoteControlResponse_Tags.AppMessage: {
                     c.writeI32(3);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlAppMessage.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlResponse_Tags.WatchInterfaces: {
+                    c.writeI32(4);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlStreamId.writeIntoCursor(inner.streamId, c);
+                    return;
+                }
+                case RemoteControlResponse_Tags.InventoryInterfaces: {
+                    c.writeI32(5);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceInventory.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.SetInterfacePower: {
-                    c.writeI32(4);
+                    c.writeI32(6);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlPowerOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.SetInterfaceMode: {
-                    c.writeI32(5);
+                    c.writeI32(7);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlModeOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.SetInterfaceGroup: {
-                    c.writeI32(6);
+                    c.writeI32(8);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlGroupOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.InventoryInterfaceDiscoveryGroups: {
-                    c.writeI32(7);
+                    c.writeI32(9);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlDiscoveryGroupsInventoryOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.ReplaceInterfaceDiscoveryGroups: {
-                    c.writeI32(8);
+                    c.writeI32(10);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlDiscoveryGroupsReplaceOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.InventoryInterfacePeers: {
-                    c.writeI32(9);
+                    c.writeI32(11);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfacePeersOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.InventoryInterfaceConfig: {
-                    c.writeI32(10);
+                    c.writeI32(12);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceConfigOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
+                case RemoteControlResponse_Tags.InspectRadio: {
+                    c.writeI32(13);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlRadioStatus.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlResponse_Tags.ConfigureRadio: {
+                    c.writeI32(14);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlRadioOutcome.writeIntoCursor(inner.value, c);
+                    return;
+                }
                 case RemoteControlResponse_Tags.SetInterfaceLoRaProfile: {
-                    c.writeI32(11);
+                    c.writeI32(15);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlLoRaOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.SetInterfaceWifiStation: {
-                    c.writeI32(12);
+                    c.writeI32(16);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlWifiStationOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.InventoryControllers: {
-                    c.writeI32(13);
+                    c.writeI32(17);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlControllerInventory.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.AuthorizeController: {
-                    c.writeI32(14);
+                    c.writeI32(18);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlAuthorizeControllerOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.RevokeController: {
-                    c.writeI32(15);
+                    c.writeI32(19);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlRevokeControllerOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.DescribeBuild: {
-                    c.writeI32(16);
+                    c.writeI32(20);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlBuildVersion.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.DescribePower: {
-                    c.writeI32(17);
+                    c.writeI32(21);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlPowerSnapshot.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.SleepRadios: {
-                    c.writeI32(18);
+                    c.writeI32(22);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlSleepOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.WakeRadios: {
-                    c.writeI32(19);
+                    c.writeI32(23);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlSleepOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
                 case RemoteControlResponse_Tags.SetSystemPower: {
-                    c.writeI32(20);
-                    const inner = value.inner;
-                    FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
-                    return;
-                }
-                case RemoteControlResponse_Tags.SetGnssPower: {
-                    c.writeI32(21);
-                    const inner = value.inner;
-                    FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
-                    return;
-                }
-                case RemoteControlResponse_Tags.SetDisplayVisibility: {
-                    c.writeI32(22);
-                    const inner = value.inner;
-                    FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
-                    return;
-                }
-                case RemoteControlResponse_Tags.SetDisplayAutoOff: {
-                    c.writeI32(23);
-                    const inner = value.inner;
-                    FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
-                    return;
-                }
-                case RemoteControlResponse_Tags.SetStationUplink: {
                     c.writeI32(24);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
-                case RemoteControlResponse_Tags.SetEspRadioMode: {
+                case RemoteControlResponse_Tags.SetGnssPower: {
                     c.writeI32(25);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
-                case RemoteControlResponse_Tags.StageWifiCredentials: {
+                case RemoteControlResponse_Tags.SetDisplayVisibility: {
                     c.writeI32(26);
                     const inner = value.inner;
-                    FfiConverterTypeRemoteControlWifiStageOutcome.writeIntoCursor(inner.value, c);
+                    FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
-                case RemoteControlResponse_Tags.ActivateWifiCredentials: {
+                case RemoteControlResponse_Tags.SetDisplayAutoOff: {
                     c.writeI32(27);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
-                case RemoteControlResponse_Tags.ConfirmWifiCredentials: {
+                case RemoteControlResponse_Tags.SetStationUplink: {
                     c.writeI32(28);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
-                case RemoteControlResponse_Tags.CancelWifiCredentials: {
+                case RemoteControlResponse_Tags.SetEspRadioMode: {
                     c.writeI32(29);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
                     return;
                 }
-                case RemoteControlResponse_Tags.InspectWifiTransaction: {
+                case RemoteControlResponse_Tags.StageWifiCredentials: {
                     c.writeI32(30);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlWifiStageOutcome.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlResponse_Tags.ActivateWifiCredentials: {
+                    c.writeI32(31);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlResponse_Tags.ConfirmWifiCredentials: {
+                    c.writeI32(32);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlResponse_Tags.CancelWifiCredentials: {
+                    c.writeI32(33);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlResponse_Tags.InspectWifiTransaction: {
+                    c.writeI32(34);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlWifiTransactionStatus.writeIntoCursor(inner.value, c);
                     return;
                 }
+                case RemoteControlResponse_Tags.SetNodeName: {
+                    c.writeI32(35);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlApplyOutcome.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlResponse_Tags.DescribeNodeName: {
+                    c.writeI32(36);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlNodeName.writeIntoCursor(inner.value, c);
+                    return;
+                }
                 case RemoteControlResponse_Tags.ProtocolError: {
-                    c.writeI32(31);
+                    c.writeI32(37);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlProtocolError.writeIntoCursor(inner.value, c);
                     return;
@@ -32190,6 +33176,18 @@ const FfiConverterTypeRemoteControlResponse = (() => {
                     const inner = value.inner;
                     let size = 4;
                     size += FfiConverterTypeRemoteControlAnnounceSelfOutcome.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlResponse_Tags.AppMessage: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlAppMessage.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlResponse_Tags.WatchInterfaces: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlStreamId.allocationSize(inner.streamId);
                     return size;
                 }
                 case RemoteControlResponse_Tags.InventoryInterfaces: {
@@ -32238,6 +33236,18 @@ const FfiConverterTypeRemoteControlResponse = (() => {
                     const inner = value.inner;
                     let size = 4;
                     size += FfiConverterTypeRemoteControlInterfaceConfigOutcome.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlResponse_Tags.InspectRadio: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlRadioStatus.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlResponse_Tags.ConfigureRadio: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlRadioOutcome.allocationSize(inner.value);
                     return size;
                 }
                 case RemoteControlResponse_Tags.SetInterfaceLoRaProfile: {
@@ -32358,6 +33368,18 @@ const FfiConverterTypeRemoteControlResponse = (() => {
                     const inner = value.inner;
                     let size = 4;
                     size += FfiConverterTypeRemoteControlWifiTransactionStatus.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlResponse_Tags.SetNodeName: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlApplyOutcome.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlResponse_Tags.DescribeNodeName: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlNodeName.allocationSize(inner.value);
                     return size;
                 }
                 case RemoteControlResponse_Tags.ProtocolError: {
@@ -37475,6 +38497,8 @@ const FfiConverterTypeRemoteControlStationUplink = (() => {
 export enum RemoteControlRequest_Tags {
     Describe = "Describe",
     AnnounceSelf = "AnnounceSelf",
+    AppMessage = "AppMessage",
+    WatchInterfaces = "WatchInterfaces",
     InventoryInterfaces = "InventoryInterfaces",
     SetInterfacePower = "SetInterfacePower",
     SetInterfaceMode = "SetInterfaceMode",
@@ -37483,6 +38507,8 @@ export enum RemoteControlRequest_Tags {
     ReplaceInterfaceDiscoveryGroups = "ReplaceInterfaceDiscoveryGroups",
     InventoryInterfacePeers = "InventoryInterfacePeers",
     InventoryInterfaceConfig = "InventoryInterfaceConfig",
+    InspectRadio = "InspectRadio",
+    ConfigureRadio = "ConfigureRadio",
     SetInterfaceLoRaProfile = "SetInterfaceLoRaProfile",
     SetInterfaceWifiStation = "SetInterfaceWifiStation",
     InventoryControllers = "InventoryControllers",
@@ -37502,7 +38528,9 @@ export enum RemoteControlRequest_Tags {
     ActivateWifiCredentials = "ActivateWifiCredentials",
     ConfirmWifiCredentials = "ConfirmWifiCredentials",
     CancelWifiCredentials = "CancelWifiCredentials",
-    InspectWifiTransaction = "InspectWifiTransaction"
+    InspectWifiTransaction = "InspectWifiTransaction",
+    SetNodeName = "SetNodeName",
+    DescribeNodeName = "DescribeNodeName"
 }
 export const RemoteControlRequest = (() => {
 
@@ -37550,6 +38578,68 @@ export const RemoteControlRequest = (() => {
 
         static instanceOf(obj: any): obj is AnnounceSelf_ {
             return obj.tag === RemoteControlRequest_Tags.AnnounceSelf;
+        }
+
+    }
+
+    type AppMessage__interface = {
+        tag: RemoteControlRequest_Tags.AppMessage;
+        inner:
+Readonly<{value: RemoteControlAppMessage}>
+    };
+    class AppMessage_ extends UniffiEnum implements AppMessage__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRequest";
+        readonly tag = RemoteControlRequest_Tags.AppMessage;
+        readonly inner:
+Readonly<{value: RemoteControlAppMessage}>;
+        constructor(
+inner: {value: RemoteControlAppMessage }) {
+            super("RemoteControlRequest", "AppMessage");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {value: RemoteControlAppMessage }): AppMessage_ {
+            return new AppMessage_(inner);
+        }
+
+        static instanceOf(obj: any): obj is AppMessage_ {
+            return obj.tag === RemoteControlRequest_Tags.AppMessage;
+        }
+
+    }
+
+    type WatchInterfaces__interface = {
+        tag: RemoteControlRequest_Tags.WatchInterfaces;
+        inner:
+Readonly<{streamId: RemoteControlStreamId}>
+    };
+    class WatchInterfaces_ extends UniffiEnum implements WatchInterfaces__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRequest";
+        readonly tag = RemoteControlRequest_Tags.WatchInterfaces;
+        readonly inner:
+Readonly<{streamId: RemoteControlStreamId}>;
+        constructor(
+inner: {streamId: RemoteControlStreamId }) {
+            super("RemoteControlRequest", "WatchInterfaces");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {streamId: RemoteControlStreamId }): WatchInterfaces_ {
+            return new WatchInterfaces_(inner);
+        }
+
+        static instanceOf(obj: any): obj is WatchInterfaces_ {
+            return obj.tag === RemoteControlRequest_Tags.WatchInterfaces;
         }
 
     }
@@ -37798,6 +38888,68 @@ inner: {id: RemoteControlInterfaceId }): InventoryInterfaceConfig_ {
 
         static instanceOf(obj: any): obj is InventoryInterfaceConfig_ {
             return obj.tag === RemoteControlRequest_Tags.InventoryInterfaceConfig;
+        }
+
+    }
+
+    type InspectRadio__interface = {
+        tag: RemoteControlRequest_Tags.InspectRadio;
+        inner:
+Readonly<{id: RemoteControlInterfaceId}>
+    };
+    class InspectRadio_ extends UniffiEnum implements InspectRadio__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRequest";
+        readonly tag = RemoteControlRequest_Tags.InspectRadio;
+        readonly inner:
+Readonly<{id: RemoteControlInterfaceId}>;
+        constructor(
+inner: {id: RemoteControlInterfaceId }) {
+            super("RemoteControlRequest", "InspectRadio");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {id: RemoteControlInterfaceId }): InspectRadio_ {
+            return new InspectRadio_(inner);
+        }
+
+        static instanceOf(obj: any): obj is InspectRadio_ {
+            return obj.tag === RemoteControlRequest_Tags.InspectRadio;
+        }
+
+    }
+
+    type ConfigureRadio__interface = {
+        tag: RemoteControlRequest_Tags.ConfigureRadio;
+        inner:
+Readonly<{id: RemoteControlInterfaceId; configuration: RemoteControlRadioConfiguration}>
+    };
+    class ConfigureRadio_ extends UniffiEnum implements ConfigureRadio__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRequest";
+        readonly tag = RemoteControlRequest_Tags.ConfigureRadio;
+        readonly inner:
+Readonly<{id: RemoteControlInterfaceId; configuration: RemoteControlRadioConfiguration}>;
+        constructor(
+inner: {id: RemoteControlInterfaceId; configuration: RemoteControlRadioConfiguration }) {
+            super("RemoteControlRequest", "ConfigureRadio");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {id: RemoteControlInterfaceId; configuration: RemoteControlRadioConfiguration }): ConfigureRadio_ {
+            return new ConfigureRadio_(inner);
+        }
+
+        static instanceOf(obj: any): obj is ConfigureRadio_ {
+            return obj.tag === RemoteControlRequest_Tags.ConfigureRadio;
         }
 
     }
@@ -38387,6 +39539,61 @@ inner: {revision: RemoteControlWifiCredentialRevision }): CancelWifiCredentials_
 
     }
 
+    type SetNodeName__interface = {
+        tag: RemoteControlRequest_Tags.SetNodeName;
+        inner:
+Readonly<{name: RemoteControlNodeName}>
+    };
+    class SetNodeName_ extends UniffiEnum implements SetNodeName__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRequest";
+        readonly tag = RemoteControlRequest_Tags.SetNodeName;
+        readonly inner:
+Readonly<{name: RemoteControlNodeName}>;
+        constructor(
+inner: {name: RemoteControlNodeName }) {
+            super("RemoteControlRequest", "SetNodeName");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {name: RemoteControlNodeName }): SetNodeName_ {
+            return new SetNodeName_(inner);
+        }
+
+        static instanceOf(obj: any): obj is SetNodeName_ {
+            return obj.tag === RemoteControlRequest_Tags.SetNodeName;
+        }
+
+    }
+
+    type DescribeNodeName__interface = {
+        tag: RemoteControlRequest_Tags.DescribeNodeName
+    };
+    class DescribeNodeName_ extends UniffiEnum implements DescribeNodeName__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteControlRequest";
+        readonly tag = RemoteControlRequest_Tags.DescribeNodeName;
+        constructor() {
+            super("RemoteControlRequest", "DescribeNodeName");
+        }
+
+        static new(): DescribeNodeName_ {
+            return new DescribeNodeName_();
+        }
+
+        static instanceOf(obj: any): obj is DescribeNodeName_ {
+            return obj.tag === RemoteControlRequest_Tags.DescribeNodeName;
+        }
+
+    }
+
     function instanceOf(obj: any): obj is RemoteControlRequest {
         return obj[uniffiTypeNameSymbol] === "RemoteControlRequest";
     }
@@ -38395,6 +39602,8 @@ inner: {revision: RemoteControlWifiCredentialRevision }): CancelWifiCredentials_
         instanceOf,
   Describe: Describe_,
   AnnounceSelf: AnnounceSelf_,
+  AppMessage: AppMessage_,
+  WatchInterfaces: WatchInterfaces_,
   InventoryInterfaces: InventoryInterfaces_,
   SetInterfacePower: SetInterfacePower_,
   SetInterfaceMode: SetInterfaceMode_,
@@ -38403,6 +39612,8 @@ inner: {revision: RemoteControlWifiCredentialRevision }): CancelWifiCredentials_
   ReplaceInterfaceDiscoveryGroups: ReplaceInterfaceDiscoveryGroups_,
   InventoryInterfacePeers: InventoryInterfacePeers_,
   InventoryInterfaceConfig: InventoryInterfaceConfig_,
+  InspectRadio: InspectRadio_,
+  ConfigureRadio: ConfigureRadio_,
   SetInterfaceLoRaProfile: SetInterfaceLoRaProfile_,
   SetInterfaceWifiStation: SetInterfaceWifiStation_,
   InventoryControllers: InventoryControllers_,
@@ -38422,12 +39633,14 @@ inner: {revision: RemoteControlWifiCredentialRevision }): CancelWifiCredentials_
   ActivateWifiCredentials: ActivateWifiCredentials_,
   ConfirmWifiCredentials: ConfirmWifiCredentials_,
   CancelWifiCredentials: CancelWifiCredentials_,
-  InspectWifiTransaction: InspectWifiTransaction_
+  InspectWifiTransaction: InspectWifiTransaction_,
+  SetNodeName: SetNodeName_,
+  DescribeNodeName: DescribeNodeName_
     });
 
 })();
 export type RemoteControlRequest = InstanceType<
-    typeof RemoteControlRequest['Describe' | 'AnnounceSelf' | 'InventoryInterfaces' | 'SetInterfacePower' | 'SetInterfaceMode' | 'SetInterfaceGroup' | 'InventoryInterfaceDiscoveryGroups' | 'ReplaceInterfaceDiscoveryGroups' | 'InventoryInterfacePeers' | 'InventoryInterfaceConfig' | 'SetInterfaceLoRaProfile' | 'SetInterfaceWifiStation' | 'InventoryControllers' | 'AuthorizeController' | 'RevokeController' | 'DescribeBuild' | 'DescribePower' | 'SleepRadios' | 'WakeRadios' | 'SetSystemPower' | 'SetGnssPower' | 'SetDisplayVisibility' | 'SetDisplayAutoOff' | 'SetStationUplink' | 'SetEspRadioMode' | 'StageWifiCredentials' | 'ActivateWifiCredentials' | 'ConfirmWifiCredentials' | 'CancelWifiCredentials' | 'InspectWifiTransaction']
+    typeof RemoteControlRequest['Describe' | 'AnnounceSelf' | 'AppMessage' | 'WatchInterfaces' | 'InventoryInterfaces' | 'SetInterfacePower' | 'SetInterfaceMode' | 'SetInterfaceGroup' | 'InventoryInterfaceDiscoveryGroups' | 'ReplaceInterfaceDiscoveryGroups' | 'InventoryInterfacePeers' | 'InventoryInterfaceConfig' | 'InspectRadio' | 'ConfigureRadio' | 'SetInterfaceLoRaProfile' | 'SetInterfaceWifiStation' | 'InventoryControllers' | 'AuthorizeController' | 'RevokeController' | 'DescribeBuild' | 'DescribePower' | 'SleepRadios' | 'WakeRadios' | 'SetSystemPower' | 'SetGnssPower' | 'SetDisplayVisibility' | 'SetDisplayAutoOff' | 'SetStationUplink' | 'SetEspRadioMode' | 'StageWifiCredentials' | 'ActivateWifiCredentials' | 'ConfirmWifiCredentials' | 'CancelWifiCredentials' | 'InspectWifiTransaction' | 'SetNodeName' | 'DescribeNodeName']
 >;
 
 // FfiConverter for enum RemoteControlRequest
@@ -38438,34 +39651,40 @@ const FfiConverterTypeRemoteControlRequest = (() => {
             switch (c.readI32()) {
                 case 1: return new RemoteControlRequest.Describe();
                 case 2: return new RemoteControlRequest.AnnounceSelf();
-                case 3: return new RemoteControlRequest.InventoryInterfaces({page: FfiConverterTypeRemoteControlInterfacePage.readFromCursor(c) });
-                case 4: return new RemoteControlRequest.SetInterfacePower({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), power: FfiConverterTypeRemoteControlInterfacePower.readFromCursor(c) });
-                case 5: return new RemoteControlRequest.SetInterfaceMode({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), mode: FfiConverterTypeRemoteControlInterfaceMode.readFromCursor(c) });
-                case 6: return new RemoteControlRequest.SetInterfaceGroup({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), group: FfiConverterTypeRemoteControlInterfaceGroup.readFromCursor(c) });
-                case 7: return new RemoteControlRequest.InventoryInterfaceDiscoveryGroups({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c) });
-                case 8: return new RemoteControlRequest.ReplaceInterfaceDiscoveryGroups({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), groups: FfiConverterTypeRemoteControlDiscoveryGroups.readFromCursor(c) });
-                case 9: return new RemoteControlRequest.InventoryInterfacePeers({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), page: FfiConverterTypeRemoteControlPeerPage.readFromCursor(c) });
-                case 10: return new RemoteControlRequest.InventoryInterfaceConfig({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c) });
-                case 11: return new RemoteControlRequest.SetInterfaceLoRaProfile({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), profile: FfiConverterTypeRemoteControlLoRaProfile.readFromCursor(c) });
-                case 12: return new RemoteControlRequest.SetInterfaceWifiStation({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), station: FfiConverterTypeRemoteControlWifiStation.readFromCursor(c) });
-                case 13: return new RemoteControlRequest.InventoryControllers({page: FfiConverterTypeRemoteControlControllerPage.readFromCursor(c) });
-                case 14: return new RemoteControlRequest.AuthorizeController({controller: FfiConverterTypeRemoteControlControllerIdentity.readFromCursor(c), permittedRequests: FfiConverterTypeRemoteControlRequestSet.readFromCursor(c) });
-                case 15: return new RemoteControlRequest.RevokeController({hash: FfiConverterTypeRemoteControlIdentityHash.readFromCursor(c) });
-                case 16: return new RemoteControlRequest.DescribeBuild();
-                case 17: return new RemoteControlRequest.DescribePower();
-                case 18: return new RemoteControlRequest.SleepRadios();
-                case 19: return new RemoteControlRequest.WakeRadios();
-                case 20: return new RemoteControlRequest.SetSystemPower({power: FfiConverterTypeRemoteControlSystemPower.readFromCursor(c) });
-                case 21: return new RemoteControlRequest.SetGnssPower({power: FfiConverterTypeRemoteControlGnssPower.readFromCursor(c) });
-                case 22: return new RemoteControlRequest.SetDisplayVisibility({visibility: FfiConverterTypeRemoteControlDisplayVisibility.readFromCursor(c) });
-                case 23: return new RemoteControlRequest.SetDisplayAutoOff({autoOff: FfiConverterTypeRemoteControlDisplayAutoOff.readFromCursor(c) });
-                case 24: return new RemoteControlRequest.SetStationUplink({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), uplink: FfiConverterTypeRemoteControlStationUplink.readFromCursor(c) });
-                case 25: return new RemoteControlRequest.SetEspRadioMode({mode: FfiConverterTypeRemoteControlEspRadioMode.readFromCursor(c) });
-                case 26: return new RemoteControlRequest.StageWifiCredentials({station: FfiConverterTypeRemoteControlWifiStation.readFromCursor(c) });
-                case 27: return new RemoteControlRequest.ActivateWifiCredentials({revision: FfiConverterTypeRemoteControlWifiCredentialRevision.readFromCursor(c) });
-                case 28: return new RemoteControlRequest.ConfirmWifiCredentials({revision: FfiConverterTypeRemoteControlWifiCredentialRevision.readFromCursor(c) });
-                case 29: return new RemoteControlRequest.CancelWifiCredentials({revision: FfiConverterTypeRemoteControlWifiCredentialRevision.readFromCursor(c) });
-                case 30: return new RemoteControlRequest.InspectWifiTransaction();
+                case 3: return new RemoteControlRequest.AppMessage({value: FfiConverterTypeRemoteControlAppMessage.readFromCursor(c) });
+                case 4: return new RemoteControlRequest.WatchInterfaces({streamId: FfiConverterTypeRemoteControlStreamId.readFromCursor(c) });
+                case 5: return new RemoteControlRequest.InventoryInterfaces({page: FfiConverterTypeRemoteControlInterfacePage.readFromCursor(c) });
+                case 6: return new RemoteControlRequest.SetInterfacePower({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), power: FfiConverterTypeRemoteControlInterfacePower.readFromCursor(c) });
+                case 7: return new RemoteControlRequest.SetInterfaceMode({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), mode: FfiConverterTypeRemoteControlInterfaceMode.readFromCursor(c) });
+                case 8: return new RemoteControlRequest.SetInterfaceGroup({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), group: FfiConverterTypeRemoteControlInterfaceGroup.readFromCursor(c) });
+                case 9: return new RemoteControlRequest.InventoryInterfaceDiscoveryGroups({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c) });
+                case 10: return new RemoteControlRequest.ReplaceInterfaceDiscoveryGroups({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), groups: FfiConverterTypeRemoteControlDiscoveryGroups.readFromCursor(c) });
+                case 11: return new RemoteControlRequest.InventoryInterfacePeers({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), page: FfiConverterTypeRemoteControlPeerPage.readFromCursor(c) });
+                case 12: return new RemoteControlRequest.InventoryInterfaceConfig({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c) });
+                case 13: return new RemoteControlRequest.InspectRadio({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c) });
+                case 14: return new RemoteControlRequest.ConfigureRadio({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), configuration: FfiConverterTypeRemoteControlRadioConfiguration.readFromCursor(c) });
+                case 15: return new RemoteControlRequest.SetInterfaceLoRaProfile({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), profile: FfiConverterTypeRemoteControlLoRaProfile.readFromCursor(c) });
+                case 16: return new RemoteControlRequest.SetInterfaceWifiStation({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), station: FfiConverterTypeRemoteControlWifiStation.readFromCursor(c) });
+                case 17: return new RemoteControlRequest.InventoryControllers({page: FfiConverterTypeRemoteControlControllerPage.readFromCursor(c) });
+                case 18: return new RemoteControlRequest.AuthorizeController({controller: FfiConverterTypeRemoteControlControllerIdentity.readFromCursor(c), permittedRequests: FfiConverterTypeRemoteControlRequestSet.readFromCursor(c) });
+                case 19: return new RemoteControlRequest.RevokeController({hash: FfiConverterTypeRemoteControlIdentityHash.readFromCursor(c) });
+                case 20: return new RemoteControlRequest.DescribeBuild();
+                case 21: return new RemoteControlRequest.DescribePower();
+                case 22: return new RemoteControlRequest.SleepRadios();
+                case 23: return new RemoteControlRequest.WakeRadios();
+                case 24: return new RemoteControlRequest.SetSystemPower({power: FfiConverterTypeRemoteControlSystemPower.readFromCursor(c) });
+                case 25: return new RemoteControlRequest.SetGnssPower({power: FfiConverterTypeRemoteControlGnssPower.readFromCursor(c) });
+                case 26: return new RemoteControlRequest.SetDisplayVisibility({visibility: FfiConverterTypeRemoteControlDisplayVisibility.readFromCursor(c) });
+                case 27: return new RemoteControlRequest.SetDisplayAutoOff({autoOff: FfiConverterTypeRemoteControlDisplayAutoOff.readFromCursor(c) });
+                case 28: return new RemoteControlRequest.SetStationUplink({id: FfiConverterTypeRemoteControlInterfaceId.readFromCursor(c), uplink: FfiConverterTypeRemoteControlStationUplink.readFromCursor(c) });
+                case 29: return new RemoteControlRequest.SetEspRadioMode({mode: FfiConverterTypeRemoteControlEspRadioMode.readFromCursor(c) });
+                case 30: return new RemoteControlRequest.StageWifiCredentials({station: FfiConverterTypeRemoteControlWifiStation.readFromCursor(c) });
+                case 31: return new RemoteControlRequest.ActivateWifiCredentials({revision: FfiConverterTypeRemoteControlWifiCredentialRevision.readFromCursor(c) });
+                case 32: return new RemoteControlRequest.ConfirmWifiCredentials({revision: FfiConverterTypeRemoteControlWifiCredentialRevision.readFromCursor(c) });
+                case 33: return new RemoteControlRequest.CancelWifiCredentials({revision: FfiConverterTypeRemoteControlWifiCredentialRevision.readFromCursor(c) });
+                case 34: return new RemoteControlRequest.InspectWifiTransaction();
+                case 35: return new RemoteControlRequest.SetNodeName({name: FfiConverterTypeRemoteControlNodeName.readFromCursor(c) });
+                case 36: return new RemoteControlRequest.DescribeNodeName();
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -38479,171 +39698,206 @@ const FfiConverterTypeRemoteControlRequest = (() => {
                     c.writeI32(2);
                     return;
                 }
-                case RemoteControlRequest_Tags.InventoryInterfaces: {
+                case RemoteControlRequest_Tags.AppMessage: {
                     c.writeI32(3);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlAppMessage.writeIntoCursor(inner.value, c);
+                    return;
+                }
+                case RemoteControlRequest_Tags.WatchInterfaces: {
+                    c.writeI32(4);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlStreamId.writeIntoCursor(inner.streamId, c);
+                    return;
+                }
+                case RemoteControlRequest_Tags.InventoryInterfaces: {
+                    c.writeI32(5);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfacePage.writeIntoCursor(inner.page, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.SetInterfacePower: {
-                    c.writeI32(4);
+                    c.writeI32(6);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
                     FfiConverterTypeRemoteControlInterfacePower.writeIntoCursor(inner.power, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.SetInterfaceMode: {
-                    c.writeI32(5);
+                    c.writeI32(7);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
                     FfiConverterTypeRemoteControlInterfaceMode.writeIntoCursor(inner.mode, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.SetInterfaceGroup: {
-                    c.writeI32(6);
+                    c.writeI32(8);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
                     FfiConverterTypeRemoteControlInterfaceGroup.writeIntoCursor(inner.group, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.InventoryInterfaceDiscoveryGroups: {
-                    c.writeI32(7);
+                    c.writeI32(9);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.ReplaceInterfaceDiscoveryGroups: {
-                    c.writeI32(8);
+                    c.writeI32(10);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
                     FfiConverterTypeRemoteControlDiscoveryGroups.writeIntoCursor(inner.groups, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.InventoryInterfacePeers: {
-                    c.writeI32(9);
+                    c.writeI32(11);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
                     FfiConverterTypeRemoteControlPeerPage.writeIntoCursor(inner.page, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.InventoryInterfaceConfig: {
-                    c.writeI32(10);
+                    c.writeI32(12);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
                     return;
                 }
+                case RemoteControlRequest_Tags.InspectRadio: {
+                    c.writeI32(13);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
+                    return;
+                }
+                case RemoteControlRequest_Tags.ConfigureRadio: {
+                    c.writeI32(14);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
+                    FfiConverterTypeRemoteControlRadioConfiguration.writeIntoCursor(inner.configuration, c);
+                    return;
+                }
                 case RemoteControlRequest_Tags.SetInterfaceLoRaProfile: {
-                    c.writeI32(11);
+                    c.writeI32(15);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
                     FfiConverterTypeRemoteControlLoRaProfile.writeIntoCursor(inner.profile, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.SetInterfaceWifiStation: {
-                    c.writeI32(12);
+                    c.writeI32(16);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
                     FfiConverterTypeRemoteControlWifiStation.writeIntoCursor(inner.station, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.InventoryControllers: {
-                    c.writeI32(13);
+                    c.writeI32(17);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlControllerPage.writeIntoCursor(inner.page, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.AuthorizeController: {
-                    c.writeI32(14);
+                    c.writeI32(18);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlControllerIdentity.writeIntoCursor(inner.controller, c);
                     FfiConverterTypeRemoteControlRequestSet.writeIntoCursor(inner.permittedRequests, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.RevokeController: {
-                    c.writeI32(15);
+                    c.writeI32(19);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlIdentityHash.writeIntoCursor(inner.hash, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.DescribeBuild: {
-                    c.writeI32(16);
+                    c.writeI32(20);
                     return;
                 }
                 case RemoteControlRequest_Tags.DescribePower: {
-                    c.writeI32(17);
+                    c.writeI32(21);
                     return;
                 }
                 case RemoteControlRequest_Tags.SleepRadios: {
-                    c.writeI32(18);
+                    c.writeI32(22);
                     return;
                 }
                 case RemoteControlRequest_Tags.WakeRadios: {
-                    c.writeI32(19);
+                    c.writeI32(23);
                     return;
                 }
                 case RemoteControlRequest_Tags.SetSystemPower: {
-                    c.writeI32(20);
+                    c.writeI32(24);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlSystemPower.writeIntoCursor(inner.power, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.SetGnssPower: {
-                    c.writeI32(21);
+                    c.writeI32(25);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlGnssPower.writeIntoCursor(inner.power, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.SetDisplayVisibility: {
-                    c.writeI32(22);
+                    c.writeI32(26);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlDisplayVisibility.writeIntoCursor(inner.visibility, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.SetDisplayAutoOff: {
-                    c.writeI32(23);
+                    c.writeI32(27);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlDisplayAutoOff.writeIntoCursor(inner.autoOff, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.SetStationUplink: {
-                    c.writeI32(24);
+                    c.writeI32(28);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlInterfaceId.writeIntoCursor(inner.id, c);
                     FfiConverterTypeRemoteControlStationUplink.writeIntoCursor(inner.uplink, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.SetEspRadioMode: {
-                    c.writeI32(25);
+                    c.writeI32(29);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlEspRadioMode.writeIntoCursor(inner.mode, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.StageWifiCredentials: {
-                    c.writeI32(26);
+                    c.writeI32(30);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlWifiStation.writeIntoCursor(inner.station, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.ActivateWifiCredentials: {
-                    c.writeI32(27);
+                    c.writeI32(31);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlWifiCredentialRevision.writeIntoCursor(inner.revision, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.ConfirmWifiCredentials: {
-                    c.writeI32(28);
+                    c.writeI32(32);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlWifiCredentialRevision.writeIntoCursor(inner.revision, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.CancelWifiCredentials: {
-                    c.writeI32(29);
+                    c.writeI32(33);
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlWifiCredentialRevision.writeIntoCursor(inner.revision, c);
                     return;
                 }
                 case RemoteControlRequest_Tags.InspectWifiTransaction: {
-                    c.writeI32(30);
+                    c.writeI32(34);
+                    return;
+                }
+                case RemoteControlRequest_Tags.SetNodeName: {
+                    c.writeI32(35);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlNodeName.writeIntoCursor(inner.name, c);
+                    return;
+                }
+                case RemoteControlRequest_Tags.DescribeNodeName: {
+                    c.writeI32(36);
                     return;
                 }
                 default:
@@ -38658,6 +39912,18 @@ const FfiConverterTypeRemoteControlRequest = (() => {
                 }
                 case RemoteControlRequest_Tags.AnnounceSelf: {
                     return 4;
+                }
+                case RemoteControlRequest_Tags.AppMessage: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlAppMessage.allocationSize(inner.value);
+                    return size;
+                }
+                case RemoteControlRequest_Tags.WatchInterfaces: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlStreamId.allocationSize(inner.streamId);
+                    return size;
                 }
                 case RemoteControlRequest_Tags.InventoryInterfaces: {
                     const inner = value.inner;
@@ -38710,6 +39976,19 @@ const FfiConverterTypeRemoteControlRequest = (() => {
                     const inner = value.inner;
                     let size = 4;
                     size += FfiConverterTypeRemoteControlInterfaceId.allocationSize(inner.id);
+                    return size;
+                }
+                case RemoteControlRequest_Tags.InspectRadio: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlInterfaceId.allocationSize(inner.id);
+                    return size;
+                }
+                case RemoteControlRequest_Tags.ConfigureRadio: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlInterfaceId.allocationSize(inner.id);
+                    size += FfiConverterTypeRemoteControlRadioConfiguration.allocationSize(inner.configuration);
                     return size;
                 }
                 case RemoteControlRequest_Tags.SetInterfaceLoRaProfile: {
@@ -38819,6 +40098,15 @@ const FfiConverterTypeRemoteControlRequest = (() => {
                     return size;
                 }
                 case RemoteControlRequest_Tags.InspectWifiTransaction: {
+                    return 4;
+                }
+                case RemoteControlRequest_Tags.SetNodeName: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlNodeName.allocationSize(inner.name);
+                    return size;
+                }
+                case RemoteControlRequest_Tags.DescribeNodeName: {
                     return 4;
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
@@ -41260,6 +42548,9 @@ const FfiConverterSequenceTypeRemoteControlRequestKind = new FfiConverterArray(F
 // FfiConverter for Array<RemoteControlIdentityHash>
 const FfiConverterSequenceTypeRemoteControlIdentityHash = new FfiConverterArray(FfiConverterTypeRemoteControlIdentityHash);
 
+// FfiConverter for number | undefined
+const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
+
 // FfiConverter for Array<RemoteControlInterfaceEntry>
 const FfiConverterSequenceTypeRemoteControlInterfaceEntry = new FfiConverterArray(FfiConverterTypeRemoteControlInterfaceEntry);
 
@@ -41495,6 +42786,7 @@ export default Object.freeze({
     FfiConverterTypeRemoteControlAnnounceBuildError,
     FfiConverterTypeRemoteControlAnnounceSelfFailure,
     FfiConverterTypeRemoteControlAnnounceSelfOutcome,
+    FfiConverterTypeRemoteControlAppMessage,
     FfiConverterTypeRemoteControlApplyHashmapUpdateError,
     FfiConverterTypeRemoteControlApplyOutcome,
     FfiConverterTypeRemoteControlApproveRemoteControlControllerPairing,
@@ -41602,6 +42894,7 @@ export default Object.freeze({
     FfiConverterTypeRemoteControlNativeRemoteControlError,
     FfiConverterTypeRemoteControlNativeRemoteControlEvent,
     FfiConverterTypeRemoteControlNativeSubmitError,
+    FfiConverterTypeRemoteControlNodeName,
     FfiConverterTypeRemoteControlOpenRemoteControlPairing,
     FfiConverterTypeRemoteControlOpenRemoteControlPairingControlError,
     FfiConverterTypeRemoteControlOpenRemoteControlPairingFailure,
@@ -41648,7 +42941,13 @@ export default Object.freeze({
     FfiConverterTypeRemoteControlPowerOutcome,
     FfiConverterTypeRemoteControlPowerSnapshot,
     FfiConverterTypeRemoteControlProtocolError,
+    FfiConverterTypeRemoteControlRadioBands,
+    FfiConverterTypeRemoteControlRadioConfiguration,
     FfiConverterTypeRemoteControlRadioIndication,
+    FfiConverterTypeRemoteControlRadioOperatingState,
+    FfiConverterTypeRemoteControlRadioOutcome,
+    FfiConverterTypeRemoteControlRadioSaved,
+    FfiConverterTypeRemoteControlRadioStatus,
     FfiConverterTypeRemoteControlReceiveRemoteControlControllerPairingCompletedOutcome,
     FfiConverterTypeRemoteControlReceiveRemoteControlControllerPairingOfferOutcome,
     FfiConverterTypeRemoteControlRegisterDestinationError,
@@ -41692,6 +42991,7 @@ export default Object.freeze({
     FfiConverterTypeRemoteControlSleepOutcome,
     FfiConverterTypeRemoteControlSnrQuarterDb,
     FfiConverterTypeRemoteControlStationUplink,
+    FfiConverterTypeRemoteControlStreamId,
     FfiConverterTypeRemoteControlSystemPower,
     FfiConverterTypeRemoteControlTablePushError,
     FfiConverterTypeRemoteControlTargetAccess,

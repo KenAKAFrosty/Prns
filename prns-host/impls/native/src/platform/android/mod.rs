@@ -264,7 +264,7 @@ mod tests {
             app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
-            remote_control: RemoteControlService::Unavailable,
+            remote_control: RemoteControlService::Unavailable.into(),
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event: |_event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {},
