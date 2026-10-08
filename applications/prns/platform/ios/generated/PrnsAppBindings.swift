@@ -2946,11 +2946,11 @@ public struct RemoteInterfaceEntry: Equatable, Hashable {
     public var txBytes: UInt64
     public var rxBytes: UInt64
     public var links: UInt32
-    public var rateBytesPerSec: UInt32
+    public var rateBytesPerSec: UInt32?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(interfaceId: Data, kind: String, mode: RemoteInterfaceMode, connection: RemoteConnectionState, enabled: Bool, txBytes: UInt64, rxBytes: UInt64, links: UInt32, rateBytesPerSec: UInt32) {
+    public init(interfaceId: Data, kind: String, mode: RemoteInterfaceMode, connection: RemoteConnectionState, enabled: Bool, txBytes: UInt64, rxBytes: UInt64, links: UInt32, rateBytesPerSec: UInt32?) {
         self.interfaceId = interfaceId
         self.kind = kind
         self.mode = mode
@@ -2986,7 +2986,7 @@ public struct FfiConverterTypeRemoteInterfaceEntry: FfiConverterRustBuffer {
                 txBytes: FfiConverterUInt64.read(from: &buf),
                 rxBytes: FfiConverterUInt64.read(from: &buf),
                 links: FfiConverterUInt32.read(from: &buf),
-                rateBytesPerSec: FfiConverterUInt32.read(from: &buf)
+                rateBytesPerSec: FfiConverterOptionUInt32.read(from: &buf)
         )
     }
 
@@ -2999,7 +2999,7 @@ public struct FfiConverterTypeRemoteInterfaceEntry: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.txBytes, into: &buf)
         FfiConverterUInt64.write(value.rxBytes, into: &buf)
         FfiConverterUInt32.write(value.links, into: &buf)
-        FfiConverterUInt32.write(value.rateBytesPerSec, into: &buf)
+        FfiConverterOptionUInt32.write(value.rateBytesPerSec, into: &buf)
     }
 }
 
@@ -3278,13 +3278,13 @@ public struct RemotePeerEntry: Equatable, Hashable {
     public var rxBytes: UInt64
     public var links: UInt32
     public var destinations: UInt32
-    public var rateBytesPerSec: UInt32
+    public var rateBytesPerSec: UInt32?
     public var radio: RemotePeerRadio
     public var details: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(peerId: Data, connection: RemoteConnectionState, txBytes: UInt64, rxBytes: UInt64, links: UInt32, destinations: UInt32, rateBytesPerSec: UInt32, radio: RemotePeerRadio, details: String) {
+    public init(peerId: Data, connection: RemoteConnectionState, txBytes: UInt64, rxBytes: UInt64, links: UInt32, destinations: UInt32, rateBytesPerSec: UInt32?, radio: RemotePeerRadio, details: String) {
         self.peerId = peerId
         self.connection = connection
         self.txBytes = txBytes
@@ -3318,7 +3318,7 @@ public struct FfiConverterTypeRemotePeerEntry: FfiConverterRustBuffer {
                 rxBytes: FfiConverterUInt64.read(from: &buf),
                 links: FfiConverterUInt32.read(from: &buf),
                 destinations: FfiConverterUInt32.read(from: &buf),
-                rateBytesPerSec: FfiConverterUInt32.read(from: &buf),
+                rateBytesPerSec: FfiConverterOptionUInt32.read(from: &buf),
                 radio: FfiConverterTypeRemotePeerRadio.read(from: &buf),
                 details: FfiConverterString.read(from: &buf)
         )
@@ -3331,7 +3331,7 @@ public struct FfiConverterTypeRemotePeerEntry: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.rxBytes, into: &buf)
         FfiConverterUInt32.write(value.links, into: &buf)
         FfiConverterUInt32.write(value.destinations, into: &buf)
-        FfiConverterUInt32.write(value.rateBytesPerSec, into: &buf)
+        FfiConverterOptionUInt32.write(value.rateBytesPerSec, into: &buf)
         FfiConverterTypeRemotePeerRadio.write(value.radio, into: &buf)
         FfiConverterString.write(value.details, into: &buf)
     }
@@ -8183,6 +8183,12 @@ public enum RemoteControlRequestKind: Equatable, Hashable {
     case inspectWifiTransaction
     case inventoryInterfaceDiscoveryGroups
     case replaceInterfaceDiscoveryGroups
+    case appMessage
+    case watchInterfaces
+    case setNodeName
+    case describeNodeName
+    case inspectRadio
+    case configureRadio
 
 
 
@@ -8263,6 +8269,18 @@ public struct FfiConverterTypeRemoteControlRequestKind: FfiConverterRustBuffer {
         case 29: return .inventoryInterfaceDiscoveryGroups
 
         case 30: return .replaceInterfaceDiscoveryGroups
+
+        case 31: return .appMessage
+
+        case 32: return .watchInterfaces
+
+        case 33: return .setNodeName
+
+        case 34: return .describeNodeName
+
+        case 35: return .inspectRadio
+
+        case 36: return .configureRadio
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -8390,6 +8408,30 @@ public struct FfiConverterTypeRemoteControlRequestKind: FfiConverterRustBuffer {
 
         case .replaceInterfaceDiscoveryGroups:
             writeInt(&buf, Int32(30))
+
+
+        case .appMessage:
+            writeInt(&buf, Int32(31))
+
+
+        case .watchInterfaces:
+            writeInt(&buf, Int32(32))
+
+
+        case .setNodeName:
+            writeInt(&buf, Int32(33))
+
+
+        case .describeNodeName:
+            writeInt(&buf, Int32(34))
+
+
+        case .inspectRadio:
+            writeInt(&buf, Int32(35))
+
+
+        case .configureRadio:
+            writeInt(&buf, Int32(36))
 
         }
     }
@@ -9547,6 +9589,7 @@ public enum RemoteRadioFamily: Equatable, Hashable {
 
     case bluetooth
     case wifi
+    case haLow
     case loRa
 
 
@@ -9573,7 +9616,9 @@ public struct FfiConverterTypeRemoteRadioFamily: FfiConverterRustBuffer {
 
         case 2: return .wifi
 
-        case 3: return .loRa
+        case 3: return .haLow
+
+        case 4: return .loRa
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -9591,8 +9636,12 @@ public struct FfiConverterTypeRemoteRadioFamily: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
 
 
-        case .loRa:
+        case .haLow:
             writeInt(&buf, Int32(3))
+
+
+        case .loRa:
+            writeInt(&buf, Int32(4))
 
         }
     }

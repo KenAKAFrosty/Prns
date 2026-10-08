@@ -528,7 +528,9 @@ pub(super) fn read_failure(error: RemoteControlTargetOperationError) -> Failure 
             SendError::NodeStopped,
         )) => RemoteManagementFailureStage::Node,
         RemoteControlTargetOperationError::Exchange(
-            RemoteControlError::Response(_) | RemoteControlError::UnexpectedResponse { .. },
+            RemoteControlError::Response(_)
+            | RemoteControlError::UnexpectedResponse { .. }
+            | RemoteControlError::UnexpectedStream { .. },
         ) => RemoteManagementFailureStage::Response,
         RemoteControlTargetOperationError::Exchange(_) => RemoteManagementFailureStage::Request,
     };

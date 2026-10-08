@@ -90,7 +90,7 @@ pub(super) fn project_interfaces(
                 tx_bytes: entry.tx_bytes,
                 rx_bytes: entry.rx_bytes,
                 links: entry.links,
-                rate_bytes_per_sec: entry.rate_bytes_per_sec,
+                rate_bytes_per_sec: entry.rate_bytes_per_sec.map(|rate| rate.get()),
             })
             .collect(),
         next,
@@ -176,7 +176,7 @@ pub(super) fn project_peers(
                 rx_bytes: peer.rx_bytes,
                 links: peer.links,
                 destinations: peer.destinations,
-                rate_bytes_per_sec: peer.rate_bytes_per_sec,
+                rate_bytes_per_sec: peer.rate_bytes_per_sec.map(|rate| rate.get()),
                 radio: project_radio(peer.radio),
                 details: peer.details.to_string(),
             })
@@ -222,18 +222,12 @@ fn project_radio(radio: RadioIndication) -> RemotePeerRadio {
             snr_quarter_db: None,
             quality_tenths_percent: None,
         },
-        RadioIndication::Wifi(WifiIndication::Pending) => RemotePeerRadio::Pending {
-            family: RemoteRadioFamily::Wifi,
-        },
-        RadioIndication::Wifi(WifiIndication::Unavailable) => RemotePeerRadio::Unavailable {
-            family: RemoteRadioFamily::Wifi,
-        },
-        RadioIndication::Wifi(WifiIndication::Rssi(rssi)) => RemotePeerRadio::Measured {
-            family: RemoteRadioFamily::Wifi,
-            rssi_dbm: rssi.get(),
-            snr_quarter_db: None,
-            quality_tenths_percent: None,
-        },
+        RadioIndication::Wifi(indication) => {
+            project_wifi_radio(indication, RemoteRadioFamily::Wifi)
+        }
+        RadioIndication::HaLow(indication) => {
+            project_wifi_radio(indication, RemoteRadioFamily::HaLow)
+        }
         RadioIndication::LoRa(LoRaIndication::Pending) => RemotePeerRadio::Pending {
             family: RemoteRadioFamily::LoRa,
         },
@@ -245,6 +239,19 @@ fn project_radio(radio: RadioIndication) -> RemotePeerRadio {
                 quality_tenths_percent: quality.map(|value| value.tenths_percent()),
             }
         }
+    }
+}
+
+fn project_wifi_radio(indication: WifiIndication, family: RemoteRadioFamily) -> RemotePeerRadio {
+    match indication {
+        WifiIndication::Pending => RemotePeerRadio::Pending { family },
+        WifiIndication::Unavailable => RemotePeerRadio::Unavailable { family },
+        WifiIndication::Rssi(rssi) => RemotePeerRadio::Measured {
+            family,
+            rssi_dbm: rssi.get(),
+            snr_quarter_db: None,
+            quality_tenths_percent: None,
+        },
     }
 }
 
@@ -278,5 +285,38 @@ pub(super) fn project_lora(profile: RadioProfile) -> RemoteLoRaProfile {
         coding_rate: coding_rate.denominator(),
         tx_power_dbm: profile.tx_power().dbm(),
         preamble_symbols: profile.preamble().count(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use personal_rns::interfaces::RssiDbm;
+
+    #[test]
+    fn halow_signal_preserves_radio_family_and_measurement_state() {
+        assert_eq!(
+            project_radio(RadioIndication::HaLow(WifiIndication::Pending)),
+            RemotePeerRadio::Pending {
+                family: RemoteRadioFamily::HaLow
+            }
+        );
+        assert_eq!(
+            project_radio(RadioIndication::HaLow(WifiIndication::Unavailable)),
+            RemotePeerRadio::Unavailable {
+                family: RemoteRadioFamily::HaLow
+            }
+        );
+        assert_eq!(
+            project_radio(RadioIndication::HaLow(WifiIndication::Rssi(RssiDbm::new(
+                -61
+            )))),
+            RemotePeerRadio::Measured {
+                family: RemoteRadioFamily::HaLow,
+                rssi_dbm: -61,
+                snr_quarter_db: None,
+                quality_tenths_percent: None,
+            }
+        );
     }
 }

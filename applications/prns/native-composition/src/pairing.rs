@@ -631,6 +631,12 @@ pub fn request_kinds(requests: &RemoteControlRequestSet) -> Vec<RemoteControlReq
             CoreRequest::ReplaceInterfaceDiscoveryGroups => {
                 RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups
             }
+            CoreRequest::AppMessage => RemoteControlRequestKind::AppMessage,
+            CoreRequest::WatchInterfaces => RemoteControlRequestKind::WatchInterfaces,
+            CoreRequest::SetNodeName => RemoteControlRequestKind::SetNodeName,
+            CoreRequest::DescribeNodeName => RemoteControlRequestKind::DescribeNodeName,
+            CoreRequest::InspectRadio => RemoteControlRequestKind::InspectRadio,
+            CoreRequest::ConfigureRadio => RemoteControlRequestKind::ConfigureRadio,
         })
         .collect()
 }
@@ -679,6 +685,12 @@ mod tests {
                 RemoteControlRequestKind::InspectWifiTransaction,
                 RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
                 RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
+                RemoteControlRequestKind::AppMessage,
+                RemoteControlRequestKind::WatchInterfaces,
+                RemoteControlRequestKind::SetNodeName,
+                RemoteControlRequestKind::DescribeNodeName,
+                RemoteControlRequestKind::InspectRadio,
+                RemoteControlRequestKind::ConfigureRadio,
             ]
         );
     }

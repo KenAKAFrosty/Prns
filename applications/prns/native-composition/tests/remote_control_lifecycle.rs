@@ -107,8 +107,9 @@ impl TargetHarness {
                     RemoteControlInitialControllerGrants::Nobody,
                     RemoteControlSelfAnnouncement::Destination(endpoint.destination_hash()),
                 )
+                .into()
             } else {
-                service(identity_secrets)
+                service(identity_secrets).into()
             },
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: personal_rns::runtime::NoRemoteControlHostControls,

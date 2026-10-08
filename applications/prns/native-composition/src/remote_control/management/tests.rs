@@ -102,7 +102,7 @@ fn entry(byte: u8) -> core::RemoteControlInterfaceEntry {
         tx_bytes: u64::MAX,
         rx_bytes: u64::MAX - 1,
         links: 2,
-        rate_bytes_per_sec: 16,
+        rate_bytes_per_sec: std::num::NonZeroU32::new(16),
     }
 }
 
@@ -149,6 +149,18 @@ fn interface_page_preserves_counters_cursor_and_detects_nonprogress() {
             next: None
         }
     );
+}
+
+#[test]
+fn interface_rates_preserve_unknown_and_measured_values() {
+    let mut inventory = core::RemoteControlInterfaceInventory::empty();
+    let mut unknown = entry(1);
+    unknown.rate_bytes_per_sec = None;
+    inventory.push(unknown).expect("unknown entry fits");
+    inventory.push(entry(2)).expect("measured entry fits");
+    let page = project_interfaces(inventory, None).expect("valid page");
+    assert_eq!(page.entries[0].rate_bytes_per_sec, None);
+    assert_eq!(page.entries[1].rate_bytes_per_sec, Some(16));
 }
 
 #[test]

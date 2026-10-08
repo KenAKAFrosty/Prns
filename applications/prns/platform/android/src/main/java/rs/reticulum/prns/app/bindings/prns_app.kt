@@ -3272,7 +3272,7 @@ data class RemoteInterfaceEntry (
     ,
     var `links`: kotlin.UInt
     ,
-    var `rateBytesPerSec`: kotlin.UInt
+    var `rateBytesPerSec`: kotlin.UInt?
 
 ){
 
@@ -3297,7 +3297,7 @@ public object FfiConverterTypeRemoteInterfaceEntry: FfiConverterRustBuffer<Remot
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterUInt.read(buf),
-            FfiConverterUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
         )
     }
 
@@ -3310,7 +3310,7 @@ public object FfiConverterTypeRemoteInterfaceEntry: FfiConverterRustBuffer<Remot
             FfiConverterULong.allocationSize(value.`txBytes`) +
             FfiConverterULong.allocationSize(value.`rxBytes`) +
             FfiConverterUInt.allocationSize(value.`links`) +
-            FfiConverterUInt.allocationSize(value.`rateBytesPerSec`)
+            FfiConverterOptionalUInt.allocationSize(value.`rateBytesPerSec`)
     )
 
     override fun write(value: RemoteInterfaceEntry, buf: ByteBuffer) {
@@ -3322,7 +3322,7 @@ public object FfiConverterTypeRemoteInterfaceEntry: FfiConverterRustBuffer<Remot
             FfiConverterULong.write(value.`txBytes`, buf)
             FfiConverterULong.write(value.`rxBytes`, buf)
             FfiConverterUInt.write(value.`links`, buf)
-            FfiConverterUInt.write(value.`rateBytesPerSec`, buf)
+            FfiConverterOptionalUInt.write(value.`rateBytesPerSec`, buf)
     }
 }
 
@@ -3529,7 +3529,7 @@ data class RemotePeerEntry (
     ,
     var `destinations`: kotlin.UInt
     ,
-    var `rateBytesPerSec`: kotlin.UInt
+    var `rateBytesPerSec`: kotlin.UInt?
     ,
     var `radio`: RemotePeerRadio
     ,
@@ -3556,7 +3556,7 @@ public object FfiConverterTypeRemotePeerEntry: FfiConverterRustBuffer<RemotePeer
             FfiConverterULong.read(buf),
             FfiConverterUInt.read(buf),
             FfiConverterUInt.read(buf),
-            FfiConverterUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
             FfiConverterTypeRemotePeerRadio.read(buf),
             FfiConverterString.read(buf),
         )
@@ -3569,7 +3569,7 @@ public object FfiConverterTypeRemotePeerEntry: FfiConverterRustBuffer<RemotePeer
             FfiConverterULong.allocationSize(value.`rxBytes`) +
             FfiConverterUInt.allocationSize(value.`links`) +
             FfiConverterUInt.allocationSize(value.`destinations`) +
-            FfiConverterUInt.allocationSize(value.`rateBytesPerSec`) +
+            FfiConverterOptionalUInt.allocationSize(value.`rateBytesPerSec`) +
             FfiConverterTypeRemotePeerRadio.allocationSize(value.`radio`) +
             FfiConverterString.allocationSize(value.`details`)
     )
@@ -3581,7 +3581,7 @@ public object FfiConverterTypeRemotePeerEntry: FfiConverterRustBuffer<RemotePeer
             FfiConverterULong.write(value.`rxBytes`, buf)
             FfiConverterUInt.write(value.`links`, buf)
             FfiConverterUInt.write(value.`destinations`, buf)
-            FfiConverterUInt.write(value.`rateBytesPerSec`, buf)
+            FfiConverterOptionalUInt.write(value.`rateBytesPerSec`, buf)
             FfiConverterTypeRemotePeerRadio.write(value.`radio`, buf)
             FfiConverterString.write(value.`details`, buf)
     }
@@ -8478,7 +8478,13 @@ enum class RemoteControlRequestKind {
     CANCEL_WIFI_CREDENTIALS,
     INSPECT_WIFI_TRANSACTION,
     INVENTORY_INTERFACE_DISCOVERY_GROUPS,
-    REPLACE_INTERFACE_DISCOVERY_GROUPS;
+    REPLACE_INTERFACE_DISCOVERY_GROUPS,
+    APP_MESSAGE,
+    WATCH_INTERFACES,
+    SET_NODE_NAME,
+    DESCRIBE_NODE_NAME,
+    INSPECT_RADIO,
+    CONFIGURE_RADIO;
 
 
 
@@ -9666,6 +9672,7 @@ enum class RemoteRadioFamily {
 
     BLUETOOTH,
     WIFI,
+    HA_LOW,
     LO_RA;
 
 

@@ -4626,7 +4626,13 @@ export enum RemoteControlRequestKind {
     CancelWifiCredentials,
     InspectWifiTransaction,
     InventoryInterfaceDiscoveryGroups,
-    ReplaceInterfaceDiscoveryGroups
+    ReplaceInterfaceDiscoveryGroups,
+    AppMessage,
+    WatchInterfaces,
+    SetNodeName,
+    DescribeNodeName,
+    InspectRadio,
+    ConfigureRadio
 }
 
 const FfiConverterTypeRemoteControlRequestKind = (() => {
@@ -4664,6 +4670,12 @@ const FfiConverterTypeRemoteControlRequestKind = (() => {
                 case 28: return RemoteControlRequestKind.InspectWifiTransaction;
                 case 29: return RemoteControlRequestKind.InventoryInterfaceDiscoveryGroups;
                 case 30: return RemoteControlRequestKind.ReplaceInterfaceDiscoveryGroups;
+                case 31: return RemoteControlRequestKind.AppMessage;
+                case 32: return RemoteControlRequestKind.WatchInterfaces;
+                case 33: return RemoteControlRequestKind.SetNodeName;
+                case 34: return RemoteControlRequestKind.DescribeNodeName;
+                case 35: return RemoteControlRequestKind.InspectRadio;
+                case 36: return RemoteControlRequestKind.ConfigureRadio;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -4699,6 +4711,12 @@ const FfiConverterTypeRemoteControlRequestKind = (() => {
                 case RemoteControlRequestKind.InspectWifiTransaction: return c.writeI32(28);
                 case RemoteControlRequestKind.InventoryInterfaceDiscoveryGroups: return c.writeI32(29);
                 case RemoteControlRequestKind.ReplaceInterfaceDiscoveryGroups: return c.writeI32(30);
+                case RemoteControlRequestKind.AppMessage: return c.writeI32(31);
+                case RemoteControlRequestKind.WatchInterfaces: return c.writeI32(32);
+                case RemoteControlRequestKind.SetNodeName: return c.writeI32(33);
+                case RemoteControlRequestKind.DescribeNodeName: return c.writeI32(34);
+                case RemoteControlRequestKind.InspectRadio: return c.writeI32(35);
+                case RemoteControlRequestKind.ConfigureRadio: return c.writeI32(36);
             }
         }
         allocationSize(value: TypeName): number {
@@ -8872,7 +8890,7 @@ export type RemoteInterfaceEntry = {
     txBytes: bigint,
     rxBytes: bigint,
     links: number,
-    rateBytesPerSec: number
+    rateBytesPerSec?: number | undefined
 }
 
 /**
@@ -8904,7 +8922,7 @@ const FfiConverterTypeRemoteInterfaceEntry = (() => {
                 txBytes: FfiConverterUInt64.readFromCursor(c),
                 rxBytes: FfiConverterUInt64.readFromCursor(c),
                 links: FfiConverterUInt32.readFromCursor(c),
-                rateBytesPerSec: FfiConverterUInt32.readFromCursor(c)
+                rateBytesPerSec: FfiConverterOptionalUInt32.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
@@ -8916,7 +8934,7 @@ const FfiConverterTypeRemoteInterfaceEntry = (() => {
             FfiConverterUInt64.writeIntoCursor(value.txBytes, c);
             FfiConverterUInt64.writeIntoCursor(value.rxBytes, c);
             FfiConverterUInt32.writeIntoCursor(value.links, c);
-            FfiConverterUInt32.writeIntoCursor(value.rateBytesPerSec, c);
+            FfiConverterOptionalUInt32.writeIntoCursor(value.rateBytesPerSec, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUint8Array.allocationSize(value.interfaceId) +
@@ -8927,7 +8945,7 @@ const FfiConverterTypeRemoteInterfaceEntry = (() => {
              FfiConverterUInt64.allocationSize(value.txBytes) +
              FfiConverterUInt64.allocationSize(value.rxBytes) +
              FfiConverterUInt32.allocationSize(value.links) +
-             FfiConverterUInt32.allocationSize(value.rateBytesPerSec);
+             FfiConverterOptionalUInt32.allocationSize(value.rateBytesPerSec);
 
         }
     };
@@ -9110,6 +9128,7 @@ const FfiConverterTypeRemoteNodeOverview = (() => {
 export enum RemoteRadioFamily {
     Bluetooth,
     Wifi,
+    HaLow,
     LoRa
 }
 
@@ -9120,7 +9139,8 @@ const FfiConverterTypeRemoteRadioFamily = (() => {
             switch (c.readI32()) {
                 case 1: return RemoteRadioFamily.Bluetooth;
                 case 2: return RemoteRadioFamily.Wifi;
-                case 3: return RemoteRadioFamily.LoRa;
+                case 3: return RemoteRadioFamily.HaLow;
+                case 4: return RemoteRadioFamily.LoRa;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -9128,7 +9148,8 @@ const FfiConverterTypeRemoteRadioFamily = (() => {
             switch (value) {
                 case RemoteRadioFamily.Bluetooth: return c.writeI32(1);
                 case RemoteRadioFamily.Wifi: return c.writeI32(2);
-                case RemoteRadioFamily.LoRa: return c.writeI32(3);
+                case RemoteRadioFamily.HaLow: return c.writeI32(3);
+                case RemoteRadioFamily.LoRa: return c.writeI32(4);
             }
         }
         allocationSize(value: TypeName): number {
@@ -9367,7 +9388,7 @@ export type RemotePeerEntry = {
     rxBytes: bigint,
     links: number,
     destinations: number,
-    rateBytesPerSec: number,
+    rateBytesPerSec?: number | undefined,
     radio: RemotePeerRadio,
     details: string
 }
@@ -9399,7 +9420,7 @@ const FfiConverterTypeRemotePeerEntry = (() => {
                 rxBytes: FfiConverterUInt64.readFromCursor(c),
                 links: FfiConverterUInt32.readFromCursor(c),
                 destinations: FfiConverterUInt32.readFromCursor(c),
-                rateBytesPerSec: FfiConverterUInt32.readFromCursor(c),
+                rateBytesPerSec: FfiConverterOptionalUInt32.readFromCursor(c),
                 radio: FfiConverterTypeRemotePeerRadio.readFromCursor(c),
                 details: FfiConverterString.readFromCursor(c)
             };
@@ -9411,7 +9432,7 @@ const FfiConverterTypeRemotePeerEntry = (() => {
             FfiConverterUInt64.writeIntoCursor(value.rxBytes, c);
             FfiConverterUInt32.writeIntoCursor(value.links, c);
             FfiConverterUInt32.writeIntoCursor(value.destinations, c);
-            FfiConverterUInt32.writeIntoCursor(value.rateBytesPerSec, c);
+            FfiConverterOptionalUInt32.writeIntoCursor(value.rateBytesPerSec, c);
             FfiConverterTypeRemotePeerRadio.writeIntoCursor(value.radio, c);
             FfiConverterString.writeIntoCursor(value.details, c);
         }
@@ -9422,7 +9443,7 @@ const FfiConverterTypeRemotePeerEntry = (() => {
              FfiConverterUInt64.allocationSize(value.rxBytes) +
              FfiConverterUInt32.allocationSize(value.links) +
              FfiConverterUInt32.allocationSize(value.destinations) +
-             FfiConverterUInt32.allocationSize(value.rateBytesPerSec) +
+             FfiConverterOptionalUInt32.allocationSize(value.rateBytesPerSec) +
              FfiConverterTypeRemotePeerRadio.allocationSize(value.radio) +
              FfiConverterString.allocationSize(value.details);
 

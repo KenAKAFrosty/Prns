@@ -59,7 +59,7 @@ impl RemoteControlHostControls for Controls {
                             tx_bytes: u64::MAX,
                             rx_bytes: 10,
                             links: 1,
-                            rate_bytes_per_sec: 20,
+                            rate_bytes_per_sec: std::num::NonZeroU32::new(20),
                         })
                         .expect("entry fits");
                 }
@@ -147,7 +147,7 @@ async fn controller_access_operations_respect_authority_and_protected_grants() {
             let grants = [(controller_identity, authority), (operator, core::RemoteControlControllerAuthority::Operator), (administrator, core::RemoteControlControllerAuthority::Administrator)].map(|(identity, authority)| core::RemoteControlControllerGrant::new(identity, authority, core::RemoteControlRequestSet::all_operator()).expect("fixture grant"));
             let target = PrnsNode::new(PrnsNodeRecipe {
                 transport_identity: None,
-                remote_control: core::RemoteControlService::with_capabilities(target_secrets, core::RemoteControlInitialControllerGrants::Grants(core::RemoteControlControllerGrants::try_from(grants.as_slice()).expect("initial grants")), core::RemoteControlSelfAnnouncement::Unavailable, core::RemoteControlCapabilities::from_requests(available).expect("describe supported")),
+                remote_control: core::RemoteControlService::with_capabilities(target_secrets, core::RemoteControlInitialControllerGrants::Grants(core::RemoteControlControllerGrants::try_from(grants.as_slice()).expect("initial grants")), core::RemoteControlSelfAnnouncement::Unavailable, core::RemoteControlCapabilities::from_requests(available).expect("describe supported")).into(),
                 pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
                 app_state: personal_rns::runtime::NoRemoteControlHostControls, storage: GrowableHeap,
                 request_endpoints: request_endpoints![], on_event: |_, _| {}, interfaces: ManuallyAttached,
@@ -159,7 +159,7 @@ async fn controller_access_operations_respect_authority_and_protected_grants() {
             let _server = target_handle.supervise(server);
             let controller = PrnsNode::new(PrnsNodeRecipe {
                 transport_identity: None,
-                remote_control: core::RemoteControlService::new(controller_secrets, core::RemoteControlInitialControllerGrants::Nobody, core::RemoteControlSelfAnnouncement::Unavailable),
+                remote_control: core::RemoteControlService::new(controller_secrets, core::RemoteControlInitialControllerGrants::Nobody, core::RemoteControlSelfAnnouncement::Unavailable).into(),
                 pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
                 app_state: personal_rns::runtime::NoRemoteControlHostControls, storage: GrowableHeap,
                 request_endpoints: request_endpoints![], on_event: |_, _| {}, interfaces: ManuallyAttached,
@@ -223,9 +223,9 @@ async fn management_uses_authenticated_public_operations_and_preserves_ambiguous
         let held_read = Arc::new(AtomicBool::new(false));
         let target = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
-            remote_control: core::RemoteControlService::with_capabilities(target_secrets, core::RemoteControlInitialControllerGrants::Grants(core::RemoteControlControllerGrants::try_from(grants.as_slice()).expect("initial grants")), core::RemoteControlSelfAnnouncement::Unavailable, core::RemoteControlCapabilities::from_requests(available).expect("describe supported")),
+            remote_control: personal_rns::runtime::RemoteControlNodeSetup::new(core::RemoteControlService::with_capabilities(target_secrets, core::RemoteControlInitialControllerGrants::Grants(core::RemoteControlControllerGrants::try_from(grants.as_slice()).expect("initial grants")), core::RemoteControlSelfAnnouncement::Unavailable, core::RemoteControlCapabilities::from_requests(available).expect("describe supported"))).with_controls(personal_rns::runtime::RemoteControlSupportedHost::new(Controls { writes: Arc::clone(&writes), hold: Arc::clone(&hold), held_read: Arc::clone(&held_read) }, available)),
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-            app_state: Controls { writes: Arc::clone(&writes), hold: Arc::clone(&hold), held_read: Arc::clone(&held_read) }, storage: GrowableHeap,
+            app_state: personal_rns::runtime::NoRemoteControlHostControls, storage: GrowableHeap,
             request_endpoints: request_endpoints![], on_event: |_, _| {}, interfaces: ManuallyAttached,
             persistence: NodePersistence::custom_dir(directory.path().join("target")).expect("target persistence"),
         });
@@ -235,7 +235,7 @@ async fn management_uses_authenticated_public_operations_and_preserves_ambiguous
         let _server = target_handle.supervise(server);
         let controller = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
-            remote_control: core::RemoteControlService::new(controller_secrets, core::RemoteControlInitialControllerGrants::Nobody, core::RemoteControlSelfAnnouncement::Unavailable),
+            remote_control: core::RemoteControlService::new(controller_secrets, core::RemoteControlInitialControllerGrants::Nobody, core::RemoteControlSelfAnnouncement::Unavailable).into(),
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: personal_rns::runtime::NoRemoteControlHostControls, storage: GrowableHeap,
             request_endpoints: request_endpoints![], on_event: |_, _| {}, interfaces: ManuallyAttached,

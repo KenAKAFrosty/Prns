@@ -677,6 +677,12 @@ pub enum RemoteControlRequestKind {
     InspectWifiTransaction,
     InventoryInterfaceDiscoveryGroups,
     ReplaceInterfaceDiscoveryGroups,
+    AppMessage,
+    WatchInterfaces,
+    SetNodeName,
+    DescribeNodeName,
+    InspectRadio,
+    ConfigureRadio,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

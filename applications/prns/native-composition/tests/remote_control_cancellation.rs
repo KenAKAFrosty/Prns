@@ -89,7 +89,7 @@ async fn cancelling_a_connected_describe_retires_both_tcp_links() {
             let received = Arc::new(Notify::new());
             let target = PrnsNode::new(PrnsNodeRecipe {
                 transport_identity: None,
-                remote_control: RemoteControlService::Unavailable,
+                remote_control: RemoteControlService::Unavailable.into(),
                 pre_configured_destinations: [destination],
                 app_state: HeldDescribeState {
                     controller: controller_identity,
@@ -113,7 +113,7 @@ async fn cancelling_a_connected_describe_retires_both_tcp_links() {
                     controller_secrets,
                     RemoteControlInitialControllerGrants::Nobody,
                     RemoteControlSelfAnnouncement::Unavailable,
-                ),
+                ).into(),
                 pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
                 app_state: personal_rns::runtime::NoRemoteControlHostControls,
                 storage: GrowableHeap,

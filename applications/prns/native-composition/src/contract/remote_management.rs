@@ -103,7 +103,7 @@ pub struct RemoteInterfaceEntry {
     pub tx_bytes: u64,
     pub rx_bytes: u64,
     pub links: u32,
-    pub rate_bytes_per_sec: u32,
+    pub rate_bytes_per_sec: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,7 +214,7 @@ pub struct RemotePeerEntry {
     pub rx_bytes: u64,
     pub links: u32,
     pub destinations: u32,
-    pub rate_bytes_per_sec: u32,
+    pub rate_bytes_per_sec: Option<u32>,
     pub radio: RemotePeerRadio,
     pub details: String,
 }
@@ -242,6 +242,7 @@ pub enum RemotePeerRadio {
 pub enum RemoteRadioFamily {
     Bluetooth,
     Wifi,
+    HaLow,
     LoRa,
 }
 

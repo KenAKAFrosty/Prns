@@ -109,14 +109,14 @@ async fn wifi_workflow_uses_authenticated_typed_operations_and_confirms_only_whe
         let state = Arc::new(Mutex::new(State { transaction: Transaction::Confirmed { revision: initial_revision }, next_revision: 2, confirmed_revision: initial_revision, ready: false, writes: 0 }));
         let target = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
-            remote_control: core::RemoteControlService::with_capabilities(target_secrets, core::RemoteControlInitialControllerGrants::Grants(core::RemoteControlControllerGrants::try_from(grants.as_slice()).expect("initial grants")), core::RemoteControlSelfAnnouncement::Unavailable, core::RemoteControlCapabilities::from_requests(available).expect("capabilities")),
-            pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0], app_state: Controls(Arc::clone(&state)), storage: GrowableHeap, request_endpoints: request_endpoints![], on_event: |_, _| {}, interfaces: ManuallyAttached,
+            remote_control: personal_rns::runtime::RemoteControlNodeSetup::new(core::RemoteControlService::with_capabilities(target_secrets, core::RemoteControlInitialControllerGrants::Grants(core::RemoteControlControllerGrants::try_from(grants.as_slice()).expect("initial grants")), core::RemoteControlSelfAnnouncement::Unavailable, core::RemoteControlCapabilities::from_requests(available).expect("capabilities"))).with_controls(personal_rns::runtime::RemoteControlSupportedHost::new(Controls(Arc::clone(&state)), available)),
+            pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0], app_state: personal_rns::runtime::NoRemoteControlHostControls, storage: GrowableHeap, request_endpoints: request_endpoints![], on_event: |_, _| {}, interfaces: ManuallyAttached,
             persistence: NodePersistence::custom_dir(directory.path().join("target")).expect("target persistence"),
         });
         let target_handle = target.handle();
         let server = TcpServer::bind("127.0.0.1:0").await.expect("server"); let address = server.local_addr().expect("address").to_string(); let _server = target_handle.supervise(server);
         let controller = PrnsNode::new(PrnsNodeRecipe {
-            transport_identity: None, remote_control: core::RemoteControlService::new(controller_secrets, core::RemoteControlInitialControllerGrants::Nobody, core::RemoteControlSelfAnnouncement::Unavailable),
+            transport_identity: None, remote_control: core::RemoteControlService::new(controller_secrets, core::RemoteControlInitialControllerGrants::Nobody, core::RemoteControlSelfAnnouncement::Unavailable).into(),
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0], app_state: personal_rns::runtime::NoRemoteControlHostControls, storage: GrowableHeap, request_endpoints: request_endpoints![], on_event: |_, _| {}, interfaces: ManuallyAttached,
             persistence: NodePersistence::custom_dir(directory.path().join("controller")).expect("controller persistence"),
         });
