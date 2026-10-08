@@ -451,7 +451,8 @@ fn reticulum_profile_maps_to_lr1110_configuration() {
                 coding_rate: CodingRate::Cr4_5,
             },
             packet: LoraPacket {
-                preamble_symbols: 18,
+                // RNode preamble floor for SF7/500 kHz (24 ms target), above the stored 18.
+                preamble_symbols: 94,
                 header: HeaderMode::Explicit,
                 crc: PayloadCrc::Enabled,
                 invert_iq: InvertIq::Standard,
@@ -611,10 +612,11 @@ fn command_stream_matches_lr1110_protocol_and_board_policy() {
     assert!(has(&[0x02, 0x0f, 0x07, 0x06, 0x01, 0x00]));
     assert!(has(&[0x02, 0x15, 0x01, 0x01, 0x05, 0x07]));
     assert!(has(&[0x02, 0x11, 22, 0x02]));
-    assert!(has(&[0x02, 0x10, 0x00, 0x12, 0x00, 0xff, 0x01, 0x00]));
+    // Packet params carry the 94-symbol RNode preamble floor (0x005e).
+    assert!(has(&[0x02, 0x10, 0x00, 0x5e, 0x00, 0xff, 0x01, 0x00]));
     assert!(has(&[0x02, 0x27, 0x01]));
     assert!(has(&[0x01, 0x13, 0x00, 0xc0, 0x04, 0xfc, 0, 0, 0, 0]));
-    assert!(has(&[0x02, 0x10, 0x00, 0x12, 0x00, 16, 0x01, 0x00]));
+    assert!(has(&[0x02, 0x10, 0x00, 0x5e, 0x00, 16, 0x01, 0x00]));
     assert!(has(b"\x01\x09PRNS-LR1110-SMOK"));
     assert!(has(&[0x02, 0x0a, 0x00, 0x00, 0x00]));
     assert!(has(&[0x02, 0x09, 0xff, 0xff, 0xff]));
