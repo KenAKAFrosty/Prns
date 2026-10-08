@@ -40,13 +40,38 @@ describe("Pairing access summary", () => {
     );
   });
 
+  it("describes application messages without implying settings or access management", () => {
+    expect(summarizePairingAccess([RemoteControlRequestKind.AppMessage])).toBe(
+      "Send application messages.",
+    );
+  });
+
+  it("keeps interface watches and radio inspection in the read-only category", () => {
+    expect(
+      summarizePairingAccess([
+        RemoteControlRequestKind.WatchInterfaces,
+        RemoteControlRequestKind.DescribeNodeName,
+        RemoteControlRequestKind.InspectRadio,
+      ]),
+    ).toBe("View node information.");
+  });
+
+  it("describes node naming and radio configuration as settings changes", () => {
+    expect(
+      summarizePairingAccess([
+        RemoteControlRequestKind.SetNodeName,
+        RemoteControlRequestKind.ConfigureRadio,
+      ]),
+    ).toBe("Change node settings.");
+  });
+
   it("summarizes all supported permissions in a stable, deduplicated order", () => {
     const permissions = Object.values(RemoteControlRequestKind).filter(
       (value): value is RemoteControlRequestKind => typeof value === "number",
     );
-    expect(permissions).toHaveLength(30);
+    expect(permissions).toHaveLength(36);
     const expected =
-      "View node information. Change node settings. Share the node address. Manage other devices’ access.";
+      "View node information. Change node settings. Share the node address. Send application messages. Manage other devices’ access.";
     expect(summarizePairingAccess(permissions)).toBe(expected);
     expect(summarizePairingAccess([...permissions].reverse())).toBe(expected);
     expect(summarizePairingAccess([...permissions, ...permissions])).toBe(expected);

@@ -13,6 +13,18 @@ export function formatRequestKind(kind: RemoteControlRequestKind): string {
       return "Share node address";
     case RemoteControlRequestKind.Describe:
       return "View node information";
+    case RemoteControlRequestKind.AppMessage:
+      return "Send application messages";
+    case RemoteControlRequestKind.WatchInterfaces:
+      return "Watch interface updates";
+    case RemoteControlRequestKind.SetNodeName:
+      return "Change node name";
+    case RemoteControlRequestKind.DescribeNodeName:
+      return "View node name";
+    case RemoteControlRequestKind.InspectRadio:
+      return "View radio settings";
+    case RemoteControlRequestKind.ConfigureRadio:
+      return "Change radio settings";
     case RemoteControlRequestKind.InventoryInterfaces:
       return "View interfaces";
     case RemoteControlRequestKind.SetInterfacePower:

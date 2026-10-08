@@ -1,15 +1,16 @@
 import { RemoteControlRequestKind } from "@prns-internal/expo";
 
-type AccessCategory = "read" | "change" | "share" | "manageAccess";
+type AccessCategory = "read" | "change" | "share" | "message" | "manageAccess";
 
 const categoryLabels = {
   read: "View node information",
   change: "Change node settings",
   share: "Share the node address",
+  message: "Send application messages",
   manageAccess: "Manage other devices’ access",
 } as const satisfies Record<AccessCategory, string>;
 
-const categoryOrder = ["read", "change", "share", "manageAccess"] as const;
+const categoryOrder = ["read", "change", "share", "message", "manageAccess"] as const;
 
 /** A compact overview only; the confirmation also exposes each exact permission. */
 export function summarizePairingAccess(permissions: readonly RemoteControlRequestKind[]): string {
@@ -25,6 +26,9 @@ export function summarizePairingAccess(permissions: readonly RemoteControlReques
 
 function accessCategory(kind: RemoteControlRequestKind): AccessCategory {
   switch (kind) {
+    case RemoteControlRequestKind.WatchInterfaces:
+    case RemoteControlRequestKind.DescribeNodeName:
+    case RemoteControlRequestKind.InspectRadio:
     case RemoteControlRequestKind.Describe:
     case RemoteControlRequestKind.InventoryInterfaces:
     case RemoteControlRequestKind.InventoryInterfacePeers:
@@ -35,6 +39,8 @@ function accessCategory(kind: RemoteControlRequestKind): AccessCategory {
     case RemoteControlRequestKind.InspectWifiTransaction:
     case RemoteControlRequestKind.InventoryInterfaceDiscoveryGroups:
       return "read";
+    case RemoteControlRequestKind.SetNodeName:
+    case RemoteControlRequestKind.ConfigureRadio:
     case RemoteControlRequestKind.SetInterfacePower:
     case RemoteControlRequestKind.SleepRadios:
     case RemoteControlRequestKind.WakeRadios:
@@ -54,6 +60,8 @@ function accessCategory(kind: RemoteControlRequestKind): AccessCategory {
     case RemoteControlRequestKind.CancelWifiCredentials:
     case RemoteControlRequestKind.ReplaceInterfaceDiscoveryGroups:
       return "change";
+    case RemoteControlRequestKind.AppMessage:
+      return "message";
     case RemoteControlRequestKind.AnnounceSelf:
       return "share";
     case RemoteControlRequestKind.AuthorizeController:

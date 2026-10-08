@@ -230,7 +230,12 @@ export function RemoteInterfaceCard({
             value={`${entry.txBytes.toString()} / ${entry.rxBytes.toString()} bytes`}
           />
           <KeyValue label="Active links" value={entry.links.toString()} />
-          <KeyValue label="Transfer rate" value={`${entry.rateBytesPerSec} bytes/s`} />
+          <KeyValue
+            label="Transfer rate"
+            value={
+              entry.rateBytesPerSec === undefined ? "Unknown" : `${entry.rateBytesPerSec} bytes/s`
+            }
+          />
           {card === undefined ? null : (
             <>
               <KeyValue label="Known destinations" value={card.destinations.toString()} />
@@ -433,7 +438,12 @@ function PeerList({
               label="Active links / known destinations"
               value={`${peer.links} / ${peer.destinations}`}
             />
-            <KeyValue label="Transfer rate" value={`${peer.rateBytesPerSec} bytes/s`} />
+            <KeyValue
+              label="Transfer rate"
+              value={
+                peer.rateBytesPerSec === undefined ? "Unknown" : `${peer.rateBytesPerSec} bytes/s`
+              }
+            />
             {signal === null ? null : <KeyValue label="Signal" value={signal} />}
           </Card>
         );

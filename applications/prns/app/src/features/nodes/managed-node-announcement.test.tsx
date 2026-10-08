@@ -164,7 +164,7 @@ test("summarizes all saved and live controls without rendering a permission wall
     }),
   });
   const summary =
-    "View node information. Change node settings. Share the node address. Manage other devices’ access.";
+    "View node information. Change node settings. Share the node address. Send application messages. Manage other devices’ access.";
   const screen = render(<ManagedNodeScreen />);
   expect(screen.getByText(summary)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Check node connection" })).toBeEnabled();

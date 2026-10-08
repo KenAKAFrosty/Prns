@@ -1702,7 +1702,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(view.queryByText("Available controls")).toBeNull();
     expect(
       view.queryByText(
-        "View node information. Change node settings. Share the node address. Manage other devices’ access.",
+        "View node information. Change node settings. Share the node address. Send application messages. Manage other devices’ access.",
       ),
     ).toBeNull();
     expect(view.queryByText(/Change LoRa settings|Prepare a Wi-Fi network change/u)).toBeNull();

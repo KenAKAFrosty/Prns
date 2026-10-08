@@ -356,6 +356,41 @@ test("Wi-Fi actions belong only to the Wi-Fi interface and carry its identity", 
   );
 });
 
+test("unreported interface and peer rates remain unknown until a rate is reported", () => {
+  const peer: Bindings.RemotePeerEntry = {
+    peerId: new Uint8Array(8).fill(3),
+    connection: Bindings.RemoteConnectionState.Connected,
+    txBytes: 0n,
+    rxBytes: 0n,
+    links: 0,
+    destinations: 0,
+    rateBytesPerSec: undefined,
+    radio: Bindings.RemotePeerRadio.NotRadio.new(),
+    details: "",
+  };
+  const peers: Bindings.RemotePeerPage = { interfaceId, next: undefined, entries: [peer] };
+  const view = render(
+    <RemoteInterfaceCard
+      {...basicProps}
+      entry={{ ...entry, rateBytesPerSec: undefined }}
+      peers={peers}
+    />,
+  );
+  fireEvent.press(view.getByRole("button", { name: "Show connection details" }));
+  expect(view.getAllByText("Unknown")).toHaveLength(2);
+  expect(view.queryByText("undefined bytes/s")).toBeNull();
+  expect(view.queryByText("0 bytes/s")).toBeNull();
+  view.rerender(
+    <RemoteInterfaceCard
+      {...basicProps}
+      peers={{ ...peers, entries: [{ ...peer, rateBytesPerSec: 7 }] }}
+    />,
+  );
+  expect(view.queryByText("Unknown")).toBeNull();
+  expect(view.getByText("10 bytes/s")).toBeTruthy();
+  expect(view.getByText("7 bytes/s")).toBeTruthy();
+});
+
 test("peer paging requests more explicitly without hiding the current entries", () => {
   const onLoadMorePeers = jest.fn();
   const peers: Bindings.RemotePeerPage = {
