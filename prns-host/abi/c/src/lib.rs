@@ -4,19 +4,17 @@
 mod readiness;
 mod supplied_pipe;
 
-use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 use std::slice;
 use std::str;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use prns_host_core::{
     verify_host_contract, ApplicationEvent, ApplicationEventKind as AbiApplicationEventKind,
-    BackendKind as AbiBackendKind, Bitrate, BitrateKind as AbiBitrateKind, BoundedHostQueue,
+    BackendKind as AbiBackendKind, Bitrate, BitrateKind as AbiBitrateKind,
     Capability as AbiCapability, Capability, CommandFailure,
     CommandFailureKind as AbiCommandFailureKind, CommandOutcome,
     CommandOutcomeKind as AbiCommandOutcomeKind, ConsumerLane, DeliveryEvidence,
@@ -25,7 +23,7 @@ use prns_host_core::{
     DestinationIdentityConfigKind as AbiDestinationIdentityConfigKind, DestinationName,
     DiagnosticEvent, DiagnosticEventKind as AbiDiagnosticEventKind,
     DiscoveryScope as AbiDiscoveryScope, DiscoveryScope, EventField as AbiEventField, HostCommand,
-    HostConfig, HostFailure, HostRole as AbiHostRole, HostRole, HostSnapshot as CoreHostSnapshot,
+    HostConfig, HostRole as AbiHostRole, HostRole, HostSnapshot as CoreHostSnapshot,
     IdentityConfig, IdentityConfigKind as AbiIdentityConfigKind, IdentityHash, IdentitySecret,
     InterfaceConfig, InterfaceHealth, InterfaceId, InterfaceKind as AbiInterfaceKind,
     InterfaceKind, InterfaceMode, InterfaceRoutingPolicy, LifecyclePhase as AbiLifecyclePhase,
@@ -35,7 +33,7 @@ use prns_host_core::{
     PersistenceFlushCause as AbiPersistenceFlushCause, PersistenceFlushCause,
     PersistenceFlushTarget as AbiPersistenceFlushTarget, PersistenceFlushTarget,
     PrnsLimits as CoreLimits, RNodeRadioConfig, RequestHandlerConfig, RequestId, RequestPathHash,
-    RequestPolicy as AbiRequestPolicy, RequestPolicy, ResourceAvailable, ResourceCompression,
+    RequestPolicy as AbiRequestPolicy, RequestPolicy, ResourceCompression,
     ResourceCompressionKind as AbiResourceCompressionKind, ResourceStrategy,
     ResourceStrategyKind as AbiResourceStrategyKind, ResponseTimeout,
     ResponseTimeoutKind as AbiResponseTimeoutKind, SerialDataBits as AbiSerialDataBits,
@@ -45,9 +43,14 @@ use prns_host_core::{
     HOST_SCHEMA_VERSION, SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
 };
 use prns_host_native::{
-    CommandHandle, CommandWait, IdentityStartError, NativeEventSink, NativeHost,
-    NativeSnapshotError, NativeStartError, NativeSubmitError, NativeUpload, PersistenceStartError,
-    UploadWriteError,
+    CommandHandle, CommandWait, IdentityStartError, NativeHost, NativeSnapshotError,
+    NativeStartError, NativeSubmitError, NativeUpload, PersistenceStartError, UploadWriteError,
+};
+use prns_host_native::{
+    NativeEventStream, NativeEventValue as EventValue, NativeSessionEvents, NativeStreamError,
+};
+pub use prns_host_native::{
+    NativeResourceStream as PrnsResourceStream, NativeSessionEvents as HostPublisher,
 };
 use readiness::{Readiness, ReadinessCallback, RegisteredReadiness};
 
@@ -403,195 +406,8 @@ pub struct PrnsCommandResult {
     pub detail: PrnsStringView,
 }
 
-struct Shared {
-    queue: Mutex<BoundedHostQueue<()>>,
-    resources: Mutex<BTreeMap<u64, PrnsResourceStream>>,
-    ready: Condvar,
-    application_readiness: Arc<Readiness>,
-    diagnostic_readiness: Arc<Readiness>,
-    stop_requested: AtomicBool,
-}
-
-impl Shared {
-    fn readiness(&self, lane: ConsumerLane) -> &Arc<Readiness> {
-        match lane {
-            ConsumerLane::ApplicationEvents => &self.application_readiness,
-            ConsumerLane::Diagnostics => &self.diagnostic_readiness,
-        }
-    }
-
-    fn notify_lane(&self, lane: ConsumerLane) {
-        self.ready.notify_all();
-        self.readiness(lane).notify();
-    }
-
-    fn notify_all(&self) {
-        self.ready.notify_all();
-        self.application_readiness.notify();
-        self.diagnostic_readiness.notify();
-    }
-}
-
-pub struct HostPublisher {
-    shared: Arc<Shared>,
-}
-
-impl Clone for HostPublisher {
-    fn clone(&self) -> Self {
-        Self {
-            shared: Arc::clone(&self.shared),
-        }
-    }
-}
-
-impl HostPublisher {
-    pub fn publish_application(&self, event: ApplicationEvent) -> Result<(), ApplicationEvent> {
-        let mut queue = lock(&self.shared.queue);
-        if matches!(
-            queue.lifecycle().state,
-            LifecycleState::Stopping | LifecycleState::Stopped(_) | LifecycleState::Failed(_)
-        ) {
-            return Err(event);
-        }
-        match queue.push_application_event(event) {
-            Ok(()) => {
-                drop(queue);
-                self.shared.notify_lane(ConsumerLane::ApplicationEvents);
-                Ok(())
-            }
-            Err(rejected) => {
-                drop(queue);
-                self.shared.notify_all();
-                Err(*rejected.event)
-            }
-        }
-    }
-
-    pub fn publish_resource(
-        &self,
-        event: ResourceAvailable,
-        body: Vec<u8>,
-    ) -> Result<(), ResourceAvailable> {
-        if u64::try_from(body.len()) != Ok(event.total_bytes) {
-            return Err(event);
-        }
-        let stream_id = event.stream_id.get();
-        let mut chunks = std::collections::VecDeque::new();
-        chunks.push_back(body);
-        let rejected_event = event.clone();
-        lock(&self.shared.resources).insert(
-            stream_id,
-            PrnsResourceStream {
-                state: Mutex::new(ResourceState {
-                    chunks,
-                    active: None,
-                    offset: 0,
-                }),
-            },
-        );
-        match self.publish_application(ApplicationEvent::ResourceAvailable(event)) {
-            Ok(()) => Ok(()),
-            Err(ApplicationEvent::ResourceAvailable(event)) => {
-                lock(&self.shared.resources).remove(&stream_id);
-                Err(event)
-            }
-            Err(_) => {
-                lock(&self.shared.resources).remove(&stream_id);
-                Err(rejected_event)
-            }
-        }
-    }
-
-    pub fn publish_diagnostic(&self, event: DiagnosticEvent) {
-        lock(&self.shared.queue).push_diagnostic(event);
-        self.shared.notify_lane(ConsumerLane::Diagnostics);
-    }
-
-    pub fn backend_exited(&self) {
-        self.finish_stop();
-    }
-
-    fn transition_running(&self) {
-        let mut queue = lock(&self.shared.queue);
-        if matches!(queue.lifecycle().state, LifecycleState::Starting) {
-            let _ = queue.transition(LifecycleState::Running);
-        }
-        drop(queue);
-        self.shared.notify_all();
-    }
-
-    fn request_stop(&self) {
-        self.shared.stop_requested.store(true, Ordering::Release);
-        let mut queue = lock(&self.shared.queue);
-        if matches!(
-            queue.lifecycle().state,
-            LifecycleState::Starting | LifecycleState::Running
-        ) {
-            let _ = queue.transition(LifecycleState::Stopping);
-        }
-        drop(queue);
-        self.shared.notify_all();
-    }
-
-    fn finish_stop(&self) {
-        let mut queue = lock(&self.shared.queue);
-        let state = queue.lifecycle().state;
-        if matches!(state, LifecycleState::Starting | LifecycleState::Running) {
-            let _ = queue.transition(LifecycleState::Stopping);
-        }
-        if matches!(queue.lifecycle().state, LifecycleState::Stopping) {
-            let reason = if self.shared.stop_requested.load(Ordering::Acquire) {
-                StopReason::Requested
-            } else {
-                StopReason::BackendExited
-            };
-            let _ = queue.transition(LifecycleState::Stopped(reason));
-        }
-        drop(queue);
-        self.shared.notify_all();
-    }
-
-    fn fail(&self, detail: String) {
-        let mut queue = lock(&self.shared.queue);
-        if !queue.lifecycle().state.is_terminal() {
-            let _ = queue.transition(LifecycleState::Failed(HostFailure::BackendFailed {
-                component: "native".to_string(),
-                detail,
-            }));
-        }
-        drop(queue);
-        self.shared.notify_all();
-    }
-}
-
-impl NativeEventSink for HostPublisher {
-    fn running(&self) {
-        self.transition_running();
-    }
-
-    fn publish_application(&self, event: ApplicationEvent) -> bool {
-        HostPublisher::publish_application(self, event).is_ok()
-    }
-
-    fn publish_resource(&self, event: ResourceAvailable, body: Vec<u8>) -> bool {
-        HostPublisher::publish_resource(self, event, body).is_ok()
-    }
-
-    fn publish_diagnostic(&self, event: DiagnosticEvent) {
-        HostPublisher::publish_diagnostic(self, event);
-    }
-
-    fn stopped(&self) {
-        self.finish_stop();
-    }
-
-    fn failed(&self, detail: String) {
-        self.fail(detail);
-    }
-}
-
 pub struct PrnsHost {
-    shared: Arc<Shared>,
+    shared: NativeSessionEvents,
     native: Mutex<Option<NativeHost>>,
     identity_hash: IdentityHash,
     destination_hashes: Vec<DestinationHash>,
@@ -605,10 +421,7 @@ pub struct PrnsHostInspection {
 }
 
 pub struct PrnsEventStream {
-    shared: Arc<Shared>,
-    lane: ConsumerLane,
-    pending_diagnostics_gap: Mutex<u128>,
-    interrupted: AtomicBool,
+    inner: NativeEventStream,
     readiness_registration: Mutex<Option<Arc<RegisteredReadiness>>>,
 }
 
@@ -616,10 +429,8 @@ impl Drop for PrnsEventStream {
     fn drop(&mut self) {
         let registration = lock(&self.readiness_registration).take();
         if let Some(registration) = registration {
-            self.shared.readiness(self.lane).unregister(&registration);
+            self.inner.readiness().unregister(&registration);
         }
-        lock(&self.shared.queue).release_consumer(self.lane);
-        self.shared.notify_all();
     }
 }
 
@@ -634,19 +445,9 @@ impl Drop for PrnsReadinessRegistration {
     }
 }
 
-enum EventValue {
-    Application(ApplicationEvent),
-    Diagnostic(DiagnosticEvent),
-    DiagnosticsDropped(u128),
-}
-
 pub struct PrnsEvent {
     value: EventValue,
     resource: Mutex<Option<PrnsResourceStream>>,
-}
-
-pub struct PrnsResourceStream {
-    state: Mutex<ResourceState>,
 }
 
 pub struct PrnsResourceUpload {
@@ -679,37 +480,20 @@ struct CachedCommandResult {
     detail: String,
 }
 
-struct ResourceState {
-    chunks: std::collections::VecDeque<Vec<u8>>,
-    active: Option<Vec<u8>>,
-    offset: usize,
-}
-
 pub fn host_capsule(limits: CoreLimits) -> (PrnsHost, HostPublisher) {
     host_capsule_with_phase(limits, true)
 }
 
 fn host_capsule_with_phase(limits: CoreLimits, running: bool) -> (PrnsHost, HostPublisher) {
-    let mut queue = BoundedHostQueue::new(limits);
-    if running {
-        let _ = queue.transition(LifecycleState::Running);
-    }
-    let shared = Arc::new(Shared {
-        queue: Mutex::new(queue),
-        resources: Mutex::new(BTreeMap::new()),
-        ready: Condvar::new(),
-        application_readiness: Arc::new(Readiness::new()),
-        diagnostic_readiness: Arc::new(Readiness::new()),
-        stop_requested: AtomicBool::new(false),
-    });
+    let shared = NativeSessionEvents::new(limits, running);
     (
         PrnsHost {
-            shared: Arc::clone(&shared),
+            shared: shared.clone(),
             native: Mutex::new(None),
             identity_hash: IdentityHash::new([0; 16]),
             destination_hashes: Vec::new(),
         },
-        HostPublisher { shared },
+        shared,
     )
 }
 
@@ -916,22 +700,12 @@ unsafe fn parse_destination(value: &PrnsDestinationConfig) -> Result<Destination
                         Ok(RequestHandlerConfig { path, policy })
                     })
                     .collect::<Result<Vec<_>, u32>>()?;
-            Ok(DestinationConfig::Single(
-                prns_host_core::SingleDestinationConfig {
-                    name,
-                    identity,
-                    announce_app_data: unsafe { read_bytes(value.announce_app_data) }?.to_vec(),
-                    maximum_request_bytes: optional_safe_uint(
-                        value.has_maximum_request_bytes,
-                        value.maximum_request_bytes,
-                    )?,
-                    proof: prns_host_core::DestinationProofStrategy::ProveAll,
-                    link_requests: prns_host_core::DestinationLinkRequestPolicy::AcceptAll,
-                    ratchet: prns_host_core::DestinationRatchetPolicy::NoRatchets,
-                    resource_strategy: prns_host_core::ResourceStrategy::Refuse,
-                    request_handlers,
-                },
-            ))
+            let mut single = prns_host_core::SingleDestinationConfig::new(name, identity);
+            single.announce_app_data = unsafe { read_bytes(value.announce_app_data) }?.to_vec();
+            single.maximum_request_bytes =
+                optional_safe_uint(value.has_maximum_request_bytes, value.maximum_request_bytes)?;
+            single.request_handlers = request_handlers;
+            Ok(DestinationConfig::Single(single))
         }
     }
 }
@@ -1439,7 +1213,7 @@ pub unsafe extern "C" fn prns_host_lifecycle(
         if let Err(error) = validate_size(out.struct_size, size_of::<PrnsLifecycle>()) {
             return error;
         }
-        let lifecycle = lock(&host.shared.queue).lifecycle();
+        let lifecycle = host.shared.lifecycle();
         out.revision = lifecycle.revision;
         out.reason = 0;
         match lifecycle.state {
@@ -2514,12 +2288,7 @@ pub unsafe extern "C" fn prns_host_stop(host: *mut PrnsHost) -> u32 {
             Ok(host) => host,
             Err(error) => return error,
         };
-        if lock(&host.shared.queue).lifecycle().state.is_terminal() {
-            return status(AbiStatus::Ok);
-        }
-        let publisher = HostPublisher {
-            shared: Arc::clone(&host.shared),
-        };
+        let publisher = host.shared.clone();
         publisher.request_stop();
         if let Some(native) = lock(&host.native).as_ref() {
             native.stop();
@@ -2834,7 +2603,7 @@ pub unsafe extern "C" fn prns_command_register_readiness(
             return status(AbiStatus::InvalidArgument);
         };
         let readiness = Arc::clone(&command.readiness);
-        let registered = match readiness.register(callback, context) {
+        let registered = match readiness.register(readiness::callback_signal(callback, context)) {
             Ok(registered) => registered,
             Err(_) => return status(AbiStatus::AlreadyClaimed),
         };
@@ -2870,14 +2639,12 @@ unsafe fn claim_stream(
         Err(error) => return error,
     };
     *out = ptr::null_mut();
-    if lock(&host.shared.queue).claim_consumer(lane).is_err() {
-        return status(AbiStatus::AlreadyClaimed);
-    }
+    let inner = match host.shared.claim_stream(lane) {
+        Ok(inner) => inner,
+        Err(_) => return status(AbiStatus::AlreadyClaimed),
+    };
     *out = Box::into_raw(Box::new(PrnsEventStream {
-        shared: Arc::clone(&host.shared),
-        lane,
-        pending_diagnostics_gap: Mutex::new(0),
-        interrupted: AtomicBool::new(false),
+        inner,
         readiness_registration: Mutex::new(None),
     }));
     status(AbiStatus::Ok)
@@ -2911,8 +2678,7 @@ pub unsafe extern "C" fn prns_event_stream_release(stream: *mut PrnsEventStream)
 #[no_mangle]
 pub unsafe extern "C" fn prns_event_stream_interrupt_wait(stream: *mut PrnsEventStream) {
     if let Ok(Some(stream)) = catch_unwind(AssertUnwindSafe(|| unsafe { stream.as_ref() })) {
-        stream.interrupted.store(true, Ordering::Release);
-        stream.shared.notify_lane(stream.lane);
+        stream.inner.interrupt_wait();
     }
 }
 
@@ -2936,8 +2702,8 @@ pub unsafe extern "C" fn prns_event_stream_register_readiness(
         let Some(callback) = callback else {
             return status(AbiStatus::InvalidArgument);
         };
-        let readiness = Arc::clone(stream.shared.readiness(stream.lane));
-        let registered = match readiness.register(callback, context) {
+        let readiness = Arc::clone(stream.inner.readiness());
+        let registered = match readiness.register(readiness::callback_signal(callback, context)) {
             Ok(registered) => registered,
             Err(_) => return status(AbiStatus::AlreadyClaimed),
         };
@@ -2961,48 +2727,6 @@ pub unsafe extern "C" fn prns_readiness_registration_release(
     }
 }
 
-fn pop_event(stream: &PrnsEventStream, queue: &mut BoundedHostQueue<()>) -> Option<PrnsEvent> {
-    let mut pending_gap = lock(&stream.pending_diagnostics_gap);
-    if *pending_gap > 0 {
-        let dropped = std::mem::take(&mut *pending_gap);
-        return Some(PrnsEvent {
-            value: EventValue::DiagnosticsDropped(dropped),
-            resource: Mutex::new(None),
-        });
-    }
-    match stream.lane {
-        ConsumerLane::ApplicationEvents => queue.pop_application_event().map(|event| {
-            let resource = match &event {
-                ApplicationEvent::ResourceAvailable(value) => {
-                    lock(&stream.shared.resources).remove(&value.stream_id.get())
-                }
-                _ => None,
-            };
-            PrnsEvent {
-                value: EventValue::Application(event),
-                resource: Mutex::new(resource),
-            }
-        }),
-        ConsumerLane::Diagnostics => {
-            let mut batch = queue.drain_diagnostics(1);
-            if let Some(event) = batch.events.pop() {
-                *pending_gap = batch.dropped_newest;
-                Some(PrnsEvent {
-                    value: EventValue::Diagnostic(event),
-                    resource: Mutex::new(None),
-                })
-            } else if batch.dropped_newest > 0 {
-                Some(PrnsEvent {
-                    value: EventValue::DiagnosticsDropped(batch.dropped_newest),
-                    resource: Mutex::new(None),
-                })
-            } else {
-                None
-            }
-        }
-    }
-}
-
 #[no_mangle]
 pub unsafe extern "C" fn prns_event_stream_next(
     stream: *mut PrnsEventStream,
@@ -3019,50 +2743,25 @@ pub unsafe extern "C" fn prns_event_stream_next(
             Err(error) => return error,
         };
         *out = ptr::null_mut();
-        let deadline = if timeout_millis == NEVER_TIMEOUT {
-            None
-        } else {
-            Instant::now().checked_add(Duration::from_millis(u64::from(timeout_millis)))
-        };
-        let mut queue = lock(&stream.shared.queue);
-        loop {
-            if stream.interrupted.swap(false, Ordering::AcqRel) {
-                return status(AbiStatus::Interrupted);
-            }
-            if let Some(event) = pop_event(stream, &mut queue) {
-                *out = Box::into_raw(Box::new(event));
-                return status(AbiStatus::Ok);
-            }
-            if queue.lifecycle().state.is_terminal() {
-                return status(AbiStatus::Stopped);
-            }
-            if timeout_millis == 0 {
-                return status(AbiStatus::WouldBlock);
-            }
-            match deadline {
-                None => {
-                    queue = stream
-                        .shared
-                        .ready
-                        .wait(queue)
-                        .unwrap_or_else(PoisonError::into_inner);
+        let timeout = (timeout_millis != NEVER_TIMEOUT)
+            .then(|| Duration::from_millis(u64::from(timeout_millis)));
+        match stream.inner.next(timeout) {
+            Ok(event) => {
+                // RemoteControl is an explicitly negotiated native extension;
+                // this C capsule has no configuration or transport for it.
+                if matches!(event.value, EventValue::RemoteControl(_)) {
+                    return status(AbiStatus::Unsupported);
                 }
-                Some(deadline) => {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        return status(AbiStatus::TimedOut);
-                    }
-                    let waited = stream
-                        .shared
-                        .ready
-                        .wait_timeout(queue, remaining)
-                        .unwrap_or_else(PoisonError::into_inner);
-                    if waited.1.timed_out() {
-                        return status(AbiStatus::TimedOut);
-                    }
-                    queue = waited.0;
-                }
+                *out = Box::into_raw(Box::new(PrnsEvent {
+                    value: event.value,
+                    resource: Mutex::new(event.resource),
+                }));
+                status(AbiStatus::Ok)
             }
+            Err(NativeStreamError::WouldBlock) => status(AbiStatus::WouldBlock),
+            Err(NativeStreamError::TimedOut) => status(AbiStatus::TimedOut),
+            Err(NativeStreamError::Interrupted) => status(AbiStatus::Interrupted),
+            Err(NativeStreamError::Stopped) => status(AbiStatus::Stopped),
         }
     })
 }
@@ -3143,6 +2842,7 @@ pub unsafe extern "C" fn prns_event_kind(event: *const PrnsEvent) -> u32 {
         let event = unsafe { event.as_ref() }?;
         Some(match &event.value {
             EventValue::Application(event) => application_kind(event),
+            EventValue::RemoteControl(_) => return None,
             EventValue::Diagnostic(event) => diagnostic_kind(event),
             EventValue::DiagnosticsDropped(_) => AbiDiagnosticEventKind::DiagnosticsDropped as u32,
         })
@@ -3170,6 +2870,13 @@ fn event_bytes(event: &PrnsEvent, field: AbiEventField) -> Option<&[u8]> {
         (EventValue::Application(ApplicationEvent::LinkDelivery(value)), AbiEventField::LinkId) => {
             Some(value.link_id.as_bytes())
         }
+        (
+            EventValue::Application(ApplicationEvent::LinkDelivery(value)),
+            AbiEventField::LocalDestination,
+        ) => value
+            .local_destination
+            .as_ref()
+            .map(|destination| destination.as_bytes().as_slice()),
         (
             EventValue::Application(ApplicationEvent::LinkDelivery(value)),
             AbiEventField::SourceInterface,
@@ -3477,6 +3184,10 @@ fn persistence_target(target: PersistenceFlushTarget) -> u64 {
 fn event_u64(event: &PrnsEvent, field: AbiEventField) -> Option<u64> {
     match (&event.value, field) {
         (
+            EventValue::Application(ApplicationEvent::LinkDelivery(value)),
+            AbiEventField::ArrivedAtMillis,
+        ) => Some(value.arrived_at_millis),
+        (
             EventValue::Application(ApplicationEvent::ChannelMessage(value)),
             AbiEventField::MessageType,
         ) => Some(u64::from(value.message_type)),
@@ -3724,33 +3435,10 @@ pub unsafe extern "C" fn prns_resource_stream_next(
         if maximum_bytes == 0 {
             return status(AbiStatus::InvalidArgument);
         }
-        let mut state = lock(&stream.state);
-        loop {
-            let exhausted = state
-                .active
-                .as_ref()
-                .is_none_or(|active| state.offset >= active.len());
-            if exhausted {
-                state.active = state.chunks.pop_front();
-                state.offset = 0;
-            }
-            let Some(active) = state.active.as_ref() else {
-                *chunk = bytes_view(&[]);
-                *finished = 1;
-                break;
-            };
-            if active.is_empty() {
-                state.active = None;
-                continue;
-            }
-            let start = state.offset;
-            let end = start.saturating_add(maximum_bytes).min(active.len());
-            state.offset = end;
-            let active = state.active.as_deref().unwrap_or(&[]);
-            *chunk = bytes_view(&active[start..end]);
-            *finished = 0;
-            break;
-        }
+        stream.with_next_chunk(maximum_bytes, |next| {
+            *chunk = bytes_view(next.unwrap_or(&[]));
+            *finished = u8::from(next.is_none());
+        });
         status(AbiStatus::Ok)
     })
 }
@@ -3758,11 +3446,12 @@ pub unsafe extern "C" fn prns_resource_stream_next(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prns_host_core::ResourceAvailable;
     use prns_host_core::{
         DestinationHash, InterfaceId, LinkDelivery, LinkId, ResourceHash, ResourceStreamId,
         SingleDelivery,
     };
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn response_too_large_preserves_its_failure_kind() {
@@ -4030,6 +3719,8 @@ mod tests {
         assert!(publisher
             .publish_application(ApplicationEvent::LinkDelivery(LinkDelivery {
                 link_id,
+                local_destination: Some(DestinationHash::new([9; 16])),
+                arrived_at_millis: 12345,
                 source_interface,
                 plaintext: plaintext.clone(),
             }))
@@ -4043,7 +3734,12 @@ mod tests {
             unsafe { prns_event_kind(event) },
             AbiApplicationEventKind::LinkDelivery as u32
         );
+        let local_destination = DestinationHash::new([9; 16]);
         for (field, expected) in [
+            (
+                AbiEventField::LocalDestination,
+                local_destination.as_bytes().as_slice(),
+            ),
             (AbiEventField::LinkId, link_id.as_bytes().as_slice()),
             (
                 AbiEventField::SourceInterface,
@@ -4064,6 +3760,12 @@ mod tests {
                 expected
             );
         }
+        let mut timestamp = 0;
+        assert_eq!(
+            unsafe { prns_event_u64(event, AbiEventField::ArrivedAtMillis as u32, &mut timestamp) },
+            status(AbiStatus::Ok)
+        );
+        assert_eq!(timestamp, 12345);
         unsafe {
             prns_event_release(event);
             prns_event_stream_release(stream);
@@ -4430,6 +4132,14 @@ mod tests {
             unsafe { prns_host_create(&options, &mut host) },
             status(AbiStatus::ContractMismatch)
         );
+        // Schema 1 lacks the required link-delivery arrival field. Reject its
+        // caller before constructing a host while retaining the stable ABI 1.
+        options.required_schema_version = 1;
+        assert_eq!(
+            unsafe { prns_host_create(&options, &mut host) },
+            status(AbiStatus::ContractMismatch)
+        );
+        assert!(host.is_null());
         options.required_schema_version = HOST_CONTRACT.schema_version;
         let incompatible_version = b"0.0.0";
         options.required_product_version = PrnsStringView {

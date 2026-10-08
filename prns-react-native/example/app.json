@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "PRNS Host",
+    "slug": "prns-host-example",
+    "version": "0.0.0",
+    "ios": {
+      "bundleIdentifier": "rs.reticulum.prns.host.example"
+    },
+    "android": {
+      "package": "rs.reticulum.prns.host.example"
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 29
+          },
+          "ios": {
+            "deploymentTarget": "18.0",
+            "enableSceneSupport": true
+          }
+        }
+      ]
+    ]
+  }
+}

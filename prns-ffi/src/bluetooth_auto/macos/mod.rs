@@ -6,6 +6,7 @@ mod gatt_link;
 mod gatt_write;
 mod l2cap_lifecycle;
 mod peripheral;
+mod peripheral_notify;
 mod peripheral_write;
 
 #[cfg(test)]
@@ -27,15 +28,15 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_core_bluetooth::{
     CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey, CBCentralManager,
-    CBCentralManagerScanOptionAllowDuplicatesKey, CBCharacteristic, CBPeer, CBPeripheral,
-    CBPeripheralManager, CBUUID,
+    CBCentralManagerScanOptionAllowDuplicatesKey, CBCharacteristic, CBManagerState, CBPeer,
+    CBPeripheral, CBPeripheralManager, CBUUID,
 };
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString};
 use tokio::sync::watch;
 
 use prns_core::interfaces::bluetooth_auto::{
-    BleAddress, BleUuid, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID,
-    NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
+    BleAddress, BleUuid, BluetoothRadioState, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID,
+    COLUMBA_RX_UUID, COLUMBA_TX_UUID, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
 
 use central::CentralDelegate;
@@ -276,6 +277,7 @@ struct SendCentralDelegate(Retained<CentralDelegate>);
 // dispatch queue before and after transfer.
 unsafe impl Send for SendCentralDelegate {}
 
+#[derive(Clone)]
 struct SendPeripheralDelegate(Retained<PeripheralDelegate>);
 // SAFETY: the retained delegate's RefCell-backed state is accessed only by the serial CoreBluetooth
 // dispatch queue before and after transfer.
@@ -307,18 +309,71 @@ enum L2capPublicationState {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ManagerSignals {
     central_powered_generation: u64,
+    central_state: BluetoothRadioState,
+    peripheral_state: BluetoothRadioState,
     gatt: PublicationState,
     l2cap: L2capPublicationState,
+}
+
+impl ManagerSignals {
+    fn radio_state(self) -> BluetoothRadioState {
+        use BluetoothRadioState::{
+            PoweredOff, PoweredOn, Resetting, Unauthorized, Unknown, Unsupported,
+        };
+        let states = [self.central_state, self.peripheral_state];
+        // Both roles must be available. A concrete unavailable state is more useful than the
+        // other manager's initial unknown state while their delegate callbacks arrive.
+        for state in [Unsupported, Unauthorized, PoweredOff, Resetting, Unknown] {
+            if states.contains(&state) {
+                return state;
+            }
+        }
+        PoweredOn
+    }
+}
+
+/// Read-only observations from the existing CoreBluetooth managers, without owning another radio.
+#[derive(Clone)]
+pub struct CoreBluetoothRadioStatus(watch::Receiver<ManagerSignals>);
+
+impl CoreBluetoothRadioStatus {
+    #[must_use]
+    pub fn state(&self) -> BluetoothRadioState {
+        if self.0.has_changed().is_err() {
+            return BluetoothRadioState::Unknown;
+        }
+        self.0.borrow().radio_state()
+    }
+}
+
+fn radio_state(state: CBManagerState) -> BluetoothRadioState {
+    match state {
+        CBManagerState::Resetting => BluetoothRadioState::Resetting,
+        CBManagerState::Unsupported => BluetoothRadioState::Unsupported,
+        CBManagerState::Unauthorized => BluetoothRadioState::Unauthorized,
+        CBManagerState::PoweredOff => BluetoothRadioState::PoweredOff,
+        CBManagerState::PoweredOn => BluetoothRadioState::PoweredOn,
+        _ => BluetoothRadioState::Unknown,
+    }
 }
 
 #[derive(Clone)]
 struct ManagerSignalSender(watch::Sender<ManagerSignals>);
 
 impl ManagerSignalSender {
-    fn central_powered(&self) {
+    fn central_state_changed(&self, state: CBManagerState) {
         self.0.send_modify(|signals| {
-            signals.central_powered_generation = signals.central_powered_generation.wrapping_add(1);
+            signals.central_state = radio_state(state);
+            if signals.central_state == BluetoothRadioState::PoweredOn {
+                signals.central_powered_generation =
+                    signals.central_powered_generation.wrapping_add(1);
+            }
         });
+    }
+
+    fn peripheral_state_changed(&self, state: CBManagerState) {
+        self.0
+            .send_modify(|signals| signals.peripheral_state = radio_state(state));
     }
 
     fn gatt_service_published(&self) {

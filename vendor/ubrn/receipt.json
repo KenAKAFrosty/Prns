@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 2,
+  "sourceLockSha256": "69ec9b87ad1411c9ae525398af4988be88cb77ea7f82f33e9c5d4823877d75ba",
+  "buildScriptSha256": "64d23ba078a0220c3e1311b6e68d55cae9c40b612f991158a38d8508a6d14905",
+  "verificationScriptSha256": "64d23ba078a0220c3e1311b6e68d55cae9c40b612f991158a38d8508a6d14905",
+  "patchedSourceTree": "8296380d415b239a22b17b8feef7a101c6f300df",
+  "nativeBuild": {
+    "inputSha256": "da806c025a03ec10abe826d9a552b35583c310850c1ce222af26aa56fbd1143b",
+    "artifacts": {
+      "aarch64-apple-ios/libuniffi_runtime_jsi.dylib": "6abbf0b47df3b9be0a103e7a755a2c925bf1f09c76e59080955e0c6b7979a5aa",
+      "aarch64-apple-ios-sim/libuniffi_runtime_jsi.dylib": "5b531f0be7cab57fcc61028432d5fd1c4b1b67f2b11fc2b12cb7d28b3d35de47",
+      "aarch64-linux-android/libuniffi_runtime_jsi.so": "8cd0e6a00dbea26781e92f492e1e4910ff996ad0f71b4aa92a88ac07039434aa",
+      "x86_64-apple-ios/libuniffi_runtime_jsi.dylib": "f7b55208217c927236063901deed93a52d7df3bdd641f30e7464d5bbab890ae8",
+      "x86_64-linux-android/libuniffi_runtime_jsi.so": "5e455b15b0c698bf4e878dbeb74a62e7023980f05878f83936d51e3f95013827"
+    }
+  },
+  "packages": [
+    {
+      "name": "@ubjs/core",
+      "version": "0.31.0-5",
+      "file": "packages/ubjs-core-0.31.0-5.tgz",
+      "sha256": "88d9c3e34cb3879550f9dd17fca9901bd49639132a1fcb7a2bd7ee4535b60be3",
+      "integrity": "sha512-7Ozs0DnDJIVDBZJcxw/tQbYXebkeFADnyWBqR8IuV0aNowh51rDZLJbOzw6b0A8VCkmqI+XMxohXD784TEzH2w=="
+    },
+    {
+      "name": "@ubjs/react-native",
+      "version": "0.31.0-5",
+      "file": "packages/ubjs-react-native-0.31.0-5.tgz",
+      "sha256": "a9a9a8a2c40f0d8571b0bdfe0b1e935257e5d14163aabc6f7a9cbd7afd90fb64",
+      "integrity": "sha512-BZy4VRmceg3NgOCliTfWohcYt2uTKy0BYyblyLd4JbA3R/vy3ABXj9D2EQerIoCNpdb+X1/MS4s5uVaRoArHZw=="
+    }
+  ]
+}

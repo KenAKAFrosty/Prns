@@ -30,6 +30,7 @@ struct Harness {
     inbound: mpsc::Sender<TestLink>,
     links: mpsc::Receiver<TestLink>,
     capacity: usize,
+    retired: Vec<CoreBluetoothPeerId>,
 }
 
 impl Harness {
@@ -40,6 +41,7 @@ impl Harness {
             inbound,
             links,
             capacity,
+            retired: Vec::new(),
         }
     }
 
@@ -54,6 +56,7 @@ impl Harness {
             self.capacity,
             &self.inbound,
             make_link,
+            |peer_id| self.retired.push(peer_id),
         )
     }
 
@@ -220,6 +223,7 @@ fn disabled_callback_rejects_once_without_evaluating_or_publishing_requests() {
                 harness.capacity,
                 &harness.inbound,
                 make_link,
+                |_| panic!("disabled input must not retire a session"),
             )
         },
         |first, result| replies.push((*first, result)),
@@ -328,6 +332,7 @@ fn closed_inbound_receiver_does_not_insert_a_session() {
             1,
             &inbound,
             make_link,
+            |_| panic!("closed input must not retire a session"),
         ),
         Err(WriteError::InsufficientResources)
     );
@@ -430,6 +435,96 @@ async fn late_data_budget_failure_refunds_prior_data_and_control_reservations() 
     let session = harness.sessions.get(&peer(1)).unwrap();
     assert_eq!(session.control_tx.capacity(), 1);
     assert!(session.data_tx.try_reserve(Box::from([0; 2])).is_ok());
+}
+
+#[tokio::test]
+async fn fresh_hello_replaces_a_settled_peer_without_an_unsubscribe_callback() {
+    let mut harness = Harness::new(1, 1);
+    let old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    // into_data drops the handshake receiver but keeps the data receiver alive. A
+    // reconnect may reuse the same CBCentral identity without an unsubscribe callback.
+    drop(old.control);
+    let mut old_data = old.data;
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), hello()))]),
+        Ok(())
+    );
+    let mut replacement = harness.links.try_recv().unwrap();
+    assert_eq!(replacement.control.try_recv(), Ok(hello()));
+    assert_eq!(harness.sessions.len(), 1);
+    assert_eq!(harness.retired.len(), 1);
+    assert!(harness.retired[0] == peer(1));
+    assert!(old_data.recv().await.is_none());
+    assert_eq!(
+        harness.admit([Ok(request(peer(1), WriteTarget::Data, &[7]))]),
+        Ok(())
+    );
+    assert_eq!(&*receive_data(&mut replacement.data).await, &[7]);
+}
+
+#[tokio::test]
+async fn refused_replacement_preserves_the_old_session_and_pending_upgrade() {
+    let mut harness = Harness::new(1, 1);
+    let old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    drop(old.control);
+    let mut old_data = old.data;
+    assert_eq!(
+        harness.admit([
+            Ok(control_request(peer(1), hello())),
+            Ok(request(peer(1), WriteTarget::Data, &[7])),
+            Ok(request(peer(1), WriteTarget::Control, &[0xff])),
+        ]),
+        Err(WriteError::InvalidValueLength)
+    );
+    assert!(harness.retired.is_empty());
+    harness.assert_no_new_link();
+    assert_eq!(harness.inbound.capacity(), 1);
+    assert!(harness
+        .sessions
+        .get(&peer(1))
+        .unwrap()
+        .control_tx
+        .is_closed());
+    assert_no_data(&mut old_data).await;
+
+    // A foreign peer cannot use the replacement to exceed the session bound.
+    assert_eq!(
+        harness.admit([
+            Ok(control_request(peer(1), hello())),
+            Ok(control_request(peer(2), hello())),
+        ]),
+        Err(WriteError::InsufficientResources)
+    );
+    assert!(harness.retired.is_empty());
+    harness.assert_no_new_link();
+    assert_no_data(&mut old_data).await;
+}
+
+#[tokio::test]
+async fn only_a_fresh_hello_can_replace_a_closed_control_receiver() {
+    let mut harness = Harness::new(2, 1);
+    let old = harness.add_session(peer(1), InboundProfile::Native, 8, 10);
+    drop(old.control);
+    let mut old_data = old.data;
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), welcome()))]),
+        Err(WriteError::InsufficientResources)
+    );
+    assert!(harness.retired.is_empty());
+    assert_no_data(&mut old_data).await;
+
+    // The inbound slot is still mandatory even though replacement reuses the
+    // existing session's capacity. No old owner is retired while it is full.
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(2), hello()))]),
+        Ok(())
+    );
+    assert_eq!(
+        harness.admit([Ok(control_request(peer(1), hello()))]),
+        Err(WriteError::InsufficientResources)
+    );
+    assert!(harness.retired.is_empty());
+    assert_no_data(&mut old_data).await;
 }
 
 #[tokio::test]

@@ -21,6 +21,21 @@ SPEC.loader.exec_module(notices)
 
 
 class ThirdPartyNoticeTests(unittest.TestCase):
+    def test_extracted_host_and_expo_graphs_are_retained(self) -> None:
+        graphs = {name: (manifest, target) for name, manifest, target in notices.GRAPHS}
+        self.assertEqual(
+            graphs["Host SDK native"],
+            ("prns-host/impls/native/Cargo.toml", "x86_64-unknown-linux-gnu"),
+        )
+        for name, target in (
+            ("Expo host", "x86_64-unknown-linux-gnu"),
+            ("Expo Android", "aarch64-linux-android"),
+            ("Expo iOS", "aarch64-apple-ios"),
+        ):
+            self.assertEqual(
+                graphs[name], ("prns-host/bindings/uniffi/image/Cargo.toml", target)
+            )
+
     def test_input_fingerprint_covers_checked_in_manifests_locks_and_notice_sources(
         self,
     ) -> None:
