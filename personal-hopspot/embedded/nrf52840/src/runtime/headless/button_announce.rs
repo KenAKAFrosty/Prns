@@ -52,6 +52,15 @@ where
             }
         }
     };
+    // The XIAO usually has no button fitted, so it also announces on the headless schedule and
+    // to each Bluetooth peer that connects; otherwise no peer would learn it exists until a
+    // controller asked it to announce.
+    #[cfg(feature = "board-xiao-nrf52840")]
+    let announce = join3(
+        announce,
+        super::node_page_announce::announce_forever(node_page_destination),
+        super::node_page_announce::announce_to_new_bluetooth_peers(node_page_destination),
+    );
     join(
         join3(io, bluetooth, join(lora, remote_control)),
         join(board::drive_button(button), announce),

@@ -234,6 +234,17 @@ requires = ["bash", "cargo", "python3", "rustc"]
 setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
 
 [[task]]
+id = "build.hopspot.xiao-nrf52840"
+summary = "Build the headless Seeed XIAO nRF52840 + Wio-SX1262 firmware with S140 7.3.0 Bluetooth Auto and package its developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "xiao-nrf52840"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
 id = "build.hopspot.sensecap-solar-node"
 summary = "Build the headless Seeed SenseCAP Solar Node firmware and package its recovery-compatible developer UF2."
 domain = "build"

@@ -29,6 +29,7 @@ lora-2g4 = ["personal-rns/lora-2g4", "personal-hopspot-core/lora-2g4"]
 board-muzi-base-duo = ["embassy-nrf/nfc-pins-as-gpio", "lora-2g4"]
 board-rak4631 = ["embassy-nrf/nfc-pins-as-gpio", "softdevice-s140-v6"]
 board-rak10724 = ["embassy-nrf/nfc-pins-as-gpio", "softdevice-s140-v6"]
+board-xiao-nrf52840 = ["softdevice-s140-v7"]
 board-wio-tracker-l1 = ["personal-hopspot-core/display", "dep:embedded-graphics", "embassy-nrf/time", "softdevice-s140-v7"]
 wio-tracker-l1-pro-1w = ["board-wio-tracker-l1"]
 softdevice-s140-v6 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v6"]
@@ -147,3 +148,8 @@ personal-hopspot-memory = { path = "../../memory" }
 name = "rak10724"
 path = "src/bin/rak10724.rs"
 required-features = ["board-rak10724"]
+
+[[bin]]
+name = "xiao-nrf52840"
+path = "src/bin/xiao_nrf52840.rs"
+required-features = ["board-xiao-nrf52840"]
