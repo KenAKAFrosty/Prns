@@ -186,4 +186,3 @@ class GattLifetimeTest {
         assertTrue(owners.beginNotification("peer", owner))
     }
 }
-
