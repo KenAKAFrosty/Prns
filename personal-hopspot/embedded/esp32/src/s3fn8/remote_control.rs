@@ -1,4 +1,7 @@
+#[cfg(not(feature = "heltec-v3"))]
 use embassy_futures::select::{select, Either};
+#[cfg(feature = "heltec-v3")]
+use embassy_futures::select::{select3, select4, Either3, Either4};
 use embassy_time::{Duration, Instant, Timer};
 use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
@@ -80,17 +83,266 @@ pub(super) fn capabilities() -> RemoteControlCapabilities {
     capabilities
 }
 
+#[cfg(feature = "heltec-v3")]
+async fn refresh_face(
+    face: &mut super::heltec_v3_face::Face,
+    lora_status: &EmbassyInterfaceStatus,
+    usb_status: &EmbassyInterfaceStatus,
+    subg_configuration: &mut SubGConfigurationState,
+    system_awake: bool,
+    lora_spectrum: &personal_rns::lora::LoRaSpectrumStatus,
+    ui_handle: &personal_rns::runtime::PrnsNodeHandle<
+        'static,
+        super::Mtx,
+        { super::COMMANDS_CAP },
+        { super::COMPLETIONS_CAP },
+    >,
+    node_page_destination: personal_rns::wire::DestinationHash,
+    lora_controller: &mut personal_rns::lora::LoRaController<'static>,
+    subg_store: &mut ConfigurationStore,
+    system_awake_slot: &mut bool,
+    desired_interfaces: &mut u8,
+    scheduled_effect: &mut Option<ScheduledEffect>,
+    input: Option<hopspot::InputEvent>,
+) {
+    let Ok(snapshots) = snapshots(lora_status, usb_status) else {
+        return;
+    };
+    let action = face.poll(
+        &snapshots,
+        *subg_configuration,
+        system_awake,
+        lora_spectrum,
+        input,
+    );
+    let mut context = Context {
+        snapshots: &snapshots,
+        lora_status,
+        usb_status,
+        system_awake: system_awake_slot,
+        desired_interfaces,
+        scheduled_effect,
+        lora_controller,
+        subg_store,
+        subg_configuration,
+    };
+    match action {
+        hopspot::UiAction::Announce => {
+            use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
+            let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
+                destination: node_page_destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Registered,
+            }));
+        }
+        hopspot::UiAction::Sleep => {
+            let _ = schedule_effect(context.scheduled_effect, ScheduledAction::SleepSystem);
+        }
+        hopspot::UiAction::Wake => {
+            let _ = cancel_pending_sleep(context.scheduled_effect);
+            restore_desired_interfaces(&context);
+            *context.system_awake = true;
+        }
+        hopspot::UiAction::ToggleSelectedInterface => {
+            if let Some(id) = face.selected_interface(&snapshots, *context.subg_configuration) {
+                if let Some(enabled) = desired_interface_enabled(&context, id) {
+                    set_desired_interface(&mut context, id, !enabled);
+                }
+            }
+        }
+        hopspot::UiAction::SetSubGConfiguration(configuration) => {
+            let _ = apply_subg_configuration(
+                context.lora_controller,
+                context.subg_store,
+                context.subg_configuration,
+                SubGConfigurationState::Configured(configuration),
+            )
+            .await;
+        }
+        hopspot::UiAction::ClearSubGConfiguration => {
+            let _ = apply_subg_configuration(
+                context.lora_controller,
+                context.subg_store,
+                context.subg_configuration,
+                SubGConfigurationState::Unconfigured,
+            )
+            .await;
+        }
+        hopspot::UiAction::None
+        | hopspot::UiAction::BlankDisplay
+        | hopspot::UiAction::ToggleDisplayAutoOff
+        | hopspot::UiAction::ControlGnss(_)
+        | hopspot::UiAction::ToggleStationUplink
+        | hopspot::UiAction::OpenDiscoveryGroupsEditor(_)
+        | hopspot::UiAction::ReplaceDiscoveryGroups
+        | hopspot::UiAction::OpenSubGEditor
+        | hopspot::UiAction::SwapRadioMode
+        | hopspot::UiAction::OpenDocs
+        | hopspot::UiAction::CopySharedInstanceConfig => {}
+        #[cfg(feature = "remote-control-pairing")]
+        hopspot::UiAction::OpenRemoteControlPairing
+        | hopspot::UiAction::CloseRemoteControlPairing
+        | hopspot::UiAction::ApproveRemoteControlTargetPairing(_)
+        | hopspot::UiAction::RejectRemoteControlTargetPairing(_) => {}
+    }
+}
+
+#[cfg_attr(feature = "heltec-v3", embassy_executor::task)]
 pub(super) async fn run(
     lora_status: &'static EmbassyInterfaceStatus,
     usb_status: &'static EmbassyInterfaceStatus,
     mut lora_controller: personal_rns::lora::LoRaController<'static>,
     mut subg_store: ConfigurationStore,
     mut subg_configuration: SubGConfigurationState,
+    #[cfg(feature = "heltec-v3")] face: &'static mut super::heltec_v3_face::Face,
+    #[cfg(feature = "heltec-v3")] lora_spectrum: &'static personal_rns::lora::LoRaSpectrumStatus,
+    #[cfg(feature = "heltec-v3")] ui_handle: personal_rns::runtime::PrnsNodeHandle<
+        'static,
+        super::Mtx,
+        { super::COMMANDS_CAP },
+        { super::COMPLETIONS_CAP },
+    >,
+    #[cfg(feature = "heltec-v3")] node_page_destination: personal_rns::wire::DestinationHash,
 ) -> ! {
     let mut system_awake = true;
     let mut desired_interfaces = enabled_interfaces(lora_status, usb_status);
     let mut scheduled_effect: Option<ScheduledEffect> = None;
     loop {
+        #[cfg(feature = "heltec-v3")]
+        {
+            enum Wake<Command> {
+                Button(hopspot::InputEvent),
+                Tick,
+                Command(Command),
+                Scheduled,
+            }
+            let wake = match scheduled_effect.as_ref() {
+                Some(effect) => {
+                    match select4(
+                        super::heltec_v3_face::BUTTON_EVENTS.receive(),
+                        Timer::after(Duration::from_millis(500)),
+                        REMOTE_CONTROL_COMMANDS.receive(),
+                        Timer::at(effect.deadline()),
+                    )
+                    .await
+                    {
+                        Either4::First(event) => Wake::Button(event),
+                        Either4::Second(()) => Wake::Tick,
+                        Either4::Third(pending) => Wake::Command(pending),
+                        Either4::Fourth(()) => Wake::Scheduled,
+                    }
+                }
+                None => match select3(
+                    super::heltec_v3_face::BUTTON_EVENTS.receive(),
+                    Timer::after(Duration::from_millis(500)),
+                    REMOTE_CONTROL_COMMANDS.receive(),
+                )
+                .await
+                {
+                    Either3::First(event) => Wake::Button(event),
+                    Either3::Second(()) => Wake::Tick,
+                    Either3::Third(pending) => Wake::Command(pending),
+                },
+            };
+            match wake {
+                Wake::Scheduled => {
+                    apply_scheduled(
+                        &mut scheduled_effect,
+                        lora_status,
+                        usb_status,
+                        &mut system_awake,
+                        desired_interfaces,
+                    );
+                    continue;
+                }
+                Wake::Button(event) => {
+                    let awake = system_awake;
+                    refresh_face(
+                        face,
+                        lora_status,
+                        usb_status,
+                        &mut subg_configuration,
+                        awake,
+                        lora_spectrum,
+                        &ui_handle,
+                        node_page_destination,
+                        &mut lora_controller,
+                        &mut subg_store,
+                        &mut system_awake,
+                        &mut desired_interfaces,
+                        &mut scheduled_effect,
+                        Some(event),
+                    )
+                    .await;
+                    continue;
+                }
+                Wake::Tick => {
+                    let awake = system_awake;
+                    refresh_face(
+                        face,
+                        lora_status,
+                        usb_status,
+                        &mut subg_configuration,
+                        awake,
+                        lora_spectrum,
+                        &ui_handle,
+                        node_page_destination,
+                        &mut lora_controller,
+                        &mut subg_store,
+                        &mut system_awake,
+                        &mut desired_interfaces,
+                        &mut scheduled_effect,
+                        None,
+                    )
+                    .await;
+                    continue;
+                }
+                Wake::Command(pending) => {
+                    let (token, command) = pending.into_parts();
+                    let result = match snapshots(lora_status, usb_status) {
+                        Ok(snapshots) => {
+                            execute(
+                                Context {
+                                    snapshots: &snapshots,
+                                    lora_status,
+                                    usb_status,
+                                    system_awake: &mut system_awake,
+                                    desired_interfaces: &mut desired_interfaces,
+                                    scheduled_effect: &mut scheduled_effect,
+                                    lora_controller: &mut lora_controller,
+                                    subg_store: &mut subg_store,
+                                    subg_configuration: &mut subg_configuration,
+                                },
+                                command,
+                            )
+                            .await
+                        }
+                        Err(error) => Err(error),
+                    };
+                    REMOTE_CONTROL_COMMANDS.complete(token, result);
+                    let awake = system_awake;
+                    refresh_face(
+                        face,
+                        lora_status,
+                        usb_status,
+                        &mut subg_configuration,
+                        awake,
+                        lora_spectrum,
+                        &ui_handle,
+                        node_page_destination,
+                        &mut lora_controller,
+                        &mut subg_store,
+                        &mut system_awake,
+                        &mut desired_interfaces,
+                        &mut scheduled_effect,
+                        None,
+                    )
+                    .await;
+                    continue;
+                }
+            }
+        }
+        #[cfg(not(feature = "heltec-v3"))]
         let pending = match scheduled_effect.as_ref() {
             Some(effect) => match select(
                 REMOTE_CONTROL_COMMANDS.receive(),
@@ -112,31 +364,34 @@ pub(super) async fn run(
             },
             None => Some(REMOTE_CONTROL_COMMANDS.receive().await),
         };
-        let Some(pending) = pending else {
-            continue;
-        };
-        let (token, command) = pending.into_parts();
-        let result = match snapshots(lora_status, usb_status) {
-            Ok(snapshots) => {
-                execute(
-                    Context {
-                        snapshots: &snapshots,
-                        lora_status,
-                        usb_status,
-                        system_awake: &mut system_awake,
-                        desired_interfaces: &mut desired_interfaces,
-                        scheduled_effect: &mut scheduled_effect,
-                        lora_controller: &mut lora_controller,
-                        subg_store: &mut subg_store,
-                        subg_configuration: &mut subg_configuration,
-                    },
-                    command,
-                )
-                .await
-            }
-            Err(error) => Err(error),
-        };
-        REMOTE_CONTROL_COMMANDS.complete(token, result);
+        #[cfg(not(feature = "heltec-v3"))]
+        {
+            let Some(pending) = pending else {
+                continue;
+            };
+            let (token, command) = pending.into_parts();
+            let result = match snapshots(lora_status, usb_status) {
+                Ok(snapshots) => {
+                    execute(
+                        Context {
+                            snapshots: &snapshots,
+                            lora_status,
+                            usb_status,
+                            system_awake: &mut system_awake,
+                            desired_interfaces: &mut desired_interfaces,
+                            scheduled_effect: &mut scheduled_effect,
+                            lora_controller: &mut lora_controller,
+                            subg_store: &mut subg_store,
+                            subg_configuration: &mut subg_configuration,
+                        },
+                        command,
+                    )
+                    .await
+                }
+                Err(error) => Err(error),
+            };
+            REMOTE_CONTROL_COMMANDS.complete(token, result);
+        }
     }
 }
 

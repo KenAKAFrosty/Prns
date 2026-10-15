@@ -1,5 +1,8 @@
 use super::*;
-use personal_hopspot_memory::HELTEC_WIRELESS_STICK_LITE_V3;
+#[cfg(feature = "heltec-v3")]
+use personal_hopspot_memory::HELTEC_V3 as BOARD_MEMORY_PROFILE;
+#[cfg(not(feature = "heltec-v3"))]
+use personal_hopspot_memory::HELTEC_WIRELESS_STICK_LITE_V3 as BOARD_MEMORY_PROFILE;
 use personal_rns::interfaces::lora::AirtimePolicy;
 use personal_rns::lora::{LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::remote_control::{
@@ -7,23 +10,43 @@ use personal_rns::remote_control::{
 };
 use personal_rns::runtime::{PrnsNodeHandle, PrnsNodeRecipe, SharedNorFlash};
 
+#[cfg(feature = "heltec-v3")]
+const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x19Personal Hopspot HeltecV3\xc0";
+#[cfg(not(feature = "heltec-v3"))]
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x27Personal Hopspot Wireless Stick Lite V3\xc0";
+#[cfg(feature = "heltec-v3")]
+const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot HeltecV3";
+#[cfg(not(feature = "heltec-v3"))]
 const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot Wireless Stick Lite V3";
 
+#[cfg_attr(feature = "heltec-v3", embassy_executor::task)]
 pub async fn run(spawner: Spawner) {
-    let memory = crate::memory::EspFirmwareMemory::new(&HELTEC_WIRELESS_STICK_LITE_V3);
+    let memory = crate::memory::EspFirmwareMemory::new(&BOARD_MEMORY_PROFILE);
     let S3Fn8Hardware {
         usb_rx,
         usb_tx,
         lora_radio,
         bluetooth,
+        #[cfg(not(feature = "heltec-v3"))]
         identity_entropy,
+        #[cfg(feature = "heltec-v3")]
+        mut rng,
+        #[cfg(feature = "heltec-v3")]
+        mut adc,
+        #[cfg(feature = "heltec-v3")]
+        battery_pin,
+        #[cfg(feature = "heltec-v3")]
+        button,
+        #[cfg(feature = "heltec-v3")]
+        display,
         mac,
         timebase,
         _rtc,
         _vext,
         _adc_control,
     } = board::bringup();
+    #[cfg(feature = "heltec-v3")]
+    let identity_entropy = esp_hal::rng::TrngSource::new(rng.reborrow(), adc.reborrow());
 
     let mut boot_entropy = entropy::seed_runtime_entropy(&identity_entropy)
         .expect("the enabled S3 boot TRNG fills the initial seed");
@@ -125,6 +148,8 @@ pub async fn run(spawner: Spawner) {
         .expect("Bluetooth supervisor lane is available");
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
+    #[cfg(feature = "heltec-v3")]
+    let ui_handle = handle;
     let manifold_wiring = manifold_lanes.into_manifold_wiring(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
@@ -169,6 +194,28 @@ pub async fn run(spawner: Spawner) {
     spawner.spawn(
         ble_task(spawner, bluetooth, mac, ble_identity, ble_fleet).expect("Bluetooth task fits"),
     );
+    #[cfg(feature = "heltec-v3")]
+    {
+        spawner.spawn(super::heltec_v3_face::button_task(button).expect("button task fits"));
+        static FACE: StaticCell<super::heltec_v3_face::Face> = StaticCell::new();
+        let face = FACE.init(super::heltec_v3_face::Face::new(display, adc, battery_pin));
+        spawner.spawn(
+            remote_control::run(
+                lora_status,
+                &USB_STATUS,
+                lora_controller,
+                subg_configuration_store,
+                subg_configuration,
+                face,
+                lora_spectrum,
+                ui_handle,
+                node_page_destination,
+            )
+            .expect("remote control task fits"),
+        );
+        lora.run(lora_seam).await;
+    }
+    #[cfg(not(feature = "heltec-v3"))]
     join(
         lora.run(lora_seam),
         remote_control::run(
