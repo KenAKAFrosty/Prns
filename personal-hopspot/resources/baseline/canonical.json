@@ -18568,12 +18568,12 @@
             "capacity": {
               "kind": "known",
               "bytes": 341760,
-              "headroom_bytes": 32772
+              "headroom_bytes": 75684
             },
-            "static_section_bytes": 308976,
-            "linker_padding_bytes": 12,
+            "static_section_bytes": 266076,
+            "linker_padding_bytes": 0,
             "additional_reservation_bytes": 0,
-            "included_reservation_bytes": 126976,
+            "included_reservation_bytes": 49152,
             "external_reservation_bytes": 0
           },
           {
@@ -18584,12 +18584,12 @@
             "capacity": {
               "kind": "known",
               "bytes": 73728,
-              "headroom_bytes": 0
+              "headroom_bytes": 73728
             },
-            "static_section_bytes": 73728,
+            "static_section_bytes": 0,
             "linker_padding_bytes": 0,
             "additional_reservation_bytes": 0,
-            "included_reservation_bytes": 73728,
+            "included_reservation_bytes": 0,
             "external_reservation_bytes": 0
           },
           {
@@ -18600,11 +18600,11 @@
             "capacity": {
               "kind": "known",
               "bytes": 32768,
-              "headroom_bytes": 0
+              "headroom_bytes": 32768
             },
             "static_section_bytes": 0,
             "linker_padding_bytes": 0,
-            "additional_reservation_bytes": 32768,
+            "additional_reservation_bytes": 0,
             "included_reservation_bytes": 0,
             "external_reservation_bytes": 0
           },
