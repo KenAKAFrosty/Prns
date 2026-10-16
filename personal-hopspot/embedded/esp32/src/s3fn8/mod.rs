@@ -1,9 +1,17 @@
 mod board;
 mod entropy;
 mod firmware;
+#[cfg(feature = "heltec-v3")]
+#[path = "../s3/boards/heltec_frontend.rs"]
+mod heltec_frontend;
+#[cfg(feature = "heltec-v3")]
+mod heltec_v3_face;
 mod remote_control;
+#[cfg(feature = "heltec-v3")]
+mod ui;
 
 use embassy_executor::Spawner;
+#[cfg(not(feature = "heltec-v3"))]
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -14,6 +22,7 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
 use esp_hal::gpio::{Input, Output};
 use esp_hal::peripherals::BT;
+#[cfg(not(feature = "heltec-v3"))]
 use esp_hal::rng::TrngSource;
 use esp_hal::rtc_cntl::Rtc;
 use esp_hal::spi::master::Spi;
@@ -45,6 +54,9 @@ use entropy::S3Fn8EntropySource;
 
 firmware_app_descriptor!();
 
+#[cfg(feature = "heltec-v3")]
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltecv3");
+#[cfg(not(feature = "heltec-v3"))]
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"wslv3usb");
 const USB_UART_BAUD: u32 = 115_200;
 const USB_UART_DATA_BITS_PER_FRAME: u64 = 8;
@@ -128,7 +140,18 @@ struct S3Fn8Hardware {
     usb_tx: UartTx<'static, Async>,
     lora_radio: LoraRadio,
     bluetooth: BT<'static>,
+    #[cfg(not(feature = "heltec-v3"))]
     identity_entropy: TrngSource<'static>,
+    #[cfg(feature = "heltec-v3")]
+    rng: esp_hal::peripherals::RNG<'static>,
+    #[cfg(feature = "heltec-v3")]
+    adc: esp_hal::peripherals::ADC1<'static>,
+    #[cfg(feature = "heltec-v3")]
+    battery_pin: esp_hal::peripherals::GPIO1<'static>,
+    #[cfg(feature = "heltec-v3")]
+    button: Input<'static>,
+    #[cfg(feature = "heltec-v3")]
+    display: Option<heltec_v3_face::Oled>,
     mac: [u8; 6],
     timebase: personal_rns::manifold::embassy::EmbassyTimebase,
     _rtc: Rtc<'static>,
@@ -208,6 +231,18 @@ async fn ble_task(
         esp_radio::ble::controller::BleConnector::new(bt, ble_config()).expect("BLE connector");
     entropy::reseed_after_radio_start();
     crate::bluetooth_auto::run(connector, mac, identity, fleet, &BLE_SHARED, spawner).await;
+}
+
+#[cfg(feature = "heltec-v3")]
+pub(super) fn heltec_lora_frontend(
+    power_pin: impl esp_hal::gpio::OutputPin + 'static,
+    chip_enable_pin: impl esp_hal::gpio::Pin + 'static,
+    gc1109_cps_pin: impl esp_hal::gpio::OutputPin + 'static,
+    kct8103l_ctx_pin: impl esp_hal::gpio::OutputPin + 'static,
+) -> (personal_rns::radios::sx126x::FrontendControl, u8) {
+    let frontend =
+        heltec_frontend::initialize(power_pin, chip_enable_pin, gc1109_cps_pin, kct8103l_ctx_pin);
+    (frontend.control(), frontend.rx_gain_db())
 }
 
 fn ignore_events(_event: PrnsEvent<'_>, _state: &AppState) {}

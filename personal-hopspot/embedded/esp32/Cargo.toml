@@ -51,6 +51,9 @@ usb = ["personal-rns/usb"]
 tcp = ["wifi-auto", "personal-rns/tcp-dns", "embassy-net/dns"]
 remote-control-pairing = ["personal-hopspot-core/remote-control-pairing"]
 esp32s3fn8 = []
+# Heltec WiFi LoRa 32 V3 is an ESP32-S3FN8: 8 MiB flash and no PSRAM. The feature
+# selects that board's pins and OLED on the SRAM-only runtime.
+heltec-v3 = ["display"]
 jtag-logging = ["esp-println/jtag-serial"]
 silent-logging = ["esp-println/no-op"]
 # Developer-only interoperability fixture. Shipping board packages do not enable it.

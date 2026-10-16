@@ -431,6 +431,17 @@ const S3FN8_RUNTIME_RESERVATIONS: [RuntimeReservation; 1] = [RuntimeReservation 
     },
 }];
 
+/// Heltec V3 uses the same SRAM-only runtime as the Wireless Stick, with a 48 KiB heap.
+const HELTEC_V3_RUNTIME_RESERVATIONS: [RuntimeReservation; 1] = [RuntimeReservation {
+    id: ReservationId("internal-heap"),
+    address_space: DRAM,
+    bytes: 48 * KIB,
+    accounting: ReservationAccounting::SharedPool {
+        pool: ReservationPoolId("internal-heap"),
+        charge: ReservationCharge::IncludedInStaticImage,
+    },
+}];
+
 pub const HELTEC_V4: MemoryProfile = MemoryProfile {
     id: MemoryProfileId("heltec-v4"),
     architecture: ProcessorArchitecture::XtensaEsp32S3,
@@ -478,7 +489,7 @@ pub const HELTEC_V3: MemoryProfile = MemoryProfile {
     regions: &ESP_8_MIB_REGIONS,
     firmware: firmware_placement(0x10000, 0x67D000, 0x67D000),
     journals: &ESP_8_MIB_JOURNALS,
-    runtime_reservations: &S3_RUNTIME_RESERVATIONS,
+    runtime_reservations: &HELTEC_V3_RUNTIME_RESERVATIONS,
 };
 
 pub const HELTEC_WIRELESS_STICK_LITE_V3: MemoryProfile = MemoryProfile {

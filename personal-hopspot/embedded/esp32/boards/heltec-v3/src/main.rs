@@ -7,5 +7,6 @@ use embassy_executor::Spawner;
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    personal_hopspot_esp32::s3::boards::heltec_v3::run(spawner).await;
+    spawner.spawn(personal_hopspot_esp32::s3fn8::run(spawner).expect("firmware task fits"));
+    core::future::pending().await
 }

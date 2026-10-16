@@ -18290,7 +18290,7 @@
         "linker_version": "xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
       },
       "memory_contract": {
-        "fingerprint": "646ea081174bf01bbd71be3550864dd07ad487954fa0ea4cf1e3f4428ccdc191",
+        "fingerprint": "1bc3cd81a7eed0ea0092248f223457d994dffad50507598e1c5f561070198352",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -18532,42 +18532,13 @@
         },
         "runtime_reservations": [
           {
-            "id": "core1-stack",
+            "id": "internal-heap",
             "address_space": "data-ram",
-            "bytes": 73728,
-            "accounting": {
-              "kind": "dedicated",
-              "charge": "included-in-static-image"
-            }
-          },
-          {
-            "id": "reclaimed-heap",
-            "address_space": "reclaimed-ram",
-            "bytes": 73728,
+            "bytes": 49152,
             "accounting": {
               "kind": "shared-pool",
-              "pool": "reclaimed-heap",
+              "pool": "internal-heap",
               "charge": "included-in-static-image"
-            }
-          },
-          {
-            "id": "radio-internal-heap",
-            "address_space": "data-ram",
-            "bytes": 53248,
-            "accounting": {
-              "kind": "shared-pool",
-              "pool": "radio-internal-heap",
-              "charge": "included-in-static-image"
-            }
-          },
-          {
-            "id": "dcache-heap",
-            "address_space": "dcache-ram",
-            "bytes": 32768,
-            "accounting": {
-              "kind": "shared-pool",
-              "pool": "dcache-heap",
-              "charge": "additional-to-static"
             }
           }
         ]
@@ -18597,12 +18568,12 @@
             "capacity": {
               "kind": "known",
               "bytes": 341760,
-              "headroom_bytes": 32772
+              "headroom_bytes": 75684
             },
-            "static_section_bytes": 308976,
-            "linker_padding_bytes": 12,
+            "static_section_bytes": 266076,
+            "linker_padding_bytes": 0,
             "additional_reservation_bytes": 0,
-            "included_reservation_bytes": 126976,
+            "included_reservation_bytes": 49152,
             "external_reservation_bytes": 0
           },
           {
@@ -18613,12 +18584,12 @@
             "capacity": {
               "kind": "known",
               "bytes": 73728,
-              "headroom_bytes": 0
+              "headroom_bytes": 73728
             },
-            "static_section_bytes": 73728,
+            "static_section_bytes": 0,
             "linker_padding_bytes": 0,
             "additional_reservation_bytes": 0,
-            "included_reservation_bytes": 73728,
+            "included_reservation_bytes": 0,
             "external_reservation_bytes": 0
           },
           {
@@ -18629,11 +18600,11 @@
             "capacity": {
               "kind": "known",
               "bytes": 32768,
-              "headroom_bytes": 0
+              "headroom_bytes": 32768
             },
             "static_section_bytes": 0,
             "linker_padding_bytes": 0,
-            "additional_reservation_bytes": 32768,
+            "additional_reservation_bytes": 0,
             "included_reservation_bytes": 0,
             "external_reservation_bytes": 0
           },
