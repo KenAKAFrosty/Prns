@@ -33,6 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -83,6 +84,14 @@ jobs:
             cmp "target/cloudflare-release/$asset" \
               "target/cloudflare-website/releases/channels/$asset"
           done
+      - name: Keep source links available within the Cloudflare Pages file limit
+        run: |
+          test ! -e target/cloudflare-website/_redirects
+          test -d target/cloudflare-website/api/src
+          rm -rf target/cloudflare-website/api/src
+          printf '%s\n' '/api/src/* https://reticulum.rs/api/src/:splat 302' \
+            > target/cloudflare-website/_redirects
+          test "$(find target/cloudflare-website -type f | wc -l)" -le 20000
       - name: Deploy the signed website using the existing Cloudflare credentials
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
