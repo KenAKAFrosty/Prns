@@ -1,0 +1,19 @@
+{
+  "candidate": {
+    "channel": "stable",
+    "manifest_sha256": "46b241a4a21f9709179d7c8a0c51881a02f42e88ff1ecfce4d4ce5b1d5019dec",
+    "manifest_signature_sha256": "98a462a2762e886bb16305d4ecff74baf1eb3b0c80edd26d7ea7c1c089235287",
+    "prerelease_published_at": "2026-10-16T22:59:56Z",
+    "signed_candidate_sha256": "af4db79ff568436840790f53e8f1c155504d870f5deb590c51693821aca195e6",
+    "signing_key_id": "1BF5C4D8B140811A",
+    "source_commit": "92a9613fd3fa2cdd827f2e222f65d4a305360463",
+    "version": "0.3.8-hotfix.1"
+  },
+  "physical_qualification": "not-required-pre-1.0",
+  "schema": 7,
+  "software_validation": {
+    "reference": "artifact://qualification/599e53274e25588f599a6d9b48307eeb60117f03a48c350669141cfddbc0d9cf",
+    "sha256": "599e53274e25588f599a6d9b48307eeb60117f03a48c350669141cfddbc0d9cf",
+    "workflow_run_id": "38972545725"
+  }
+}
