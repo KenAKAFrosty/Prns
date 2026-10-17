@@ -33,7 +33,9 @@ class CloudflareDeploymentTargetTests(unittest.TestCase):
         project = {"name": "public-site", "production_branch": "production", "domains": ["prns.dev"]}
         unrelated = {"name": "preview", "production_branch": "main", "domains": ["preview.pages.dev"]}
         cases = [
-            ("later page", [[unrelated], [project]], "project=public-site\nbranch=production\n"),
+            ("later page", [[unrelated] * 10, [project]], "project=public-site\nbranch=production\n"),
+            ("empty final page", [[unrelated] * 9 + [project], []], "project=public-site\nbranch=production\n"),
+            ("API rejection", [{"error": "Invalid page size"}], None),
             ("missing", [[unrelated]], None),
             ("ambiguous", [[project, project]], None),
             ("invalid branch", [[{**project, "production_branch": "main\ninjected=value"}]], None),
@@ -43,17 +45,23 @@ class CloudflareDeploymentTargetTests(unittest.TestCase):
             import json
             import sys
             from unittest.mock import patch
+            from urllib.error import HTTPError
             from urllib.parse import parse_qs, urlsplit
 
             pages = json.load(sys.stdin)
             def response(request, timeout):
                 assert request.get_header("Authorization") == "Bearer fixture-token"
                 assert request.get_header("User-agent") == "prns-release-deploy/1"
-                page = int(parse_qs(urlsplit(request.full_url).query)["page"][0])
+                query = parse_qs(urlsplit(request.full_url).query)
+                assert query["per_page"] == ["10"]
+                page = int(query["page"][0])
+                if isinstance(pages[page - 1], dict):
+                    raise HTTPError(request.full_url, 400, "Bad Request", {}, StringIO(json.dumps({
+                        "errors": [{"code": 123, "message": pages[page - 1]["error"]}],
+                    })))
                 return StringIO(json.dumps({
                     "success": True,
                     "result": pages[page - 1],
-                    "result_info": {"total_pages": len(pages)},
                 }))
             with patch("urllib.request.urlopen", side_effect=response):
                 exec(CODE)
@@ -78,6 +86,8 @@ class CloudflareDeploymentTargetTests(unittest.TestCase):
                 if expected is None:
                     self.assertNotEqual(result.returncode, 0)
                     self.assertFalse(output.exists())
+                    if name == "API rejection":
+                        self.assertIn("Invalid page size", result.stderr)
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(output.read_text(), expected)

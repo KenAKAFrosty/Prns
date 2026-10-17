@@ -48,26 +48,34 @@ jobs:
           import json
           import os
           from pathlib import Path
+          from urllib.error import HTTPError
           from urllib.request import Request, urlopen
 
           account = os.environ["CLOUDFLARE_ACCOUNT_ID"]
           host = os.environ["CLOUDFLARE_SITE_HOST"]
           matches = []
+          page_size = 10
           page = 1
           while True:
               request = Request(
-                  f"https://api.cloudflare.com/client/v4/accounts/{account}/pages/projects?page={page}&per_page=100",
+                  f"https://api.cloudflare.com/client/v4/accounts/{account}/pages/projects?page={page}&per_page={page_size}",
                   headers={
                       "Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}",
                       "User-Agent": "prns-release-deploy/1",
                   },
               )
-              with urlopen(request, timeout=30) as response:
-                  payload = json.load(response)
+              try:
+                  with urlopen(request, timeout=30) as response:
+                      payload = json.load(response)
+              except HTTPError as error:
+                  failure = json.load(error)
+                  raise SystemExit(
+                      f"Cloudflare Pages discovery failed (HTTP {error.code}): {json.dumps(failure['errors'])}"
+                  ) from None
               if payload["success"] is not True:
                   raise SystemExit("Cloudflare Pages project discovery failed")
               matches.extend(project for project in payload["result"] if host in project["domains"])
-              if page >= payload["result_info"]["total_pages"]:
+              if len(payload["result"]) < page_size:
                   break
               page += 1
           if len(matches) != 1:
