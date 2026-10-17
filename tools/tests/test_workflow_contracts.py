@@ -24,6 +24,65 @@ sys.modules[SPEC.name] = contracts
 SPEC.loader.exec_module(contracts)
 
 
+class CloudflareDeploymentTargetTests(unittest.TestCase):
+    def test_domain_target_uses_all_pages_and_rejects_invalid_matches(self) -> None:
+        workflow = (ROOT / ".github/workflows/site-release.yml").read_text()
+        step = workflow.split("      - name: Resolve the Pages project that owns the public domain\n", 1)[1]
+        shell = textwrap.dedent(step.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        code = shell.split("python3 - <<'PYTHON'\n", 1)[1].rsplit("\nPYTHON", 1)[0]
+        project = {"name": "public-site", "production_branch": "production", "domains": ["prns.dev"]}
+        unrelated = {"name": "preview", "production_branch": "main", "domains": ["preview.pages.dev"]}
+        cases = [
+            ("later page", [[unrelated], [project]], "project=public-site\nbranch=production\n"),
+            ("missing", [[unrelated]], None),
+            ("ambiguous", [[project, project]], None),
+            ("invalid branch", [[{**project, "production_branch": "main\ninjected=value"}]], None),
+        ]
+        fixture = textwrap.dedent("""\
+            from io import StringIO
+            import json
+            import sys
+            from unittest.mock import patch
+            from urllib.parse import parse_qs, urlsplit
+
+            pages = json.load(sys.stdin)
+            def response(request, timeout):
+                assert request.get_header("Authorization") == "Bearer fixture-token"
+                assert request.get_header("User-agent") == "prns-release-deploy/1"
+                page = int(parse_qs(urlsplit(request.full_url).query)["page"][0])
+                return StringIO(json.dumps({
+                    "success": True,
+                    "result": pages[page - 1],
+                    "result_info": {"total_pages": len(pages)},
+                }))
+            with patch("urllib.request.urlopen", side_effect=response):
+                exec(CODE)
+        """).replace("CODE", repr(code))
+        for name, pages, expected in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "outputs"
+                result = subprocess.run(
+                    [sys.executable, "-c", fixture],
+                    input=json.dumps(pages),
+                    text=True,
+                    capture_output=True,
+                    env={
+                        **os.environ,
+                        "CLOUDFLARE_API_TOKEN": "fixture-token",
+                        "CLOUDFLARE_ACCOUNT_ID": "fixture-account",
+                        "CLOUDFLARE_SITE_HOST": "prns.dev",
+                        "GITHUB_OUTPUT": str(output),
+                    },
+                )
+                self.assertNotIn("fixture-token", result.stdout + result.stderr)
+                if expected is None:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(output.exists())
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(output.read_text(), expected)
+
+
 class SuiteFinalizationCustodyTests(unittest.TestCase):
     def test_suite_sign_stages_the_bundled_hotfix_qualification_helper(self) -> None:
         workflow = (ROOT / ".github/workflows/suite-sign.yml").read_text()

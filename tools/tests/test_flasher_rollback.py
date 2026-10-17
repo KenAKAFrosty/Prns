@@ -315,6 +315,12 @@ class FlasherRollbackTests(unittest.TestCase):
             self.assertIn("files", identity["website"])
 
             class QuietHandler(SimpleHTTPRequestHandler):
+                def do_GET(self) -> None:
+                    if self.headers.get("User-Agent") != "prns-release-verifier/1":
+                        self.send_error(403)
+                        return
+                    super().do_GET()
+
                 def log_message(self, format: str, *args: object) -> None:
                     pass
 

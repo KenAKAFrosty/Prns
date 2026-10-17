@@ -23,7 +23,7 @@ env:
   RELEASE_VERSION: ${{ inputs.version }}
   RELEASE_RECORD_SHA256: ${{ inputs.release_record_sha256 }}
   WRANGLER_VERSION: 4.118.0
-  CLOUDFLARE_PAGES_PROJECT: prns-site-preview
+  CLOUDFLARE_SITE_HOST: prns.dev
 
 jobs:
   deploy:
@@ -38,6 +38,50 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24.18.0"
+      - name: Resolve the Pages project that owns the public domain
+        id: cloudflare-target
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          account = os.environ["CLOUDFLARE_ACCOUNT_ID"]
+          host = os.environ["CLOUDFLARE_SITE_HOST"]
+          matches = []
+          page = 1
+          while True:
+              request = Request(
+                  f"https://api.cloudflare.com/client/v4/accounts/{account}/pages/projects?page={page}&per_page=100",
+                  headers={
+                      "Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}",
+                      "User-Agent": "prns-release-deploy/1",
+                  },
+              )
+              with urlopen(request, timeout=30) as response:
+                  payload = json.load(response)
+              if payload["success"] is not True:
+                  raise SystemExit("Cloudflare Pages project discovery failed")
+              matches.extend(project for project in payload["result"] if host in project["domains"])
+              if page >= payload["result_info"]["total_pages"]:
+                  break
+              page += 1
+          if len(matches) != 1:
+              raise SystemExit(f"Expected exactly one Pages project for {host}; found {len(matches)}")
+          project = matches[0]
+          outputs = {"project": project["name"], "branch": project["production_branch"]}
+          for name, value in outputs.items():
+              if not isinstance(value, str) or not value or "\n" in value or "\r" in value:
+                  raise SystemExit(f"Invalid Cloudflare Pages {name}")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              for name, value in outputs.items():
+                  output.write(f"{name}={value}\n")
+          print(f"Deploying {host} through Pages project {outputs['project']} on branch {outputs['branch']}")
+          PYTHON
       - name: Download the exact promoted stable release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -94,17 +138,19 @@ jobs:
           test "$(find target/cloudflare-website -type f | wc -l)" -le 20000
       - name: Deploy the signed website using the existing Cloudflare credentials
         env:
+          CLOUDFLARE_PAGES_PROJECT: ${{ steps.cloudflare-target.outputs.project }}
+          CLOUDFLARE_PRODUCTION_BRANCH: ${{ steps.cloudflare-target.outputs.branch }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           record="target/cloudflare-release/flasher-release-record-v${RELEASE_VERSION}.json"
           npx --yes "wrangler@${WRANGLER_VERSION}" pages deploy target/cloudflare-website \
             --project-name "$CLOUDFLARE_PAGES_PROJECT" \
-            --branch main \
+            --branch "$CLOUDFLARE_PRODUCTION_BRANCH" \
             --commit-hash "$(jq -r '.release.source_commit' "$record")" \
             --commit-dirty=false
       - name: Verify the complete deployed website
         run: |
           ./tools/prns release rollback -- verify-live-website \
             --stage-identity target/cloudflare-stage.json \
-            --site-url https://prns.dev
+            --site-url "https://${CLOUDFLARE_SITE_HOST}"

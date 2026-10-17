@@ -23,6 +23,7 @@ from flasher_website_history import (
 )
 
 
+RELEASE_WEBSITE_USER_AGENT = "prns-release-verifier/1"
 WORKFLOW_PATH = ".github/workflows/flasher-rollback.yml"
 STAGE_JOB_NAME = "Verify and stage complete prior website"
 STABLE_RELEASE = "StableRelease"
@@ -291,7 +292,13 @@ def verify_live_website(*, stage_identity: Path, site_url: str) -> dict:
                     "",
                 )
             )
-            request = Request(url, headers={"Cache-Control": "no-cache"})
+            request = Request(
+                url,
+                headers={
+                    "Cache-Control": "no-cache",
+                    "User-Agent": RELEASE_WEBSITE_USER_AGENT,
+                },
+            )
             with urlopen(request, timeout=30) as response:
                 if response.status != 200:
                     raise ValueError(
