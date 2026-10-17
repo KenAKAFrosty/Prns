@@ -13,6 +13,8 @@ use crate::persistence::{PersistedStore, SnapshotRegion};
 pub struct FileStore {
     dir: PathBuf,
     dir_ready: bool,
+    #[cfg(unix)]
+    pending_directory_syncs: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug)]
@@ -39,6 +41,8 @@ impl FileStore {
         Self {
             dir: dir.into(),
             dir_ready: false,
+            #[cfg(unix)]
+            pending_directory_syncs: None,
         }
     }
 
@@ -50,22 +54,47 @@ impl FileStore {
         self.dir.join(region_file_name(region))
     }
 
-    fn ensure_dir(&mut self) -> Result<(), FileStoreError> {
+    /// Prepares the directory without publishing a snapshot. Existing directories
+    /// are caller-provided namespace anchors: their parents need not be readable.
+    /// On Unix, newly created directories and their first existing parent are
+    /// synced before preparation succeeds. Retry a failed preparation on this
+    /// instance so it retains any outstanding directory-confirmation obligations;
+    /// a new instance cannot recover another owner's unfinished creation history.
+    pub fn prepare_directory(&mut self) -> Result<(), FileStoreError> {
+        #[cfg(unix)]
+        {
+            self.prepare_directory_with(confirm_directory)
+        }
+        #[cfg(not(unix))]
+        {
+            if !self.dir_ready {
+                fs::create_dir_all(&self.dir)?;
+                self.dir_ready = true;
+            }
+            Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    fn prepare_directory_with(
+        &mut self,
+        mut confirm: impl FnMut(&Path) -> std::io::Result<()>,
+    ) -> Result<(), FileStoreError> {
         if self.dir_ready {
             return Ok(());
         }
+        if self.pending_directory_syncs.is_none() {
+            // Capture the boundary before creation, not after a partial attempt.
+            self.pending_directory_syncs = Some(directory_sync_chain(&self.dir)?);
+        }
         fs::create_dir_all(&self.dir)?;
-        #[cfg(unix)]
         let _ = fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700));
-        #[cfg(unix)]
-        {
-            // A previous failed attempt may already have created any of these directories.
-            // Confirm the full chain before caching readiness, including on retries.
-            let absolute = fs::canonicalize(&self.dir)?;
-            for directory in absolute.ancestors() {
-                sync_directory(directory)?;
+        if let Some(directories) = &self.pending_directory_syncs {
+            for directory in directories {
+                confirm(directory).map_err(FileStoreError::DurabilityUnconfirmed)?;
             }
         }
+        self.pending_directory_syncs = None;
         self.dir_ready = true;
         Ok(())
     }
@@ -76,7 +105,7 @@ impl FileStore {
         snapshot: &[u8],
         confirm: impl FnOnce(&Path) -> std::io::Result<()>,
     ) -> Result<(), FileStoreError> {
-        self.ensure_dir()?;
+        self.prepare_directory()?;
         let final_path = self.path_for(region);
         let staging_path = self.dir.join(format!(
             ".{}.{}.staging",
@@ -142,6 +171,22 @@ impl FileStore {
             .map_err(FileStoreError::PublishedDurabilityUnconfirmed)?;
         Ok(FileStoreConfirmation::Confirmed)
     }
+}
+
+#[cfg(unix)]
+fn directory_sync_chain(directory: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let absolute = std::path::absolute(directory)?;
+    let mut directories = Vec::new();
+    for ancestor in absolute.ancestors() {
+        directories.push(ancestor.to_path_buf());
+        match fs::metadata(ancestor) {
+            Ok(metadata) if metadata.is_dir() => return Ok(directories),
+            Ok(_) => return Err(ErrorKind::NotADirectory.into()),
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(ErrorKind::NotFound.into())
 }
 
 fn confirm_directory(directory: &Path) -> std::io::Result<()> {
@@ -245,6 +290,18 @@ fn sync_directory(path: &Path) -> Result<(), FileStoreError> {
 impl From<std::io::Error> for FileStoreError {
     fn from(error: std::io::Error) -> Self {
         FileStoreError::Io(error)
+    }
+}
+
+impl From<FileStoreError> for std::io::Error {
+    fn from(error: FileStoreError) -> Self {
+        let kind = match &error {
+            FileStoreError::Io(source)
+            | FileStoreError::DurabilityUnconfirmed(source)
+            | FileStoreError::PublishedDurabilityUnconfirmed(source) => source.kind(),
+            FileStoreError::SnapshotOutgrewBuffer { .. } => ErrorKind::InvalidData,
+        };
+        Self::new(kind, error)
     }
 }
 

@@ -115,9 +115,18 @@ impl NodePersistence {
         Self::custom_dir(directory.into().join("storage").join("prns"))
     }
 
+    /// Opens snapshots beneath a caller-provided directory, confirming any new
+    /// directories before returning. Existing directories are namespace durability
+    /// anchors; their ancestors need not be readable by this process.
+    ///
+    /// Failed initialization may leave directories behind without confirming them.
+    /// A fresh call cannot recover that creation history and relies on the caller's
+    /// existing-directory durability guarantee. Retain a `FileStore` directly when
+    /// directory preparation needs to be retried with its original obligations.
     pub fn custom_dir(directory: impl Into<PathBuf>) -> Result<Self, std::io::Error> {
         let directory = directory.into();
-        std::fs::create_dir_all(&directory)?;
+        let mut store = FileStore::new(&directory);
+        store.prepare_directory()?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -126,7 +135,7 @@ impl NodePersistence {
         verify_writable(&directory)?;
         Ok(Self {
             io: Arc::new(NativePersistenceIo),
-            store: FileStore::new(&directory),
+            store,
             vault: FileVault::new(directory),
         })
     }
