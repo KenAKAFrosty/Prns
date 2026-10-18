@@ -261,6 +261,50 @@ revocation behavior. Physical USB behavior remains outside simulator/emulator
 coverage.
 
 
+### Configuring a screenless nRF board from the command line
+
+The `usb_config` example is a command-line controller for nRF Hopspots over USB
+Remote Control. Its `provision` command writes a pre-provisioned Remote Control
+identity page: it merges the firmware UF2 with a vault page holding a fresh
+target identity and this controller's factory owner grant, which the firmware
+loads at first boot. One drag-and-drop then flashes the board and makes it trust
+the computer, without a browser.
+
+Allow your user to open the board's WebUSB interface once (Linux):
+
+    tools/device/install-prns-webusb-udev.sh
+
+Build the firmware and the tool, then make the owned UF2. `--board` names the
+board's memory profile, which sets where the identity page is written:
+
+    ./tools/prns build hopspot rak4631
+    cargo build --manifest-path personal-hopspot/headless/Cargo.toml \
+        --example usb_config --features usb-config
+    usb_config provision --board rak4631 \
+        --firmware target/hopspot-rak4631/rak4631.uf2 --out rak4631-owned.uf2
+
+Double-press reset, copy `rak4631-owned.uf2` to the bootloader drive, and delete
+the UF2 afterwards: it carries the board's private Remote Control key. The
+controller identity and the board's public key are kept under
+`~/.config/prns-usb-config` (`--state-dir` overrides it, `--device` names a board
+when you own several); losing that directory means re-provisioning.
+
+With the board plugged in:
+
+    usb_config status
+    usb_config lora --region US915 --frequency-hz 918300000 --bandwidth-khz 250 \
+        --spreading-factor 10 --coding-rate 5 --tx-power-dbm 22
+    usb_config name --set Box-Hopspot
+    usb_config interface INTERFACE_ID off
+    usb_config peers INTERFACE_ID
+    usb_config system asleep
+    usb_config announce
+    usb_config authorize CONTROLLER_PUBLIC_KEY
+
+Use the example executable from the build output in place of `usb_config`.
+Every command prints JSON lines. Flashing the plain firmware UF2 keeps the
+existing identity page and owner; re-running `provision` replaces both.
+
 ### Base Duo dual-band LoRa
 
 The Base Duo has one LR1121 radio and one active LoRa interface. Its firmware
