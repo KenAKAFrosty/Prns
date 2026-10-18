@@ -8,8 +8,8 @@ use prns_core::interfaces::bluetooth_auto::{
 use tokio::sync::{mpsc, oneshot};
 
 use super::backend::{
-    central_peripheral_capacity, dial_admission, manager_readiness, scan_lease, scan_op,
-    BoundedRecentSet, DialAdmission, ScanLease, ScanOp,
+    central_peripheral_capacity, dial_admission, dial_schedule, manager_readiness, scan_lease,
+    scan_op, BoundedRecentSet, DialAdmission, DialSchedule, ScanLease, ScanOp,
 };
 use super::central::{
     closed_central_session_ids, CentralDialCandidate, CentralPeerRegistry, CentralPeerSession,
@@ -29,8 +29,8 @@ use super::gatt_write::{write_admission, GattWriteAdmission, GattWriteMode, Gatt
 use super::legacy_restoration_identifiers;
 use super::peripheral::{
     advertising_op, can_arm_l2cap, can_open_inbound, has_session_for_peer,
-    l2cap_delivery_admission, pending_l2cap_capacity, peripheral_session_capacity, AdvertisingOp,
-    L2capDeliveryAdmission,
+    l2cap_delivery_admission, notify_admit, pending_l2cap_capacity, peripheral_session_capacity,
+    AdvertisingOp, L2capDeliveryAdmission, NotifyAdmit, NOTIFY_OUTBOX_CAP,
 };
 use super::MacosBleError;
 use super::{manager_signal_channel, CoreBluetoothPeerId, MacosBleBackend, Sighting};
@@ -521,6 +521,22 @@ fn manager_failures_are_sticky_and_fatal() {
         manager_readiness(*l2cap_current.borrow()),
         Err(MacosBleError::PublishFailed)
     ));
+}
+
+#[test]
+fn dials_run_one_at_a_time() {
+    assert_eq!(dial_schedule(false, false), DialSchedule::Start);
+    assert_eq!(dial_schedule(true, false), DialSchedule::Queue);
+    assert_eq!(dial_schedule(true, true), DialSchedule::AlreadyPending);
+    assert_eq!(dial_schedule(false, true), DialSchedule::AlreadyPending);
+}
+
+#[test]
+fn a_full_notify_queue_holds_until_corebluetooth_is_ready() {
+    assert_eq!(notify_admit(false, 0), NotifyAdmit::Transmit);
+    assert_eq!(notify_admit(true, 1), NotifyAdmit::Hold);
+    assert_eq!(notify_admit(false, 1), NotifyAdmit::Hold);
+    assert_eq!(notify_admit(true, NOTIFY_OUTBOX_CAP), NotifyAdmit::Full);
 }
 
 #[test]

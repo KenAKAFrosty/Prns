@@ -236,8 +236,9 @@ impl GattWriter {
                             .notify(*peer_id, ListenerCharacteristic::Data, &buf[..len]);
                     if !sent {
                         crate::diagnostic_log::warn!(
-                            "bluetooth: GATT-data notify queue full — fragment dropped, peer will retransmit"
+                            "bluetooth: GATT-data notify rejected — outbound queue full or session gone"
                         );
+                        return Err(MacosBleError::NotifyFailed);
                     }
                 }
             }
