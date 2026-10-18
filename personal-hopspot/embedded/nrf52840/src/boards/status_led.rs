@@ -11,7 +11,8 @@ enum Polarity {
     #[cfg(any(
         feature = "board-t114",
         feature = "board-mesh-tower-v2",
-        feature = "board-muzi-base-duo"
+        feature = "board-muzi-base-duo",
+        feature = "board-xiao-nrf52840"
     ))]
     ActiveLow,
 }
@@ -38,7 +39,8 @@ impl StatusLed {
     #[cfg(any(
         feature = "board-t114",
         feature = "board-mesh-tower-v2",
-        feature = "board-muzi-base-duo"
+        feature = "board-muzi-base-duo",
+        feature = "board-xiao-nrf52840"
     ))]
     pub(crate) fn active_low(output: Output<'static>) -> Self {
         Self {
@@ -59,7 +61,8 @@ impl StatusLed {
             #[cfg(any(
                 feature = "board-t114",
                 feature = "board-mesh-tower-v2",
-                feature = "board-muzi-base-duo"
+                feature = "board-muzi-base-duo",
+                feature = "board-xiao-nrf52840"
             ))]
             Polarity::ActiveLow => self.output.set_low(),
         }
@@ -77,14 +80,19 @@ impl StatusLed {
             #[cfg(any(
                 feature = "board-t114",
                 feature = "board-mesh-tower-v2",
-                feature = "board-muzi-base-duo"
+                feature = "board-muzi-base-duo",
+                feature = "board-xiao-nrf52840"
             ))]
             Polarity::ActiveLow => self.output.set_high(),
         }
     }
 
     /// Two short flashes make successful runtime entry visible on the headless RAK4631.
-    #[cfg(any(feature = "board-rak4631", feature = "board-rak10724"))]
+    #[cfg(any(
+        feature = "board-rak4631",
+        feature = "board-rak10724",
+        feature = "board-xiao-nrf52840"
+    ))]
     pub(crate) async fn boot_splash(&mut self) {
         use embassy_time::Timer;
 

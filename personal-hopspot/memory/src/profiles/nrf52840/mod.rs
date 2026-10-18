@@ -626,7 +626,14 @@ pub const RAK10724: MemoryProfile = MemoryProfile {
     ..RAK4631
 };
 
-const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 13] = [
+/// Seeed's XIAO nRF52840 ships the same Adafruit UF2 bootloader with S140 7.3.0 as the Wio
+/// Tracker L1, and Meshtastic keeps the same InternalFS above it, so it shares that map.
+pub const XIAO_NRF52840: MemoryProfile = MemoryProfile {
+    id: MemoryProfileId("xiao-nrf52840"),
+    ..WIO_TRACKER_L1
+};
+
+const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 14] = [
     T_ECHO_S140_V6.id,
     T_ECHO_S140_V7.id,
     T096.id,
@@ -640,6 +647,7 @@ const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 13] = [
     RAK4631.id,
     RAK10724.id,
     WIO_TRACKER_L1.id,
+    XIAO_NRF52840.id,
 ];
 
 pub const NRF52840_MEMORY_X_BINDING: NrfMemoryXBinding = NrfMemoryXBinding {

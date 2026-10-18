@@ -15,7 +15,7 @@ pub use espressif::{
 pub use nrf52840::{
     MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2, MUZI_BASE_DUO, NRF52840_MEMORY_X_BINDING,
     RAK10724, RAK4631, SENSECAP_SOLAR_NODE, T096, T1000_E, T114, T_ECHO_S140_V6, T_ECHO_S140_V7,
-    WIO_TRACKER_L1,
+    WIO_TRACKER_L1, XIAO_NRF52840,
 };
 
 const KIB: u64 = 1024;
@@ -96,7 +96,7 @@ const fn journal(
     }
 }
 
-pub const ALL_MEMORY_PROFILES: [&MemoryProfile; 21] = [
+pub const ALL_MEMORY_PROFILES: [&MemoryProfile; 22] = [
     &HELTEC_V3,
     &HELTEC_V4,
     &HELTEC_V4_R8,
@@ -118,6 +118,7 @@ pub const ALL_MEMORY_PROFILES: [&MemoryProfile; 21] = [
     &RAK4631,
     &RAK10724,
     &WIO_TRACKER_L1,
+    &XIAO_NRF52840,
 ];
 
 #[must_use]

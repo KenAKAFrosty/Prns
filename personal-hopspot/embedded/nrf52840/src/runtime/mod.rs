@@ -6,7 +6,11 @@
     feature = "board-mesh-pocket",
     feature = "board-mesh-tower-v2",
     feature = "board-muzi-base-duo",
-    any(feature = "board-rak4631", feature = "board-rak10724")
+    any(
+        feature = "board-rak4631",
+        feature = "board-rak10724",
+        feature = "board-xiao-nrf52840"
+    )
 ))]
 mod bluetooth_auto;
 #[cfg(any(
@@ -17,7 +21,11 @@ mod bluetooth_auto;
     feature = "board-mesh-pocket",
     feature = "board-mesh-tower-v2",
     feature = "board-muzi-base-duo",
-    any(feature = "board-rak4631", feature = "board-rak10724")
+    any(
+        feature = "board-rak4631",
+        feature = "board-rak10724",
+        feature = "board-xiao-nrf52840"
+    )
 ))]
 mod bluetooth_gatt_server;
 #[cfg(any(
@@ -29,7 +37,11 @@ mod bluetooth_gatt_server;
     feature = "board-mesh-pocket",
     feature = "board-mesh-tower-v2",
     feature = "board-muzi-base-duo",
-    any(feature = "board-rak4631", feature = "board-rak10724")
+    any(
+        feature = "board-rak4631",
+        feature = "board-rak10724",
+        feature = "board-xiao-nrf52840"
+    )
 ))]
 pub(crate) mod bootloader_entry;
 mod controller_enrollment;
@@ -49,7 +61,11 @@ pub(crate) mod gnss;
     any(feature = "board-t1000e", feature = "board-sensecap-solar-node"),
     feature = "board-mesh-tower-v2",
     feature = "board-muzi-base-duo",
-    any(feature = "board-rak4631", feature = "board-rak10724")
+    any(
+        feature = "board-rak4631",
+        feature = "board-rak10724",
+        feature = "board-xiao-nrf52840"
+    )
 ))]
 mod headless;
 mod heartbeat;
@@ -69,7 +85,11 @@ mod remote_control;
     feature = "board-mesh-pocket",
     feature = "board-mesh-tower-v2",
     feature = "board-muzi-base-duo",
-    any(feature = "board-rak4631", feature = "board-rak10724")
+    any(
+        feature = "board-rak4631",
+        feature = "board-rak10724",
+        feature = "board-xiao-nrf52840"
+    )
 ))]
 pub(crate) mod software_vbus;
 #[cfg(not(feature = "board-muzi-base-duo"))]
@@ -84,6 +104,10 @@ pub use firmware::run;
     any(feature = "board-t1000e", feature = "board-sensecap-solar-node"),
     feature = "board-mesh-tower-v2",
     feature = "board-muzi-base-duo",
-    any(feature = "board-rak4631", feature = "board-rak10724")
+    any(
+        feature = "board-rak4631",
+        feature = "board-rak10724",
+        feature = "board-xiao-nrf52840"
+    )
 ))]
 pub use headless::run;

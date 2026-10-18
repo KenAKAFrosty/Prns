@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if (( $# != 1 )); then
-    echo "usage: hopspot-nrf52840.sh <t096|t114|mesh-pocket-5000|mesh-pocket-10000|t1000e|sensecap-solar-node|rak4631|rak10724|wio-tracker-l1|wio-tracker-l1-pro-1w>" >&2
+    echo "usage: hopspot-nrf52840.sh <t096|t114|mesh-pocket-5000|mesh-pocket-10000|t1000e|sensecap-solar-node|rak4631|rak10724|wio-tracker-l1|wio-tracker-l1-pro-1w|xiao-nrf52840>" >&2
     exit 1
 fi
 
@@ -57,6 +57,11 @@ case "$board" in
         board_name="Wio Tracker L1 Pro 1W"
         board_feature="board-wio-tracker-l1,wio-tracker-l1-pro-1w"
         firmware_name="wio-tracker-l1"
+        ;;
+    xiao-nrf52840)
+        board_name="XIAO nRF52840"
+        board_feature="board-xiao-nrf52840"
+        firmware_name="xiao-nrf52840"
         ;;
     *)
         printf 'unsupported nRF52840 board: %s\n' "$board" >&2

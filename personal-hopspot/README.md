@@ -123,6 +123,15 @@ and maps requested output power through the amplifier's gain curve:
 
     ./tools/prns build hopspot wio-tracker-l1-pro-1w
 
+Seeed XIAO nRF52840 (or XIAO nRF52840 Sense) with the Wio-SX1262 for XIAO, as
+in Seeed's kit SKU 102010710, runs the screenless RAK4631 runtime: Bluetooth
+Auto, LoRa and USB Auto on the factory S140 7.3.0 UF2 bootloader, with the
+Wio Tracker L1 flash map. The radio uses Meshtastic's default kit pinout and
+switches RXEN around each transmit; the green RGB LED is the status light.
+Double-tap reset and copy the UF2 onto the `XIAO-SENSE` bootloader drive:
+
+    ./tools/prns build hopspot xiao-nrf52840
+
 ## Local developer web flasher
 
 Build and serve the current working tree for one or more cataloged boards with:

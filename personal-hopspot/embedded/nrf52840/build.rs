@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use personal_hopspot_memory::{
     MemoryProfile, MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2, MUZI_BASE_DUO,
     NRF52840_MEMORY_X_BINDING, RAK10724, RAK4631, SENSECAP_SOLAR_NODE, T096, T1000_E, T114,
-    T_ECHO_S140_V6, T_ECHO_S140_V7, WIO_TRACKER_L1,
+    T_ECHO_S140_V6, T_ECHO_S140_V7, WIO_TRACKER_L1, XIAO_NRF52840,
 };
 
 const BOARD_T_ECHO_FEATURE: &str = "CARGO_FEATURE_BOARD_T_ECHO";
@@ -34,6 +34,7 @@ enum Board {
     Rak10724,
     WioTrackerL1,
     SolarNode,
+    XiaoNrf52840,
 }
 
 enum Softdevice {
@@ -68,6 +69,8 @@ fn main() {
         (Board::SolarNode, Some(_)) => panic!("Solar Node uses bare-metal HAL without SoftDevice"),
         (Board::Rak10724, Some(Softdevice::S140V6)) => &RAK10724,
         (Board::Rak10724, _) => panic!("RAK10724 requires S140 6.1.1"),
+        (Board::XiaoNrf52840, Some(Softdevice::S140V7)) => &XIAO_NRF52840,
+        (Board::XiaoNrf52840, _) => panic!("XIAO nRF52840 requires S140 7.3.0"),
         (Board::T1000e, None) => &T1000_E,
         (Board::MeshTowerV2, Some(Softdevice::S140V6)) => &MESH_TOWER_V2,
         (Board::MeshTowerV2, None) => {
@@ -130,38 +133,46 @@ fn selected_board() -> Board {
         env::var_os(BOARD_WIO_TRACKER_L1_FEATURE).is_some(),
         env::var_os("CARGO_FEATURE_BOARD_SENSECAP_SOLAR_NODE").is_some(),
         env::var_os("CARGO_FEATURE_BOARD_RAK10724").is_some(),
+        env::var_os("CARGO_FEATURE_BOARD_XIAO_NRF52840").is_some(),
     ) {
-        (true, false, false, false, false, false, false, false, false, false, false) => {
+        (true, false, false, false, false, false, false, false, false, false, false, false) => {
             Board::TEcho
         }
-        (false, true, false, false, false, false, false, false, false, false, false) => Board::T096,
-        (false, false, true, false, false, false, false, false, false, false, false) => Board::T114,
-        (false, false, false, true, false, false, false, false, false, false, false) => {
+        (false, true, false, false, false, false, false, false, false, false, false, false) => {
+            Board::T096
+        }
+        (false, false, true, false, false, false, false, false, false, false, false, false) => {
+            Board::T114
+        }
+        (false, false, false, true, false, false, false, false, false, false, false, false) => {
             Board::MeshPocket
         }
-        (false, false, false, false, true, false, false, false, false, false, false) => {
+        (false, false, false, false, true, false, false, false, false, false, false, false) => {
             Board::T1000e
         }
-        (false, false, false, false, false, true, false, false, false, false, false) => {
+        (false, false, false, false, false, true, false, false, false, false, false, false) => {
             Board::MeshTowerV2
         }
-        (false, false, false, false, false, false, true, false, false, false, false) => {
+        (false, false, false, false, false, false, true, false, false, false, false, false) => {
             Board::MuziBaseDuo
         }
-        (false, false, false, false, false, false, false, true, false, false, false) => {
+        (false, false, false, false, false, false, false, true, false, false, false, false) => {
             Board::Rak4631
         }
-        (false, false, false, false, false, false, false, false, true, false, false) => {
+        (false, false, false, false, false, false, false, false, true, false, false, false) => {
             Board::WioTrackerL1
         }
-        (false, false, false, false, false, false, false, false, false, false, false) => {
+        (false, false, false, false, false, false, false, false, false, false, false, false) => {
             panic!("select exactly one nRF52840 board feature")
         }
-        (false, false, false, false, false, false, false, false, false, true, false) => {
+        (false, false, false, false, false, false, false, false, false, true, false, false) => {
             Board::SolarNode
         }
-        (false, false, false, false, false, false, false, false, false, false, true) => {
+        (false, false, false, false, false, false, false, false, false, false, true, false) => {
             Board::Rak10724
+        }
+        (false, false, false, false, false, false, false, false, false, false, false, true) => {
+            Board::XiaoNrf52840
         }
         _ => panic!("nRF52840 board features are mutually exclusive"),
     }

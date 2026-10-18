@@ -11,10 +11,11 @@
     feature = "board-muzi-base-duo",
     feature = "board-rak4631",
     feature = "board-rak10724",
-    feature = "board-wio-tracker-l1"
+    feature = "board-wio-tracker-l1",
+    feature = "board-xiao-nrf52840"
 )))]
 compile_error!(
-    "select exactly one nRF52840 board feature; available: board-t-echo, board-t096, board-t114, board-mesh-pocket, board-t1000e, board-mesh-tower-v2, board-muzi-base-duo, board-rak4631, board-wio-tracker-l1"
+    "select exactly one nRF52840 board feature; available: board-t-echo, board-t096, board-t114, board-mesh-pocket, board-t1000e, board-mesh-tower-v2, board-muzi-base-duo, board-rak4631, board-rak10724, board-wio-tracker-l1, board-sensecap-solar-node, board-xiao-nrf52840"
 );
 
 #[cfg(any(
@@ -75,7 +76,18 @@ compile_error!(
     all(feature = "board-rak10724", feature = "board-muzi-base-duo"),
     all(feature = "board-rak10724", feature = "board-rak4631"),
     all(feature = "board-rak10724", feature = "board-wio-tracker-l1"),
-    all(feature = "board-rak10724", feature = "board-sensecap-solar-node")
+    all(feature = "board-rak10724", feature = "board-sensecap-solar-node"),
+    all(feature = "board-xiao-nrf52840", feature = "board-t-echo"),
+    all(feature = "board-xiao-nrf52840", feature = "board-t096"),
+    all(feature = "board-xiao-nrf52840", feature = "board-t114"),
+    all(feature = "board-xiao-nrf52840", feature = "board-mesh-pocket"),
+    all(feature = "board-xiao-nrf52840", feature = "board-t1000e"),
+    all(feature = "board-xiao-nrf52840", feature = "board-mesh-tower-v2"),
+    all(feature = "board-xiao-nrf52840", feature = "board-muzi-base-duo"),
+    all(feature = "board-xiao-nrf52840", feature = "board-rak4631"),
+    all(feature = "board-xiao-nrf52840", feature = "board-rak10724"),
+    all(feature = "board-xiao-nrf52840", feature = "board-wio-tracker-l1"),
+    all(feature = "board-xiao-nrf52840", feature = "board-sensecap-solar-node")
 ))]
 compile_error!("nRF52840 board features are mutually exclusive");
 
@@ -255,7 +267,11 @@ mod retained_display;
         not(feature = "board-wio-tracker-l1")
     ),
     all(
-        any(feature = "board-rak4631", feature = "board-rak10724"),
+        any(
+            feature = "board-rak4631",
+            feature = "board-rak10724",
+            feature = "board-xiao-nrf52840"
+        ),
         not(feature = "board-t-echo"),
         not(feature = "board-t096"),
         not(feature = "board-t114"),
@@ -359,7 +375,11 @@ mod storage;
         not(feature = "board-wio-tracker-l1")
     ),
     all(
-        any(feature = "board-rak4631", feature = "board-rak10724"),
+        any(
+            feature = "board-rak4631",
+            feature = "board-rak10724",
+            feature = "board-xiao-nrf52840"
+        ),
         not(feature = "board-t-echo"),
         not(feature = "board-t096"),
         not(feature = "board-t114"),
@@ -387,3 +407,7 @@ pub use runtime::run;
 compile_error!("RAK10724 requires softdevice-s140-v6");
 #[cfg(all(feature = "board-rak10724", feature = "softdevice-s140-v7"))]
 compile_error!("RAK10724 does not support S140 7.x");
+#[cfg(all(feature = "board-xiao-nrf52840", not(feature = "softdevice-s140-v7")))]
+compile_error!("XIAO nRF52840 requires softdevice-s140-v7; its UF2 bootloader ships S140 7.3.0");
+#[cfg(all(feature = "board-xiao-nrf52840", feature = "softdevice-s140-v6"))]
+compile_error!("XIAO nRF52840 does not support S140 6.x");
