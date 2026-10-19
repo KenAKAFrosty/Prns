@@ -254,7 +254,7 @@ pub(super) fn radio_config(profile: RadioProfile) -> RadioConfig {
             coding_rate,
         },
         packet: LoraPacket {
-            preamble_symbols: profile.preamble().count(),
+            preamble_symbols: profile.effective_preamble().count(),
             header: HeaderMode::Explicit,
             crc: PayloadCrc::Enabled,
             invert_iq: InvertIq::Standard,

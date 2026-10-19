@@ -24,7 +24,40 @@ impl PreambleSymbols {
     pub const fn count(self) -> u16 {
         self.0
     }
+
+    /// RNode firmware's preamble for `modulation` (Config.h `LORA_PREAMBLE_*`, Utilities.h
+    /// `updateBitrate`): enough symbols to cover a 24 ms target, or 6 ms above 30 kbps, never fewer
+    /// than 18. An SX126x only waits its own configured preamble length for the sync word after
+    /// detecting a preamble, so a shorter setting than the RNode transmits keeps re-detecting the
+    /// preamble and never syncs, and an RNode listening for its longer preamble misses ours.
+    pub const fn rnode_floor(modulation: Modulation) -> Self {
+        let Modulation::Lora {
+            spreading_factor,
+            bandwidth,
+            ..
+        } = modulation;
+        let target_ms = if modulation.nominal_bitrate_bps() > RNODE_FAST_THRESHOLD_BPS {
+            RNODE_PREAMBLE_TARGET_MS - RNODE_PREAMBLE_FAST_DELTA_MS
+        } else {
+            RNODE_PREAMBLE_TARGET_MS
+        };
+        // ceil(target_ms / symbol_ms), with symbol_ms = 2^sf * 1000 / bandwidth_hz.
+        let symbol_scale = 1_000 * (1u64 << (spreading_factor as u32));
+        let symbols = (target_ms * bandwidth.hz() as u64).div_ceil(symbol_scale);
+        if symbols < RNODE_PREAMBLE_SYMBOLS_MIN as u64 {
+            Self(RNODE_PREAMBLE_SYMBOLS_MIN)
+        } else if symbols > u16::MAX as u64 {
+            Self(u16::MAX)
+        } else {
+            Self(symbols as u16)
+        }
+    }
 }
+
+const RNODE_PREAMBLE_SYMBOLS_MIN: u16 = 18;
+const RNODE_PREAMBLE_TARGET_MS: u64 = 24;
+const RNODE_PREAMBLE_FAST_DELTA_MS: u64 = 18;
+const RNODE_FAST_THRESHOLD_BPS: u32 = 30_000;
 
 /// Why a LoRa radio profile cannot be applied safely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,6 +257,18 @@ impl RadioProfile {
         self.preamble
     }
 
+    /// The preamble the radio actually uses on air: the configured count, raised to
+    /// [`PreambleSymbols::rnode_floor`] for this modulation so RNodes and this node sync on each
+    /// other's frames. The stored [`preamble`](Self::preamble) is left as configured.
+    pub const fn effective_preamble(self) -> PreambleSymbols {
+        let floor = PreambleSymbols::rnode_floor(self.modulation);
+        if self.preamble.count() >= floor.count() {
+            self.preamble
+        } else {
+            floor
+        }
+    }
+
     pub const fn region(self) -> SubGRegion {
         self.region
     }
@@ -346,7 +391,7 @@ impl RadioProfile {
         let sf = spreading_factor as u128;
         let coding = coding_rate as u128;
         let bandwidth_hz = bandwidth.hz() as u128;
-        let preamble = self.preamble.count() as u128;
+        let preamble = self.effective_preamble().count() as u128;
         let bytes = frame_bytes as u128;
         let (coded_bits, quarter_denominator, tail_quarter_symbols) = if sf >= 7 {
             let ldro = if self.modulation.is_low_data_rate() {
@@ -519,9 +564,45 @@ mod tests {
     use crate::interfaces::subghz::{RegulatoryRegion, SubGRegion};
     use crate::interfaces::{InterfaceId, InterfaceKind};
 
+    fn lora(sf: SpreadingFactor, bandwidth: LoraBandwidth) -> Modulation {
+        Modulation::Lora {
+            spreading_factor: sf,
+            bandwidth,
+            coding_rate: CodingRate::Cr45,
+        }
+    }
+
+    #[test]
+    fn rnode_floor_matches_the_rnode_firmware_preamble() {
+        use LoraBandwidth::{Bw125kHz, Bw250kHz, Bw500kHz};
+        use SpreadingFactor::{Sf12, Sf5, Sf7};
+        // 24 ms / 1.024 ms symbols = 23.4, rounded up.
+        assert_eq!(PreambleSymbols::rnode_floor(lora(Sf7, Bw125kHz)).count(), 24);
+        assert_eq!(PreambleSymbols::rnode_floor(lora(Sf7, Bw250kHz)).count(), 47);
+        assert_eq!(PreambleSymbols::rnode_floor(lora(Sf7, Bw500kHz)).count(), 94);
+        // Long symbols fall back to the 18-symbol minimum.
+        assert_eq!(PreambleSymbols::rnode_floor(lora(Sf12, Bw125kHz)).count(), 18);
+        // Above 30 kbps the target drops to 6 ms: 62.5 kbps at SF5/500 kHz.
+        assert_eq!(PreambleSymbols::rnode_floor(lora(Sf5, Bw500kHz)).count(), 94);
+    }
+
+    #[test]
+    fn effective_preamble_raises_a_short_preamble_to_the_rnode_floor_only() {
+        let short = US915_AUTO_LORA_PROFILE
+            .with_modulation(lora(SpreadingFactor::Sf7, LoraBandwidth::Bw125kHz))
+            .unwrap()
+            .with_preamble(PreambleSymbols::new(18))
+            .unwrap();
+        assert_eq!(short.preamble().count(), 18);
+        assert_eq!(short.effective_preamble().count(), 24);
+        let longer = short.with_preamble(PreambleSymbols::new(32)).unwrap();
+        assert_eq!(longer.effective_preamble().count(), 32);
+    }
+
     #[test]
     fn time_on_air_matches_the_rnode_firmware_formula() {
-        assert_eq!(US915_AUTO_LORA_PROFILE.time_on_air_us(167), 68_525);
+        // SF7/500 kHz: RNode's 24 ms target makes the preamble 94 symbols, not the stored 18.
+        assert_eq!(US915_AUTO_LORA_PROFILE.time_on_air_us(167), 87_981);
         let long_slow = US915_AUTO_LORA_PROFILE
             .with_modulation(ModemPreset::LongSlow.modulation())
             .unwrap();
@@ -535,7 +616,8 @@ mod tests {
             .unwrap()
             .with_preamble(PreambleSymbols::new(12))
             .unwrap();
-        assert_eq!(sub_sf7.time_on_air_us(50), 13_834);
+        // 37.5 kbps is above RNode's fast threshold: a 6 ms target, 47 symbols instead of 12.
+        assert_eq!(sub_sf7.time_on_air_us(50), 18_314);
     }
 
     #[test]

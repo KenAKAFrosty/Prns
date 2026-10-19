@@ -565,7 +565,7 @@ const fn false_preamble_watchdog_ms(profile: RadioProfile) -> u64 {
         ..
     } = profile.modulation();
     let symbol_us = (1u64 << spreading_factor as u8) * 1_000_000 / bandwidth.hz() as u64;
-    let watchdog_symbols = (profile.preamble().count() as u64).saturating_add(20);
+    let watchdog_symbols = (profile.effective_preamble().count() as u64).saturating_add(20);
     symbol_us
         .saturating_mul(watchdog_symbols)
         .saturating_add(999)

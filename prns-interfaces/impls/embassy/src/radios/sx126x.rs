@@ -986,7 +986,7 @@ fn radio_config(profile: RadioProfile) -> RadioConfig {
             coding_rate,
         },
         packet: LoraPacket {
-            preamble_symbols: profile.preamble().count(),
+            preamble_symbols: profile.effective_preamble().count(),
             explicit_header: true,
             crc_on: true,
             invert_iq: false,
@@ -1372,7 +1372,8 @@ mod tests {
                     coding_rate: CodingRate::Cr4_5,
                 },
                 packet: LoraPacket {
-                    preamble_symbols: 18,
+                    // RNode preamble floor for SF7/500 kHz (24 ms target), above the stored 18.
+                    preamble_symbols: 94,
                     explicit_header: true,
                     crc_on: true,
                     invert_iq: false,
