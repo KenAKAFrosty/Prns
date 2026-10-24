@@ -496,10 +496,17 @@ mod tests {
         let _ = fs::remove_file(&path);
         fs::write(&path, b"not a directory").unwrap();
 
+        // A regular file where the directory should be fails at the load step on Unix (ENOTDIR)
+        // and at the store step on Windows, where opening below a file is PATH_NOT_FOUND and the
+        // directory creation that follows is ERROR_ALREADY_EXISTS. Both are the typed failure
+        // this test is after; neither writes an identity.
         assert!(matches!(
             RemoteControlIdentityDirectory::new(&path).load_or_generate(),
             Err(RemoteControlFileIdentityBootstrapError::Bootstrap(
                 RemoteControlNodeIdentityBootstrapError::ControllerLoad(FileVaultError::Io(_))
+                    | RemoteControlNodeIdentityBootstrapError::ControllerStore(FileVaultError::Io(
+                        _
+                    ))
             ))
         ));
 
