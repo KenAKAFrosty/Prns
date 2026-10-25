@@ -32,6 +32,21 @@ use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
 use super::owed_work::PendingOwedWork;
 
+/// Copy a retained destination identity out of the engine for an introspection reply. The engine
+/// row borrows its application data from the identity table, so the snapshot owns a copy.
+fn destination_identity_snapshot(
+    entry: crate::identity::destination_identity::DestinationIdentity<'_>,
+) -> crate::node_introspection::DestinationIdentitySnapshot {
+    crate::node_introspection::DestinationIdentitySnapshot {
+        destination: entry.destination,
+        identity: entry.identity,
+        public: crate::identity::PublicIdentityMaterial::from_bytes(
+            entry.public_keys.public_key_bytes(),
+        ),
+        app_data: entry.app_data.to_vec(),
+    }
+}
+
 // Keep the hot routing dependencies explicit. Packing these borrowed data-plane
 // components into an opaque context would only hide the bow-tie boundary.
 #[allow(clippy::too_many_arguments)]
@@ -646,9 +661,7 @@ where
                         let _ = reply.send(identity);
                     }
                     NodeIntrospectionRequest::DestinationIdentity { query, reply } => {
-                        use crate::node_introspection::{
-                            DestinationIdentityQuery, DestinationIdentitySnapshot,
-                        };
+                        use crate::node_introspection::DestinationIdentityQuery;
 
                         let entry = match query {
                             DestinationIdentityQuery::Destination(destination) => {
@@ -658,27 +671,12 @@ where
                                 .destination_identities()
                                 .find(|entry| entry.identity == identity),
                         };
-                        let snapshot = entry.map(|entry| DestinationIdentitySnapshot {
-                            destination: entry.destination,
-                            identity: entry.identity,
-                            public: crate::identity::PublicIdentityMaterial::from_bytes(
-                                entry.public_keys.public_key_bytes(),
-                            ),
-                        });
-                        let _ = reply.send(snapshot);
+                        let _ = reply.send(entry.map(destination_identity_snapshot));
                     }
                     NodeIntrospectionRequest::DestinationIdentities { reply } => {
                         let snapshots = engine
                             .destination_identities()
-                            .map(
-                                |entry| crate::node_introspection::DestinationIdentitySnapshot {
-                                    destination: entry.destination,
-                                    identity: entry.identity,
-                                    public: crate::identity::PublicIdentityMaterial::from_bytes(
-                                        entry.public_keys.public_key_bytes(),
-                                    ),
-                                },
-                            )
+                            .map(destination_identity_snapshot)
                             .collect();
                         let _ = reply.send(snapshots);
                     }
@@ -689,15 +687,7 @@ where
                         });
                         let destination_identities = engine
                             .destination_identities()
-                            .map(
-                                |entry| crate::node_introspection::DestinationIdentitySnapshot {
-                                    destination: entry.destination,
-                                    identity: entry.identity,
-                                    public: crate::identity::PublicIdentityMaterial::from_bytes(
-                                        entry.public_keys.public_key_bytes(),
-                                    ),
-                                },
-                            )
+                            .map(destination_identity_snapshot)
                             .collect();
                         let _ = reply.send(crate::node_introspection::EngineInspectionSnapshot {
                             link_count: engine.link_count(),
@@ -816,5 +806,59 @@ where
                 CommandEffect::UNCHANGED
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::destination_identity_snapshot;
+    use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
+    use crate::engine::test_support::TestStorageLayout;
+    use crate::engine::{DestinationIdentitySeedOutcome, EngineState};
+    use crate::identity::destination_identity::{
+        DestinationIdentityRetentionState, DestinationIdentitySeed,
+    };
+    use crate::identity::{
+        IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey,
+        PublicIdentityMaterial,
+    };
+    use crate::units::InstantMillis;
+    use crate::wire::DestinationHash;
+
+    #[test]
+    fn destination_identity_snapshot_carries_the_retained_app_data() {
+        let public_keys = IdentityPublicKeys {
+            encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([0x31; 32])),
+            signing: IdentitySigningPublicKey::new(Ed25519PublicKey([0x41; 32])),
+        };
+        let destination = DestinationHash::new([0x21; 16]);
+        let app_data = b"node name and a stamp cost";
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        assert_eq!(
+            engine.seed_destination_identity(
+                DestinationIdentitySeed {
+                    destination,
+                    public_keys,
+                    announced_at: InstantMillis(1_000),
+                    retention: DestinationIdentityRetentionState::NeverUsed,
+                    app_data,
+                },
+                InstantMillis(1_000),
+            ),
+            DestinationIdentitySeedOutcome::Seeded,
+        );
+
+        let entry = engine
+            .destination_identity(&destination)
+            .expect("the seeded identity is retained");
+        let snapshot = destination_identity_snapshot(entry);
+
+        assert_eq!(snapshot.destination, destination);
+        assert_eq!(snapshot.identity, entry.identity);
+        assert_eq!(
+            snapshot.public,
+            PublicIdentityMaterial::from_bytes(public_keys.public_key_bytes())
+        );
+        assert_eq!(snapshot.app_data, app_data);
     }
 }

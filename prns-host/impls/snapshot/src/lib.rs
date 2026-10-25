@@ -492,6 +492,7 @@ mod tests {
                 destination,
                 identity: associated_identity,
                 public: PublicIdentityMaterial::from_bytes([0x51; 64]),
+                app_data: Vec::new(),
             }],
         };
         let backend = BackendInfo::new(

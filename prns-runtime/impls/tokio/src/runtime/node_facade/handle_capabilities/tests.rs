@@ -117,6 +117,7 @@ async fn destination_identity_query_resolves_public_material() {
         destination: PEER,
         identity,
         public,
+        app_data: b"announced application data".to_vec(),
     };
     let query = crate::node_introspection::DestinationIdentityQuery::Identity(identity);
     let reading = tokio::spawn(async move { handle.destination_identity(query).await });
@@ -129,7 +130,7 @@ async fn destination_identity_query_resolves_public_material() {
         panic!("expected destination identity material introspection request");
     };
     assert_eq!(received, query);
-    reply.send(Some(expected)).unwrap();
+    reply.send(Some(expected.clone())).unwrap();
 
     assert_eq!(reading.await.unwrap(), Some(expected));
 }

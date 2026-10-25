@@ -27,11 +27,15 @@ pub enum DestinationIdentityQuery {
     Identity(IdentityHash),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DestinationIdentitySnapshot {
     pub destination: DestinationHash,
     pub identity: IdentityHash,
     pub public: PublicIdentityMaterial,
+    /// The application data carried by the most recent announce retained for this destination,
+    /// which is what RNS hands back from `Identity.recall_app_data`. Empty when the announce
+    /// carried none.
+    pub app_data: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

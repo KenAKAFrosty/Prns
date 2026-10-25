@@ -176,7 +176,7 @@ async fn query(
         DestinationIdentityQuery::Destination(identity_destination),
     ] {
         if let Some(snapshot) = client.destination_identity(query).await {
-            if matches_request(snapshot, requested, requested_destination) {
+            if matches_request(&snapshot, requested, requested_destination) {
                 return Some(snapshot.public);
             }
         }
@@ -185,7 +185,7 @@ async fn query(
 }
 
 fn matches_request(
-    snapshot: DestinationIdentitySnapshot,
+    snapshot: &DestinationIdentitySnapshot,
     requested: IdentityHash,
     requested_destination: DestinationHash,
 ) -> bool {
