@@ -460,6 +460,28 @@ inputs = ["validation/hygiene/no-personal-paths.py", ".githooks/pre-push"]
 artifacts = "validation-artifacts/results/personal-path-hygiene"
 
 [[suite]]
+id = "application-boundary"
+domain = "hygiene"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 300
+command = ["__RUNNER_PYTHON__", "validation/hygiene/application-boundary.py"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot"]
+artifacts = "validation-artifacts/results/application-boundary"
+
+[[suite]]
+id = "application-boundary-tests"
+domain = "hygiene"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 300
+command = ["__RUNNER_PYTHON__", "-m", "unittest", "validation.tests.test_application_boundary"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot"]
+artifacts = "validation-artifacts/results/application-boundary-tests"
+
+[[suite]]
 id = "runtime-ownership"
 domain = "hygiene"
 tiers = ["pr", "release", "scheduled"]

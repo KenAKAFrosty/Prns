@@ -40,7 +40,7 @@ exceptions = [
     { allow = ["LicenseRef-Nordic-SoftDevice"], crate = "nrf-softdevice-s140-v6@0.1.2-prns.1" },
     { allow = ["LicenseRef-Nordic-SoftDevice"], crate = "nrf-softdevice-s140-v7@0.1.2-prns.1" },
     { allow = ["MPL-2.0"], crate = "option-ext@0.2.0" },
-    # espflash 4.5.0's library serial engine requires serialport. Keep its file-level MPL
+    # espflash 4.7.0's library serial engine requires serialport. Keep its file-level MPL
     # obligations quarantined to this exact transport crate instead of widening the policy.
     { allow = ["MPL-2.0"], crate = "serialport@4.9.0" },
 ]

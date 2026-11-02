@@ -167,7 +167,7 @@ Among what you gain: brand-new interfaces, a built-in operator CLI, observabilit
 
 ## Minimum supported Rust version
 
-The workspace's declared and CI-tested MSRV is Rust **1.90**. Development builds use the stable channel configured in [rust-toolchain.toml](rust-toolchain.toml).
+The core workspace's declared and CI-tested MSRV is Rust **1.90**. The firmware host tools (`personal-hopspot-builder`, `hopspot-flash`, `personal-hopspot-resources`, and `personal-hopspot-assurance`) require Rust **1.95**. Development builds use the stable channel configured in [rust-toolchain.toml](rust-toolchain.toml).
 
 ## Contributing
 

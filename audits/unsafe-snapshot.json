@@ -3682,7 +3682,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.4.2"
+      "version": "0.4.4"
     },
     {
       "graphs": {
@@ -18722,6 +18722,7 @@
       "graphs": {
         "android": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -18736,6 +18737,7 @@
         ],
         "daemon-linux": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -18755,6 +18757,7 @@
         ],
         "daemon-macos": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -18774,6 +18777,7 @@
         ],
         "daemon-windows": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -18793,6 +18797,7 @@
         ],
         "desktop-linux": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -18807,6 +18812,7 @@
         ],
         "desktop-macos": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -18821,6 +18827,7 @@
         ],
         "desktop-windows": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -18835,6 +18842,7 @@
         ],
         "engine": [
           "alloc",
+          "crypto-precomputed",
           "default",
           "ed25519-batch",
           "embassy-host",
@@ -18850,6 +18858,7 @@
         ],
         "esp32-c6": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "external-alloc",
@@ -18862,6 +18871,7 @@
         ],
         "esp32-s3-heltec": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "external-alloc",
@@ -18874,6 +18884,7 @@
         ],
         "esp32-s3-heltec-e290": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "external-alloc",
@@ -18886,6 +18897,7 @@
         ],
         "esp32-s3-heltec-r8": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "external-alloc",
@@ -18898,6 +18910,7 @@
         ],
         "esp32-s3-heltec-v3": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "external-alloc",
@@ -18910,6 +18923,7 @@
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "external-alloc",
@@ -18922,6 +18936,7 @@
         ],
         "esp32-s3-tbeam": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "external-alloc",
@@ -18934,6 +18949,7 @@
         ],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "external-alloc",
@@ -18946,6 +18962,7 @@
         ],
         "halow-appliance-manager": [
           "alloc",
+          "crypto-precomputed",
           "default",
           "ed25519-batch",
           "embassy-host",
@@ -18961,6 +18978,7 @@
         ],
         "halow-headless": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -18972,6 +18990,7 @@
         ],
         "host-c-linux": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -18987,6 +19006,7 @@
         ],
         "host-c-macos": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -19002,6 +19022,7 @@
         ],
         "host-c-windows": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -19017,6 +19038,7 @@
         ],
         "ios": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -19030,6 +19052,7 @@
         ],
         "nrf52840": [
           "alloc",
+          "crypto-precomputed",
           "ed25519-batch",
           "embassy-host",
           "flash",
@@ -19041,6 +19064,7 @@
         ],
         "wasm": [
           "alloc",
+          "crypto-precomputed",
           "flash",
           "resource-work-offload",
           "rns-management-wire",
@@ -19082,11 +19106,18 @@
           "log"
         ],
         "engine": [
-          "linux-packet"
+          "linux-packet",
+          "owned-async-fd"
         ],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
+        "host-c-linux": [
+          "owned-async-fd"
+        ],
+        "host-c-macos": [
+          "owned-async-fd"
+        ],
+        "host-c-windows": [
+          "owned-async-fd"
+        ],
         "ios": [
           "default"
         ]
@@ -19094,11 +19125,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 173,
+        "blocks": 174,
         "externs": 7,
         "functions": 0,
         "impls": 21,
-        "tokens": 233
+        "tokens": 234
       },
       "version": "0.3.8"
     },
@@ -21775,7 +21806,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.23.45"
+      "version": "0.23.46"
     },
     {
       "graphs": {
@@ -21897,7 +21928,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.103.15"
+      "version": "0.103.16"
     },
     {
       "graphs": {
@@ -26082,53 +26113,6 @@
           "tokio-macros",
           "windows-sys"
         ],
-        "ios": [
-          "bytes",
-          "default",
-          "fs",
-          "io-util",
-          "libc",
-          "macros",
-          "mio",
-          "net",
-          "rt",
-          "rt-multi-thread",
-          "socket2",
-          "sync",
-          "time",
-          "tokio-macros",
-          "windows-sys"
-        ],
-        "nrf52840": [
-          "bytes",
-          "default",
-          "fs",
-          "io-util",
-          "libc",
-          "macros",
-          "mio",
-          "net",
-          "rt",
-          "socket2",
-          "sync",
-          "time",
-          "tokio-macros",
-          "windows-sys"
-        ]
-      },
-      "name": "tokio",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 748,
-        "externs": 2,
-        "functions": 208,
-        "impls": 121,
-        "tokens": 1082
-      },
-      "version": "1.52.3"
-    },
-    {
-      "graphs": {
         "halow-headless": [
           "bytes",
           "default",
@@ -26204,18 +26188,51 @@
           "time",
           "tokio-macros",
           "windows-sys"
+        ],
+        "ios": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "rt",
+          "rt-multi-thread",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
+        "nrf52840": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "rt",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
         ]
       },
       "name": "tokio",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "unsafe": {
-        "blocks": 764,
+        "blocks": 803,
         "externs": 2,
-        "functions": 209,
-        "impls": 121,
-        "tokens": 1099
+        "functions": 208,
+        "impls": 122,
+        "tokens": 1138
       },
-      "version": "1.53.1"
+      "version": "1.53.3"
     },
     {
       "graphs": {

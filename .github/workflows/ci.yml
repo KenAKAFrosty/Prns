@@ -32,6 +32,12 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: reusable application dependency boundary
+        run: >-
+          python3 validation/run.py run
+          --suite application-boundary
+          --suite application-boundary-tests
+          --expected-sha "${{ github.sha }}"
       - name: registry, format, and documentation gate
         run: bash validation/hygiene/fmt-docs.sh
 
@@ -448,8 +454,8 @@ jobs:
 
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
-    # declared workspace floor (1.90); catches a feature or a dependency bump that
-    # quietly requires a newer compiler than we advertise.
+    # core workspace floor (1.90), with firmware host tools checked at their
+    # separately declared 1.95 floor.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -474,7 +480,9 @@ jobs:
       - name: Prove and check the advertised MSRV
         run: |
           rustc --version | grep -E '^rustc 1\.90\.0 '
-          cargo check --workspace --locked
+          cargo check --workspace --locked \
+            --exclude personal-hopspot-builder --exclude hopspot-flash \
+            --exclude personal-hopspot-resources --exclude personal-hopspot-assurance
       # The root-excluded workspaces declare the same 1.90 floor; hold them to it too.
       - run: cargo check --locked
         working-directory: prns-config
@@ -482,6 +490,14 @@ jobs:
         working-directory: prns-napi
       - run: cargo check --workspace --locked
         working-directory: prnsd
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.95.0
+      - name: Check firmware host tools at their advertised MSRV
+        run: >-
+          cargo +1.95.0 check --locked --all-targets
+          -p personal-hopspot-builder -p hopspot-flash
+          -p personal-hopspot-resources -p personal-hopspot-assurance
 
   embedded-resource-selection:
     runs-on: ubuntu-24.04

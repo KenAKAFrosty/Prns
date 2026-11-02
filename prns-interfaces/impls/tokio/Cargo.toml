@@ -39,7 +39,7 @@ socket2 = { version = "0.6", optional = true, features = ["all"] }
 if-addrs = { version = "0.13", optional = true }
 getrandom = { version = "0.2", optional = true }
 tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "handshake"] }
-rustls = { version = "0.23", optional = true, default-features = false, features = ["ring"] }
+rustls = { version = "0.23.46", optional = true, default-features = false, features = ["ring"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc", "sink"] }
 log = { version = "0.4", optional = true, default-features = false }
 tracing = { version = "0.1", optional = true, default-features = false, features = ["std"] }
@@ -98,7 +98,7 @@ wifi-auto-apple = ["wifi-auto", "dep:prns-ffi", "dep:getrandom"]
 wifi-auto-mdns = ["wifi-auto", "dep:mdns-sd", "dep:getrandom"]
 wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
 wifi-aware = ["tcp"]
-wifi-halow = ["dep:tokio", "tokio/net", "dep:prns-ffi", "prns-ffi/linux-packet"]
+wifi-halow = ["dep:tokio", "tokio/net", "dep:prns-ffi", "prns-ffi/linux-packet", "prns-ffi/owned-async-fd"]
 usb = ["serial", "tcp", "dep:futures-util", "dep:prns-ffi", "dep:nusb"]
 interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
 config = ["dep:prns-config", "dep:tokio", "dep:if-addrs", "tokio/rt"]

@@ -13,8 +13,8 @@ use personal_rns::interfaces::pipe as pipe_contract;
 use personal_rns::interfaces::{BitrateBps, ConfiguredInterfacePolicy};
 use personal_rns::pipe::{PipeInterface, PipeRespawnDelay};
 use personal_rns::PrnsNodeHandle;
+use prns_ffi::owned_async_fd::OwnedAsyncFd;
 use prns_host::{Bitrate, CommandFailure, CommandOutcome, InterfaceId};
-use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{mpsc, oneshot};
 
@@ -470,13 +470,13 @@ fn opener(broker: Arc<SuppliedPipeBroker>) -> impl FnMut() -> OpenFuture {
 }
 
 pub(crate) struct FdStream {
-    fd: AsyncFd<File>,
+    fd: OwnedAsyncFd<File>,
 }
 
 impl FdStream {
     fn supplied(fd: OwnedFd) -> io::Result<Self> {
         Ok(Self {
-            fd: AsyncFd::new(File::from(fd))?,
+            fd: OwnedAsyncFd::new(File::from(fd))?,
         })
     }
 }
