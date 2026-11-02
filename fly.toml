@@ -1,0 +1,50 @@
+# Shared Fly.io configuration. Supply your app name with --app.
+primary_region = 'iad'
+kill_signal = 'SIGTERM'
+kill_timeout = '30s'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[deploy]
+  strategy = 'rolling'
+
+[env]
+  PRNSD_BACKBONE_DISCOVERABLE = 'Yes'
+  PRNSD_REACHABLE_PORT = '4242'
+
+[[mounts]]
+  source = 'prnsd_data'
+  destination = '/var/lib/prnsd'
+  initial_size = '1gb'
+  snapshot_retention = 14
+
+[http_service]
+  internal_port = 4284
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = false
+  min_machines_running = 1
+
+[[services]]
+  protocol = 'tcp'
+  internal_port = 4242
+  auto_stop_machines = 'off'
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 4242
+
+  [[services.tcp_checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '20s'
+
+[[restart]]
+  policy = 'always'
+
+[[vm]]
+  memory = '1gb'
+  cpus = 1
+  cpu_kind = 'shared'
