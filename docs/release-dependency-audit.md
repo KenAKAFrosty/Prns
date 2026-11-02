@@ -29,14 +29,14 @@ pipes and Linux HaLow sockets use a sealed owned-descriptor wrapper in the FFI
 boundary to satisfy Tokio's registration safety contract; consuming crates
 retain their unsafe-code forbids.
 
-The allowlist in [`deny.toml`](../deny.toml) admits reviewed license expressions;
-every unlisted expression fails.
-GPL, LGPL, AGPL, and unknown licenses are not accepted. Package-scoped additions are `ksni 0.3.6`
-under Unlicense, `nrf-softdevice-s140 0.1.2` under the hash-pinned Nordic terms, and the exact
-`serialport 4.9.0` transport required by the mandated `espflash 4.7.0` library under file-level
-MPL-2.0. That narrow hardware boundary is shipped with its source/license notice; MPL is not
-accepted generally. The SoftDevice source remains restricted to revision
-`47d6121c6e823120e8b883a7ac75f44ce7daa3aa`.
+[`deny.toml`](../deny.toml) owns the reviewed license allowlist, exact package
+exceptions and permitted sources. Unlisted license expressions fail unless the
+selected package and version have an explicit exception. GPL, LGPL, AGPL and
+unknown licenses are not accepted. MPL is not allowed generally; its exceptions
+apply only to the listed Rust packages and versions, whose source and notices
+remain part of distribution review. They do not approve separately distributed
+npm packages. Keep exception versions and source restrictions in that
+configuration rather than maintaining a second list here.
 
 ## Unsafe enforcement
 
