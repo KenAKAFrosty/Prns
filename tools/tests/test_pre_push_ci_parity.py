@@ -31,6 +31,37 @@ class PrePushCiParityTests(unittest.TestCase):
         suites = set(selected.command[4::2]) if selected else set()
         return suites, gates
 
+    def test_key_bindings_select_native_checks_and_macos_swift_consumer(self) -> None:
+        for path in ("prns-identities/src/keys.rs", "prns-identities/bindings/uniffi/src/lib.rs"):
+            with self.subTest(path=path):
+                self.assertIn("identity-key-bindings", self.reusable_suites({path}, "Linux")[0])
+                self.assertIn("identity-key-bindings-swift", self.reusable_suites({path}, "Darwin")[0])
+                self.assertNotIn("identity-key-bindings-swift", self.reusable_suites({path}, "Linux")[0])
+                self.assertNotIn("identity-key-bindings-swift", self.reusable_suites({path}, "Windows")[0])
+        self.assertIn("identity-key-bindings-swift", self.reusable_suites({"tools/uniffi/tooling.py"}, "Darwin")[0])
+
+    def test_catalog_bindings_select_both_independent_profiles(self) -> None:
+        for path in ("prns-identities/src/api/client.rs", "prns-identities/bindings/uniffi/src/catalog.rs"):
+            with self.subTest(path=path):
+                self.assertTrue({"identity-key-bindings", "identity-catalog-bindings"} <= self.reusable_suites({path}, "Linux")[0])
+                self.assertIn("identity-catalog-bindings-swift", self.reusable_suites({path}, "Darwin")[0])
+                self.assertNotIn("identity-catalog-bindings-swift", self.reusable_suites({path}, "Linux")[0])
+                self.assertNotIn("identity-catalog-bindings-swift", self.reusable_suites({path}, "Windows")[0])
+
+    def test_card_bindings_select_native_and_platform_appropriate_foreign_checks(self) -> None:
+        rust = {"identity-key-card-bindings", "identity-catalog-card-bindings"}
+        swift = {identifier + "-swift" for identifier in rust}
+        for path in ("prns-contact-card/src/api.rs", "prns-identities/src/contact_card.rs",
+                     "prns-identities/bindings/uniffi/src/lib.rs", "prns-storage/src/lib.rs"):
+            with self.subTest(path=path):
+                self.assertTrue(rust <= self.reusable_suites({path}, "Linux")[0])
+                self.assertTrue(rust | swift <= self.reusable_suites({path}, "Darwin")[0])
+                self.assertFalse(swift & self.reusable_suites({path}, "Linux")[0])
+                self.assertFalse(swift & self.reusable_suites({path}, "Windows")[0])
+        self.assertTrue(swift <= self.reusable_suites({"tools/uniffi/tooling.py"}, "Darwin")[0])
+        codec_suites = self.reusable_suites({"prns-contact-card/src/api.rs"}, "Linux")[0]
+        self.assertFalse({"identity-key-bindings", "identity-catalog-bindings"} & codec_suites)
+
     def test_core_change_checks_root_feature_and_native_consumers(self) -> None:
         names = self.gate_names({"prns-core/src/engine.rs"})
 

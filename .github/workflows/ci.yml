@@ -486,12 +486,29 @@ jobs:
           workspaces: |
             .
             prns-identities
+            prns-identities/bindings/uniffi
       - name: Run registered validation suites
         run: >-
           python3 validation/run.py run
+          --suite uniffi-tooling-contracts
           --suite identity-portable-tests
           --suite identity-key-owner-tests
+          --suite identity-key-bindings
+          --suite identity-catalog-bindings
+          --suite identity-key-card-bindings
+          --suite identity-catalog-card-bindings
           --suite ${{ matrix.native-suite }}
+          --expected-sha "$GITHUB_SHA"
+      - name: Qualify standalone Swift bindings
+        if: runner.os == 'macOS'
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: >-
+          python3 validation/run.py run
+          --suite identity-key-bindings-swift
+          --suite identity-catalog-bindings-swift
+          --suite identity-key-card-bindings-swift
+          --suite identity-catalog-card-bindings-swift
           --expected-sha "$GITHUB_SHA"
       - name: Retain validation evidence
         if: always()
@@ -573,6 +590,7 @@ jobs:
           cargo check --locked -p prns-storage --all-targets --all-features
           cargo check --locked -p prns-contact-card --all-targets --all-features
           cargo check --locked --manifest-path prns-identities/Cargo.toml --workspace --all-targets --all-features
+          cargo check --locked --manifest-path prns-identities/bindings/uniffi/Cargo.toml --workspace --all-targets --all-features
       # The root-excluded workspaces declare the same 1.90 floor; hold them to it too.
       - run: cargo check --locked
         working-directory: prns-config

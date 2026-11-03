@@ -2,12 +2,20 @@
 
 This checked bundle covers the shipped and qualification Rust, JavaScript, and Android product graphs.
 It was generated with `cargo-about 0.9.1` by `./tools/prns repo notices generate`.
-Notice input fingerprint: `sha256:87a79f8d0c1a676994a38b3e10885788b33d8eb8f50b1f706891d35b345486a1`.
+Notice input fingerprint: `sha256:5634062c8f50c24302a50ffe13444751d55fa548d2220c8af806c4734161ffec`.
 Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before cargo-about reads its target-filtered packaged license material offline.
 Entries are deduplicated by SPDX identifier and canonical notice text; line endings, trailing space, and repeated blank lines are normalized without changing legal words.
 
 ## Release graphs
 
+- Identity keys Linux: `prns-identities/bindings/uniffi/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
+- Identity keys macOS: `prns-identities/bindings/uniffi/Cargo.toml` (`aarch64-apple-darwin`, locked resolution)
+- Identity catalog Linux: `prns-identities/bindings/uniffi/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
+- Identity catalog macOS: `prns-identities/bindings/uniffi/Cargo.toml` (`aarch64-apple-darwin`, locked resolution)
+- Identity key card Linux: `prns-identities/bindings/uniffi/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
+- Identity key card macOS: `prns-identities/bindings/uniffi/Cargo.toml` (`aarch64-apple-darwin`, locked resolution)
+- Identity catalog card Linux: `prns-identities/bindings/uniffi/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
+- Identity catalog card macOS: `prns-identities/bindings/uniffi/Cargo.toml` (`aarch64-apple-darwin`, locked resolution)
 - Contact cards: `prns-contact-card/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
 - Identity storage: `prns-identities/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
 - Storage redb: `prns-storage/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)

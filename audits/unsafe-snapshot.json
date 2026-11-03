@@ -2,6 +2,66 @@
   "generator": "validation/security/unsafe-audit.py",
   "graphs": [
     {
+      "manifest": "prns-identities/bindings/uniffi/Cargo.toml",
+      "name": "identity-keys-linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "manifest": "prns-identities/bindings/uniffi/Cargo.toml",
+      "name": "identity-keys-macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "features": [
+        "catalog"
+      ],
+      "manifest": "prns-identities/bindings/uniffi/Cargo.toml",
+      "name": "identity-catalog-linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "features": [
+        "catalog"
+      ],
+      "manifest": "prns-identities/bindings/uniffi/Cargo.toml",
+      "name": "identity-catalog-macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "features": [
+        "contact-card"
+      ],
+      "manifest": "prns-identities/bindings/uniffi/Cargo.toml",
+      "name": "identity-key-card-linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "features": [
+        "contact-card"
+      ],
+      "manifest": "prns-identities/bindings/uniffi/Cargo.toml",
+      "name": "identity-key-card-macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "features": [
+        "catalog",
+        "contact-card"
+      ],
+      "manifest": "prns-identities/bindings/uniffi/Cargo.toml",
+      "name": "identity-catalog-card-linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "features": [
+        "catalog",
+        "contact-card"
+      ],
+      "manifest": "prns-identities/bindings/uniffi/Cargo.toml",
+      "name": "identity-catalog-card-macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
       "manifest": "prns-contact-card/Cargo.toml",
       "name": "contact-card",
       "target": "x86_64-unknown-linux-gnu"
@@ -206,6 +266,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -513,6 +581,52 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "default",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "anyhow",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 68,
+        "externs": 1,
+        "functions": 32,
+        "impls": 2,
+        "tokens": 108
+      },
+      "version": "1.0.104"
+    },
+    {
+      "graphs": {
         "daemon-linux": [],
         "desktop-linux": []
       },
@@ -600,6 +714,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "ios": [],
         "nrf52840": []
       },
@@ -1180,6 +1302,30 @@
       "graphs": {
         "halow-headless": [
           "std"
+        ],
+        "identity-catalog-card-linux": [
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "std"
+        ],
+        "identity-keys-linux": [
+          "std"
+        ],
+        "identity-keys-macos": [
+          "std"
         ]
       },
       "name": "bitflags",
@@ -1291,6 +1437,30 @@
         "host-c-windows": [
           "zeroize"
         ],
+        "identity-catalog-card-linux": [
+          "zeroize"
+        ],
+        "identity-catalog-card-macos": [
+          "zeroize"
+        ],
+        "identity-catalog-linux": [
+          "zeroize"
+        ],
+        "identity-catalog-macos": [
+          "zeroize"
+        ],
+        "identity-key-card-linux": [
+          "zeroize"
+        ],
+        "identity-key-card-macos": [
+          "zeroize"
+        ],
+        "identity-keys-linux": [
+          "zeroize"
+        ],
+        "identity-keys-macos": [
+          "zeroize"
+        ],
         "identity-storage": [
           "zeroize"
         ],
@@ -1338,6 +1508,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -1766,6 +1944,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -1925,6 +2111,38 @@
         "host-c-windows": [
           "default",
           "std"
+        ],
+        "identity-catalog-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "default",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "default",
+          "std"
         ]
       },
       "name": "bytes",
@@ -2023,6 +2241,28 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
+      },
+      "name": "camino",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 32,
+        "externs": 0,
+        "functions": 4,
+        "impls": 0,
+        "tokens": 36
+      },
+      "version": "1.2.5"
+    },
+    {
+      "graphs": {
         "android": [
           "block-padding"
         ],
@@ -2084,6 +2324,30 @@
           "block-padding"
         ],
         "host-c-windows": [
+          "block-padding"
+        ],
+        "identity-catalog-card-linux": [
+          "block-padding"
+        ],
+        "identity-catalog-card-macos": [
+          "block-padding"
+        ],
+        "identity-catalog-linux": [
+          "block-padding"
+        ],
+        "identity-catalog-macos": [
+          "block-padding"
+        ],
+        "identity-key-card-linux": [
+          "block-padding"
+        ],
+        "identity-key-card-macos": [
+          "block-padding"
+        ],
+        "identity-keys-linux": [
+          "block-padding"
+        ],
+        "identity-keys-macos": [
           "block-padding"
         ],
         "identity-storage": [
@@ -2224,6 +2488,14 @@
     {
       "graphs": {
         "halow-headless": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": []
       },
       "name": "cfg-if",
@@ -2358,6 +2630,38 @@
           "rng",
           "zeroize"
         ],
+        "identity-catalog-card-linux": [
+          "rng",
+          "zeroize"
+        ],
+        "identity-catalog-card-macos": [
+          "rng",
+          "zeroize"
+        ],
+        "identity-catalog-linux": [
+          "rng",
+          "zeroize"
+        ],
+        "identity-catalog-macos": [
+          "rng",
+          "zeroize"
+        ],
+        "identity-key-card-linux": [
+          "rng",
+          "zeroize"
+        ],
+        "identity-key-card-macos": [
+          "rng",
+          "zeroize"
+        ],
+        "identity-keys-linux": [
+          "rng",
+          "zeroize"
+        ],
+        "identity-keys-macos": [
+          "rng",
+          "zeroize"
+        ],
         "identity-storage": [
           "rng",
           "zeroize"
@@ -2449,6 +2753,30 @@
           "block-padding"
         ],
         "host-c-windows": [
+          "block-padding"
+        ],
+        "identity-catalog-card-linux": [
+          "block-padding"
+        ],
+        "identity-catalog-card-macos": [
+          "block-padding"
+        ],
+        "identity-catalog-linux": [
+          "block-padding"
+        ],
+        "identity-catalog-macos": [
+          "block-padding"
+        ],
+        "identity-key-card-linux": [
+          "block-padding"
+        ],
+        "identity-key-card-macos": [
+          "block-padding"
+        ],
+        "identity-keys-linux": [
+          "block-padding"
+        ],
+        "identity-keys-macos": [
           "block-padding"
         ],
         "identity-storage": [
@@ -2724,6 +3052,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -3106,6 +3442,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": []
       },
@@ -3149,6 +3493,14 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": []
       },
       "name": "cpufeatures",
@@ -3618,6 +3970,14 @@
         "host-c-windows": [
           "std"
         ],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -3702,6 +4062,14 @@
         "host-c-windows": [
           "rand_core"
         ],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [
           "rand_core"
@@ -3746,6 +4114,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -3942,6 +4318,46 @@
           "rand_core",
           "zeroize"
         ],
+        "identity-catalog-card-linux": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "identity-catalog-card-macos": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "identity-catalog-linux": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "identity-catalog-macos": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "identity-key-card-linux": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "identity-key-card-macos": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "identity-keys-linux": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "identity-keys-macos": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
         "identity-storage": [
           "digest",
           "precomputed-tables",
@@ -3988,6 +4404,10 @@
         "engine": [],
         "host-c-linux": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-linux": [],
+        "identity-key-card-linux": [],
+        "identity-keys-linux": [],
         "identity-storage": []
       },
       "name": "curve25519-dalek-derive",
@@ -5086,6 +5506,54 @@
           "rand_core",
           "zeroize"
         ],
+        "identity-catalog-card-linux": [
+          "block-api",
+          "default",
+          "mac",
+          "zeroize"
+        ],
+        "identity-catalog-card-macos": [
+          "block-api",
+          "default",
+          "mac",
+          "zeroize"
+        ],
+        "identity-catalog-linux": [
+          "block-api",
+          "default",
+          "mac",
+          "zeroize"
+        ],
+        "identity-catalog-macos": [
+          "block-api",
+          "default",
+          "mac",
+          "zeroize"
+        ],
+        "identity-key-card-linux": [
+          "block-api",
+          "default",
+          "mac",
+          "zeroize"
+        ],
+        "identity-key-card-macos": [
+          "block-api",
+          "default",
+          "mac",
+          "zeroize"
+        ],
+        "identity-keys-linux": [
+          "block-api",
+          "default",
+          "mac",
+          "zeroize"
+        ],
+        "identity-keys-macos": [
+          "block-api",
+          "default",
+          "mac",
+          "zeroize"
+        ],
         "identity-storage": [
           "block-api",
           "default",
@@ -5534,6 +6002,14 @@
         "host-c-windows": [
           "alloc"
         ],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [
           "alloc"
@@ -5752,6 +6228,38 @@
           "rand_core",
           "signature",
           "strobe-rs",
+          "zeroize"
+        ],
+        "identity-catalog-card-linux": [
+          "fast",
+          "zeroize"
+        ],
+        "identity-catalog-card-macos": [
+          "fast",
+          "zeroize"
+        ],
+        "identity-catalog-linux": [
+          "fast",
+          "zeroize"
+        ],
+        "identity-catalog-macos": [
+          "fast",
+          "zeroize"
+        ],
+        "identity-key-card-linux": [
+          "fast",
+          "zeroize"
+        ],
+        "identity-key-card-macos": [
+          "fast",
+          "zeroize"
+        ],
+        "identity-keys-linux": [
+          "fast",
+          "zeroize"
+        ],
+        "identity-keys-macos": [
+          "fast",
           "zeroize"
         ],
         "identity-storage": [
@@ -7469,7 +7977,15 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
-        "host-c-macos": []
+        "host-c-macos": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
       },
       "name": "equivalent",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7520,6 +8036,30 @@
         ],
         "host-c-macos": [
           "default",
+          "std"
+        ],
+        "identity-catalog-card-linux": [
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "std"
+        ],
+        "identity-keys-linux": [
+          "std"
+        ],
+        "identity-keys-macos": [
           "std"
         ],
         "ios": [
@@ -9114,6 +9654,46 @@
           "default",
           "std"
         ],
+        "identity-catalog-card-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "ios": [
           "alloc",
           "default",
@@ -9518,6 +10098,28 @@
         "tokens": 2
       },
       "version": "1.2.2"
+    },
+    {
+      "graphs": {
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
+      },
+      "name": "fs-err",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "2.11.0"
     },
     {
       "graphs": {
@@ -11093,6 +11695,30 @@
         "host-c-windows": [
           "more_lengths"
         ],
+        "identity-catalog-card-linux": [
+          "more_lengths"
+        ],
+        "identity-catalog-card-macos": [
+          "more_lengths"
+        ],
+        "identity-catalog-linux": [
+          "more_lengths"
+        ],
+        "identity-catalog-macos": [
+          "more_lengths"
+        ],
+        "identity-key-card-linux": [
+          "more_lengths"
+        ],
+        "identity-key-card-macos": [
+          "more_lengths"
+        ],
+        "identity-keys-linux": [
+          "more_lengths"
+        ],
+        "identity-keys-macos": [
+          "more_lengths"
+        ],
         "identity-storage": [
           "more_lengths"
         ],
@@ -11196,6 +11822,14 @@
         "host-c-windows": [
           "std"
         ],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": []
       },
       "name": "getrandom",
@@ -11252,6 +11886,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "ios": [],
         "nrf52840": []
       },
@@ -11304,6 +11946,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -11386,7 +12036,15 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
-        "host-c-macos": []
+        "host-c-macos": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
       },
       "name": "hashbrown",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11422,6 +12080,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -11513,7 +12179,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
-        "host-c-linux": []
+        "host-c-linux": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
       },
       "name": "heck",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11593,6 +12267,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -11672,6 +12354,30 @@
           "zeroize"
         ],
         "host-c-windows": [
+          "zeroize"
+        ],
+        "identity-catalog-card-linux": [
+          "zeroize"
+        ],
+        "identity-catalog-card-macos": [
+          "zeroize"
+        ],
+        "identity-catalog-linux": [
+          "zeroize"
+        ],
+        "identity-catalog-macos": [
+          "zeroize"
+        ],
+        "identity-key-card-linux": [
+          "zeroize"
+        ],
+        "identity-key-card-macos": [
+          "zeroize"
+        ],
+        "identity-keys-linux": [
+          "zeroize"
+        ],
+        "identity-keys-macos": [
           "zeroize"
         ],
         "identity-storage": [
@@ -12053,6 +12759,30 @@
     {
       "graphs": {
         "halow-headless": [
+          "zeroize"
+        ],
+        "identity-catalog-card-linux": [
+          "zeroize"
+        ],
+        "identity-catalog-card-macos": [
+          "zeroize"
+        ],
+        "identity-catalog-linux": [
+          "zeroize"
+        ],
+        "identity-catalog-macos": [
+          "zeroize"
+        ],
+        "identity-key-card-linux": [
+          "zeroize"
+        ],
+        "identity-key-card-macos": [
+          "zeroize"
+        ],
+        "identity-keys-linux": [
+          "zeroize"
+        ],
+        "identity-keys-macos": [
           "zeroize"
         ],
         "identity-storage": [
@@ -12470,6 +13200,52 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "default",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "indexmap",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 13,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 13
+      },
+      "version": "2.14.2"
+    },
+    {
+      "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -12553,6 +13329,30 @@
           "block-padding"
         ],
         "host-c-windows": [
+          "block-padding"
+        ],
+        "identity-catalog-card-linux": [
+          "block-padding"
+        ],
+        "identity-catalog-card-macos": [
+          "block-padding"
+        ],
+        "identity-catalog-linux": [
+          "block-padding"
+        ],
+        "identity-catalog-macos": [
+          "block-padding"
+        ],
+        "identity-key-card-linux": [
+          "block-padding"
+        ],
+        "identity-key-card-macos": [
+          "block-padding"
+        ],
+        "identity-keys-linux": [
+          "block-padding"
+        ],
+        "identity-keys-macos": [
           "block-padding"
         ],
         "identity-storage": [
@@ -13288,6 +14088,30 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "std"
+        ],
+        "identity-keys-linux": [
+          "std"
+        ],
+        "identity-keys-macos": [
+          "std"
+        ],
         "identity-storage": [
           "default",
           "std"
@@ -13468,6 +14292,38 @@
           "no_std",
           "std",
           "xdp"
+        ],
+        "identity-catalog-card-linux": [
+          "auxvec",
+          "elf",
+          "errno",
+          "general",
+          "ioctl",
+          "no_std"
+        ],
+        "identity-catalog-linux": [
+          "auxvec",
+          "elf",
+          "errno",
+          "general",
+          "ioctl",
+          "no_std"
+        ],
+        "identity-key-card-linux": [
+          "auxvec",
+          "elf",
+          "errno",
+          "general",
+          "ioctl",
+          "no_std"
+        ],
+        "identity-keys-linux": [
+          "auxvec",
+          "elf",
+          "errno",
+          "general",
+          "ioctl",
+          "no_std"
         ]
       },
       "name": "linux-raw-sys",
@@ -17324,6 +18180,54 @@
           "race",
           "std"
         ],
+        "identity-catalog-card-linux": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
         "ios": [
           "alloc",
           "default",
@@ -18370,6 +19274,10 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -18903,6 +19811,30 @@
       "graphs": {
         "contact-card": [
           "default"
+        ],
+        "identity-catalog-card-linux": [
+          "alloc",
+          "default",
+          "prns-identity",
+          "uniffi-bindings"
+        ],
+        "identity-catalog-card-macos": [
+          "alloc",
+          "default",
+          "prns-identity",
+          "uniffi-bindings"
+        ],
+        "identity-key-card-linux": [
+          "alloc",
+          "default",
+          "prns-identity",
+          "uniffi-bindings"
+        ],
+        "identity-key-card-macos": [
+          "alloc",
+          "default",
+          "prns-identity",
+          "uniffi-bindings"
         ]
       },
       "name": "prns-contact-card",
@@ -19234,6 +20166,30 @@
           "std",
           "tokio-host"
         ],
+        "identity-catalog-card-linux": [
+          "crypto-precomputed"
+        ],
+        "identity-catalog-card-macos": [
+          "crypto-precomputed"
+        ],
+        "identity-catalog-linux": [
+          "crypto-precomputed"
+        ],
+        "identity-catalog-macos": [
+          "crypto-precomputed"
+        ],
+        "identity-key-card-linux": [
+          "crypto-precomputed"
+        ],
+        "identity-key-card-macos": [
+          "crypto-precomputed"
+        ],
+        "identity-keys-linux": [
+          "crypto-precomputed"
+        ],
+        "identity-keys-macos": [
+          "crypto-precomputed"
+        ],
         "identity-storage": [
           "crypto-precomputed"
         ],
@@ -19435,6 +20391,42 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [
+          "contact-card",
+          "default",
+          "owner",
+          "uniffi-bindings"
+        ],
+        "identity-catalog-card-macos": [
+          "contact-card",
+          "default",
+          "owner",
+          "uniffi-bindings"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "owner",
+          "uniffi-bindings"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "owner",
+          "uniffi-bindings"
+        ],
+        "identity-key-card-linux": [
+          "contact-card",
+          "default"
+        ],
+        "identity-key-card-macos": [
+          "contact-card",
+          "default"
+        ],
+        "identity-keys-linux": [
+          "default"
+        ],
+        "identity-keys-macos": [
+          "default"
+        ],
         "identity-storage": [
           "default",
           "redb-store"
@@ -19453,6 +20445,14 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": []
       },
       "name": "prns-identities-codec",
@@ -19468,6 +20468,34 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [
+          "default",
+          "uniffi-bindings"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "uniffi-bindings"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "uniffi-bindings"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "uniffi-bindings"
+        ],
+        "identity-key-card-linux": [
+          "default"
+        ],
+        "identity-key-card-macos": [
+          "default"
+        ],
+        "identity-keys-linux": [
+          "default"
+        ],
+        "identity-keys-macos": [
+          "default"
+        ],
         "identity-storage": [
           "default"
         ]
@@ -19485,12 +20513,86 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [
+          "default",
+          "uniffi-bindings"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "uniffi-bindings"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "uniffi-bindings"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "uniffi-bindings"
+        ],
+        "identity-key-card-linux": [
+          "default"
+        ],
+        "identity-key-card-macos": [
+          "default"
+        ],
+        "identity-keys-linux": [
+          "default"
+        ],
+        "identity-keys-macos": [
+          "default"
+        ],
         "identity-storage": [
           "default"
         ]
       },
       "name": "prns-identities-runtime",
       "source": "prns-identities/runtime",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "identity-catalog-card-linux": [
+          "catalog",
+          "contact-card",
+          "default"
+        ],
+        "identity-catalog-card-macos": [
+          "catalog",
+          "contact-card",
+          "default"
+        ],
+        "identity-catalog-linux": [
+          "catalog",
+          "default"
+        ],
+        "identity-catalog-macos": [
+          "catalog",
+          "default"
+        ],
+        "identity-key-card-linux": [
+          "contact-card",
+          "default"
+        ],
+        "identity-key-card-macos": [
+          "contact-card",
+          "default"
+        ],
+        "identity-keys-linux": [
+          "default"
+        ],
+        "identity-keys-macos": [
+          "default"
+        ]
+      },
+      "name": "prns-identities-uniffi",
+      "source": "prns-identities/bindings/uniffi",
       "unsafe": {
         "blocks": 0,
         "externs": 0,
@@ -20019,6 +21121,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -20438,6 +21548,30 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [
+          "default"
+        ],
+        "identity-catalog-card-macos": [
+          "default"
+        ],
+        "identity-catalog-linux": [
+          "default"
+        ],
+        "identity-catalog-macos": [
+          "default"
+        ],
+        "identity-key-card-linux": [
+          "default"
+        ],
+        "identity-key-card-macos": [
+          "default"
+        ],
+        "identity-keys-linux": [
+          "default"
+        ],
+        "identity-keys-macos": [
+          "default"
+        ],
         "identity-storage": [
           "default",
           "redb"
@@ -20747,6 +21881,38 @@
           "default",
           "proc-macro"
         ],
+        "identity-catalog-card-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-key-card-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-key-card-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-keys-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-keys-macos": [
+          "default",
+          "proc-macro"
+        ],
         "identity-storage": [
           "default",
           "proc-macro"
@@ -21037,6 +22203,38 @@
           "default",
           "proc-macro"
         ],
+        "identity-catalog-card-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-key-card-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-key-card-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-keys-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "identity-keys-macos": [
+          "default",
+          "proc-macro"
+        ],
         "identity-storage": [
           "default",
           "proc-macro"
@@ -21241,6 +22439,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -21972,6 +23178,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -22086,6 +23300,54 @@
     {
       "graphs": {
         "halow-headless": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "identity-catalog-card-linux": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "identity-keys-macos": [
           "alloc",
           "default",
           "fs",
@@ -22655,6 +23917,38 @@
           "default",
           "std"
         ],
+        "identity-catalog-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "default",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "default",
+          "std"
+        ],
         "identity-storage": [
           "default",
           "std"
@@ -22877,6 +24171,54 @@
           "derive",
           "serde_derive",
           "std"
+        ],
+        "identity-catalog-card-linux": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
         ]
       },
       "name": "serde",
@@ -23065,6 +24407,46 @@
           "alloc",
           "result",
           "std"
+        ],
+        "identity-catalog-card-linux": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "alloc",
+          "result",
+          "std"
         ]
       },
       "name": "serde_core",
@@ -23161,6 +24543,30 @@
           "default"
         ],
         "host-c-windows": [
+          "default"
+        ],
+        "identity-catalog-card-linux": [
+          "default"
+        ],
+        "identity-catalog-card-macos": [
+          "default"
+        ],
+        "identity-catalog-linux": [
+          "default"
+        ],
+        "identity-catalog-macos": [
+          "default"
+        ],
+        "identity-key-card-linux": [
+          "default"
+        ],
+        "identity-key-card-macos": [
+          "default"
+        ],
+        "identity-keys-linux": [
+          "default"
+        ],
+        "identity-keys-macos": [
           "default"
         ]
       },
@@ -23268,6 +24674,46 @@
           "std"
         ],
         "daemon-windows": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-catalog-card-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-keys-macos": [
           "alloc",
           "serde",
           "std"
@@ -23521,6 +24967,30 @@
         "host-c-windows": [
           "zeroize"
         ],
+        "identity-catalog-card-linux": [
+          "zeroize"
+        ],
+        "identity-catalog-card-macos": [
+          "zeroize"
+        ],
+        "identity-catalog-linux": [
+          "zeroize"
+        ],
+        "identity-catalog-macos": [
+          "zeroize"
+        ],
+        "identity-key-card-linux": [
+          "zeroize"
+        ],
+        "identity-key-card-macos": [
+          "zeroize"
+        ],
+        "identity-keys-linux": [
+          "zeroize"
+        ],
+        "identity-keys-macos": [
+          "zeroize"
+        ],
         "identity-storage": [
           "zeroize"
         ],
@@ -23765,6 +25235,14 @@
           "alloc",
           "rand_core"
         ],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [
           "alloc",
@@ -23835,6 +25313,52 @@
         "tokens": 36
       },
       "version": "0.3.9"
+    },
+    {
+      "graphs": {
+        "identity-catalog-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "default",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "siphasher",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 11,
+        "externs": 0,
+        "functions": 1,
+        "impls": 0,
+        "tokens": 12
+      },
+      "version": "1.0.3"
     },
     {
       "graphs": {
@@ -24660,6 +26184,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -24688,7 +26220,15 @@
         "halow-appliance-manager": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
       },
       "name": "static_assertions",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -25054,6 +26594,30 @@
           "const-generics"
         ],
         "host-c-windows": [
+          "const-generics"
+        ],
+        "identity-catalog-card-linux": [
+          "const-generics"
+        ],
+        "identity-catalog-card-macos": [
+          "const-generics"
+        ],
+        "identity-catalog-linux": [
+          "const-generics"
+        ],
+        "identity-catalog-macos": [
+          "const-generics"
+        ],
+        "identity-key-card-linux": [
+          "const-generics"
+        ],
+        "identity-key-card-macos": [
+          "const-generics"
+        ],
+        "identity-keys-linux": [
+          "const-generics"
+        ],
+        "identity-keys-macos": [
           "const-generics"
         ],
         "identity-storage": [
@@ -25591,6 +27155,102 @@
           "visit",
           "visit-mut"
         ],
+        "identity-catalog-card-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "identity-catalog-card-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "identity-catalog-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "identity-catalog-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "identity-key-card-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "identity-key-card-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "identity-keys-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "identity-keys-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
         "identity-storage": [
           "clone-impls",
           "default",
@@ -25725,6 +27385,84 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ],
+        "identity-catalog-card-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ],
+        "identity-catalog-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ],
+        "identity-catalog-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ],
+        "identity-key-card-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ],
+        "identity-key-card-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ],
+        "identity-keys-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ],
+        "identity-keys-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "parsing",
+          "printing",
+          "proc-macro"
+        ]
+      },
+      "name": "syn",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 39,
+        "externs": 0,
+        "functions": 2,
+        "impls": 3,
+        "tokens": 78
+      },
+      "version": "3.0.9"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "default",
           "proc-macro"
@@ -25815,6 +27553,38 @@
           "getrandom"
         ],
         "host-c-windows": [
+          "default",
+          "getrandom"
+        ],
+        "identity-catalog-card-linux": [
+          "default",
+          "getrandom"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "getrandom"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "getrandom"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "getrandom"
+        ],
+        "identity-key-card-linux": [
+          "default",
+          "getrandom"
+        ],
+        "identity-key-card-macos": [
+          "default",
+          "getrandom"
+        ],
+        "identity-keys-linux": [
+          "default",
+          "getrandom"
+        ],
+        "identity-keys-macos": [
           "default",
           "getrandom"
         ],
@@ -25959,6 +27729,52 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "default",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "default",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "default",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "thiserror",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "2.0.21"
+    },
+    {
+      "graphs": {
         "android": []
       },
       "name": "thiserror-impl",
@@ -26024,6 +27840,28 @@
         "tokens": 0
       },
       "version": "2.0.20"
+    },
+    {
+      "graphs": {
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
+      },
+      "name": "thiserror-impl",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "2.0.21"
     },
     {
       "graphs": {
@@ -26601,6 +28439,18 @@
           "tokio-macros",
           "windows-sys"
         ],
+        "identity-catalog-card-linux": [
+          "sync"
+        ],
+        "identity-catalog-card-macos": [
+          "sync"
+        ],
+        "identity-catalog-linux": [
+          "sync"
+        ],
+        "identity-catalog-macos": [
+          "sync"
+        ],
         "ios": [
           "bytes",
           "default",
@@ -26946,6 +28796,76 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ]
+      },
+      "name": "toml",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.9.12+spec-1.1.0"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "default",
           "display",
@@ -26978,6 +28898,60 @@
         "tokens": 0
       },
       "version": "1.1.4+spec-1.1.0"
+    },
+    {
+      "graphs": {
+        "identity-catalog-card-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "alloc",
+          "serde",
+          "std"
+        ]
+      },
+      "name": "toml_datetime",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.7.5+spec-1.1.0"
     },
     {
       "graphs": {
@@ -27175,6 +29149,38 @@
           "alloc",
           "default",
           "std"
+        ],
+        "identity-catalog-card-linux": [
+          "alloc",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "alloc",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "alloc",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "alloc",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "alloc",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "alloc",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "alloc",
+          "std"
+        ],
+        "identity-keys-macos": [
+          "alloc",
+          "std"
         ]
       },
       "name": "toml_parser",
@@ -27199,6 +29205,38 @@
           "std"
         ],
         "daemon-windows": [
+          "alloc",
+          "std"
+        ],
+        "identity-catalog-card-linux": [
+          "alloc",
+          "std"
+        ],
+        "identity-catalog-card-macos": [
+          "alloc",
+          "std"
+        ],
+        "identity-catalog-linux": [
+          "alloc",
+          "std"
+        ],
+        "identity-catalog-macos": [
+          "alloc",
+          "std"
+        ],
+        "identity-key-card-linux": [
+          "alloc",
+          "std"
+        ],
+        "identity-key-card-macos": [
+          "alloc",
+          "std"
+        ],
+        "identity-keys-linux": [
+          "alloc",
+          "std"
+        ],
+        "identity-keys-macos": [
           "alloc",
           "std"
         ]
@@ -27918,6 +29956,30 @@
         "host-c-windows": [
           "const-generics"
         ],
+        "identity-catalog-card-linux": [
+          "const-generics"
+        ],
+        "identity-catalog-card-macos": [
+          "const-generics"
+        ],
+        "identity-catalog-linux": [
+          "const-generics"
+        ],
+        "identity-catalog-macos": [
+          "const-generics"
+        ],
+        "identity-key-card-linux": [
+          "const-generics"
+        ],
+        "identity-key-card-macos": [
+          "const-generics"
+        ],
+        "identity-keys-linux": [
+          "const-generics"
+        ],
+        "identity-keys-macos": [
+          "const-generics"
+        ],
         "identity-storage": [
           "const-generics"
         ],
@@ -28073,6 +30135,28 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
+      },
+      "name": "unicode-ident",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "1.0.27"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -28145,6 +30229,186 @@
         "tokens": 0
       },
       "version": "0.1.14"
+    },
+    {
+      "graphs": {
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
+      },
+      "name": "uniffi",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.31.2"
+    },
+    {
+      "graphs": {
+        "identity-catalog-card-linux": [
+          "default"
+        ],
+        "identity-catalog-card-macos": [
+          "default"
+        ],
+        "identity-catalog-linux": [
+          "default"
+        ],
+        "identity-catalog-macos": [
+          "default"
+        ],
+        "identity-key-card-linux": [
+          "default"
+        ],
+        "identity-key-card-macos": [
+          "default"
+        ],
+        "identity-keys-linux": [
+          "default"
+        ],
+        "identity-keys-macos": [
+          "default"
+        ]
+      },
+      "name": "uniffi_core",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 30,
+        "externs": 0,
+        "functions": 23,
+        "impls": 34,
+        "tokens": 97
+      },
+      "version": "0.31.2"
+    },
+    {
+      "graphs": {
+        "identity-catalog-card-linux": [
+          "default"
+        ],
+        "identity-catalog-card-macos": [
+          "default"
+        ],
+        "identity-catalog-linux": [
+          "default"
+        ],
+        "identity-catalog-macos": [
+          "default"
+        ],
+        "identity-key-card-linux": [
+          "default"
+        ],
+        "identity-key-card-macos": [
+          "default"
+        ],
+        "identity-keys-linux": [
+          "default"
+        ],
+        "identity-keys-macos": [
+          "default"
+        ]
+      },
+      "name": "uniffi_internal_macros",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.31.2"
+    },
+    {
+      "graphs": {
+        "identity-catalog-card-linux": [
+          "default"
+        ],
+        "identity-catalog-card-macos": [
+          "default"
+        ],
+        "identity-catalog-linux": [
+          "default"
+        ],
+        "identity-catalog-macos": [
+          "default"
+        ],
+        "identity-key-card-linux": [
+          "default"
+        ],
+        "identity-key-card-macos": [
+          "default"
+        ],
+        "identity-keys-linux": [
+          "default"
+        ],
+        "identity-keys-macos": [
+          "default"
+        ]
+      },
+      "name": "uniffi_macros",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 11,
+        "externs": 13,
+        "functions": 0,
+        "impls": 3,
+        "tokens": 61
+      },
+      "version": "0.31.2"
+    },
+    {
+      "graphs": {
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
+      },
+      "name": "uniffi_meta",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.31.2"
+    },
+    {
+      "graphs": {
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
+      },
+      "name": "uniffi_pipeline",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.31.2"
     },
     {
       "graphs": {
@@ -28593,6 +30857,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
         "nrf52840": [],
@@ -29526,6 +31798,28 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
+      },
+      "name": "winnow",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 26,
+        "externs": 0,
+        "functions": 20,
+        "impls": 0,
+        "tokens": 46
+      },
+      "version": "0.7.15"
+    },
+    {
+      "graphs": {
         "esp32-c6": [
           "alloc",
           "ascii",
@@ -29635,7 +31929,15 @@
           "default",
           "parser",
           "std"
-        ]
+        ],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": []
       },
       "name": "winnow",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -29749,6 +32051,38 @@
           "static_secrets"
         ],
         "host-c-windows": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "identity-catalog-card-linux": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "identity-catalog-card-macos": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "identity-catalog-linux": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "identity-catalog-macos": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "identity-key-card-linux": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "identity-key-card-macos": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "identity-keys-linux": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "identity-keys-macos": [
           "precomputed-tables",
           "static_secrets"
         ],
@@ -30365,6 +32699,38 @@
     },
     {
       "graphs": {
+        "identity-catalog-card-linux": [
+          "derive",
+          "zeroize_derive"
+        ],
+        "identity-catalog-card-macos": [
+          "derive",
+          "zeroize_derive"
+        ],
+        "identity-catalog-linux": [
+          "derive",
+          "zeroize_derive"
+        ],
+        "identity-catalog-macos": [
+          "derive",
+          "zeroize_derive"
+        ],
+        "identity-key-card-linux": [
+          "derive",
+          "zeroize_derive"
+        ],
+        "identity-key-card-macos": [
+          "derive",
+          "zeroize_derive"
+        ],
+        "identity-keys-linux": [
+          "derive",
+          "zeroize_derive"
+        ],
+        "identity-keys-macos": [
+          "derive",
+          "zeroize_derive"
+        ],
         "identity-storage": [
           "derive",
           "zeroize_derive"
@@ -30421,6 +32787,14 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-catalog-card-linux": [],
+        "identity-catalog-card-macos": [],
+        "identity-catalog-linux": [],
+        "identity-catalog-macos": [],
+        "identity-key-card-linux": [],
+        "identity-key-card-macos": [],
+        "identity-keys-linux": [],
+        "identity-keys-macos": [],
         "identity-storage": [],
         "wasm": []
       },

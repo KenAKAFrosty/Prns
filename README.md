@@ -32,6 +32,10 @@ If one of these ecosystems is home for you, shaping its consumer API and packagi
 
 [Choose an SDK and see its exact readiness and installation path](docs/sdks.md).
 
+Applications can also use the independent [identity catalog and key vault](prns-identities/usage.md),
+[contact cards](prns-contact-card/README.md), and [bounded storage workers](prns-storage/README.md).
+Each library owns its types and storage contract; none requires a chat application.
+
 If you're already familiar with Reticulum, you can [jump to here](#coming-from-rns). 
 
 If you came here to put Reticulum on an embedded device, [flash a Hopspot here](https://reticulum.rs/flash).

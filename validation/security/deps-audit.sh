@@ -15,6 +15,14 @@ fi
 python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
+    "identity-keys-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu"
+    "identity-keys-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin"
+    "identity-catalog-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu|catalog"
+    "identity-catalog-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin|catalog"
+    "identity-key-card-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu|contact-card"
+    "identity-key-card-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin|contact-card"
+    "identity-catalog-card-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu|catalog contact-card"
+    "identity-catalog-card-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin|catalog contact-card"
     "contact-card|prns-contact-card/Cargo.toml|x86_64-unknown-linux-gnu"
     "identity-storage|prns-identities/Cargo.toml|x86_64-unknown-linux-gnu|redb-store"
     "storage-redb|prns-storage/Cargo.toml|x86_64-unknown-linux-gnu|redb"

@@ -401,6 +401,8 @@ class WorkflowSchedulingTests(unittest.TestCase):
                             self.assertIn(expected[suite_id]["platform"], {"any", platform})
                             scheduled.setdefault(suite_id, set()).add(platform)
         self.assertEqual(set(scheduled), set(expected))
+        self.assertEqual(scheduled["identity-key-bindings"], {"linux", "macos"})
+        self.assertEqual(scheduled["identity-key-bindings-swift"], {"macos"})
         self.assertEqual(scheduled["identity-native-tests-linux"], {"linux"})
         self.assertEqual(scheduled["identity-native-tests-macos"], {"macos"})
 

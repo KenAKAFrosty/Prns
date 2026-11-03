@@ -39,6 +39,7 @@ version = "1.5.4"
 [registry]
 cargo_lock_workspaces = [
     "prns-identities",
+    "prns-identities/bindings/uniffi",
     ".",
     "benchmarks",
     "docs/website",
@@ -69,6 +70,8 @@ cargo_lock_workspaces = [
 cargo_manifests = [
     "prns-contact-card/Cargo.toml",
     "prns-identities/Cargo.toml",
+    "prns-identities/bindings/uniffi/Cargo.toml",
+    "prns-identities/bindings/uniffi/image/Cargo.toml",
     "prns-identities/codec/Cargo.toml",
     "prns-identities/core/Cargo.toml",
     "prns-identities/runtime/Cargo.toml",
@@ -148,6 +151,7 @@ cargo_manifests = [
 ]
 format_manifests = [
     "prns-identities/Cargo.toml",
+    "prns-identities/bindings/uniffi/Cargo.toml",
     "Cargo.toml",
     "benchmarks/Cargo.toml",
     "docs/website/Cargo.toml",
@@ -2520,3 +2524,111 @@ timeout_seconds = 600
 command = ["cargo", "run", "--locked", "-p", "prns-contact-card", "--example", "telemetry_contact", "--no-default-features"]
 inputs = ["Cargo.toml", "Cargo.lock", "prns-contact-card"]
 artifacts = "validation-artifacts/results/contact-card-example"
+
+[[suite]]
+id = "identity-key-bindings"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-identities/bindings/uniffi/Cargo.toml", "--workspace", "--all-targets"]
+inputs = ["prns-identities", "prns-core", "prns-macros", "prns-storage"]
+artifacts = "validation-artifacts/results/identity-key-bindings"
+
+[[suite]]
+id = "identity-key-bindings-swift"
+domain = "platform"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "prns-identities/bindings/uniffi/tests/check_swift.py"]
+inputs = ["prns-identities", "prns-core", "prns-macros", "prns-storage", "tools/uniffi"]
+artifacts = "validation-artifacts/results/identity-key-bindings-swift"
+
+[[suite]]
+id = "identity-catalog-bindings"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-identities/bindings/uniffi/Cargo.toml", "--workspace", "--all-targets", "--features", "catalog"]
+inputs = ["prns-identities", "prns-core", "prns-macros", "prns-storage"]
+artifacts = "validation-artifacts/results/identity-catalog-bindings"
+
+[[suite]]
+id = "identity-catalog-bindings-swift"
+domain = "platform"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "prns-identities/bindings/uniffi/tests/check_swift.py", "--catalog"]
+inputs = ["prns-identities", "prns-core", "prns-macros", "prns-storage", "tools/uniffi"]
+artifacts = "validation-artifacts/results/identity-catalog-bindings-swift"
+
+[[suite]]
+id = "identity-key-card-bindings"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-identities/bindings/uniffi/Cargo.toml", "--workspace", "--all-targets", "--features", "contact-card"]
+inputs = ["prns-identities", "prns-contact-card", "prns-core", "prns-macros", "prns-storage"]
+artifacts = "validation-artifacts/results/identity-key-card-bindings"
+
+[[suite]]
+id = "identity-key-card-bindings-swift"
+domain = "platform"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "prns-identities/bindings/uniffi/tests/check_swift.py", "--contact-card"]
+inputs = ["prns-identities", "prns-contact-card", "prns-core", "prns-macros", "prns-storage", "tools/uniffi"]
+artifacts = "validation-artifacts/results/identity-key-card-bindings-swift"
+
+[[suite]]
+id = "identity-catalog-card-bindings"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-identities/bindings/uniffi/Cargo.toml", "--workspace", "--all-targets", "--features", "catalog,contact-card"]
+inputs = ["prns-identities", "prns-contact-card", "prns-core", "prns-macros", "prns-storage"]
+artifacts = "validation-artifacts/results/identity-catalog-card-bindings"
+
+[[suite]]
+id = "identity-catalog-card-bindings-swift"
+domain = "platform"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "prns-identities/bindings/uniffi/tests/check_swift.py", "--catalog", "--contact-card"]
+inputs = ["prns-identities", "prns-contact-card", "prns-core", "prns-macros", "prns-storage", "tools/uniffi"]
+artifacts = "validation-artifacts/results/identity-catalog-card-bindings-swift"
+
+[[suite]]
+id = "uniffi-tooling-contracts"
+domain = "hygiene"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 120
+command = ["__RUNNER_PYTHON__", "-m", "unittest", "discover", "-s", "tools/uniffi", "-p", "test_*.py"]
+inputs = ["tools/uniffi"]
+artifacts = "validation-artifacts/results/uniffi-tooling-contracts"

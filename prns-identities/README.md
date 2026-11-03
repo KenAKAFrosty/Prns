@@ -218,7 +218,7 @@ at filesystem publication boundaries; never enable that feature in a shipping
 build. Current filesystem evidence covers macOS process crashes, not electrical
 power loss, phone filesystems/UI or live RemoteControl integration. The telemetry
 example uses fixed caller-owned storage and simulated keys/runtime; it is an
-independent non-messaging consumer. The standalone foreign consumers
+independent non-messaging consumer. The [standalone foreign consumers](bindings/uniffi/README.md)
 qualify key-only and catalog profiles separately; retain exact-build and device
 acceptance receipts separately.
 

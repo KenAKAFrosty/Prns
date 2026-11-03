@@ -41,6 +41,14 @@ GRAPH_FEATURES = {
     "identity-storage": ("redb-store",),
 }
 GRAPHS = (
+    ("identity-keys-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("identity-keys-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
+    ("identity-catalog-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("identity-catalog-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
+    ("identity-key-card-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("identity-key-card-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
+    ("identity-catalog-card-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("identity-catalog-card-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
     ("contact-card", "prns-contact-card/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("identity-storage", "prns-identities/Cargo.toml", "x86_64-unknown-linux-gnu"),
 
