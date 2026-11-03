@@ -1,0 +1,98 @@
+{
+  "name": "personal-rns-expo",
+  "version": "0.3.8",
+  "description": "General PRNS host SDK for Expo and React Native",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "react-native": "src/index.native.ts",
+  "types": "src/index.native.ts",
+  "sideEffects": [
+    "src/bindings.native.ts"
+  ],
+  "exports": {
+    ".": {
+      "react-native": "./src/index.native.ts",
+      "browser": "./src/index.web.ts",
+      "types": "./src/index.native.ts",
+      "default": "./src/index.web.ts"
+    },
+    "./bindings": "./src/bindings.native.ts",
+    "./browser": "./src/index.web.ts",
+    "./package.json": "./package.json",
+    "./contract-adapter": "./src/generated/host-adapter.generated.ts",
+    "./bindings/values": "./src/generated/prns_host_uniffi.ts"
+  },
+  "files": [
+    "src",
+    "ios/*.swift",
+    "ios/*.podspec",
+    "ios/generated",
+    "ios/*.xcframework/**",
+    "android/build.gradle",
+    "android/consumer-rules.pro",
+    "android/generated",
+    "android/src/main",
+    "expo-module.config.json",
+    "native-image.json",
+    "README.md",
+    "docs/qualification.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "THIRD_PARTY_NOTICES.md",
+    "third-party-sources.json",
+    "patches/*.patch"
+  ],
+  "scripts": {
+    "generate": "python3 tools/generate.py generate",
+    "generate:check": "python3 tools/generate.py generate --check",
+    "build:ios": "python3 tools/generate.py ios",
+    "build:android": "python3 tools/generate.py android",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test tests/*.test.mjs && python3 -m unittest discover -s tools -p 'test_*.py'",
+    "verify": "npm run typecheck && npm test && npm run notices:inputs",
+    "pack:check": "node tools/detached-consumer.mjs --pack-only --require-ios",
+    "test:apple": "node scripts/test-apple.mjs",
+    "test:consumer": "node tools/detached-consumer.mjs --android",
+    "notices:generate": "python3 tools/package_notices.py --write",
+    "notices:check": "python3 tools/package_notices.py",
+    "notices:inputs": "python3 tools/package_notices.py --check-inputs",
+    "patch:runtime": "node -e \"require('node:fs').accessSync('patches/@ubjs+react-native+0.31.0-6.patch')\" && patch-package --error-on-fail --patch-dir patches"
+  },
+  "peerDependencies": {
+    "expo": "^58.0.0",
+    "expo-modules-core": "^58.0.0",
+    "react": ">=19 <20",
+    "react-native": "^0.88.0",
+    "personal-rns": "0.3.8",
+    "@ubjs/core": "0.31.0-6",
+    "@ubjs/react-native": "0.31.0-6"
+  },
+  "devDependencies": {
+    "@expo/metro-runtime": "~58.0.17",
+    "@types/react": "19.3.0",
+    "@ubjs/core": "0.31.0-6",
+    "@ubjs/react-native": "0.31.0-6",
+    "expo": "~58.0.23",
+    "expo-build-properties": "58.0.12",
+    "expo-modules-core": "~58.0.30",
+    "patch-package": "8.0.1",
+    "personal-rns": "file:../prns-js",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-web": "~0.21.4",
+    "typescript": "7.0.2"
+  },
+  "author": "Prns contributors",
+  "homepage": "https://reticulum.rs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KenAKAFrosty/Prns.git",
+    "directory": "prns-react-native"
+  },
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": "^22.13.0 || ^24.3.0 || >=26.0.0"
+  }
+}

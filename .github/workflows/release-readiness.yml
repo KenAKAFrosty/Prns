@@ -111,12 +111,27 @@ jobs:
           shared-key: release-readiness-${{ matrix.id }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         # Firmware resource checks build the captive portal; release tests audit its tooling.
-        if: matrix.toolchain == 'node' || matrix.group == 'web' || matrix.group == 'esp' || matrix.domain == 'security' || matrix.domain == 'release'
+        if: matrix.toolchain == 'node' || matrix.group == 'web' || matrix.group == 'esp' || matrix.domain == 'security' || matrix.domain == 'release' || matrix.id == 'react-native-generated'
         with:
           node-version: "24.18.0"
       - name: Prepare portable MLS adapter targets
         if: startsWith(matrix.id, 'group-mls-adapter-portable-')
         run: rustup target add --toolchain 1.96.0 thumbv7em-none-eabihf riscv32imac-unknown-none-elf
+      - name: Prepare standalone React Native SDK dependencies
+        if: matrix.id == 'react-native-sdk' || matrix.id == 'react-native-generated' || matrix.id == 'react-native-notices'
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+          printf 'RUSTUP_TOOLCHAIN=1.98.1\n' >> "$GITHUB_ENV"
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-react-native run patch:runtime
+      - name: Prepare selected SDK notice collector
+        if: matrix.id == 'react-native-notices'
+        run: cargo install cargo-about --version 0.9.1 --locked --features cli
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
         if: matrix.domain == 'oracles' || matrix.domain == 'interop' || matrix.domain == 'release'
       - name: Prepare nightly validation toolchain
@@ -226,6 +241,9 @@ jobs:
           PRNS_ANDROID_DEVICE: ${{ matrix.platform == 'android-device' && '1' || '0' }}
           VALIDATION_PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
         run: |
+          if [[ "${{ matrix.id }}" == react-native-* ]]; then
+            export RUSTUP_TOOLCHAIN=1.98.1
+          fi
           if [[ "${{ matrix.id }}" == "embedded-builds" || "${{ matrix.id }}" == "esp32-firmware-check" ]]; then
             unset CARGO_INCREMENTAL
           fi

@@ -7,3 +7,12 @@ docs/website/web-flasher/browser/fixtures/signed-candidate/** -text
 tools/prns text eol=lf
 tools/prns.cmd text eol=crlf
 personal-hopspot/embedded/esp32/vendor/esp-wifi-sys-esp32s3-0.2.0/build.rs -text whitespace=trailing-space,space-before-tab,cr-at-eol
+prns-react-native/src/generated/** linguist-generated=true
+prns-react-native/ios/generated/** linguist-generated=true
+prns-react-native/android/generated/** linguist-generated=true
+prns-react-native/ios/NativeImage.generated.swift linguist-generated=true
+prns-react-native/android/src/main/java/rs/reticulum/prns/expo/NativeImage.generated.kt linguist-generated=true
+
+# Byte-exact exports of the generic Android Bluetooth source owner.
+prns-react-native/android/src/main/java/rs/reticulum/prns/bluetooth/** linguist-generated=true
+prns-react-native/android/src/test/java/rs/reticulum/prns/bluetooth/** linguist-generated=true

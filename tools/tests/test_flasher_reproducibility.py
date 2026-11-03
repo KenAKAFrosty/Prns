@@ -890,7 +890,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
 
     def test_npm_release_graph_keeps_browser_tools_test_only(self) -> None:
         result = run_repository_python(
-            ROOT / "validation" / "security" / "npm-production-audit.py"
+            ROOT / "validation" / "security" / "npm-production-audit.py", Path("--scope"), Path("web")
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 

@@ -17,6 +17,8 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools/uniffi"))
+import runtime_notices
 OUTPUT = ROOT / "THIRD_PARTY_NOTICES.md"
 ABOUT = ROOT / "about.toml"
 GRAPH_FEATURES = {'Group secure storage': ('prns-groups-store/secure',),
@@ -218,6 +220,7 @@ def notice_input_paths() -> tuple[Path, ...]:
         for _, _, relative in NPM
         if "node_modules" not in Path(relative).parts
     )
+    paths.update(runtime_notices.input_paths())
     paths.update(ROOT / relative for _, _, relative, _ in VENDORED)
     tracked = subprocess.run(
         ["git", "ls-files", "--cached", "--full-name", "-z"],
@@ -384,7 +387,7 @@ def generate_graph(
     return json.loads(output.read_text(encoding="utf-8"))
 
 
-def notice_bundle() -> str:
+def collect_rust_notices(graphs, features):
     binary = about_binary()
     version = about_version(binary)
     notices: dict[tuple[str, str], dict] = {}
@@ -395,11 +398,12 @@ def notice_bundle() -> str:
         directory = temporary / "output"
         directory.mkdir()
         fetched_manifests: set[str] = set()
-        for graph, manifest, target in GRAPHS:
+        for graph, manifest, target in graphs:
             if manifest not in fetched_manifests:
                 fetch_manifest(manifest, cargo_home)
                 fetched_manifests.add(manifest)
-            data = generate_graph(manifest, target, directory, cargo_home, binary, GRAPH_FEATURES.get(graph, ()))
+            data = generate_graph(manifest, target, directory, cargo_home, binary,
+                                  features=features.get(graph, ()))
             for license_info in data["licenses"]:
                 text = normalized_notice_text(license_info["text"])
                 key = (license_info["id"], text)
@@ -415,30 +419,62 @@ def notice_bundle() -> str:
                 for used in license_info.get("used_by", []):
                     package = used["crate"]
                     notice["packages"].add(f'{package["name"]} {package["version"]}')
-        for package, identifier, relative in NPM:
-            path = ROOT / relative
-            if not path.is_file():
-                raise RuntimeError(
-                    f"npm notice source {relative} is missing; run npm ci in docs/website"
-                )
-            text = normalized_notice_text(path.read_text(encoding="utf-8"))
-            notice = notices.setdefault(
-                (identifier, text),
-                {"name": identifier, "packages": set(), "graphs": set()},
+    return version, notices
+
+
+def license_text_lines(notices):
+    lines = []
+    ordered = sorted(
+        notices.items(),
+        key=lambda item: (item[0][0], hashlib.sha256(item[0][1].encode()).hexdigest()),
+    )
+    for (identifier, text), notice in ordered:
+        digest = hashlib.sha256(text.encode()).hexdigest()[:12]
+        lines.extend(
+            [
+                f"### {identifier} ({digest})",
+                "",
+                f"License: {notice['name']}",
+                "",
+                "Used by: " + ", ".join(f"`{package}`" for package in sorted(notice["packages"])),
+                "",
+                "Release graphs: " + ", ".join(sorted(notice["graphs"])),
+                "",
+                "```text",
+                text,
+                "```",
+                "",
+            ]
+        )
+    return lines
+
+
+def notice_bundle() -> str:
+    version, notices = collect_rust_notices(GRAPHS, GRAPH_FEATURES)
+    for package, identifier, relative in NPM:
+        path = ROOT / relative
+        if not path.is_file():
+            raise RuntimeError(
+                f"npm notice source {relative} is missing; run npm ci in docs/website"
             )
-            notice["packages"].add(package)
-            notice["graphs"].add("website JavaScript")
-        for package, identifier, relative, graphs in VENDORED:
-            path = ROOT / relative
-            if not path.is_file():
-                raise RuntimeError(f"vendored notice source {relative} is missing")
-            text = normalized_notice_text(path.read_text(encoding="utf-8"))
-            notice = notices.setdefault(
-                (identifier, text),
-                {"name": identifier, "packages": set(), "graphs": set()},
-            )
-            notice["packages"].add(package)
-            notice["graphs"].update(graphs)
+        text = normalized_notice_text(path.read_text(encoding="utf-8"))
+        notice = notices.setdefault(
+            (identifier, text),
+            {"name": identifier, "packages": set(), "graphs": set()},
+        )
+        notice["packages"].add(package)
+        notice["graphs"].add("website JavaScript")
+    for package, identifier, relative, graphs in VENDORED:
+        path = ROOT / relative
+        if not path.is_file():
+            raise RuntimeError(f"vendored notice source {relative} is missing")
+        text = normalized_notice_text(path.read_text(encoding="utf-8"))
+        notice = notices.setdefault(
+            (identifier, text),
+            {"name": identifier, "packages": set(), "graphs": set()},
+        )
+        notice["packages"].add(package)
+        notice["graphs"].update(graphs)
     nordic = [key for key in notices if key[0] == "LicenseRef-Nordic-SoftDevice"]
     if len(nordic) != 1:
         raise RuntimeError("Nordic SoftDevice notice was not generated exactly once")
@@ -471,6 +507,7 @@ def notice_bundle() -> str:
             "- `tslib 2.8.1` — `0BSD`",
         ]
     )
+    lines.extend(runtime_notices.declaration_lines(runtime_notices.evidence()))
     lines.extend(["", "## Vendored native code", ""])
     lines.extend(
         [
@@ -498,28 +535,7 @@ def notice_bundle() -> str:
             "",
         ]
     )
-    ordered = sorted(
-        notices.items(),
-        key=lambda item: (item[0][0], hashlib.sha256(item[0][1].encode()).hexdigest()),
-    )
-    for (identifier, text), notice in ordered:
-        digest = hashlib.sha256(text.encode()).hexdigest()[:12]
-        lines.extend(
-            [
-                f"### {identifier} ({digest})",
-                "",
-                f"License: {notice['name']}",
-                "",
-                "Used by: " + ", ".join(f"`{package}`" for package in sorted(notice["packages"])),
-                "",
-                "Release graphs: " + ", ".join(sorted(notice["graphs"])),
-                "",
-                "```text",
-                text,
-                "```",
-                "",
-            ]
-        )
+    lines.extend(license_text_lines(notices))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -537,12 +553,12 @@ def main() -> int:
     if arguments.check_inputs:
         try:
             return 0 if check_notice_inputs(arguments.output) else 1
-        except (OSError, RuntimeError) as error:
+        except (OSError, RuntimeError, ValueError) as error:
             print(f"notice input check failed: {error}", file=sys.stderr)
             return 2
     try:
         rendered = notice_bundle()
-    except RuntimeError as error:
+    except (OSError, RuntimeError, ValueError) as error:
         print(f"notice generation failed: {error}", file=sys.stderr)
         return 2
     rendered_bytes = rendered.encode("utf-8")

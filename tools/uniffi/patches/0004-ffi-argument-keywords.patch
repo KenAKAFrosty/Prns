@@ -1,0 +1,188 @@
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/type_helpers.rs b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/type_helpers.rs
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/type_helpers.rs
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/type_helpers.rs
+@@ -180,7 +180,7 @@
+     }
+ }
+ 
+-pub(super) fn arg_name(nm: &str) -> String {
++pub(in crate::bindings::gen_typescript) fn arg_name(nm: &str) -> String {
+     rewrite_keywords(nm.to_lower_camel_case())
+ }
+ 
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/mod.rs b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/mod.rs
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/mod.rs
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/mod.rs
+@@ -27,6 +27,7 @@
+ 
+ use self::builders::*;
+ use self::docstring::format_docstring;
++pub(super) use self::type_helpers::arg_name;
+ use self::nodes::*;
+ 
+ pub(crate) use self::nodes::{
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/ffi_module/builder.rs b/crates/ubrn_bindgen/src/bindings/gen_typescript/ffi_module/builder.rs
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/ffi_module/builder.rs
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/ffi_module/builder.rs
+@@ -4,11 +4,12 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/
+  */
+ 
+-use heck::{ToLowerCamelCase, ToUpperCamelCase};
++use heck::ToUpperCamelCase;
+ use uniffi_bindgen::pipeline::general;
+ 
+ use super::nodes::*;
+ use super::type_mapping::{ffi_type_to_ts, ffi_type_to_ts_native};
++use crate::bindings::gen_typescript::api_module::arg_name;
+ use crate::switches::AbiFlavor;
+ 
+ /// Check whether a namespace has async functions.
+@@ -114,7 +115,7 @@
+             .arguments
+             .iter()
+             .map(|arg| FfiArgDecl {
+-                name: arg.name.to_lower_camel_case(),
++                name: arg_name(&arg.name),
+                 type_name: type_mapper(&arg.ty.ty),
+             })
+             .collect();
+@@ -248,7 +249,7 @@
+             .iter()
+             .filter(|a| a.name != "uniffi_out_return" && a.name != "uniffi_out_dropped_callback")
+             .map(|arg| FfiArgDecl {
+-                name: arg.name.to_lower_camel_case(),
++                name: arg_name(&arg.name),
+                 type_name: ffi_type_to_ts(&arg.ty.ty),
+             })
+             .collect();
+@@ -321,3 +322,63 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn arguments() -> Vec<general::FfiArgument> {
++        ["import", "package", "ordinary_name"]
++            .into_iter()
++            .map(|name| general::FfiArgument {
++                name: name.into(),
++                ty: general::FfiTypeNode {
++                    ty: general::FfiType::UInt32,
++                },
++            })
++            .collect()
++    }
++
++    #[test]
++    fn ffi_function_arguments_escape_keywords_without_changing_symbols_or_status() {
++        let function = general::FfiFunction {
++            name: general::RustFfiFunctionName("exact_native_symbol".into()),
++            is_async: false,
++            async_data: None,
++            arguments: arguments(),
++            return_type: general::FfiReturnType { ty: None },
++            has_rust_call_status_arg: true,
++            kind: general::FfiFunctionKind::Scaffolding,
++        };
++        for internal in [false, true] {
++            let output = TsFfiModule::map_ffi_function(&function, internal);
++            assert_eq!(output.name, "ubrn_exact_native_symbol");
++            let names: Vec<_> = output
++                .arguments
++                .iter()
++                .map(|arg| arg.name.as_str())
++                .collect();
++            assert_eq!(
++                names,
++                ["import_", "package_", "ordinaryName", "uniffi_out_err"]
++            );
++        }
++    }
++
++    #[test]
++    fn ffi_callback_arguments_use_the_same_keyword_names() {
++        let callback = general::FfiFunctionType {
++            name: general::FfiFunctionTypeName("CallbackInterfaceExample".into()),
++            arguments: arguments(),
++            return_type: general::FfiReturnType { ty: None },
++            has_rust_call_status_arg: false,
++        };
++        let output = TsFfiModule::map_callback(&callback);
++        let names: Vec<_> = output
++            .arguments
++            .iter()
++            .map(|arg| arg.name.as_str())
++            .collect();
++        assert_eq!(names, ["import_", "package_", "ordinaryName"]);
++    }
++}
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/ffi_module_player/builder.rs b/crates/ubrn_bindgen/src/bindings/gen_typescript/ffi_module_player/builder.rs
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/ffi_module_player/builder.rs
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/ffi_module_player/builder.rs
+@@ -4,11 +4,11 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/
+  */
+ 
+-use heck::ToLowerCamelCase;
+ use uniffi_bindgen::pipeline::general;
+ 
+ use super::nodes::*;
+ use super::type_mapping::ffi_type_to_player;
++use crate::bindings::gen_typescript::api_module::arg_name;
+ use crate::bindings::gen_typescript::config::TsConfig;
+ use crate::bindings::gen_typescript::ffi_module::type_mapping::ffi_type_to_ts;
+ use crate::bindings::gen_typescript::ffi_module::{
+@@ -230,7 +230,7 @@
+             .arguments
+             .iter()
+             .map(|arg| FfiArgDecl {
+-                name: arg.name.to_lower_camel_case(),
++                name: arg_name(&arg.name),
+                 type_name: ffi_type_to_ts(&arg.ty.ty),
+             })
+             .collect();
+@@ -282,3 +282,40 @@
+         );
+     }
+ }
++
++#[cfg(test)]
++mod keyword_tests {
++    use super::*;
++
++    #[test]
++    fn ffi_player_arguments_escape_keywords_without_changing_native_symbol() {
++        let function = general::FfiFunction {
++            name: general::RustFfiFunctionName("exact_native_symbol".into()),
++            is_async: false,
++            async_data: None,
++            arguments: ["import", "package", "ordinary_name"]
++                .into_iter()
++                .map(|name| general::FfiArgument {
++                    name: name.into(),
++                    ty: general::FfiTypeNode {
++                        ty: general::FfiType::UInt32,
++                    },
++                })
++                .collect(),
++            return_type: general::FfiReturnType { ty: None },
++            has_rust_call_status_arg: true,
++            kind: general::FfiFunctionKind::Scaffolding,
++        };
++        let output = PlayerFfiModule::map_ffi_function_for_player(&function);
++        assert_eq!(output.name, "exact_native_symbol");
++        let names: Vec<_> = output
++            .arguments
++            .iter()
++            .map(|arg| arg.name.as_str())
++            .collect();
++        assert_eq!(
++            names,
++            ["import_", "package_", "ordinaryName", "uniffi_out_err"]
++        );
++    }
++}

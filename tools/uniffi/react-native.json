@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/jhugman/uniffi-bindgen-react-native.git",
+    "revision": "3dd1cd1353750dc3bfbbf4bb4d4ccde26b0fbd2e"
+  },
+  "patches": [
+    {
+      "file": "patches/0001-exact-optional-properties.patch",
+      "sha256": "dbd70e408dcd986eabd1237b0394362eece59b37299717119c4999b0523a0769"
+    },
+    {
+      "file": "patches/0002-jsi-native-object-lifetime.patch",
+      "sha256": "b69afc0e6204f570b4ad57f43f7320891f863d0a6ed55ed978270044d027d592"
+    },
+    {
+      "file": "patches/0003-strict-error-override.patch",
+      "sha256": "7092a98f5ad9ff251d6630abe8c3a89c38159e9892400f0e8cdb4065b002661e"
+    },
+    {
+      "file": "patches/0004-ffi-argument-keywords.patch",
+      "sha256": "60a61d59b08161154ec23cf8d4fcd966e05f3a120a9946074af60769a8f0e0b3"
+    }
+  ],
+  "runtime_patch": {
+    "file": "prns-react-native/patches/@ubjs+react-native+0.31.0-6.patch",
+    "sha256": "5cce949e138cbad43bd9d663e98bd635326031852b936ca143f684dacca74613"
+  },
+  "toolchain": {
+    "node": "24.18.0",
+    "npm": "11.16.0",
+    "rust": "1.98.1",
+    "cargoNdk": "4.1.2",
+    "androidNdk": "27.1.12297006",
+    "xcode": "27.1",
+    "xcodeBuild": "27A9275"
+  },
+  "targets": [
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-sim",
+    "x86_64-apple-ios",
+    "aarch64-linux-android",
+    "x86_64-linux-android"
+  ],
+  "packages": [
+    {
+      "name": "@ubjs/core",
+      "version": "0.31.0-6",
+      "archive": "https://registry.npmjs.org/@ubjs/core/-/core-0.31.0-6.tgz",
+      "integrity": "sha512-pscv6Zj8mVmd5+ikb1Zr6XZ0yqYwKGeIV8HU8rf9sTvs7GW34OARAp03xFJ7rE9XE4R6LgwQhzYW9knAuz5yxA==",
+      "sha256": "a3b946739f4baec75cdf9e98ca780d689ac06d2844595a19a9acdf9ad9c2c48f",
+      "license": "MPL-2.0",
+      "license_file": "licenses/ubrn-MPL-2.0.txt",
+      "license_sha256": "d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d"
+    },
+    {
+      "name": "@ubjs/react-native",
+      "version": "0.31.0-6",
+      "archive": "https://registry.npmjs.org/@ubjs/react-native/-/react-native-0.31.0-6.tgz",
+      "integrity": "sha512-vD1033OqUFy968F/3yUKFfN/Im7sfSM5NXRZcUlpUWwuzC9vQn81vtX9P1Fz/xuLxNc88MnNym3zari7PkClNQ==",
+      "sha256": "3b27ee9708351db5b6e4baa281af2c802763055086d55db54811b804e2871a87",
+      "license": "MPL-2.0",
+      "license_file": "licenses/ubrn-MPL-2.0.txt",
+      "license_sha256": "d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d"
+    }
+  ]
+}

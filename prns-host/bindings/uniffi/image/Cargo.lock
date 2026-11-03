@@ -2018,6 +2018,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-expo-android"
+version = "0.3.8"
+dependencies = [
+ "jni 0.21.1",
+ "prns-core",
+ "prns-ffi",
+ "prns-host-runtime",
+ "prns-interfaces-tokio",
+]
+
+[[package]]
 name = "prns-ffi"
 version = "0.3.8"
 dependencies = [
@@ -2086,6 +2097,7 @@ dependencies = [
 name = "prns-host-uniffi-image"
 version = "0.3.8"
 dependencies = [
+ "prns-expo-android",
  "prns-host-uniffi",
  "uniffi",
 ]
