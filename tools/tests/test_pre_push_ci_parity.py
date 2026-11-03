@@ -81,6 +81,11 @@ class PrePushCiParityTests(unittest.TestCase):
         codec_suites = self.reusable_suites({"prns-contact-card/src/api.rs"}, "Linux")[0]
         self.assertFalse({"identity-key-bindings", "identity-catalog-bindings"} & codec_suites)
 
+    def test_service_runtime_selects_owned_profiles(self) -> None:
+        rust = {"service-runtime-minimal", "service-runtime-tests", "service-runtime-msrv"}
+        for system in ("Linux", "Darwin", "Windows"):
+            self.assertTrue(rust <= self.reusable_suites({"prns-service-runtime/src/groups/mod.rs"}, system)[0])
+
     def test_core_change_checks_root_feature_and_native_consumers(self) -> None:
         names = self.gate_names({"prns-core/src/engine.rs"})
 

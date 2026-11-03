@@ -357,7 +357,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
                 "Path(os.environ['CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n"
             )
             fake_python.chmod(0o755)
-            for name in ("named-identities", "standalone-libraries", "host-runtime", "group-libraries"):
+            for name in ("named-identities", "standalone-libraries", "host-runtime", "group-libraries", "service-runtime"):
                 job = jobs[name]
                 self.assertNotRegex(job, r"(?m)^    (?:needs|if):")
                 self.assertNotIn("continue-on-error", job)
@@ -407,6 +407,15 @@ class WorkflowSchedulingTests(unittest.TestCase):
         self.assertEqual(scheduled["identity-native-tests-linux"], {"linux"})
         self.assertEqual(scheduled["identity-native-tests-macos"], {"macos"})
 
+
+    def test_service_runtime_is_required_with_explicit_msrv_preparation(self) -> None:
+        jobs = self.workflow_jobs("ci.yml")
+        self.assertIn("max-parallel: 16", jobs["service-runtime"])
+        self.assertIn('toolchain: "1.90.0"', jobs["service-runtime"])
+        self.assertIn("      - service-runtime\n", jobs["release-critical"])
+        self.assertIn('"$SERVICE_RUNTIME_RESULT"', jobs["release-critical"])
+        release = (ROOT / ".github/workflows/release-readiness.yml").read_text()
+        self.assertIn("matrix.id == 'service-runtime-msrv'", release)
 
     def test_deployment_deferral_does_not_accept_fake_qualification_inputs(self) -> None:
         workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()

@@ -15,6 +15,14 @@ fi
 python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
+    "service-runtime-groups-linux|prns-service-runtime/Cargo.toml|x86_64-unknown-linux-gnu|groups"
+    "service-runtime-groups-network-linux|prns-service-runtime/Cargo.toml|x86_64-unknown-linux-gnu|groups-network archive"
+    "service-runtime-groups-macos|prns-service-runtime/Cargo.toml|aarch64-apple-darwin|groups"
+    "service-runtime-groups-network-macos|prns-service-runtime/Cargo.toml|aarch64-apple-darwin|groups-network archive"
+    "service-runtime-groups-android|prns-service-runtime/Cargo.toml|aarch64-linux-android|groups"
+    "service-runtime-groups-network-android|prns-service-runtime/Cargo.toml|aarch64-linux-android|groups-network archive"
+    "service-runtime-groups-ios|prns-service-runtime/Cargo.toml|aarch64-apple-ios|groups"
+    "service-runtime-groups-network-ios|prns-service-runtime/Cargo.toml|aarch64-apple-ios|groups-network archive"
     "group-native-local-linux|prns-groups/tests/fixtures/local-consumer/Cargo.toml|x86_64-unknown-linux-gnu"
     "group-native-local-macos|prns-groups/tests/fixtures/local-consumer/Cargo.toml|aarch64-apple-darwin"
     "group-native-bindings-linux|prns-groups/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu"
@@ -34,7 +42,7 @@ graphs=(
     "identity-catalog-card-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin|catalog contact-card"
     "contact-card|prns-contact-card/Cargo.toml|x86_64-unknown-linux-gnu"
     "identity-storage|prns-identities/Cargo.toml|x86_64-unknown-linux-gnu|redb-store"
-    "storage-redb|prns-storage/Cargo.toml|x86_64-unknown-linux-gnu|redb"
+    "storage-redb|prns-storage/Cargo.toml|x86_64-unknown-linux-gnu|prns-storage/redb"
     "engine|Cargo.toml|x86_64-unknown-linux-gnu"
     "daemon-linux|prnsd/Cargo.toml|x86_64-unknown-linux-gnu"
     "daemon-macos|prnsd/Cargo.toml|aarch64-apple-darwin"

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "prns-service-runtime",
     "prns-contact-card",
     "prns-storage",
     "personal-rns",
@@ -31,6 +32,9 @@ default-members = [
     "personal-hopspot/core",
 ]
 exclude = [
+    "prns-groups/security/mls-rs",
+    "prns-host/impls/runtime",
+    "prns-host/impls/snapshot",
     "prns-groups",
     "prns-identities",
     "prnsd",

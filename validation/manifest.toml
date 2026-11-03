@@ -169,6 +169,7 @@ cargo_manifests = [
     "prns-host/bindings/uniffi/Cargo.toml",
     "prns-host/bindings/uniffi/image/Cargo.toml",
     "prns-host/impls/runtime/Cargo.toml",
+  "prns-service-runtime/Cargo.toml",
 ]
 format_manifests = [
     "prns-identities/Cargo.toml",
@@ -477,7 +478,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "validation/hygiene/application-boundary.py"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card", "prns-service-runtime"]
 artifacts = "validation-artifacts/results/application-boundary"
 
 [[suite]]
@@ -488,7 +489,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "-m", "unittest", "validation.tests.test_application_boundary"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card", "prns-service-runtime"]
 artifacts = "validation-artifacts/results/application-boundary-tests"
 
 [[suite]]
@@ -2877,3 +2878,75 @@ timeout_seconds = 1800
 command = ["__RUNNER_PYTHON__", "prns-groups/bindings/uniffi/tests/check_kotlin.py"]
 inputs = ["prns-groups", "prns-identities", "prns-storage", "prns-host/core", "prns-core", "prns-macros", "prns-runtime/core", "prns-ffi", "tools/uniffi"]
 artifacts = "validation-artifacts/results/group-native-bindings-kotlin"
+
+[[suite]]
+id = "service-runtime-minimal"
+domain = "native"
+group = "named-identities"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "check", "--locked", "-p", "prns-service-runtime", "--no-default-features"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-core", "prns-macros", "prns-host/core", "prns-runtime/core"]
+artifacts = "validation-artifacts/results/service-runtime-minimal"
+
+[[suite]]
+id = "service-runtime-identities"
+domain = "native"
+group = "named-identities"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "check", "--locked", "-p", "prns-service-runtime", "--no-default-features", "--features", "identities", "--all-targets"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-core", "prns-macros", "prns-host/core", "prns-runtime/core"]
+artifacts = "validation-artifacts/results/service-runtime-identities"
+
+[[suite]]
+id = "service-runtime-without-connections"
+domain = "native"
+group = "named-identities"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "prns-service-runtime", "--no-default-features", "--features", "standalone", "--test", "standalone"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-core", "prns-host", "prns-runtime", "prns-interfaces"]
+artifacts = "validation-artifacts/results/service-runtime-without-connections"
+
+[[suite]]
+id = "service-runtime-tests"
+domain = "native"
+group = "named-identities"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "prns-service-runtime", "--all-features", "--all-targets"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-core", "prns-macros", "prns-host/core", "prns-runtime/core"]
+artifacts = "validation-artifacts/results/service-runtime-tests"
+
+[[suite]]
+id = "service-runtime-clippy"
+domain = "native"
+group = "named-identities"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "clippy", "--locked", "-p", "prns-service-runtime", "--all-features", "--all-targets", "--", "-D", "warnings"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-core", "prns-macros", "prns-host/core", "prns-runtime/core"]
+artifacts = "validation-artifacts/results/service-runtime-clippy"
+
+[[suite]]
+id = "service-runtime-msrv"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["rustup", "run", "1.90.0", "cargo", "check", "--locked", "-p", "prns-service-runtime", "--all-features", "--all-targets"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-service-runtime", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-macros", "prns-runtime", "prns-interfaces", "prns-ffi", "prns-contact-card", "personal-rns"]
+artifacts = "validation-artifacts/results/service-runtime-msrv"

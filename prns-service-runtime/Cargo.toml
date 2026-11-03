@@ -1,0 +1,64 @@
+[package]
+name = "prns-service-runtime"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Selected service construction, identity admission and coordinated lifecycle"
+
+[features]
+default = []
+standalone = ["groups-network", "tokio/rt-multi-thread", "tokio/time", "tokio/net"]
+connections = ["standalone", "prns-host-runtime/connections"]
+uniffi-bindings = ["standalone", "dep:uniffi", "prns-groups/uniffi-bindings", "prns-identities/uniffi-bindings"]
+contact-card = ["identities", "prns-identities/contact-card", "prns-groups-reticulum?/contact-card"]
+identities = ["dep:prns-identities-core", "dep:prns-identities", "dep:prns-identities-runtime", "dep:prns-storage", "dep:redb"]
+groups = ["identities", "dep:prns-groups", "dep:prns-core", "dep:prns-groups-store-redb", "dep:prns-groups-store", "dep:getrandom"]
+archive = ["groups", "prns-groups/archive"]
+groups-network = ["groups", "prns-groups/network", "dep:prns-host", "dep:prns-host-runtime", "dep:prns-groups-reticulum", "dep:prns-runtime", "dep:tokio"]
+
+[dependencies]
+uniffi = { version = "=0.31.2", default-features = false, optional = true }
+prns-identities-core = { path = "../prns-identities/core", optional = true }
+prns-identities = { path = "../prns-identities", features = ["owner", "redb-store"], optional = true }
+prns-identities-runtime = { path = "../prns-identities/runtime", optional = true }
+prns-storage = { path = "../prns-storage", features = ["redb"], optional = true }
+prns-groups = { path = "../prns-groups", default-features = false, optional = true }
+prns-core = { path = "../prns-core", default-features = false, features = ["crypto-precomputed"], optional = true }
+prns-groups-store = { path = "../prns-groups/store", optional = true }
+prns-groups-store-redb = { path = "../prns-groups/store/redb", optional = true }
+prns-host = { path = "../prns-host/core", optional = true }
+prns-host-runtime = { path = "../prns-host/impls/runtime", optional = true }
+prns-groups-reticulum = { path = "../prns-groups/transport/reticulum", default-features = false, features = ["network"], optional = true }
+prns-runtime = { path = "../prns-runtime/core", default-features = false, optional = true }
+tokio = { version = "1", default-features = false, features = ["rt", "sync"], optional = true }
+getrandom = { version = "0.3", optional = true }
+redb = { version = "=4.2.0", optional = true }
+
+[dev-dependencies]
+personal-rns = { path = "../personal-rns", default-features = false, features = ["tokio-host"] }
+prns-groups-core = { path = "../prns-groups/core" }
+prns-contact-card = { path = "../prns-contact-card" }
+prns-groups-reticulum = { path = "../prns-groups/transport/reticulum", default-features = false, features = ["contact-card"] }
+
+[[test]]
+name = "network"
+required-features = ["groups-network", "contact-card", "archive"]
+
+[[test]]
+name = "local"
+required-features = ["groups"]
+
+[lints]
+workspace = true
+
+[[test]]
+name = "shared_services"
+required-features = ["groups-network"]
+
+[[test]]
+name = "standalone"
+required-features = ["standalone"]

@@ -681,6 +681,59 @@ jobs:
           if-no-files-found: warn
           path: validation-artifacts/results/
 
+  service-runtime:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        if: runner.os == 'Linux'
+        with:
+          toolchain: "1.90.0"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: service-runtime-${{ matrix.platform }}
+          workspaces: |
+            .
+      - name: Install Linux native development packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Check service runtime
+        if: runner.os == 'Linux'
+        run: >-
+          python3 validation/run.py run
+          --suite service-runtime-minimal
+          --suite service-runtime-identities
+          --suite service-runtime-without-connections
+          --suite service-runtime-tests
+          --suite service-runtime-clippy
+          --suite service-runtime-msrv
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: service-runtime-${{ matrix.platform }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
     # core workspace floor (1.90), with firmware host tools checked at their
@@ -1279,6 +1332,7 @@ jobs:
       - standalone-libraries
       - msrv
       - group-libraries
+      - service-runtime
       - embedded-resource-selection
       - no-std-embedded
       - esp32-firmware
@@ -1306,6 +1360,7 @@ jobs:
       NAMED_IDENTITIES_RESULT: ${{ needs.named-identities.result }}
       STANDALONE_LIBRARIES_RESULT: ${{ needs.standalone-libraries.result }}
       GROUP_LIBRARIES_RESULT: ${{ needs.group-libraries.result }}
+      SERVICE_RUNTIME_RESULT: ${{ needs.service-runtime.result }}
       MSRV_RESULT: ${{ needs.msrv.result }}
       EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}
       EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}
@@ -1341,6 +1396,7 @@ jobs:
             "$STANDALONE_LIBRARIES_RESULT" \
             "$MSRV_RESULT" \
             "$GROUP_LIBRARIES_RESULT" \
+            "$SERVICE_RUNTIME_RESULT" \
             "$EMBEDDED_SELECTION_RESULT" \
             "$ANDROID_RESULT" \
             "$APPLE_RESULT" \

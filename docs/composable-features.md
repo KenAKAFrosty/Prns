@@ -14,6 +14,7 @@ presentation and execution lifetime. No library requires a chat application.
 | Signed identity and service claims | [Contact cards](../prns-contact-card/README.md) | Trust, consent and address-book policy |
 | Encrypted records, enrollment and device receipts | [Groups](../prns-groups/usage.md) | Group profiles, local budgets and optional network scheduling |
 | Text within group records | [Text profile](../prns-groups/profiles/text/README.md) | Conversation presentation and history policy |
+| Identity and group assembly over shared resources | [Service runtime](../prns-service-runtime/README.md) | Feature selection, admission policies and embedding lifetime |
 
 Storage has no domain or host dependency. The Rust group owner can operate
 without a named-identity catalog or running host. Optional networking borrows a
@@ -39,6 +40,19 @@ Rust consumers may construct a domain owner directly or attach it to an existing
 serialized storage lane. Composition must retain the owners and dependencies,
 enforce identity admission, and drain accepted work before releasing resources.
 Borrowed clients do not acquire authority to stop another component's owner.
+
+The service runtime coordinates the existing identity, group and storage owners;
+it does not introduce another domain store or copy their client APIs. Its
+`groups-network` factory borrows an embedding's host and executor. With
+`standalone` selected, it can construct and retain those resources itself.
+
+Standalone local readiness is independent of network readiness. Preparing local
+data does not require a running host. Stopping networking drains its attachments
+while keeping the same local clients and saved data available; restarting creates
+a new host generation. Full shutdown is separate: the owner fences admission,
+drains domain work and joins owned resources before reporting cleanup complete.
+Retain that completion handle when teardown is interrupted or fails; releasing a
+client is not proof of cleanup.
 
 Creating new state and opening existing state are explicit choices. Opening
 validates the persisted identity binding and supported schema; failure does not
