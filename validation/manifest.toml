@@ -38,6 +38,8 @@ version = "1.5.4"
 
 [registry]
 cargo_lock_workspaces = [
+    "prns-groups/bindings/uniffi",
+    "prns-groups/tests/fixtures/local-consumer",
 
     "prns-identities",
     "prns-identities/bindings/uniffi",
@@ -73,6 +75,9 @@ cargo_lock_workspaces = [
     "prns-host/impls/runtime",
 ]
 cargo_manifests = [
+    "prns-groups/bindings/uniffi/Cargo.toml",
+    "prns-groups/bindings/uniffi/image/Cargo.toml",
+    "prns-groups/tests/fixtures/local-consumer/Cargo.toml",
 
     "prns-groups/transport/reticulum/Cargo.toml",
     "prns-contact-card/Cargo.toml",
@@ -2814,6 +2819,18 @@ inputs = ["prns-host/impls/runtime", "prns-host/core", "prns-storage", "personal
 artifacts = "validation-artifacts/results/host-runtime-msrv"
 
 [[suite]]
+id = "group-local-consumer"
+domain = "native"
+group = "group-communication"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+command = ["__RUNNER_PYTHON__", "prns-groups/tests/check-local-consumer.py"]
+inputs = ["prns-groups", "prns-storage"]
+artifacts = "validation-artifacts/results/group-local-consumer"
+
+[[suite]]
 id = "group-headless-process"
 domain = "native"
 group = "group-communication"
@@ -2824,3 +2841,39 @@ timeout_seconds = 1200
 command = ["cargo", "test", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "-p", "prns-groups", "--features", "headless", "--test", "headless_process"]
 inputs = ["prns-groups", "prns-host", "personal-rns", "prns-interfaces", "prns-runtime", "prns-core", "prns-macros", "prns-storage"]
 artifacts = "validation-artifacts/results/group-headless-process"
+
+[[suite]]
+id = "group-native-bindings"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 900
+command = ["__RUNNER_PYTHON__", "prns-groups/bindings/uniffi/tests/check_profile.py"]
+inputs = ["prns-groups", "prns-identities", "prns-storage", "prns-host/core", "prns-core", "prns-macros", "prns-runtime/core", "prns-ffi"]
+artifacts = "validation-artifacts/results/group-native-bindings"
+
+[[suite]]
+id = "group-native-bindings-swift"
+domain = "platform"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "prns-groups/bindings/uniffi/tests/check_swift.py"]
+inputs = ["prns-groups", "prns-identities", "prns-storage", "prns-host/core", "prns-core", "prns-macros", "prns-runtime/core", "prns-ffi", "tools/uniffi"]
+artifacts = "validation-artifacts/results/group-native-bindings-swift"
+
+[[suite]]
+id = "group-native-bindings-kotlin"
+domain = "platform"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "prns-groups/bindings/uniffi/tests/check_kotlin.py"]
+inputs = ["prns-groups", "prns-identities", "prns-storage", "prns-host/core", "prns-core", "prns-macros", "prns-runtime/core", "prns-ffi", "tools/uniffi"]
+artifacts = "validation-artifacts/results/group-native-bindings-kotlin"

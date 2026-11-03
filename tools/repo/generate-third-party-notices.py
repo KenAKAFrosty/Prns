@@ -116,6 +116,18 @@ GRAPHS = (('Group MLS adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
  ('Expo host', 'prns-host/bindings/uniffi/image/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('Expo Android', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-linux-android'),
  ('Expo iOS', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-ios'),
+ ('Group local Rust consumer Linux',
+  'prns-groups/tests/fixtures/local-consumer/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('Group local Rust consumer macOS',
+  'prns-groups/tests/fixtures/local-consumer/Cargo.toml',
+  'aarch64-apple-darwin'),
+ ('Group native bindings Linux',
+  'prns-groups/bindings/uniffi/image/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('Group native bindings macOS',
+  'prns-groups/bindings/uniffi/image/Cargo.toml',
+  'aarch64-apple-darwin'),
  ('Group headless peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'))
 MAVEN = (
     ("androidx.annotation:annotation:1.5.0", "Apache-2.0"),

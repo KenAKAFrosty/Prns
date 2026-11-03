@@ -10,7 +10,7 @@ The core and [text profile](profiles/text/README.md) are allocation-free
 `no_std`; MLS and the generic service use `no_std + alloc` with explicit storage
 and admission limits. See the [MLS allocation boundary](security/mls-rs/README.md#what-is-bounded).
 
-The optional foreign binding workspace generates the
+The optional [foreign binding workspace](bindings/uniffi/README.md) generates the
 canonical local client directly and supplies a narrow key-owning factory. Public
 client operations return the core `ApiError`, preserving rejection/retry reasons
 and separating uncertain outcomes. Lower-level manager/storage APIs retain

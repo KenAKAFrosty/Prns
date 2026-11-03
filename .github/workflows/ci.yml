@@ -555,10 +555,12 @@ jobs:
             .
             prns-identities
             prns-identities/bindings/uniffi
+            prns-groups/bindings/uniffi
       - name: Run registered validation suites
         run: >-
           python3 validation/run.py run
           --suite uniffi-tooling-contracts
+          --suite group-native-bindings
           --suite identity-portable-tests
           --suite identity-key-owner-tests
           --suite identity-key-bindings
@@ -582,6 +584,8 @@ jobs:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: >-
           python3 validation/run.py run
+          --suite group-native-bindings-swift
+          --suite group-native-bindings-kotlin
           --suite identity-key-bindings-swift
           --suite identity-catalog-bindings-swift
           --suite identity-key-card-bindings-swift
@@ -661,6 +665,7 @@ jobs:
           python3 validation/run.py run
           --suite group-communication-tests
           --suite group-headless-process
+          --suite group-local-consumer
           --suite group-communication-clippy
           --suite group-mls-adapter-tests
           --suite group-mls-adapter-clippy
@@ -709,6 +714,7 @@ jobs:
             --exclude personal-hopspot-resources --exclude personal-hopspot-assurance
           cargo check --locked --manifest-path prns-groups/Cargo.toml --workspace --all-targets --all-features
           cargo check --locked --manifest-path prns-groups/security/mls-rs/Cargo.toml --all-targets
+          cargo check --locked --manifest-path prns-groups/bindings/uniffi/Cargo.toml --workspace --all-targets
           cargo check --locked -p prns-storage --all-targets --all-features
           cargo check --locked -p prns-contact-card --all-targets --all-features
           cargo check --locked --manifest-path prns-identities/Cargo.toml --workspace --all-targets --all-features

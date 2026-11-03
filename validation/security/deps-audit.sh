@@ -15,6 +15,10 @@ fi
 python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
+    "group-native-local-linux|prns-groups/tests/fixtures/local-consumer/Cargo.toml|x86_64-unknown-linux-gnu"
+    "group-native-local-macos|prns-groups/tests/fixtures/local-consumer/Cargo.toml|aarch64-apple-darwin"
+    "group-native-bindings-linux|prns-groups/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu"
+    "group-native-bindings-macos|prns-groups/bindings/uniffi/image/Cargo.toml|aarch64-apple-darwin"
     "group-headless-peer|prns-groups/Cargo.toml|x86_64-unknown-linux-gnu|headless"
 
     "group-mls-adapter|prns-groups/security/mls-rs/Cargo.toml|x86_64-unknown-linux-gnu"

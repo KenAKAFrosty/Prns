@@ -26,7 +26,7 @@ remain separate work.
 | [redb store](store/redb/README.md) | Caller-owned database adapter; storage is plaintext |
 | [MLS adapter](security/mls-rs/README.md) | `no_std + alloc` crypto operations with storage/admission limits, committed with application facts and exact output |
 | [Records](service/README.md) | Opaque application bytes, receipt intent, retention and inventory; `no_std + alloc` |
-| Foreign bindings | Owning declarations and a standalone local factory, with one image for key and group namespaces |
+| [Foreign bindings](bindings/uniffi/README.md) | Owning declarations and a standalone local factory, with one image for key and group namespaces |
 | [Text profile](profiles/text/README.md) | Allocation-free borrowed UTF-8 encoding |
 | [Reticulum transport](transport/reticulum/README.md) | Native adapter using a borrowed Host client and authenticated peers |
 | [Group library](usage.md) | Caller-owned storage jobs and network future; [enrollment](enrollment.md), [generic records](generic-records.md) and [progress](progress.md) |

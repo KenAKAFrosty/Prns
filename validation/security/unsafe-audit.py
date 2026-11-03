@@ -123,6 +123,18 @@ GRAPHS = (('group-mls-adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
  ('expo-host-linux', 'prns-host/bindings/uniffi/image/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('expo-android', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-linux-android'),
  ('expo-ios', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-ios'),
+ ('group-native-local-linux',
+  'prns-groups/tests/fixtures/local-consumer/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('group-native-local-macos',
+  'prns-groups/tests/fixtures/local-consumer/Cargo.toml',
+  'aarch64-apple-darwin'),
+ ('group-native-bindings-linux',
+  'prns-groups/bindings/uniffi/image/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('group-native-bindings-macos',
+  'prns-groups/bindings/uniffi/image/Cargo.toml',
+  'aarch64-apple-darwin'),
  ('group-headless-peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'))
 UNSAFE_EXCEPTIONS = {
     "prns-core",

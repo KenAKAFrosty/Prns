@@ -286,6 +286,26 @@
       "target": "aarch64-apple-ios"
     },
     {
+      "manifest": "prns-groups/tests/fixtures/local-consumer/Cargo.toml",
+      "name": "group-native-local-linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "manifest": "prns-groups/tests/fixtures/local-consumer/Cargo.toml",
+      "name": "group-native-local-macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
+      "manifest": "prns-groups/bindings/uniffi/image/Cargo.toml",
+      "name": "group-native-bindings-linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "manifest": "prns-groups/bindings/uniffi/image/Cargo.toml",
+      "name": "group-native-bindings-macos",
+      "target": "aarch64-apple-darwin"
+    },
+    {
       "features": [
         "headless"
       ],
@@ -366,6 +386,26 @@
           "getrandom",
           "rand_core"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "getrandom",
+          "rand_core"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "getrandom",
+          "rand_core"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "getrandom",
+          "rand_core"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "getrandom",
+          "rand_core"
+        ],
         "group-secure-storage": [
           "alloc",
           "getrandom",
@@ -406,6 +446,10 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -453,6 +497,18 @@
         "group-mls-adapter": [
           "zeroize"
         ],
+        "group-native-bindings-linux": [
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "zeroize"
+        ],
         "group-secure-storage": [
           "zeroize"
         ]
@@ -485,6 +541,34 @@
           "zeroize"
         ],
         "group-mls-adapter": [
+          "aes",
+          "alloc",
+          "default",
+          "getrandom",
+          "zeroize"
+        ],
+        "group-native-bindings-linux": [
+          "aes",
+          "alloc",
+          "default",
+          "getrandom",
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "aes",
+          "alloc",
+          "default",
+          "getrandom",
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "aes",
+          "alloc",
+          "default",
+          "getrandom",
+          "zeroize"
+        ],
+        "group-native-local-macos": [
           "aes",
           "alloc",
           "default",
@@ -813,6 +897,14 @@
           "default",
           "std"
         ],
+        "group-native-bindings-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "std"
+        ],
         "host-connections-android": [
           "default",
           "std"
@@ -990,6 +1082,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "host-c-linux": [],
@@ -1078,6 +1174,18 @@
           "alloc"
         ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-native-bindings-linux": [
+          "alloc"
+        ],
+        "group-native-bindings-macos": [
+          "alloc"
+        ],
+        "group-native-local-linux": [
+          "alloc"
+        ],
+        "group-native-local-macos": [
           "alloc"
         ],
         "group-secure-storage": [
@@ -1194,6 +1302,26 @@
           "std"
         ],
         "group-libraries": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-native-local-macos": [
           "alloc",
           "default",
           "std"
@@ -1329,6 +1457,18 @@
           "alloc"
         ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-native-bindings-linux": [
+          "alloc"
+        ],
+        "group-native-bindings-macos": [
+          "alloc"
+        ],
+        "group-native-local-linux": [
+          "alloc"
+        ],
+        "group-native-local-macos": [
           "alloc"
         ],
         "group-secure-storage": [
@@ -1757,6 +1897,18 @@
         "group-libraries": [
           "std"
         ],
+        "group-native-bindings-linux": [
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "std"
+        ],
+        "group-native-local-linux": [
+          "std"
+        ],
+        "group-native-local-macos": [
+          "std"
+        ],
         "group-secure-storage": [
           "std"
         ],
@@ -1818,6 +1970,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -1911,6 +2067,18 @@
           "zeroize"
         ],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "zeroize"
+        ],
         "group-secure-storage": [
           "zeroize"
         ],
@@ -2018,6 +2186,10 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -2610,6 +2782,10 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -2791,6 +2967,14 @@
           "std"
         ],
         "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
           "default",
           "std"
         ],
@@ -3006,6 +3190,8 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -3093,6 +3279,18 @@
           "block-padding"
         ],
         "group-libraries": [
+          "block-padding"
+        ],
+        "group-native-bindings-linux": [
+          "block-padding"
+        ],
+        "group-native-bindings-macos": [
+          "block-padding"
+        ],
+        "group-native-local-linux": [
+          "block-padding"
+        ],
+        "group-native-local-macos": [
           "block-padding"
         ],
         "group-secure-storage": [
@@ -3346,6 +3544,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-headless": [],
         "identity-catalog-card-linux": [],
@@ -3504,6 +3706,30 @@
         "group-mls-adapter": [
           "cipher",
           "xchacha"
+        ],
+        "group-native-bindings-linux": [
+          "cipher",
+          "rng",
+          "xchacha",
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "cipher",
+          "rng",
+          "xchacha",
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "cipher",
+          "rng",
+          "xchacha",
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "cipher",
+          "rng",
+          "xchacha",
+          "zeroize"
         ],
         "group-secure-storage": [
           "cipher",
@@ -3669,6 +3895,22 @@
           "alloc",
           "getrandom"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "getrandom"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "getrandom"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "getrandom"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "getrandom"
+        ],
         "group-secure-storage": [
           "alloc",
           "getrandom"
@@ -3752,6 +3994,18 @@
         ],
         "group-mls-adapter": [
           "zeroize"
+        ],
+        "group-native-bindings-linux": [
+          "block-padding"
+        ],
+        "group-native-bindings-macos": [
+          "block-padding"
+        ],
+        "group-native-local-linux": [
+          "block-padding"
+        ],
+        "group-native-local-macos": [
+          "block-padding"
         ],
         "group-secure-storage": [
           "block-padding",
@@ -3849,6 +4103,22 @@
           "stream-wrapper"
         ],
         "group-mls-adapter": [
+          "block-buffer",
+          "stream-wrapper"
+        ],
+        "group-native-bindings-linux": [
+          "block-buffer",
+          "stream-wrapper"
+        ],
+        "group-native-bindings-macos": [
+          "block-buffer",
+          "stream-wrapper"
+        ],
+        "group-native-local-linux": [
+          "block-buffer",
+          "stream-wrapper"
+        ],
+        "group-native-local-macos": [
           "block-buffer",
           "stream-wrapper"
         ],
@@ -4118,6 +4388,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -4287,6 +4561,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -4559,6 +4837,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "cpubits",
@@ -4588,6 +4870,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -4657,6 +4943,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "host-connections-android": [],
         "host-connections-ios": [],
@@ -4912,6 +5202,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -5377,6 +5671,30 @@
           "subtle",
           "zeroize"
         ],
+        "group-native-bindings-linux": [
+          "hybrid-array",
+          "rand_core",
+          "subtle",
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "hybrid-array",
+          "rand_core",
+          "subtle",
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "hybrid-array",
+          "rand_core",
+          "subtle",
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "hybrid-array",
+          "rand_core",
+          "subtle",
+          "zeroize"
+        ],
         "group-secure-storage": [
           "hybrid-array",
           "rand_core",
@@ -5439,6 +5757,10 @@
           "std"
         ],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [
           "std"
         ],
@@ -5573,6 +5895,22 @@
           "getrandom",
           "rand_core"
         ],
+        "group-native-bindings-linux": [
+          "getrandom",
+          "rand_core"
+        ],
+        "group-native-bindings-macos": [
+          "getrandom",
+          "rand_core"
+        ],
+        "group-native-local-linux": [
+          "getrandom",
+          "rand_core"
+        ],
+        "group-native-local-macos": [
+          "getrandom",
+          "rand_core"
+        ],
         "group-secure-storage": [
           "getrandom",
           "rand_core"
@@ -5643,6 +5981,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "ctr",
@@ -5722,6 +6064,18 @@
           "subtle"
         ],
         "group-mls-adapter": [
+          "subtle"
+        ],
+        "group-native-bindings-linux": [
+          "subtle"
+        ],
+        "group-native-bindings-macos": [
+          "subtle"
+        ],
+        "group-native-local-linux": [
+          "subtle"
+        ],
+        "group-native-local-macos": [
           "subtle"
         ],
         "group-secure-storage": [
@@ -5924,6 +6278,32 @@
           "digest",
           "rand_core"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "digest",
+          "rand_core",
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "digest",
+          "rand_core",
+          "zeroize"
+        ],
         "group-secure-storage": [
           "alloc",
           "digest",
@@ -6096,6 +6476,8 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-local-linux": [],
         "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-windows": [],
@@ -6263,6 +6645,22 @@
           "default",
           "suggestions"
         ],
+        "group-native-bindings-linux": [
+          "default",
+          "suggestions"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "suggestions"
+        ],
+        "group-native-local-linux": [
+          "default",
+          "suggestions"
+        ],
+        "group-native-local-macos": [
+          "default",
+          "suggestions"
+        ],
         "group-secure-storage": [
           "default",
           "suggestions"
@@ -6463,6 +6861,22 @@
           "strsim",
           "suggestions"
         ],
+        "group-native-bindings-linux": [
+          "strsim",
+          "suggestions"
+        ],
+        "group-native-bindings-macos": [
+          "strsim",
+          "suggestions"
+        ],
+        "group-native-local-linux": [
+          "strsim",
+          "suggestions"
+        ],
+        "group-native-local-macos": [
+          "strsim",
+          "suggestions"
+        ],
         "group-secure-storage": [
           "strsim",
           "suggestions"
@@ -6603,6 +7017,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
@@ -7195,6 +7613,30 @@
           "oid",
           "pem",
           "zeroize"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "oid",
+          "pem",
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "oid",
+          "pem",
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "oid",
+          "pem",
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "oid",
+          "pem",
+          "zeroize"
         ]
       },
       "name": "der",
@@ -7331,6 +7773,26 @@
           "std"
         ],
         "group-mls-adapter": [
+          "block-buffer",
+          "core-api",
+          "default"
+        ],
+        "group-native-bindings-linux": [
+          "block-buffer",
+          "core-api",
+          "default"
+        ],
+        "group-native-bindings-macos": [
+          "block-buffer",
+          "core-api",
+          "default"
+        ],
+        "group-native-local-linux": [
+          "block-buffer",
+          "core-api",
+          "default"
+        ],
+        "group-native-local-macos": [
           "block-buffer",
           "core-api",
           "default"
@@ -7599,6 +8061,38 @@
           "mac",
           "oid",
           "rand_core"
+        ],
+        "group-native-bindings-linux": [
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
         ],
         "group-secure-storage": [
           "block-api",
@@ -8248,6 +8742,42 @@
           "pkcs8",
           "spki"
         ],
+        "group-native-bindings-linux": [
+          "algorithm",
+          "alloc",
+          "der",
+          "digest",
+          "pem",
+          "pkcs8",
+          "spki"
+        ],
+        "group-native-bindings-macos": [
+          "algorithm",
+          "alloc",
+          "der",
+          "digest",
+          "pem",
+          "pkcs8",
+          "spki"
+        ],
+        "group-native-local-linux": [
+          "algorithm",
+          "alloc",
+          "der",
+          "digest",
+          "pem",
+          "pkcs8",
+          "spki"
+        ],
+        "group-native-local-macos": [
+          "algorithm",
+          "alloc",
+          "der",
+          "digest",
+          "pem",
+          "pkcs8",
+          "spki"
+        ],
         "group-secure-storage": [
           "algorithm",
           "alloc",
@@ -8338,6 +8868,18 @@
           "alloc"
         ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-native-bindings-linux": [
+          "alloc"
+        ],
+        "group-native-bindings-macos": [
+          "alloc"
+        ],
+        "group-native-local-linux": [
+          "alloc"
+        ],
+        "group-native-local-macos": [
           "alloc"
         ],
         "group-secure-storage": [
@@ -8608,6 +9150,32 @@
           "alloc",
           "rand_core",
           "signature"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "fast",
+          "rand_core",
+          "signature",
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "fast",
+          "rand_core",
+          "signature",
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "rand_core",
+          "signature",
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "rand_core",
+          "signature",
+          "zeroize"
         ],
         "group-secure-storage": [
           "alloc",
@@ -8905,6 +9473,10 @@
           "use_std"
         ],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [
           "std",
           "use_std"
@@ -8946,6 +9518,50 @@
           "sec1"
         ],
         "group-mls-adapter": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ff",
+          "group",
+          "pem",
+          "pkcs8",
+          "sec1"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ff",
+          "group",
+          "pem",
+          "pkcs8",
+          "sec1"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ff",
+          "group",
+          "pem",
+          "pkcs8",
+          "sec1"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ff",
+          "group",
+          "pem",
+          "pkcs8",
+          "sec1"
+        ],
+        "group-native-local-macos": [
           "alloc",
           "arithmetic",
           "digest",
@@ -10678,6 +11294,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-headless": []
       },
@@ -10927,6 +11547,8 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "host-c-macos": [],
         "host-connections-android": [],
         "host-connections-ios": [],
@@ -10995,6 +11617,18 @@
         ],
         "group-libraries": [
           "default",
+          "std"
+        ],
+        "group-native-bindings-linux": [
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "std"
+        ],
+        "group-native-local-linux": [
+          "std"
+        ],
+        "group-native-local-macos": [
           "std"
         ],
         "group-secure-storage": [
@@ -12661,6 +13295,26 @@
           "default",
           "std"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "group-secure-storage": [
           "alloc",
           "default",
@@ -12800,6 +13454,18 @@
           "alloc"
         ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-native-bindings-linux": [
+          "alloc"
+        ],
+        "group-native-bindings-macos": [
+          "alloc"
+        ],
+        "group-native-local-linux": [
+          "alloc"
+        ],
+        "group-native-local-macos": [
           "alloc"
         ],
         "group-secure-storage": [
@@ -13139,6 +13805,22 @@
           "default",
           "std"
         ],
+        "group-native-bindings-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "std"
+        ],
+        "group-native-local-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-local-macos": [
+          "default",
+          "std"
+        ],
         "group-secure-storage": [
           "default",
           "std"
@@ -13264,6 +13946,8 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -15547,6 +16231,18 @@
         "group-mls-adapter": [
           "more_lengths"
         ],
+        "group-native-bindings-linux": [
+          "more_lengths"
+        ],
+        "group-native-bindings-macos": [
+          "more_lengths"
+        ],
+        "group-native-local-linux": [
+          "more_lengths"
+        ],
+        "group-native-local-macos": [
+          "more_lengths"
+        ],
         "group-secure-storage": [
           "more_lengths"
         ],
@@ -15668,6 +16364,10 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -15722,6 +16422,8 @@
         "group-libraries": [
           "std"
         ],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "group-secure-storage": [
           "std"
         ],
@@ -15833,6 +16535,22 @@
           "sys_rng",
           "wasm_js"
         ],
+        "group-native-bindings-linux": [
+          "sys_rng",
+          "wasm_js"
+        ],
+        "group-native-bindings-macos": [
+          "sys_rng",
+          "wasm_js"
+        ],
+        "group-native-local-linux": [
+          "sys_rng",
+          "wasm_js"
+        ],
+        "group-native-local-macos": [
+          "sys_rng",
+          "wasm_js"
+        ],
         "group-secure-storage": [
           "sys_rng",
           "wasm_js"
@@ -15880,6 +16598,18 @@
         "group-mls-adapter": [
           "zeroize"
         ],
+        "group-native-bindings-linux": [
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "zeroize"
+        ],
         "group-secure-storage": [
           "zeroize"
         ]
@@ -15904,6 +16634,18 @@
           "alloc"
         ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-native-bindings-linux": [
+          "alloc"
+        ],
+        "group-native-bindings-macos": [
+          "alloc"
+        ],
+        "group-native-local-linux": [
+          "alloc"
+        ],
+        "group-native-local-macos": [
           "alloc"
         ],
         "group-secure-storage": [
@@ -15959,6 +16701,10 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -16100,6 +16846,8 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "host-c-macos": [],
         "host-connections-android": [],
         "host-connections-ios": [],
@@ -16148,6 +16896,10 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -16274,6 +17026,8 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -16337,6 +17091,18 @@
           "std"
         ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-native-bindings-linux": [
+          "alloc"
+        ],
+        "group-native-bindings-macos": [
+          "alloc"
+        ],
+        "group-native-local-linux": [
+          "alloc"
+        ],
+        "group-native-local-macos": [
           "alloc"
         ],
         "group-secure-storage": [
@@ -16410,6 +17176,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -16512,6 +17282,18 @@
           "zeroize"
         ],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "zeroize"
+        ],
         "group-secure-storage": [
           "zeroize"
         ],
@@ -17114,6 +17896,26 @@
           "subtle",
           "zeroize"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "subtle",
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "subtle",
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "subtle",
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "subtle",
+          "zeroize"
+        ],
         "group-secure-storage": [
           "alloc",
           "subtle",
@@ -17340,6 +18142,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
@@ -17593,6 +18399,14 @@
           "default",
           "std"
         ],
+        "group-native-bindings-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "std"
+        ],
         "host-connections-android": [
           "default",
           "std"
@@ -17741,6 +18555,18 @@
           "block-padding"
         ],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [
+          "block-padding"
+        ],
+        "group-native-bindings-macos": [
+          "block-padding"
+        ],
+        "group-native-local-linux": [
+          "block-padding"
+        ],
+        "group-native-local-macos": [
+          "block-padding"
+        ],
         "group-secure-storage": [
           "block-padding"
         ],
@@ -17830,6 +18656,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "inout",
@@ -18084,6 +18914,18 @@
         "group-mls-adapter": [
           "use_alloc"
         ],
+        "group-native-bindings-linux": [
+          "use_alloc"
+        ],
+        "group-native-bindings-macos": [
+          "use_alloc"
+        ],
+        "group-native-local-linux": [
+          "use_alloc"
+        ],
+        "group-native-local-macos": [
+          "use_alloc"
+        ],
         "group-secure-storage": [
           "default",
           "use_alloc",
@@ -18142,6 +18984,10 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -18790,6 +19636,14 @@
           "std"
         ],
         "group-mls-adapter": [],
+        "group-native-local-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-local-macos": [
+          "default",
+          "std"
+        ],
         "group-secure-storage": [
           "default",
           "extra_traits",
@@ -18834,6 +19688,28 @@
         "tokens": 800
       },
       "version": "0.2.190"
+    },
+    {
+      "graphs": {
+        "group-native-bindings-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "libc",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 160,
+        "externs": 210,
+        "functions": 412,
+        "impls": 10,
+        "tokens": 800
+      },
+      "version": "0.2.191"
     },
     {
       "graphs": {
@@ -19061,6 +19937,22 @@
           "no_std",
           "std",
           "xdp"
+        ],
+        "group-native-bindings-linux": [
+          "auxvec",
+          "elf",
+          "errno",
+          "general",
+          "ioctl",
+          "no_std"
+        ],
+        "group-native-local-linux": [
+          "auxvec",
+          "elf",
+          "errno",
+          "general",
+          "ioctl",
+          "no_std"
         ],
         "group-secure-storage": [
           "auxvec",
@@ -20014,6 +20906,18 @@
         "group-mls-adapter": [
           "default"
         ],
+        "group-native-bindings-linux": [
+          "default"
+        ],
+        "group-native-bindings-macos": [
+          "default"
+        ],
+        "group-native-local-linux": [
+          "default"
+        ],
+        "group-native-local-macos": [
+          "default"
+        ],
         "group-secure-storage": [
           "default"
         ]
@@ -20298,6 +21202,22 @@
         "group-libraries": [
           "alloc",
           "default",
+          "std"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "std"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "std"
+        ],
+        "group-native-local-macos": [
+          "alloc",
           "std"
         ],
         "group-secure-storage": [
@@ -20698,6 +21618,34 @@
           "prior_epoch",
           "private_message"
         ],
+        "group-native-bindings-linux": [
+          "by_ref_proposal",
+          "fast_serialize",
+          "out_of_order",
+          "prior_epoch",
+          "private_message"
+        ],
+        "group-native-bindings-macos": [
+          "by_ref_proposal",
+          "fast_serialize",
+          "out_of_order",
+          "prior_epoch",
+          "private_message"
+        ],
+        "group-native-local-linux": [
+          "by_ref_proposal",
+          "fast_serialize",
+          "out_of_order",
+          "prior_epoch",
+          "private_message"
+        ],
+        "group-native-local-macos": [
+          "by_ref_proposal",
+          "fast_serialize",
+          "out_of_order",
+          "prior_epoch",
+          "private_message"
+        ],
         "group-secure-storage": [
           "by_ref_proposal",
           "fast_serialize",
@@ -20728,6 +21676,18 @@
         "group-mls-adapter": [
           "preallocate"
         ],
+        "group-native-bindings-linux": [
+          "preallocate"
+        ],
+        "group-native-bindings-macos": [
+          "preallocate"
+        ],
+        "group-native-local-linux": [
+          "preallocate"
+        ],
+        "group-native-local-macos": [
+          "preallocate"
+        ],
         "group-secure-storage": [
           "preallocate"
         ]
@@ -20748,6 +21708,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "mls-rs-codec-derive",
@@ -20772,6 +21736,18 @@
         "group-mls-adapter": [
           "fast_serialize"
         ],
+        "group-native-bindings-linux": [
+          "fast_serialize"
+        ],
+        "group-native-bindings-macos": [
+          "fast_serialize"
+        ],
+        "group-native-local-linux": [
+          "fast_serialize"
+        ],
+        "group-native-local-macos": [
+          "fast_serialize"
+        ],
         "group-secure-storage": [
           "fast_serialize"
         ]
@@ -20792,6 +21768,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "mls-rs-crypto-hpke",
@@ -20810,6 +21790,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "mls-rs-crypto-rustcrypto",
@@ -20828,6 +21812,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "mls-rs-crypto-traits",
@@ -21804,6 +22792,10 @@
           "std"
         ],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [
           "default",
           "std"
@@ -24820,6 +25812,28 @@
           "race",
           "std"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "race",
+          "std"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "race",
+          "std"
+        ],
         "group-secure-storage": [
           "alloc",
           "default",
@@ -25127,6 +26141,54 @@
           "sha2",
           "sha256"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha256"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha256"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha256"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha256"
+        ],
         "group-secure-storage": [
           "alloc",
           "arithmetic",
@@ -25178,6 +26240,54 @@
           "sha384"
         ],
         "group-mls-adapter": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha384"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha384"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha384"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha384"
+        ],
+        "group-native-local-macos": [
           "alloc",
           "arithmetic",
           "digest",
@@ -25336,6 +26446,18 @@
           "alloc"
         ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-native-bindings-linux": [
+          "alloc"
+        ],
+        "group-native-bindings-macos": [
+          "alloc"
+        ],
+        "group-native-local-linux": [
+          "alloc"
+        ],
+        "group-native-local-macos": [
           "alloc"
         ],
         "group-secure-storage": [
@@ -26487,6 +27609,10 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -26588,6 +27714,22 @@
           "pem"
         ],
         "group-mls-adapter": [
+          "alloc",
+          "pem"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "pem"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "pem"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "pem"
+        ],
+        "group-native-local-macos": [
           "alloc",
           "pem"
         ],
@@ -26755,6 +27897,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "poly1305",
@@ -26779,6 +27925,22 @@
           "zeroize"
         ],
         "group-mls-adapter": [
+          "hazmat",
+          "zeroize"
+        ],
+        "group-native-bindings-linux": [
+          "hazmat",
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "hazmat",
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "hazmat",
+          "zeroize"
+        ],
+        "group-native-local-macos": [
           "hazmat",
           "zeroize"
         ],
@@ -27015,6 +28177,22 @@
           "std"
         ],
         "group-mls-adapter": [
+          "critical-section",
+          "require-cas"
+        ],
+        "group-native-bindings-linux": [
+          "critical-section",
+          "require-cas"
+        ],
+        "group-native-bindings-macos": [
+          "critical-section",
+          "require-cas"
+        ],
+        "group-native-local-linux": [
+          "critical-section",
+          "require-cas"
+        ],
+        "group-native-local-macos": [
           "critical-section",
           "require-cas"
         ],
@@ -27276,6 +28454,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "primefield",
@@ -27298,6 +28480,18 @@
           "alloc"
         ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-native-bindings-linux": [
+          "alloc"
+        ],
+        "group-native-bindings-macos": [
+          "alloc"
+        ],
+        "group-native-local-linux": [
+          "alloc"
+        ],
+        "group-native-local-macos": [
           "alloc"
         ],
         "group-secure-storage": [
@@ -27725,6 +28919,24 @@
           "std",
           "tokio-host"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "crypto-precomputed",
+          "rns-management-wire"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "crypto-precomputed",
+          "rns-management-wire"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "rns-management-wire"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "rns-management-wire"
+        ],
         "group-secure-storage": [
           "alloc",
           "crypto-precomputed",
@@ -28122,6 +29334,14 @@
           "network",
           "text"
         ],
+        "group-native-bindings-linux": [
+          "uniffi-bindings"
+        ],
+        "group-native-bindings-macos": [
+          "uniffi-bindings"
+        ],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [
           "default",
           "network",
@@ -28148,6 +29368,20 @@
           "serde"
         ],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [
+          "serde",
+          "uniffi-bindings"
+        ],
+        "group-native-bindings-macos": [
+          "serde",
+          "uniffi-bindings"
+        ],
+        "group-native-local-linux": [
+          "serde"
+        ],
+        "group-native-local-macos": [
+          "serde"
+        ],
         "group-secure-storage": [
           "serde"
         ]
@@ -28165,9 +29399,29 @@
     },
     {
       "graphs": {
+        "group-native-local-linux": [],
+        "group-native-local-macos": []
+      },
+      "name": "prns-groups-local-consumer",
+      "source": "prns-groups/tests/fixtures/local-consumer",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.0.0"
+    },
+    {
+      "graphs": {
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "prns-groups-mls",
@@ -28193,6 +29447,10 @@
           "default",
           "network"
         ],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [
           "contact-card",
           "default",
@@ -28214,6 +29472,14 @@
       "graphs": {
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [
+          "uniffi-bindings"
+        ],
+        "group-native-bindings-macos": [
+          "uniffi-bindings"
+        ],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "prns-groups-service",
@@ -28238,6 +29504,18 @@
         "group-mls-adapter": [
           "default",
           "secure"
+        ],
+        "group-native-bindings-linux": [
+          "default"
+        ],
+        "group-native-bindings-macos": [
+          "default"
+        ],
+        "group-native-local-linux": [
+          "default"
+        ],
+        "group-native-local-macos": [
+          "default"
         ],
         "group-secure-storage": [
           "default",
@@ -28265,6 +29543,24 @@
           "default",
           "serde"
         ],
+        "group-native-bindings-linux": [
+          "default",
+          "serde",
+          "uniffi-bindings"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "serde",
+          "uniffi-bindings"
+        ],
+        "group-native-local-linux": [
+          "default",
+          "serde"
+        ],
+        "group-native-local-macos": [
+          "default",
+          "serde"
+        ],
         "group-secure-storage": [
           "default",
           "serde"
@@ -28272,6 +29568,38 @@
       },
       "name": "prns-groups-store-redb",
       "source": "prns-groups/store/redb",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": []
+      },
+      "name": "prns-groups-uniffi",
+      "source": "prns-groups/bindings/uniffi",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": []
+      },
+      "name": "prns-groups-uniffi-image",
+      "source": "prns-groups/bindings/uniffi/image",
       "unsafe": {
         "blocks": 0,
         "externs": 0,
@@ -28296,6 +29624,18 @@
           "default"
         ],
         "group-libraries": [
+          "default"
+        ],
+        "group-native-bindings-linux": [
+          "default"
+        ],
+        "group-native-bindings-macos": [
+          "default"
+        ],
+        "group-native-local-linux": [
+          "default"
+        ],
+        "group-native-local-macos": [
           "default"
         ],
         "group-secure-storage": [
@@ -28543,6 +29883,12 @@
     },
     {
       "graphs": {
+        "group-native-bindings-linux": [
+          "default"
+        ],
+        "group-native-bindings-macos": [
+          "default"
+        ],
         "identity-catalog-card-linux": [
           "contact-card",
           "default",
@@ -28597,6 +29943,8 @@
     },
     {
       "graphs": {
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "identity-catalog-card-linux": [],
         "identity-catalog-card-macos": [],
         "identity-catalog-linux": [],
@@ -28620,6 +29968,12 @@
     },
     {
       "graphs": {
+        "group-native-bindings-linux": [
+          "default"
+        ],
+        "group-native-bindings-macos": [
+          "default"
+        ],
         "identity-catalog-card-linux": [
           "default",
           "uniffi-bindings"
@@ -28665,6 +30019,12 @@
     },
     {
       "graphs": {
+        "group-native-bindings-linux": [
+          "default"
+        ],
+        "group-native-bindings-macos": [
+          "default"
+        ],
         "identity-catalog-card-linux": [
           "default",
           "uniffi-bindings"
@@ -28710,6 +30070,12 @@
     },
     {
       "graphs": {
+        "group-native-bindings-linux": [
+          "default"
+        ],
+        "group-native-bindings-macos": [
+          "default"
+        ],
         "identity-catalog-card-linux": [
           "catalog",
           "contact-card",
@@ -29597,6 +30963,10 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -29840,6 +31210,18 @@
           "remote-control-wifi-host",
           "resource-bzip2",
           "std"
+        ],
+        "group-native-bindings-linux": [
+          "alloc"
+        ],
+        "group-native-bindings-macos": [
+          "alloc"
+        ],
+        "group-native-local-linux": [
+          "alloc"
+        ],
+        "group-native-local-macos": [
+          "alloc"
         ],
         "group-secure-storage": [
           "alloc",
@@ -30212,6 +31594,22 @@
           "default",
           "redb"
         ],
+        "group-native-bindings-linux": [
+          "default",
+          "redb"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "redb"
+        ],
+        "group-native-local-linux": [
+          "default",
+          "redb"
+        ],
+        "group-native-local-macos": [
+          "default",
+          "redb"
+        ],
         "group-secure-storage": [
           "default",
           "redb"
@@ -30574,6 +31972,22 @@
           "proc-macro"
         ],
         "group-mls-adapter": [
+          "default",
+          "proc-macro"
+        ],
+        "group-native-bindings-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "group-native-local-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "group-native-local-macos": [
           "default",
           "proc-macro"
         ],
@@ -30951,6 +32365,22 @@
           "proc-macro"
         ],
         "group-mls-adapter": [
+          "default",
+          "proc-macro"
+        ],
+        "group-native-bindings-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "proc-macro"
+        ],
+        "group-native-local-linux": [
+          "default",
+          "proc-macro"
+        ],
+        "group-native-local-macos": [
           "default",
           "proc-macro"
         ],
@@ -31379,6 +32809,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -31656,6 +33090,22 @@
           "default",
           "std"
         ],
+        "group-native-bindings-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "std"
+        ],
+        "group-native-local-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-local-macos": [
+          "default",
+          "std"
+        ],
         "group-secure-storage": [
           "default",
           "std"
@@ -31893,6 +33343,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "rfc6979",
@@ -32349,6 +33803,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -32591,6 +34049,30 @@
           "net",
           "std",
           "time"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "default",
+          "fs",
+          "std"
         ],
         "group-secure-storage": [
           "alloc",
@@ -33280,6 +34762,46 @@
           "subtle",
           "zeroize"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "ctutils",
+          "default",
+          "der",
+          "pem",
+          "point",
+          "subtle",
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "ctutils",
+          "default",
+          "der",
+          "pem",
+          "point",
+          "subtle",
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "ctutils",
+          "default",
+          "der",
+          "pem",
+          "point",
+          "subtle",
+          "zeroize"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "ctutils",
+          "default",
+          "der",
+          "pem",
+          "point",
+          "subtle",
+          "zeroize"
+        ],
         "group-secure-storage": [
           "alloc",
           "ctutils",
@@ -33497,6 +35019,22 @@
           "std"
         ],
         "group-mls-adapter": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "std"
+        ],
+        "group-native-local-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-local-macos": [
           "default",
           "std"
         ],
@@ -33816,6 +35354,34 @@
         ],
         "group-mls-adapter": [
           "alloc"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
         ],
         "group-secure-storage": [
           "alloc",
@@ -34142,6 +35708,26 @@
           "alloc",
           "result"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "result",
+          "std"
+        ],
         "group-secure-storage": [
           "alloc",
           "result",
@@ -34340,6 +35926,18 @@
         "group-libraries": [
           "default"
         ],
+        "group-native-bindings-linux": [
+          "default"
+        ],
+        "group-native-bindings-macos": [
+          "default"
+        ],
+        "group-native-local-linux": [
+          "default"
+        ],
+        "group-native-local-macos": [
+          "default"
+        ],
         "group-secure-storage": [
           "default"
         ],
@@ -34462,6 +36060,14 @@
           "default",
           "std"
         ],
+        "group-native-local-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-local-macos": [
+          "default",
+          "std"
+        ],
         "group-secure-storage": [
           "default",
           "std"
@@ -34512,6 +36118,28 @@
     },
     {
       "graphs": {
+        "group-native-bindings-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "serde_json",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 16,
+        "externs": 0,
+        "functions": 1,
+        "impls": 0,
+        "tokens": 17
+      },
+      "version": "1.0.154"
+    },
+    {
+      "graphs": {
         "daemon-linux": [],
         "desktop-linux": []
       },
@@ -34554,6 +36182,16 @@
           "std"
         ],
         "expo-ios": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "group-native-bindings-macos": [
           "alloc",
           "serde",
           "std"
@@ -34661,6 +36299,18 @@
           "alloc"
         ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-native-bindings-linux": [
+          "alloc"
+        ],
+        "group-native-bindings-macos": [
+          "alloc"
+        ],
+        "group-native-local-linux": [
+          "alloc"
+        ],
+        "group-native-local-macos": [
           "alloc"
         ],
         "group-secure-storage": [
@@ -34903,6 +36553,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [
           "default",
@@ -34992,6 +36646,18 @@
           "zeroize"
         ],
         "group-libraries": [
+          "zeroize"
+        ],
+        "group-native-bindings-linux": [
+          "zeroize"
+        ],
+        "group-native-bindings-macos": [
+          "zeroize"
+        ],
+        "group-native-local-linux": [
+          "zeroize"
+        ],
+        "group-native-local-macos": [
           "zeroize"
         ],
         "group-secure-storage": [
@@ -35431,6 +37097,26 @@
           "digest",
           "rand_core"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "digest",
+          "rand_core"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "digest",
+          "rand_core"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "digest",
+          "rand_core"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "digest",
+          "rand_core"
+        ],
         "group-secure-storage": [
           "alloc",
           "digest",
@@ -35570,6 +37256,14 @@
           "std"
         ],
         "expo-ios": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
           "default",
           "std"
         ],
@@ -36495,6 +38189,30 @@
           "portable_atomic",
           "spin_mutex"
         ],
+        "group-native-bindings-linux": [
+          "mutex",
+          "portable-atomic",
+          "portable_atomic",
+          "spin_mutex"
+        ],
+        "group-native-bindings-macos": [
+          "mutex",
+          "portable-atomic",
+          "portable_atomic",
+          "spin_mutex"
+        ],
+        "group-native-local-linux": [
+          "mutex",
+          "portable-atomic",
+          "portable_atomic",
+          "spin_mutex"
+        ],
+        "group-native-local-macos": [
+          "mutex",
+          "portable-atomic",
+          "portable_atomic",
+          "spin_mutex"
+        ],
         "group-secure-storage": [
           "mutex",
           "portable-atomic",
@@ -36557,6 +38275,22 @@
           "spin_mutex"
         ],
         "group-mls-adapter": [
+          "mutex",
+          "spin_mutex"
+        ],
+        "group-native-bindings-linux": [
+          "mutex",
+          "spin_mutex"
+        ],
+        "group-native-bindings-macos": [
+          "mutex",
+          "spin_mutex"
+        ],
+        "group-native-local-linux": [
+          "mutex",
+          "spin_mutex"
+        ],
+        "group-native-local-macos": [
           "mutex",
           "spin_mutex"
         ],
@@ -36703,6 +38437,22 @@
           "alloc",
           "pem"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "pem"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "pem"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "pem"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "pem"
+        ],
         "group-secure-storage": [
           "alloc",
           "pem"
@@ -36809,6 +38559,10 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [
           "alloc",
@@ -36862,6 +38616,8 @@
         "expo-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "host-c-linux": [],
@@ -37099,6 +38855,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -37356,6 +39116,22 @@
           "i128"
         ],
         "group-mls-adapter": [
+          "const-generics",
+          "i128"
+        ],
+        "group-native-bindings-linux": [
+          "const-generics",
+          "i128"
+        ],
+        "group-native-bindings-macos": [
+          "const-generics",
+          "i128"
+        ],
+        "group-native-local-linux": [
+          "const-generics",
+          "i128"
+        ],
+        "group-native-local-macos": [
           "const-generics",
           "i128"
         ],
@@ -37980,6 +39756,54 @@
           "visit",
           "visit-mut"
         ],
+        "group-native-bindings-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "group-native-bindings-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "group-native-local-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "group-native-local-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
         "group-secure-storage": [
           "clone-impls",
           "default",
@@ -38465,6 +40289,24 @@
           "proc-macro",
           "visit-mut"
         ],
+        "group-native-local-linux": [
+          "clone-impls",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ],
+        "group-native-local-macos": [
+          "clone-impls",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ],
         "group-secure-storage": [
           "clone-impls",
           "default",
@@ -38489,6 +40331,26 @@
     },
     {
       "graphs": {
+        "group-native-bindings-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ],
+        "group-native-bindings-macos": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ],
         "identity-catalog-card-linux": [
           "clone-impls",
           "default",
@@ -38685,6 +40547,22 @@
           "getrandom"
         ],
         "group-libraries": [
+          "default",
+          "getrandom"
+        ],
+        "group-native-bindings-linux": [
+          "default",
+          "getrandom"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "getrandom"
+        ],
+        "group-native-local-linux": [
+          "default",
+          "getrandom"
+        ],
+        "group-native-local-macos": [
           "default",
           "getrandom"
         ],
@@ -38955,6 +40833,14 @@
           "default",
           "std"
         ],
+        "group-native-bindings-linux": [
+          "default",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "std"
+        ],
         "group-secure-storage": [
           "default",
           "std"
@@ -39086,6 +40972,8 @@
       "graphs": {
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "group-secure-storage": [],
         "identity-catalog-card-linux": [],
         "identity-catalog-card-macos": [],
@@ -39715,6 +41603,18 @@
           "time",
           "tokio-macros",
           "windows-sys"
+        ],
+        "group-native-bindings-linux": [
+          "sync"
+        ],
+        "group-native-bindings-macos": [
+          "sync"
+        ],
+        "group-native-local-linux": [
+          "sync"
+        ],
+        "group-native-local-macos": [
+          "sync"
         ],
         "group-secure-storage": [
           "bytes",
@@ -40568,6 +42468,20 @@
           "serde",
           "std"
         ],
+        "group-native-bindings-linux": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
         "host-connections-android": [
           "default",
           "display",
@@ -40712,6 +42626,16 @@
           "std"
         ],
         "expo-ios": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "group-native-bindings-macos": [
           "alloc",
           "serde",
           "std"
@@ -40997,6 +42921,14 @@
           "alloc",
           "std"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "std"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "std"
+        ],
         "host-connections-android": [
           "alloc",
           "std"
@@ -41080,6 +43012,14 @@
           "std"
         ],
         "expo-ios": [
+          "alloc",
+          "std"
+        ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "std"
+        ],
+        "group-native-bindings-macos": [
           "alloc",
           "std"
         ],
@@ -41973,6 +43913,18 @@
         "group-mls-adapter": [
           "const-generics"
         ],
+        "group-native-bindings-linux": [
+          "const-generics"
+        ],
+        "group-native-bindings-macos": [
+          "const-generics"
+        ],
+        "group-native-local-linux": [
+          "const-generics"
+        ],
+        "group-native-local-macos": [
+          "const-generics"
+        ],
         "group-secure-storage": [
           "const-generics"
         ],
@@ -42181,6 +44133,8 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-headless": [],
         "identity-storage": []
@@ -42198,6 +44152,8 @@
     },
     {
       "graphs": {
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "identity-catalog-card-linux": [],
         "identity-catalog-card-macos": [],
         "identity-catalog-linux": [],
@@ -42298,6 +44254,8 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -42331,6 +44289,12 @@
           "default"
         ],
         "expo-ios": [
+          "default"
+        ],
+        "group-native-bindings-linux": [
+          "default"
+        ],
+        "group-native-bindings-macos": [
           "default"
         ],
         "host-connections-android": [
@@ -42392,6 +44356,12 @@
         "expo-ios": [
           "default"
         ],
+        "group-native-bindings-linux": [
+          "default"
+        ],
+        "group-native-bindings-macos": [
+          "default"
+        ],
         "host-connections-android": [
           "default"
         ],
@@ -42451,6 +44421,12 @@
         "expo-ios": [
           "default"
         ],
+        "group-native-bindings-linux": [
+          "default"
+        ],
+        "group-native-bindings-macos": [
+          "default"
+        ],
         "host-connections-android": [
           "default"
         ],
@@ -42504,6 +44480,8 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -42533,6 +44511,8 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -42578,6 +44558,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "universal-hash",
@@ -43149,6 +45133,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
@@ -44119,6 +46107,8 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -44258,6 +46248,8 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -44287,6 +46279,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": []
       },
       "name": "wnaf",
@@ -44405,6 +46401,20 @@
           "static_secrets"
         ],
         "group-mls-adapter": [
+          "static_secrets"
+        ],
+        "group-native-bindings-linux": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "group-native-bindings-macos": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "group-native-local-linux": [
+          "static_secrets"
+        ],
+        "group-native-local-macos": [
           "static_secrets"
         ],
         "group-secure-storage": [
@@ -45255,6 +47265,30 @@
           "alloc",
           "zeroize_derive"
         ],
+        "group-native-bindings-linux": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
+        "group-native-bindings-macos": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
+        "group-native-local-linux": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
+        "group-native-local-macos": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
         "group-secure-storage": [
           "alloc",
           "default",
@@ -45351,6 +47385,10 @@
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -45488,6 +47526,10 @@
         "expo-host-linux": [],
         "group-headless-peer": [],
         "group-libraries": [],
+        "group-native-bindings-linux": [],
+        "group-native-bindings-macos": [],
+        "group-native-local-linux": [],
+        "group-native-local-macos": [],
         "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],

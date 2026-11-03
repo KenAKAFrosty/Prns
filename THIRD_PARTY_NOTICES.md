@@ -2,7 +2,7 @@
 
 This checked bundle covers the shipped and qualification Rust, JavaScript, and Android product graphs.
 It was generated with `cargo-about 0.9.1` by `./tools/prns repo notices generate`.
-Notice input fingerprint: `sha256:0793e3a594d5971fcdb49039a7c7e520dc9724e9a6373be4031980432d7bbc13`.
+Notice input fingerprint: `sha256:e25b276f5f562a29c9efd7e1caaba9d497c3b022e3aab82cc4028a8ca62be307`.
 Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before cargo-about reads its target-filtered packaged license material offline.
 Entries are deduplicated by SPDX identifier and canonical notice text; line endings, trailing space, and repeated blank lines are normalized without changing legal words.
 
@@ -62,6 +62,10 @@ Entries are deduplicated by SPDX identifier and canonical notice text; line endi
 - Expo host: `prns-host/bindings/uniffi/image/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
 - Expo Android: `prns-host/bindings/uniffi/image/Cargo.toml` (`aarch64-linux-android`, locked resolution)
 - Expo iOS: `prns-host/bindings/uniffi/image/Cargo.toml` (`aarch64-apple-ios`, locked resolution)
+- Group local Rust consumer Linux: `prns-groups/tests/fixtures/local-consumer/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
+- Group local Rust consumer macOS: `prns-groups/tests/fixtures/local-consumer/Cargo.toml` (`aarch64-apple-darwin`, locked resolution)
+- Group native bindings Linux: `prns-groups/bindings/uniffi/image/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
+- Group native bindings macOS: `prns-groups/bindings/uniffi/image/Cargo.toml` (`aarch64-apple-darwin`, locked resolution)
 - Group headless peer: `prns-groups/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution, default features plus headless)
 
 ## Website JavaScript runtime

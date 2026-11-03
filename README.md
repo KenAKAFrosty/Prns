@@ -35,6 +35,8 @@ If one of these ecosystems is home for you, shaping its consumer API and packagi
 Applications can also use the independent [identity catalog and key vault](prns-identities/usage.md),
 [contact cards](prns-contact-card/README.md), and [bounded storage workers](prns-storage/README.md).
 Each library owns its types and storage contract; none requires a chat application.
+The [composable capability guide](docs/composable-features.md) explains how to select
+these owners and group communication, and how their storage and network lifetimes fit together.
 
 If you're already familiar with Reticulum, you can [jump to here](#coming-from-rns). 
 
