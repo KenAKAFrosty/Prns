@@ -15,6 +15,7 @@ fi
 python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
+    "lxmf-wire|prns-lxmf/wire/Cargo.toml|x86_64-unknown-linux-gnu"
     "group-native-local-linux|prns-groups/tests/fixtures/local-consumer/Cargo.toml|x86_64-unknown-linux-gnu"
     "group-native-local-macos|prns-groups/tests/fixtures/local-consumer/Cargo.toml|aarch64-apple-darwin"
     "group-native-bindings-linux|prns-groups/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu"
@@ -34,7 +35,7 @@ graphs=(
     "identity-catalog-card-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin|catalog contact-card"
     "contact-card|prns-contact-card/Cargo.toml|x86_64-unknown-linux-gnu"
     "identity-storage|prns-identities/Cargo.toml|x86_64-unknown-linux-gnu|redb-store"
-    "storage-redb|prns-storage/Cargo.toml|x86_64-unknown-linux-gnu|redb"
+    "storage-redb|prns-storage/Cargo.toml|x86_64-unknown-linux-gnu|prns-storage/redb"
     "engine|Cargo.toml|x86_64-unknown-linux-gnu"
     "daemon-linux|prnsd/Cargo.toml|x86_64-unknown-linux-gnu"
     "daemon-macos|prnsd/Cargo.toml|aarch64-apple-darwin"

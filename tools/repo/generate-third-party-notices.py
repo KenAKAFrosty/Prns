@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "THIRD_PARTY_NOTICES.md"
 ABOUT = ROOT / "about.toml"
 GRAPH_FEATURES = {'Group secure storage': ('prns-groups-store/secure',),
- 'Storage redb': ('redb',),
+ 'Storage redb': ('prns-storage/redb',),
  'Identity key card Linux': ('contact-card',),
  'Identity key card macOS': ('contact-card',),
  'Identity catalog card Linux': ('catalog', 'contact-card'),
@@ -33,7 +33,8 @@ GRAPH_FEATURES = {'Group secure storage': ('prns-groups-store/secure',),
  'Host connections iOS': ('connections',),
  'Host connections macOS': ('connections',),
  'Host runtime connections': ('connections',),
- 'Group headless peer': ('headless',)}
+ 'Group headless peer': ('headless',),
+ }
 GRAPHS = (('Group MLS adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('Group secure storage', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('Group libraries', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
@@ -128,7 +129,9 @@ GRAPHS = (('Group MLS adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
  ('Group native bindings macOS',
   'prns-groups/bindings/uniffi/image/Cargo.toml',
   'aarch64-apple-darwin'),
- ('Group headless peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'))
+ ('Group headless peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('LXMF wire', 'prns-lxmf/wire/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ )
 MAVEN = (
     ("androidx.annotation:annotation:1.5.0", "Apache-2.0"),
     ("com.github.mik3y:usb-serial-for-android:3.7.0", "MIT"),

@@ -88,6 +88,7 @@ def reusable_library_gates(paths: set[str], manifest: dict) -> tuple[Gate, ...]:
         "validation/manifest.toml", "validation/hygiene/pre-push-ci-parity.py",
     })
     selected: list[str] = []
+    equivalents: list[Gate] = []
     for suite in manifest.get("suite", []):
         reusable = suite.get("group") in REUSABLE_SUITE_GROUPS
         if not reusable or "pr" not in suite["tiers"]:
@@ -100,11 +101,14 @@ def reusable_library_gates(paths: set[str], manifest: dict) -> tuple[Gate, ...]:
             continue
         if suite["platform"] in {"any", platform}:
             selected.append(suite["id"])
+        elif suite["id"] == "lxmf-wire" and platform == "macos":
+            # Run the POSIX authority launcher without claiming Linux evidence.
+            equivalents.append(Gate("LXMF wire vectors (macOS)", tuple(suite["command"])))
     registered = (
         (Gate("reusable library suites", validation_command(tuple(selected))),)
         if selected else ()
     )
-    return registered
+    return (*registered, *equivalents)
 
 
 def plan_for_paths(paths: set[str]) -> PrePushPlan:

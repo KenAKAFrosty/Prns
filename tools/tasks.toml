@@ -1367,3 +1367,14 @@ audience = ["developer"]
 entrypoint = ["python3", "tools/build/group-scale.py", "--case", "management8"]
 requires = ["cargo", "rustc", "python3"]
 setup = "Pass a fresh --output directory. Functional lifecycle findings are separate from admission/query measurements and are not suppressed by them."
+
+[[task]]
+id = "build.lxmf.verify"
+summary = "Verify LXMF wire handling against the pinned Python authority."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/lxmf.sh"]
+requires = ["bash", "cargo", "rustup", "python3"]
+setup = "Install Rust 1.90.0, the thumbv7em-none-eabihf Rust target, and either uv or Python 3.13.7; uv provisions the pinned interpreter automatically."

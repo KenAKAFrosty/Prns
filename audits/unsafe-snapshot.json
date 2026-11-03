@@ -219,7 +219,7 @@
     },
     {
       "features": [
-        "redb"
+        "prns-storage/redb"
       ],
       "manifest": "prns-storage/Cargo.toml",
       "name": "storage-redb",
@@ -311,6 +311,11 @@
       ],
       "manifest": "prns-groups/Cargo.toml",
       "name": "group-headless-peer",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "manifest": "prns-lxmf/wire/Cargo.toml",
+      "name": "lxmf-wire",
       "target": "x86_64-unknown-linux-gnu"
     }
   ],
@@ -1510,6 +1515,9 @@
         "ios": [
           "alloc"
         ],
+        "lxmf-wire": [
+          "alloc"
+        ],
         "nrf52840": [
           "alloc"
         ]
@@ -1732,6 +1740,11 @@
           "std"
         ],
         "halow-appliance-manager": [
+          "serde",
+          "serde_core",
+          "std"
+        ],
+        "lxmf-wire": [
           "serde",
           "serde_core",
           "std"
@@ -2143,6 +2156,9 @@
           "zeroize"
         ],
         "ios": [
+          "zeroize"
+        ],
+        "lxmf-wire": [
           "zeroize"
         ],
         "nrf52840": [
@@ -2808,6 +2824,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -3524,6 +3541,7 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-wire": [],
         "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
@@ -4414,6 +4432,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -4578,6 +4597,7 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-wire": [],
         "nrf52840": []
       },
       "name": "const-oid",
@@ -4922,7 +4942,8 @@
         "host-c-windows": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
-        "ios": []
+        "ios": [],
+        "lxmf-wire": []
       },
       "name": "cpufeatures",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -5960,6 +5981,9 @@
         "ios": [
           "rand_core"
         ],
+        "lxmf-wire": [
+          "rand_core"
+        ],
         "nrf52840": [
           "rand_core"
         ],
@@ -6041,6 +6065,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -6440,6 +6465,13 @@
           "rand_core",
           "zeroize"
         ],
+        "lxmf-wire": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
         "nrf52840": [
           "alloc",
           "digest",
@@ -6488,7 +6520,8 @@
         "identity-catalog-linux": [],
         "identity-key-card-linux": [],
         "identity-keys-linux": [],
-        "identity-storage": []
+        "identity-storage": [],
+        "lxmf-wire": []
       },
       "name": "curve25519-dalek-derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7517,6 +7550,11 @@
           "oid",
           "zeroize"
         ],
+        "lxmf-wire": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
         "nrf52840": [
           "alloc",
           "oid",
@@ -8242,6 +8280,15 @@
           "rand_core",
           "zeroize"
         ],
+        "lxmf-wire": [
+          "alloc",
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
+        ],
         "nrf52840": [
           "block-api",
           "default",
@@ -8930,6 +8977,9 @@
         "ios": [
           "alloc"
         ],
+        "lxmf-wire": [
+          "alloc"
+        ],
         "nrf52840": [
           "alloc"
         ],
@@ -8961,6 +9011,7 @@
           "alloc",
           "batch",
           "fast",
+          "hazmat",
           "rand_core",
           "signature",
           "strobe-rs",
@@ -9024,6 +9075,7 @@
           "alloc",
           "batch",
           "fast",
+          "hazmat",
           "rand_core",
           "signature",
           "strobe-rs",
@@ -9190,6 +9242,7 @@
           "alloc",
           "batch",
           "fast",
+          "hazmat",
           "rand_core",
           "signature",
           "strobe-rs",
@@ -9325,6 +9378,16 @@
           "alloc",
           "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
+        "lxmf-wire": [
+          "alloc",
+          "batch",
+          "fast",
+          "hazmat",
           "rand_core",
           "signature",
           "strobe-rs",
@@ -17139,6 +17202,11 @@
           "alloc",
           "default",
           "std"
+        ],
+        "lxmf-wire": [
+          "alloc",
+          "default",
+          "std"
         ]
       },
       "name": "hex",
@@ -17202,6 +17270,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -17358,6 +17427,9 @@
           "zeroize"
         ],
         "ios": [
+          "zeroize"
+        ],
+        "lxmf-wire": [
           "zeroize"
         ],
         "nrf52840": [
@@ -17786,6 +17858,9 @@
           "zeroize"
         ],
         "ios": [
+          "zeroize"
+        ],
+        "lxmf-wire": [
           "zeroize"
         ],
         "nrf52840": [
@@ -18999,7 +19074,8 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-wire": []
       },
       "name": "itoa",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19231,6 +19307,7 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-wire": [],
         "nrf52840": []
       },
       "name": "keccak",
@@ -21048,6 +21125,11 @@
           "std"
         ],
         "halow-appliance-manager": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-wire": [
           "alloc",
           "default",
           "std"
@@ -27773,6 +27855,9 @@
         "ios": [
           "alloc"
         ],
+        "lxmf-wire": [
+          "alloc"
+        ],
         "nrf52840": [
           "alloc"
         ]
@@ -30942,6 +31027,23 @@
     },
     {
       "graphs": {
+        "lxmf-wire": [
+          "default"
+        ]
+      },
+      "name": "prns-lxmf-wire",
+      "source": "prns-lxmf/wire",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -31925,6 +32027,10 @@
           "default",
           "proc-macro"
         ],
+        "lxmf-wire": [
+          "default",
+          "proc-macro"
+        ],
         "nrf-dfu-browser": [
           "default",
           "proc-macro"
@@ -32289,6 +32395,10 @@
           "proc-macro"
         ],
         "ios": [
+          "default",
+          "proc-macro"
+        ],
+        "lxmf-wire": [
           "default",
           "proc-macro"
         ],
@@ -32835,6 +32945,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -33829,6 +33940,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -35126,6 +35238,10 @@
           "default",
           "std"
         ],
+        "lxmf-wire": [
+          "default",
+          "std"
+        ],
         "nrf52840": [
           "default",
           "std"
@@ -35290,6 +35406,13 @@
           "std"
         ],
         "ios": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "lxmf-wire": [
           "alloc",
           "default",
           "derive",
@@ -35660,6 +35783,12 @@
           "result",
           "std"
         ],
+        "lxmf-wire": [
+          "alloc",
+          "default",
+          "result",
+          "std"
+        ],
         "nrf52840": [
           "alloc",
           "result",
@@ -35894,6 +36023,9 @@
         "ios": [
           "default"
         ],
+        "lxmf-wire": [
+          "default"
+        ],
         "nrf52840": [
           "default"
         ]
@@ -36031,6 +36163,10 @@
           "std"
         ],
         "halow-appliance-manager": [
+          "default",
+          "std"
+        ],
+        "lxmf-wire": [
           "default",
           "std"
         ]
@@ -36729,6 +36865,12 @@
         "ios": [
           "zeroize"
         ],
+        "lxmf-wire": [
+          "alloc",
+          "default",
+          "oid",
+          "zeroize"
+        ],
         "nrf52840": [
           "zeroize"
         ],
@@ -37176,6 +37318,10 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [
+          "alloc",
+          "rand_core"
+        ],
+        "lxmf-wire": [
           "alloc",
           "rand_core"
         ],
@@ -38408,6 +38554,9 @@
         "ios": [
           "alloc"
         ],
+        "lxmf-wire": [
+          "alloc"
+        ],
         "nrf52840": [
           "alloc"
         ]
@@ -38802,6 +38951,9 @@
           "default"
         ],
         "ios": [
+          "default"
+        ],
+        "lxmf-wire": [
           "default"
         ],
         "nrf52840": [
@@ -39202,6 +39354,9 @@
         "ios": [
           "const-generics"
         ],
+        "lxmf-wire": [
+          "const-generics"
+        ],
         "nrf52840": [
           "const-generics"
         ],
@@ -39573,6 +39728,19 @@
           "default",
           "derive",
           "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "lxmf-wire": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "fold",
           "full",
           "parsing",
           "printing",
@@ -43835,6 +44003,9 @@
         ],
         "halow-appliance-manager": [
           "const-generics"
+        ],
+        "lxmf-wire": [
+          "const-generics"
         ]
       },
       "name": "typenum",
@@ -44113,6 +44284,7 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-wire": [],
         "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
@@ -47114,6 +47286,12 @@
           "derive",
           "zeroize_derive"
         ],
+        "lxmf-wire": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
         "nrf52840": [
           "alloc",
           "default",
@@ -47361,6 +47539,7 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "halow-appliance-manager": [],
         "ios": [],
+        "lxmf-wire": [],
         "nrf52840": []
       },
       "name": "zeroize_derive",
@@ -47505,7 +47684,8 @@
         "contact-card": [],
         "desktop-linux": [],
         "engine": [],
-        "halow-appliance-manager": []
+        "halow-appliance-manager": [],
+        "lxmf-wire": []
       },
       "name": "zmij",
       "source": "registry+https://github.com/rust-lang/crates.io-index",

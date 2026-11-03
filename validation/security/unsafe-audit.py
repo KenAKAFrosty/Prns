@@ -31,7 +31,7 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "audits" / "unsafe-snapshot.json"
 GRAPH_FEATURES = {'group-secure-storage': ('prns-groups-store/secure',),
- 'storage-redb': ('redb',),
+ 'storage-redb': ('prns-storage/redb',),
  'identity-key-card-linux': ('contact-card',),
  'identity-key-card-macos': ('contact-card',),
  'identity-catalog-card-linux': ('catalog', 'contact-card'),
@@ -44,7 +44,8 @@ GRAPH_FEATURES = {'group-secure-storage': ('prns-groups-store/secure',),
  'host-connections-linux': ('connections',),
  'host-connections-macos': ('connections',),
  'host-runtime-connections-linux': ('connections',),
- 'group-headless-peer': ('headless',)}
+ 'group-headless-peer': ('headless',),
+ }
 GRAPHS = (('group-mls-adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('group-secure-storage', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('group-libraries', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
@@ -135,7 +136,9 @@ GRAPHS = (('group-mls-adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
  ('group-native-bindings-macos',
   'prns-groups/bindings/uniffi/image/Cargo.toml',
   'aarch64-apple-darwin'),
- ('group-headless-peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'))
+ ('group-headless-peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('lxmf-wire', 'prns-lxmf/wire/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ )
 UNSAFE_EXCEPTIONS = {
     "prns-core",
     "prns-ffi",

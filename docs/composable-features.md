@@ -21,6 +21,10 @@ host client; it does not construct another node. Portable group policy, storage,
 security and record layers are described in the
 [group architecture](../prns-groups/docs/design.md).
 
+The independent [LXMF wire library](../prns-lxmf/README.md)
+provides allocation-free parsing, composition and validation for LXMF messages.
+It is separate from group communication; applications choose their protocol.
+
 ## Storage choices
 
 Identity catalogs and private keys use bounded snapshots and checked private-file

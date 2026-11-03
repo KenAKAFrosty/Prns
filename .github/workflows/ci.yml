@@ -1262,10 +1262,51 @@ jobs:
             audits/unsafe-snapshot.json
             personal-hopspot/mobile/android/dependencies/release-runtime.tsv
 
+  lxmf-wire:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+          targets: thumbv7em-none-eabihf
+      - name: Prepare isolated LXMF MSRV consumers
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: lxmf-wire-v1
+          workspaces: |
+            .
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Run registered validation suites
+        run: >-
+          python3 validation/run.py run
+          --suite lxmf-wire
+          --suite standalone-libraries-portable
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lxmf-wire
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
   release-critical:
     name: Release critical
     if: always()
     needs:
+      - lxmf-wire
       - fmt
       - clippy
       - test
@@ -1294,6 +1335,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
+      LXMF_WIRE_RESULT: ${{ needs.lxmf-wire.result }}
       FMT_RESULT: ${{ needs.fmt.result }}
       CLIPPY_RESULT: ${{ needs.clippy.result }}
       TEST_RESULT: ${{ needs.test.result }}
@@ -1328,6 +1370,7 @@ jobs:
       - name: Require every release-critical lane
         run: |
           for result in \
+            "$LXMF_WIRE_RESULT" \
             "$FMT_RESULT" \
             "$CLIPPY_RESULT" \
             "$TEST_RESULT" \

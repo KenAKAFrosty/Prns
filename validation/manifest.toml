@@ -40,7 +40,6 @@ version = "1.5.4"
 cargo_lock_workspaces = [
     "prns-groups/bindings/uniffi",
     "prns-groups/tests/fixtures/local-consumer",
-
     "prns-identities",
     "prns-identities/bindings/uniffi",
     ".",
@@ -78,7 +77,6 @@ cargo_manifests = [
     "prns-groups/bindings/uniffi/Cargo.toml",
     "prns-groups/bindings/uniffi/image/Cargo.toml",
     "prns-groups/tests/fixtures/local-consumer/Cargo.toml",
-
     "prns-groups/transport/reticulum/Cargo.toml",
     "prns-contact-card/Cargo.toml",
     "prns-identities/Cargo.toml",
@@ -169,6 +167,7 @@ cargo_manifests = [
     "prns-host/bindings/uniffi/Cargo.toml",
     "prns-host/bindings/uniffi/image/Cargo.toml",
     "prns-host/impls/runtime/Cargo.toml",
+    "prns-lxmf/wire/Cargo.toml",
 ]
 format_manifests = [
     "prns-identities/Cargo.toml",
@@ -477,7 +476,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "validation/hygiene/application-boundary.py"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card", "prns-lxmf"]
 artifacts = "validation-artifacts/results/application-boundary"
 
 [[suite]]
@@ -488,7 +487,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "-m", "unittest", "validation.tests.test_application_boundary"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card", "prns-lxmf"]
 artifacts = "validation-artifacts/results/application-boundary-tests"
 
 [[suite]]
@@ -2877,3 +2876,27 @@ timeout_seconds = 1800
 command = ["__RUNNER_PYTHON__", "prns-groups/bindings/uniffi/tests/check_kotlin.py"]
 inputs = ["prns-groups", "prns-identities", "prns-storage", "prns-host/core", "prns-core", "prns-macros", "prns-runtime/core", "prns-ffi", "tools/uniffi"]
 artifacts = "validation-artifacts/results/group-native-bindings-kotlin"
+
+[[suite]]
+id = "lxmf-wire"
+domain = "native"
+group = "standalone-libraries"
+tiers = ["pr", "release", "scheduled"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["./tools/prns", "build", "lxmf", "verify"]
+inputs = ["tools/tests/test_lxmf_publication_contracts.py", "tools/prns", "tools/tasks.toml", "tools/build/lxmf.sh", "Cargo.toml", "Cargo.lock", "prns-lxmf", "personal-rns", "prns-core", "prns-host", "prns-interfaces", "prns-runtime"]
+artifacts = "validation-artifacts/results/lxmf-wire"
+
+[[suite]]
+id = "standalone-libraries-portable"
+domain = "native"
+group = "standalone-libraries"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "check", "--locked", "-p", "prns-lxmf-wire", "--lib", "--no-default-features", "--target", "thumbv7em-none-eabihf"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-lxmf", "prns-core", "prns-macros"]
+artifacts = "validation-artifacts/results/standalone-libraries-portable"

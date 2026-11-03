@@ -23,6 +23,7 @@ members = [
     "personal-hopspot/flasher",
     "personal-hopspot/appliance",
     "validation/simulation",
+    "prns-lxmf/wire",
 ]
 default-members = [
     "personal-rns",
