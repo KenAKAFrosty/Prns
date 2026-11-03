@@ -242,6 +242,8 @@ jobs:
             target/flash-artifacts/resources/configured/work/*/linker.map
             target/flash-artifacts/resources/configured/work/*/function-boundaries.json
             target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+            target/flash-artifacts/resources/configured/work/*/frame-alignment.json
+            target/flash-artifacts/resources/configured/xtensa-frame-summary.json
 
   qualify-emulated:
     needs: [inventory, embedded-emulators]

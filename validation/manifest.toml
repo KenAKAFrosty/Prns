@@ -1022,6 +1022,10 @@ timeout_seconds = 5400
 command = ["bash", "validation/platforms/esp32-firmware-check.sh"]
 inputs = [
   "validation/platforms/esp32-firmware-check.sh",
+  "validation/platforms/xtensa-frame-check.py",
+  "validation/platforms/xtensa-frame-audit.py",
+  "validation/platforms/fixtures/xtensa-call-frame",
+  "tools/tests/test_xtensa_frame_policy.py",
   "personal-hopspot/embedded/esp32",
   "tools/release/install-release-esp-toolchain.sh",
   "tools/release/release-esp-toolchain-identity.sh",

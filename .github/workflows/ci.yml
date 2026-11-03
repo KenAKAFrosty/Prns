@@ -565,6 +565,8 @@ jobs:
             target/flash-artifacts/resources/configured/work/*/linker.map
             target/flash-artifacts/resources/configured/work/*/function-boundaries.json
             target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+            target/flash-artifacts/resources/configured/work/*/frame-alignment.json
+            target/flash-artifacts/resources/configured/xtensa-frame-summary.json
 
   esp32-firmware:
     needs: embedded-resource-selection
@@ -603,6 +605,8 @@ jobs:
             target/flash-artifacts/resources/configured/work/*/linker.map
             target/flash-artifacts/resources/configured/work/*/function-boundaries.json
             target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+            target/flash-artifacts/resources/configured/work/*/frame-alignment.json
+            target/flash-artifacts/resources/configured/xtensa-frame-summary.json
 
   embedded-miri:
     needs: embedded-resource-selection
