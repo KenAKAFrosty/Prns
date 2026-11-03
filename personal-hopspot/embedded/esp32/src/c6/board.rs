@@ -20,10 +20,9 @@ pub(crate) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot C6";
 pub(crate) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-c6");
 pub(crate) const MEMORY_PROFILE: &MemoryProfile = &XIAO_ESP32_C6;
 
-// Bluetooth LE needs heap for esp-radio's controller + trouble-host's boxed GATT clients/reassemblers; 64 KiB
-// covers it with margin. Kept off the larger end so the leftover linker `.stack` region stays big
-// enough for the BLE construction transient (the single-core main task runs on `.stack` — esp-rtos
-// gives it no separate task stack, so RAM spent on the heap is RAM taken from that one stack).
+// Keep the existing per-radio heap budgets, placing up to 64 KiB in RAM released
+// by the ESP-IDF bootloader. The linker owns that separate bank; this does not
+// enlarge the heap or borrow from the CPU0 stack used by the Embassy executor.
 #[cfg(not(any(feature = "bluetooth-auto", feature = "esp-now")))]
 const HEAP_BYTES: usize = 32 * 1024;
 #[cfg(all(feature = "bluetooth-auto", not(feature = "esp-now")))]
@@ -32,6 +31,14 @@ const HEAP_BYTES: usize = 64 * 1024;
 const HEAP_BYTES: usize = 72 * 1024;
 #[cfg(all(feature = "esp-now", feature = "bluetooth-auto"))]
 const HEAP_BYTES: usize = 88 * 1024;
+
+const RECLAIMED_HEAP_BYTES: usize = if HEAP_BYTES < 64 * 1024 {
+    HEAP_BYTES
+} else {
+    64 * 1024
+};
+#[cfg(feature = "esp-now")]
+const INTERNAL_HEAP_BYTES: usize = HEAP_BYTES - RECLAIMED_HEAP_BYTES;
 
 pub(crate) struct C6Hardware {
     pub(crate) usb_rx: UsbSerialJtagRx<'static, Async>,
@@ -51,7 +58,11 @@ pub(crate) struct XiaoEsp32C6;
 impl XiaoEsp32C6 {
     pub(crate) fn bringup() -> C6Hardware {
         esp_println::logger::init_logger_from_env();
-        esp_alloc::heap_allocator!(size: HEAP_BYTES);
+        esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: RECLAIMED_HEAP_BYTES);
+        // The 32/64 KiB configurations fit entirely in the reclaimed bank; do
+        // not register a zero-sized allocator region for those combinations.
+        #[cfg(feature = "esp-now")]
+        esp_alloc::heap_allocator!(size: INTERNAL_HEAP_BYTES);
         esp_println::println!("XIAO ESP32-C6 boot {}", env!("HOPSPOT_BUILD_IDENTITY"));
 
         let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());

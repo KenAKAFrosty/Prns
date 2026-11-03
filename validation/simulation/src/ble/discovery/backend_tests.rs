@@ -1,3 +1,4 @@
+use personal_rns::interfaces::bluetooth_auto::BleLinkParts;
 use std::error::Error;
 use std::future::{poll_fn, Future};
 use std::num::NonZeroUsize;
@@ -107,8 +108,16 @@ async fn eviction_requires_rediscovery_but_does_not_close_existing_links(
     else {
         unreachable!("listener receives its link")
     };
-    let (dialed_source, mut sink) = dialed.into_data();
-    let (mut source, accepted_sink) = accepted.into_data();
+    let BleLinkParts {
+        source: dialed_source,
+        mut sink,
+        control: dialed_control,
+    } = dialed.into_parts();
+    let BleLinkParts {
+        mut source,
+        sink: accepted_sink,
+        control: accepted_control,
+    } = accepted.into_parts();
     let second_address = BleAddress::new([2; 6]);
     let _second = scenario.advertiser(second_address).await?;
     scenario.emit()?;
@@ -129,7 +138,14 @@ async fn eviction_requires_rediscovery_but_does_not_close_existing_links(
     assert_eq!(source.recv_frame(&mut received).await?, FRAME_LENGTH);
     assert_eq!(&received, b"survives");
     assert_eq!(scenario.lab.active_connection_count(), 1);
-    drop((dialed_source, sink, source, accepted_sink));
+    drop((
+        dialed_source,
+        sink,
+        dialed_control,
+        source,
+        accepted_sink,
+        accepted_control,
+    ));
     BleBackend::<MAX_PEERS>::set_advertising(&mut first, AdvertisingMode::Off).await?;
     BleBackend::<MAX_PEERS>::set_advertising(&mut first, AdvertisingMode::On).await?;
     scenario.emit()?;
@@ -308,8 +324,16 @@ async fn address_reuse_remains_safe_beyond_sixty_five_thousand_attachments(
             else {
                 unreachable!("replacement accepts its link")
             };
-            let (_source, mut sink) = dialed.into_data();
-            let (mut source, _sink) = accepted.into_data();
+            let BleLinkParts {
+                source: _source,
+                mut sink,
+                control: _source_control,
+            } = dialed.into_parts();
+            let BleLinkParts {
+                mut source,
+                sink: _sink,
+                control: _source_control,
+            } = accepted.into_parts();
             sink.send_frame(b"lifetime").await?;
             let mut received = [0; FRAME_LENGTH];
             assert_eq!(source.recv_frame(&mut received).await?, FRAME_LENGTH);

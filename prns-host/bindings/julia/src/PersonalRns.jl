@@ -166,6 +166,7 @@ export InterfaceConfigI2p
 export InterfaceConfigWeave
 export InterfaceConfigAutomaticUsb
 export InterfaceConfigAutomaticBluetoothLe
+export InterfaceConfigConfiguredBluetoothLe
 export InterfaceConfigWebSocketClient
 export InterfaceConfigWebSocketServer
 export InterfaceConfigBrowserRendezvous

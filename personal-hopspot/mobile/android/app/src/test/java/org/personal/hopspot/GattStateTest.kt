@@ -1,5 +1,9 @@
 package org.personal.hopspot
 
+import rs.reticulum.prns.bluetooth.GattOperationKind
+import rs.reticulum.prns.bluetooth.GattState
+import rs.reticulum.prns.bluetooth.PendingGattOperation
+
 import java.util.UUID
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

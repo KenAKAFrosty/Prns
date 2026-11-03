@@ -16,6 +16,16 @@ impl<S: StorageLayout> EngineState<S> {
         should_prove: &mut impl FnMut(&ProofRequest) -> bool,
         sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'static>>),
     ) {
+        if !self
+            .upstream_app_destinations
+            .lookup_single(&owed.destination)
+            .is_some_and(|registered| {
+                registered.registration_generation == owed.destination_generation
+                    && registered.identity == owed.identity
+            })
+        {
+            return;
+        }
         let DecryptOwed {
             destination,
             context,
@@ -66,6 +76,16 @@ impl<S: StorageLayout> EngineState<S> {
         should_prove: &mut impl FnMut(&ProofRequest) -> bool,
         sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'static>>),
     ) {
+        if !self
+            .upstream_app_destinations
+            .lookup_single(&owed.destination)
+            .is_some_and(|registered| {
+                registered.registration_generation == owed.destination_generation
+                    && registered.identity == owed.identity
+            })
+        {
+            return;
+        }
         let proof = ProofObligation::for_delivery(
             owed.proof_strategy,
             ProofOwed {

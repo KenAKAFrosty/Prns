@@ -50,7 +50,9 @@ std = ["alloc", "crypto-precomputed", "dep:roaring", "dep:crc32fast", "dep:memch
 std-sync-host = ["std"]
 tokio-host = ["std"]
 embassy-host = []
-runtime-metrics = ["alloc"]
+runtime-metrics = ["alloc", "path-diagnostics"]
+# Payload-free path-discovery journal events; no retained buffer, allocation, or logging.
+path-diagnostics = []
 movable-frame-forwarding = []
 stream-compression = ["std"]
 # Gives capable fixed-storage targets one 256 KiB outgoing static-response window. Incoming

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use objc2_core_bluetooth::CBCharacteristicProperties;
+use objc2_core_bluetooth::{CBCharacteristicProperties, CBManagerState};
 use prns_core::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleIdentity, Control, RadioMode, ScanningMode,
 };
@@ -9,12 +9,12 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::backend::{
     central_peripheral_capacity, dial_admission, manager_readiness, scan_lease, scan_op,
-    BoundedRecentSet, DialAdmission, ScanLease, ScanOp,
+    take_inbound_event, BoundedRecentSet, DialAdmission, ScanLease, ScanOp,
 };
 use super::central::{
     closed_central_session_ids, CentralDialCandidate, CentralPeerRegistry, CentralPeerSession,
-    ControlInboxError, RestoredAdmission, RestoredBufferResult, RestoredCallbackBuffer,
-    CENTRAL_CONTROL_INBOUND_CAPACITY,
+    ControlInboxError, DialCompletion, RestorationProfileAction, RestoredAdmission,
+    RestoredBufferResult, RestoredCallbackBuffer, CENTRAL_CONTROL_INBOUND_CAPACITY,
 };
 use super::data_plane::{DataPlane, PendingL2cap};
 use super::discovery::{
@@ -124,9 +124,9 @@ fn discovery_recovery_distinguishes_owned_stale_and_transitioning_links() {
                 state,
                 SessionPresence::Absent,
                 StaleCancellation::Idle,
-                StaleLinkRecovery::Disabled,
+                StaleLinkRecovery::AcquireLocal,
             ),
-            DiscoverDisposition::WaitForDisconnect
+            DiscoverDisposition::Adopt
         );
     }
     for state in [
@@ -210,7 +210,8 @@ fn startup_requires_central_gatt_and_l2cap_readiness() {
     signals.l2cap_published(0x0081);
     assert_eq!(manager_readiness(*current.borrow()).unwrap(), None);
 
-    signals.central_powered();
+    signals.central_state_changed(CBManagerState::PoweredOn);
+    signals.peripheral_state_changed(CBManagerState::PoweredOn);
     assert_eq!(manager_readiness(*current.borrow()).unwrap(), None);
 
     signals.gatt_service_published();
@@ -220,6 +221,17 @@ fn startup_requires_central_gatt_and_l2cap_readiness() {
             .map(|psm| psm.get()),
         Some(0x0081)
     );
+}
+
+#[test]
+fn closed_inbound_ingress_is_disabled_without_blocking_other_events() {
+    let mut inbound_open = true;
+    assert_eq!(take_inbound_event::<u8>(None, &mut inbound_open), None);
+    assert!(!inbound_open);
+
+    let mut inbound_open = true;
+    assert_eq!(take_inbound_event(Some(7_u8), &mut inbound_open), Some(7));
+    assert!(inbound_open);
 }
 
 #[test]
@@ -249,7 +261,8 @@ fn bounded_ingress_separates_inbound_and_sighting_pressure() {
             rssi: Some(-50),
         }))
     );
-    manager_signals.central_powered();
+    manager_signals.central_state_changed(CBManagerState::PoweredOn);
+    manager_signals.peripheral_state_changed(CBManagerState::PoweredOn);
     manager_signals.gatt_service_published();
     manager_signals.l2cap_published(0x0081);
     assert_eq!(
@@ -530,11 +543,11 @@ fn dial_admission_is_scoped_to_the_target_peer() {
     let inbound_sessions = HashMap::from([(inbound_peer, ())]);
 
     assert_eq!(
-        dial_admission(true, false, true, None),
+        dial_admission(true, false, true, None, StaleLinkRecovery::Enabled),
         DialAdmission::YieldToSystemConnection
     );
     assert_eq!(
-        dial_admission(true, false, false, None),
+        dial_admission(true, false, false, None, StaleLinkRecovery::Enabled),
         DialAdmission::CancelStaleSystemConnection
     );
     assert_eq!(
@@ -543,6 +556,7 @@ fn dial_admission_is_scoped_to_the_target_peer() {
             has_session_for_peer(&inbound_sessions, inbound_peer),
             false,
             None,
+            StaleLinkRecovery::Enabled
         ),
         DialAdmission::YieldToInboundSession
     );
@@ -552,6 +566,7 @@ fn dial_admission_is_scoped_to_the_target_peer() {
             has_session_for_peer(&inbound_sessions, inbound_peer),
             false,
             None,
+            StaleLinkRecovery::Enabled
         ),
         DialAdmission::YieldToInboundSession
     );
@@ -561,6 +576,7 @@ fn dial_admission_is_scoped_to_the_target_peer() {
             has_session_for_peer(&inbound_sessions, unrelated_peer),
             false,
             None,
+            StaleLinkRecovery::Enabled
         ),
         DialAdmission::AttachCentralSession
     );
@@ -569,15 +585,33 @@ fn dial_admission_is_scoped_to_the_target_peer() {
 #[test]
 fn restored_dial_admission_uses_the_exact_peripheral_state() {
     assert_eq!(
-        dial_admission(false, false, false, Some(PeripheralLinkState::Connected)),
+        dial_admission(
+            false,
+            false,
+            false,
+            Some(PeripheralLinkState::Connected),
+            StaleLinkRecovery::Enabled
+        ),
         DialAdmission::ResumeRestoredSession
     );
     assert_eq!(
-        dial_admission(false, false, false, Some(PeripheralLinkState::Connecting)),
+        dial_admission(
+            false,
+            false,
+            false,
+            Some(PeripheralLinkState::Connecting),
+            StaleLinkRecovery::Enabled
+        ),
         DialAdmission::AwaitRestoredConnection
     );
     assert_eq!(
-        dial_admission(false, false, false, Some(PeripheralLinkState::Disconnected)),
+        dial_admission(
+            false,
+            false,
+            false,
+            Some(PeripheralLinkState::Disconnected),
+            StaleLinkRecovery::Enabled
+        ),
         DialAdmission::AttachCentralSession
     );
     assert_eq!(
@@ -585,24 +619,43 @@ fn restored_dial_admission_uses_the_exact_peripheral_state() {
             false,
             false,
             false,
-            Some(PeripheralLinkState::Disconnecting)
+            Some(PeripheralLinkState::Disconnecting),
+            StaleLinkRecovery::Enabled
         ),
         DialAdmission::RejectRestoredConnection
     );
     assert_eq!(
-        dial_admission(false, false, false, Some(PeripheralLinkState::Unknown)),
+        dial_admission(
+            false,
+            false,
+            false,
+            Some(PeripheralLinkState::Unknown),
+            StaleLinkRecovery::Enabled
+        ),
         DialAdmission::RejectRestoredConnection
     );
     assert_eq!(
-        dial_admission(true, false, false, Some(PeripheralLinkState::Connecting)),
+        dial_admission(
+            true,
+            false,
+            false,
+            Some(PeripheralLinkState::Connecting),
+            StaleLinkRecovery::Enabled
+        ),
         DialAdmission::AwaitRestoredConnection
     );
     assert_eq!(
-        dial_admission(false, true, false, Some(PeripheralLinkState::Connected)),
+        dial_admission(
+            false,
+            true,
+            false,
+            Some(PeripheralLinkState::Connected),
+            StaleLinkRecovery::Enabled
+        ),
         DialAdmission::YieldToInboundSession
     );
     assert_eq!(
-        dial_admission(true, true, false, None),
+        dial_admission(true, true, false, None, StaleLinkRecovery::Enabled),
         DialAdmission::YieldToInboundSession
     );
 }
@@ -631,10 +684,173 @@ fn restored_ownership_precedes_stale_system_link_recovery() {
             DialAdmission::RejectRestoredConnection,
         ),
     ] {
-        assert_eq!(dial_admission(true, false, false, Some(state)), expected);
         assert_eq!(
-            dial_admission(true, true, false, Some(state)),
+            dial_admission(true, false, false, Some(state), StaleLinkRecovery::Enabled),
+            expected
+        );
+        assert_eq!(
+            dial_admission(true, true, false, Some(state), StaleLinkRecovery::Enabled),
             DialAdmission::YieldToInboundSession,
+        );
+    }
+}
+
+#[test]
+fn stale_dial_rejection_releases_claim_for_a_later_sighting() {
+    let peer = peer_id(1);
+    let mut registry = CentralPeerRegistry::new(1, 1);
+    assert!(registry.observe(peer, 10_u8, None));
+    assert!(matches!(
+        registry.claim(peer.address()),
+        CentralDialCandidate::Ready { .. }
+    ));
+    assert_eq!(
+        dial_admission(true, false, false, None, StaleLinkRecovery::Enabled),
+        DialAdmission::CancelStaleSystemConnection
+    );
+    assert_eq!(registry.remove_peer(peer), Some(10));
+    assert_eq!(registry.peripheral_len(), 0);
+    assert!(registry.observe(peer, 11, None));
+    assert!(matches!(
+        registry.claim(peer.address()),
+        CentralDialCandidate::Ready { peripheral: 11, .. }
+    ));
+    assert!(matches!(registry.begin_session(peer), Ok(None)));
+}
+
+#[test]
+fn ios_system_connection_without_restore_or_advertisement_enters_a_fresh_local_dial() {
+    let peer = peer_id(42);
+    let mut registry = CentralPeerRegistry::new(2, 1);
+    // Model the read-only service query at cold launch. It supplies a connected peripheral,
+    // without willRestoreState or an advertisement; this used to wait indefinitely on iOS.
+    assert_eq!(
+        discover_disposition(
+            PeripheralLinkState::Connected,
+            SessionPresence::Absent,
+            StaleCancellation::Idle,
+            StaleLinkRecovery::AcquireLocal,
+        ),
+        DiscoverDisposition::Adopt
+    );
+    assert!(registry.observe(peer, 42_u8, None));
+    assert_eq!(registry.restored_len(), 0);
+    assert_eq!(
+        registry.pop_sighting().0,
+        Some(Sighting {
+            address: peer.address(),
+            rssi: None
+        })
+    );
+    assert!(matches!(
+        registry.claim(peer.address()),
+        CentralDialCandidate::Ready {
+            restored: false,
+            peripheral: 42,
+            ..
+        }
+    ));
+    assert_eq!(
+        dial_admission(true, false, false, None, StaleLinkRecovery::AcquireLocal),
+        DialAdmission::AcquireSystemConnection
+    );
+    assert!(matches!(registry.begin_session(peer), Ok(None)));
+    // A repeated query cannot replace the active owner or manufacture another sighting.
+    assert!(!registry.observe(peer, 43, None));
+    assert_eq!(registry.pop_sighting().0, None);
+    assert_eq!(
+        dial_admission(true, false, true, None, StaleLinkRecovery::AcquireLocal),
+        DialAdmission::YieldToSystemConnection
+    );
+    // Failed/closed local ownership may be offered again; the host's existing retry policy
+    // still controls whether another advisory sighting results in a dial.
+    assert_eq!(registry.remove_peer(peer), Some(42));
+    assert!(registry.observe(peer, 44, None));
+    assert!(registry.pop_sighting().0.is_some());
+}
+
+#[test]
+fn ios_system_query_cannot_steal_restored_or_inbound_ownership() {
+    let peer = peer_id(43);
+    let mut registry = CentralPeerRegistry::new(1, 1);
+    assert_eq!(
+        registry.admit_restored(peer, 42_u8),
+        RestoredAdmission::Admitted
+    );
+    assert!(!registry.observe(peer, 43, None));
+    assert_eq!(registry.pop_sighting().0, None);
+    assert!(registry.offer_restored() == Some(peer));
+    assert!(matches!(
+        registry.claim(peer.address()),
+        CentralDialCandidate::Ready {
+            restored: true,
+            peripheral: 42,
+            ..
+        }
+    ));
+    for system_connected in [false, true] {
+        assert_eq!(
+            dial_admission(
+                system_connected,
+                true,
+                false,
+                None,
+                StaleLinkRecovery::AcquireLocal
+            ),
+            DialAdmission::YieldToInboundSession
+        );
+    }
+    for (state, expected) in [
+        (
+            PeripheralLinkState::Connected,
+            DialAdmission::ResumeRestoredSession,
+        ),
+        (
+            PeripheralLinkState::Connecting,
+            DialAdmission::AwaitRestoredConnection,
+        ),
+        (
+            PeripheralLinkState::Disconnected,
+            DialAdmission::AttachCentralSession,
+        ),
+        (
+            PeripheralLinkState::Disconnecting,
+            DialAdmission::RejectRestoredConnection,
+        ),
+        (
+            PeripheralLinkState::Unknown,
+            DialAdmission::RejectRestoredConnection,
+        ),
+    ] {
+        assert_eq!(
+            dial_admission(
+                true,
+                false,
+                false,
+                Some(state),
+                StaleLinkRecovery::AcquireLocal
+            ),
+            expected
+        );
+    }
+}
+
+#[test]
+fn ios_local_acquisition_waits_for_inflight_cancellation_and_transitioning_state() {
+    for state in [
+        PeripheralLinkState::Connecting,
+        PeripheralLinkState::Connected,
+        PeripheralLinkState::Disconnecting,
+        PeripheralLinkState::Unknown,
+    ] {
+        assert_eq!(
+            discover_disposition(
+                state,
+                SessionPresence::Absent,
+                StaleCancellation::InFlight,
+                StaleLinkRecovery::AcquireLocal
+            ),
+            DiscoverDisposition::WaitForDisconnect
         );
     }
 }
@@ -719,7 +935,7 @@ fn role_cleanup_only_selects_a_session_after_its_data_receiver_closes() {
     drop(data_rx);
     assert!(session.data_receiver_closed());
 
-    let (open_control_tx, _open_control_rx) = mpsc::channel::<Control>(1);
+    let (open_control_tx, open_control_rx) = mpsc::channel::<Control>(1);
     let (open_completion_tx, _open_completion_rx) = oneshot::channel();
     let (open_data_tx, _open_data_rx) = gatt_inbound_channel();
     let open_peer = peer_id(2);
@@ -729,8 +945,44 @@ fn role_cleanup_only_selects_a_session_after_its_data_receiver_closes() {
         open_completion_tx,
         open_data_tx,
     );
+    drop(open_control_rx);
     let sessions = HashMap::from([(closed_peer, session), (open_peer, open_session)]);
     assert!(closed_central_session_ids(&sessions) == vec![closed_peer]);
+}
+
+#[test]
+fn closed_session_reaping_does_not_repeat_a_restoration_cancel() {
+    for restored in [false, true] {
+        let peer = peer_id(1);
+        let (control_tx, _control_rx) = mpsc::channel::<Control>(1);
+        let (completion_tx, mut completion_rx) = oneshot::channel();
+        let (data_tx, data_rx) = gatt_inbound_channel();
+        let mut session =
+            CentralPeerSession::new(peer.address(), control_tx, completion_tx, data_tx);
+        session.configure_restoration_recovery(true, restored);
+        if restored {
+            assert_eq!(
+                session.restoration_profile(
+                    prns_core::interfaces::bluetooth_auto::PeerProtocol::Native
+                ),
+                Ok(RestorationProfileAction::Disconnect),
+            );
+        }
+        let mut sessions = HashMap::from([(peer, session)]);
+        assert!(closed_central_session_ids(&sessions).is_empty());
+        drop(data_rx);
+        let closed = closed_central_session_ids(&sessions);
+        assert!(closed == vec![peer]);
+        for peer in closed {
+            let needs_cancel = sessions.remove(&peer).map(CentralPeerSession::retire);
+            assert_eq!(needs_cancel, Some(!restored));
+        }
+        assert!(closed_central_session_ids(&sessions).is_empty());
+        assert!(matches!(
+            completion_rx.try_recv(),
+            Ok(DialCompletion::Failed)
+        ));
+    }
 }
 
 #[tokio::test]

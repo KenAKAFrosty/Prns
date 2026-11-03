@@ -1859,11 +1859,11 @@ version = "0.3.8"
 dependencies = [
  "libc",
  "prns-host",
- "prns-host-native",
+ "prns-host-runtime",
 ]
 
 [[package]]
-name = "prns-host-native"
+name = "prns-host-runtime"
 version = "0.3.8"
 dependencies = [
  "dbus",

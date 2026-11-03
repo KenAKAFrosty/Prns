@@ -33,6 +33,9 @@ pub enum LinkRequestPolicy {
 pub enum UpstreamAppDestinationKind {
     Plain,
     Single {
+        /// Local lifecycle generation; never transmitted on the Reticulum wire.
+        registration_generation: u64,
+        ingress_enabled: bool,
         identity: IdentityHash,
         proof_strategy: ProofStrategy,
         link_request_policy: LinkRequestPolicy,
@@ -65,6 +68,8 @@ pub struct UpstreamAppDestination {
 /// The [`UpstreamAppDestinationKind::Single`] levers, kind-narrowed by [`UpstreamAppDestinations::lookup_single`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegisteredSingle {
+    pub registration_generation: u64,
+    pub ingress_enabled: bool,
     pub identity: IdentityHash,
     pub proof_strategy: ProofStrategy,
     pub link_request_policy: LinkRequestPolicy,
@@ -119,6 +124,7 @@ pub(crate) enum UnregisterRegistrationOutcome {
 #[derive(Debug, Default)]
 pub struct UpstreamAppDestinations<C: UpstreamAppDestinationTable> {
     table: C,
+    next_registration_generation: u64,
 }
 
 impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
@@ -152,9 +158,17 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
         let app_data = AnnounceAppDataBytes::from_slice(app_data)
             .map_err(|()| RegisterDestinationError::AppDataTooLong)?;
         let destination = derive_destination_hash(identity_hash, &name_hash);
+        let generation = self
+            .next_registration_generation
+            .checked_add(1)
+            .ok_or(RegisterDestinationError::RegistryFull)?;
+        // Consume the generation even if a subsequent bounded insertion fails.
+        self.next_registration_generation = generation;
         self.upsert(
             destination,
             UpstreamAppDestinationKind::Single {
+                registration_generation: generation,
+                ingress_enabled: true,
                 identity: *identity_hash,
                 proof_strategy,
                 link_request_policy,
@@ -183,6 +197,40 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
             } => resource_strategy,
             _ => ResourceStrategy::AcceptNone,
         }
+    }
+
+    /// Change local admission without changing the destination's wire identity.
+    /// A generation change invalidates crypto already admitted by the old state.
+    pub fn set_single_ingress_enabled(
+        &mut self,
+        destination: &DestinationHash,
+        enabled: bool,
+    ) -> bool {
+        let Some(index) = self
+            .table
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+        else {
+            return false;
+        };
+        let UpstreamAppDestinationKind::Single {
+            ingress_enabled,
+            registration_generation,
+            ..
+        } = self.table.kind_mut(index)
+        else {
+            return false;
+        };
+        if *ingress_enabled != enabled {
+            let Some(next) = self.next_registration_generation.checked_add(1) else {
+                return false;
+            };
+            self.next_registration_generation = next;
+            *registration_generation = next;
+            *ingress_enabled = enabled;
+        }
+        true
     }
 
     pub fn set_default_resource_strategy(
@@ -358,6 +406,8 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
     pub fn lookup_single(&self, destination: &DestinationHash) -> Option<RegisteredSingle> {
         match self.lookup(destination, DestinationType::Single)?.kind {
             UpstreamAppDestinationKind::Single {
+                registration_generation,
+                ingress_enabled,
                 identity,
                 proof_strategy,
                 link_request_policy,
@@ -365,6 +415,8 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
                 maximum_request_bytes,
                 ratchet_policy,
             } => Some(RegisteredSingle {
+                registration_generation,
+                ingress_enabled,
                 identity,
                 proof_strategy,
                 link_request_policy,
@@ -475,6 +527,8 @@ mod tests {
         assert_eq!(
             destinations.lookup_single(&single),
             Some(RegisteredSingle {
+                registration_generation: 1,
+                ingress_enabled: true,
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
                 link_request_policy: LinkRequestPolicy::AcceptAll,
@@ -580,6 +634,8 @@ mod tests {
                 .lookup(&first, DestinationType::Single)
                 .map(|found| found.kind),
             Some(UpstreamAppDestinationKind::Single {
+                registration_generation: 2,
+                ingress_enabled: true,
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
                 link_request_policy: LinkRequestPolicy::AcceptAll,
@@ -669,6 +725,8 @@ mod tests {
         assert_eq!(
             views[1].kind,
             UpstreamAppDestinationKind::Single {
+                registration_generation: 1,
+                ingress_enabled: true,
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
                 link_request_policy: LinkRequestPolicy::AcceptAll,
@@ -712,6 +770,8 @@ mod tests {
                 .lookup(&proving, DestinationType::Single)
                 .map(|found| found.kind),
             Some(UpstreamAppDestinationKind::Single {
+                registration_generation: 1,
+                ingress_enabled: true,
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
                 link_request_policy: LinkRequestPolicy::AcceptAll,
@@ -725,6 +785,8 @@ mod tests {
                 .lookup(&silent, DestinationType::Single)
                 .map(|found| found.kind),
             Some(UpstreamAppDestinationKind::Single {
+                registration_generation: 2,
+                ingress_enabled: true,
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveNone,
                 link_request_policy: LinkRequestPolicy::AcceptAll,

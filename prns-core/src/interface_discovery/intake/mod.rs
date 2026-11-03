@@ -174,7 +174,7 @@ fn ingest_discovery_announce_with_cache<C: DiscoveryValidationCache>(
     policy: &InterfaceDiscoveryPolicy,
     observation: AnnounceObservation<'_>,
     decrypt: impl FnOnce(&[u8]) -> Result<Vec<u8>, DiscoveryDecryptionError>,
-    mut cache: Option<&mut C>,
+    cache: Option<&mut C>,
 ) -> DiscoveryIntake {
     let Some(enabled) = policy.enabled_policy() else {
         return DiscoveryIntake::NotApplicable(DiscoveryNotApplicable::Disabled);
@@ -277,7 +277,7 @@ fn ingest_discovery_announce_with_cache<C: DiscoveryValidationCache>(
             ..provenance
         },
         payload_hash,
-        cache.as_deref_mut(),
+        cache,
     )
 }
 
@@ -323,14 +323,14 @@ fn finish_intake<C: DiscoveryValidationCache>(
     body: PlaintextBody<'_>,
     provenance: DiscoveryProvenance,
     payload_hash: [u8; 32],
-    mut cache: Option<&mut C>,
+    cache: Option<&mut C>,
 ) -> DiscoveryIntake {
     let (packed, stamp) = body.parts();
     let advertisement_hash = AdvertisementHash::for_advertisement(packed);
     let stamp_value = match super::validate_stamp(&advertisement_hash, stamp, required_stamp_cost) {
         StampValidation::MeetsCost { value } => value,
         StampValidation::BelowCost { value, required } => {
-            if let Some(cache) = cache.as_deref_mut() {
+            if let Some(cache) = cache {
                 cache.remember_insufficient(payload_hash, value);
             }
             return DiscoveryIntake::Rejected(DiscoveryRejection::StampBelowCost {
@@ -339,7 +339,7 @@ fn finish_intake<C: DiscoveryValidationCache>(
             });
         }
     };
-    if let Some(cache) = cache.as_deref_mut() {
+    if let Some(cache) = cache {
         cache.remember_valid(payload_hash, packed, stamp_value);
     }
     finish_validated_intake(packed, stamp_value, provenance)

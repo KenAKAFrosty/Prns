@@ -1323,7 +1323,7 @@ public sealed class PrnsHost : IAsyncDisposable
         }
         PrnsException.ThrowIfError(status);
         return new StreamClaim<ApplicationEvent>.Claimed(
-            new NativeEventStream<ApplicationEvent>(stream, EventDecoder.Application)
+            new HostRuntimeEventStream<ApplicationEvent>(stream, EventDecoder.Application)
         );
     }
 
@@ -1338,7 +1338,7 @@ public sealed class PrnsHost : IAsyncDisposable
         }
         PrnsException.ThrowIfError(status);
         return new StreamClaim<DiagnosticEvent>.Claimed(
-            new NativeEventStream<DiagnosticEvent>(stream, EventDecoder.Diagnostic)
+            new HostRuntimeEventStream<DiagnosticEvent>(stream, EventDecoder.Diagnostic)
         );
     }
 

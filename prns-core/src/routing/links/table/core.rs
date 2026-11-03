@@ -45,6 +45,7 @@ impl core::fmt::Debug for LinkRole {
 
 pub enum LinkPhase {
     Pending {
+        attached_interface: InterfaceId,
         destination: DestinationHash,
         route_evidence: RouteEvidenceHandle,
         expected_hops: u8,
@@ -55,6 +56,7 @@ pub enum LinkPhase {
         command_id: CommandId,
     },
     Handshake {
+        attached_interface: InterfaceId,
         key: LinkKey,
         requested_at: InstantMillis,
         mtu: usize,
@@ -86,6 +88,7 @@ pub enum LinkPhase {
 impl LinkPhase {
     pub fn vacant() -> Self {
         Self::Pending {
+            attached_interface: InterfaceId::new([0; 8]),
             destination: DestinationHash::new([0u8; 16]),
             route_evidence: RouteEvidenceHandle::new(RouteEvidenceId::FIRST, 0),
             expected_hops: 0,
@@ -167,6 +170,7 @@ impl core::fmt::Debug for LinkPhase {
 }
 
 pub struct InitiatedLink {
+    pub attached_interface: InterfaceId,
     pub link_id: LinkId,
     pub destination: DestinationHash,
     pub route_evidence: RouteEvidenceHandle,
@@ -188,6 +192,7 @@ const _: () = {
 };
 
 pub struct RespondingLink {
+    pub attached_interface: InterfaceId,
     pub link_id: LinkId,
     pub key: LinkKey,
     pub requested_at: InstantMillis,
@@ -352,6 +357,7 @@ impl<C: LinkTable> Links<C> {
         self.table.push(
             link.link_id,
             LinkPhase::Pending {
+                attached_interface: link.attached_interface,
                 destination: link.destination,
                 route_evidence: link.route_evidence,
                 expected_hops: link.expected_hops,
@@ -374,6 +380,7 @@ impl<C: LinkTable> Links<C> {
         self.table.push(
             link.link_id,
             LinkPhase::Handshake {
+                attached_interface: link.attached_interface,
                 key: link.key,
                 requested_at: link.requested_at,
                 mtu: link.mtu,
@@ -386,6 +393,31 @@ impl<C: LinkTable> Links<C> {
         )?;
         self.refresh_earliest_timeout();
         Ok(())
+    }
+
+    /// Returns one endpoint Link owned by this interface, including either handshake phase.
+    /// The original interface is retained independently of later route replacement.
+    pub(crate) fn first_link_via(&self, interface: InterfaceId) -> Option<LinkId> {
+        self.table
+            .link_ids()
+            .iter()
+            .zip(self.table.phases())
+            .find_map(|(id, phase)| {
+                let attached = match phase {
+                    LinkPhase::Pending {
+                        attached_interface, ..
+                    }
+                    | LinkPhase::Handshake {
+                        attached_interface, ..
+                    }
+                    | LinkPhase::Active {
+                        attached_interface, ..
+                    } => *attached_interface,
+                };
+                interface
+                    .administrative_scope_contains(attached)
+                    .then_some(*id)
+            })
     }
 
     pub fn link_count_via(&self, interface: InterfaceId) -> usize {
@@ -550,6 +582,7 @@ impl<C: LinkTable> Links<C> {
                 identity,
                 proof_strategy,
                 requested_at,
+                ..
             } => {
                 let keepalive_ms = keepalive_ms_from(rtt);
                 let role = LinkRole::Responder {
@@ -935,6 +968,7 @@ mod tests {
 
     fn initiated(id: u8, timeout_at: u64) -> InitiatedLink {
         InitiatedLink {
+            attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
             link_id: link_id(id),
             destination: dest(id),
             route_evidence: RouteEvidenceHandle::new(RouteEvidenceId::FIRST, 0),
@@ -950,6 +984,7 @@ mod tests {
 
     fn responding(id: u8, timeout_at: u64) -> RespondingLink {
         RespondingLink {
+            attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
             link_id: link_id(id),
             key: key(id, id),
             requested_at: InstantMillis(1_000),

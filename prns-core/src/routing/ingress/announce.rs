@@ -324,9 +324,10 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return false;
         };
-        if arrival.arrived_at >= route.expires_at
-            || route.responsiveness == crate::routing::RouteResponsiveness::Unresponsive
-        {
+        // A failed Link leaves transport routes usable as retained evidence in RNS.
+        // An exact signed response may settle discovery and permit another Link attempt;
+        // it does not make an unresponsive route responsive or renew its lifetime.
+        if arrival.arrived_at >= route.expires_at {
             return false;
         }
         self.routing_table

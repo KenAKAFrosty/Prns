@@ -100,12 +100,50 @@ impl<C: RecursivePathRequestTable> RecursivePathRequests<C> {
         self.index_of(destination).is_some()
     }
 
+    /// A response can no longer reach this requesting interface. Preserve route
+    /// caches separately, but let a newly attached requester start discovery now.
+    pub(crate) fn retire_interface(&mut self, interface: InterfaceId) {
+        let mut index = 0;
+        while index < self.table.len() {
+            if self.table.requesting_interfaces()[index] == interface {
+                self.table.swap_remove(index);
+            } else {
+                index += 1;
+            }
+        }
+        self.refresh_earliest_expiry();
+    }
+
+    pub(crate) fn retire_administrative_scope(&mut self, interface: InterfaceId) {
+        let mut index = 0;
+        while index < self.table.len() {
+            if interface.administrative_scope_contains(self.table.requesting_interfaces()[index]) {
+                self.table.swap_remove(index);
+            } else {
+                index += 1;
+            }
+        }
+        self.refresh_earliest_expiry();
+    }
+
     pub fn cull_expired(&mut self, now: InstantMillis) {
+        self.cull_expired_with(now, &mut |_, _| {});
+    }
+
+    pub(crate) fn cull_expired_with(
+        &mut self,
+        now: InstantMillis,
+        on_expired: &mut impl FnMut(DestinationHash, InterfaceId),
+    ) {
         if self.table.prefers_linear_expiry_cull(now) {
             self.table.invalidate_expiry_index();
             let mut index = 0;
             while index < self.table.len() {
                 if self.table.expires_ats()[index] <= now {
+                    on_expired(
+                        self.table.destinations()[index],
+                        self.table.requesting_interfaces()[index],
+                    );
                     self.table.swap_remove(index);
                 } else {
                     index += 1;
@@ -115,6 +153,10 @@ impl<C: RecursivePathRequestTable> RecursivePathRequests<C> {
             return;
         }
         while let Some(index) = self.table.first_expired(now) {
+            on_expired(
+                self.table.destinations()[index],
+                self.table.requesting_interfaces()[index],
+            );
             self.table.swap_remove(index);
         }
         self.refresh_earliest_expiry();
@@ -218,6 +260,26 @@ mod tests {
         table.cull_expired(InstantMillis(15_000));
         assert_eq!(table.take_requester(&dest(1)), None);
         assert_eq!(table.take_requester(&dest(2)), Some(asker(0xB)));
+    }
+
+    #[test]
+    fn interface_retirement_preserves_other_requesters_and_their_deadlines() {
+        let mut table = table();
+        table.begin(dest(1), asker(0xA), InstantMillis(10_000));
+        table.begin(dest(2), asker(0xB), InstantMillis(20_000));
+        table.begin(dest(3), asker(0xA), InstantMillis(30_000));
+        table.retire_interface(asker(0xA));
+        assert_eq!(table.in_flight_count(), 1);
+        assert_eq!(table.earliest_expiry_at(), Some(InstantMillis(20_000)));
+        assert_eq!(table.take_requester(&dest(1)), None);
+        assert_eq!(table.take_requester(&dest(3)), None);
+        assert_eq!(
+            table.begin(dest(1), asker(0xC), InstantMillis(25_000)),
+            RecursiveOutcome::Opened
+        );
+        table.cull_expired(InstantMillis(20_000));
+        assert_eq!(table.take_requester(&dest(2)), None);
+        assert_eq!(table.take_requester(&dest(1)), Some(asker(0xC)));
     }
 
     #[test]

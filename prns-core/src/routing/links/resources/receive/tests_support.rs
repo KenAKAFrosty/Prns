@@ -104,6 +104,7 @@ pub(crate) fn engine_with_responding_link() -> EngineState<TestStorageLayout> {
     engine
         .links
         .track_responding(RespondingLink {
+            attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
             link_id: link_id(),
             key: link_key(),
             requested_at: InstantMillis(500),
@@ -132,6 +133,7 @@ pub(crate) fn active_engine<S: StorageLayout>() -> EngineState<S> {
     engine
         .links
         .track_initiated(InitiatedLink {
+            attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
             link_id: link_id(),
             destination: RESPONDER_DESTINATION,
             route_evidence: crate::routing::routes::RouteEvidenceHandle::new(

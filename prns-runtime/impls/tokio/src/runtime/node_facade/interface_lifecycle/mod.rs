@@ -36,9 +36,22 @@ mod status_registration;
 use status_registration::StatusRegistration;
 
 struct RunningInterface {
-    stop: oneshot::Sender<()>,
+    stop: Option<oneshot::Sender<()>>,
     registration: StatusRegistration,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterfaceDetachError {
+    NodeStopped,
+}
+
+impl std::fmt::Display for InterfaceDetachError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the node stopped before interface retirement was acknowledged")
+    }
+}
+
+impl std::error::Error for InterfaceDetachError {}
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of parts at once (`Resource.WINDOW_MAX_FAST` is 75, plus its flexibility), so a lane carrying a transfer must be deeper than that window or it sheds parts and the transfer stalls; the old byte-budget collapsed a fat-MTU lane to a handful of slots, exactly that failure. Growable slots (`HeapFrameSlot`) cost only the frames actually in flight, so the depth is generous.
 const HOST_LANE_DEPTH: usize = 256;
@@ -234,6 +247,7 @@ impl PrnsNodeHandle {
                     };
                     InterfaceInventoryEntry {
                         name: name.clone(),
+                        endpoint: vitals.endpoint,
                         origin: placement.origin,
                         attachment_epoch,
                         frame_accounting: if vitals.id == owner
@@ -410,6 +424,29 @@ impl PrnsNodeHandle {
             departure: Departure::MayReturn,
         });
         let _ = self.iface_build.send(DriverMsg::Stop { id });
+    }
+
+    /// Retire the socket future and all supervisor children, then acknowledge
+    /// manifold removal. A dropped waiter does not cancel an accepted retirement.
+    pub async fn remove_interface_and_wait(
+        &self,
+        id: InterfaceId,
+    ) -> Result<(), InterfaceDetachError> {
+        let (reply, completed) = oneshot::channel();
+        // Admit removal before a later same-id attachment can publish its lane.
+        // Re-emitting it while the driver drains would remove that replacement.
+        self.commands
+            .send(HostCommand::RemoveInterface {
+                id,
+                departure: Departure::MayReturn,
+            })
+            .map_err(|_| InterfaceDetachError::NodeStopped)?;
+        self.iface_build
+            .send(DriverMsg::StopAndWait { id, reply })
+            .map_err(|_| InterfaceDetachError::NodeStopped)?;
+        completed
+            .await
+            .map_err(|_| InterfaceDetachError::NodeStopped)?
     }
 
     /// Detach like [`remove_interface`](Self::remove_interface) and drop the routes learned through the interface at once, instead of holding them warm for a return.
@@ -705,6 +742,32 @@ pub(super) enum DriverMsg {
     Stop {
         id: InterfaceId,
     },
+    StopAndWait {
+        id: InterfaceId,
+        reply: oneshot::Sender<Result<(), InterfaceDetachError>>,
+    },
+}
+
+/// Driver messages retain their original order when retirement defers work.
+struct DriverInbox {
+    receiver: UnboundedReceiver<DriverMsg>,
+    deferred: std::collections::VecDeque<DriverMsg>,
+}
+
+impl DriverInbox {
+    fn new(receiver: UnboundedReceiver<DriverMsg>) -> Self {
+        Self {
+            receiver,
+            deferred: std::collections::VecDeque::new(),
+        }
+    }
+
+    async fn recv(&mut self) -> Option<DriverMsg> {
+        match self.deferred.pop_front() {
+            Some(message) => Some(message),
+            None => self.receiver.recv().await,
+        }
+    }
 }
 
 /// Drive every interface run future — the recipe's initial set, plus any added through the handle at runtime — on the `run` task. Each runtime-added interface is wrapped with a stop signal so [`PrnsNodeHandle::remove_interface`] can drop it mid-flight; the initial set runs for the node's life.
@@ -727,7 +790,7 @@ pub(super) async fn drive_interfaces(
 
 pub(super) async fn drive_interfaces_with_arbitration(
     initial: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
-    mut messages: UnboundedReceiver<DriverMsg>,
+    messages: UnboundedReceiver<DriverMsg>,
     commands: UnboundedSender<HostCommand>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     mut arbitration: InterfaceArbitration,
@@ -745,6 +808,7 @@ pub(super) async fn drive_interfaces_with_arbitration(
         .collect();
     let mut stops: HashMap<InterfaceId, RunningInterface> = HashMap::new();
     let mut supervisor_of: HashMap<InterfaceId, InterfaceId> = HashMap::new();
+    let mut inbox = DriverInbox::new(messages);
     let mut open = true;
     loop {
         if !open && futures.is_empty() {
@@ -758,7 +822,7 @@ pub(super) async fn drive_interfaces_with_arbitration(
             .select(
                 async {
                     if open {
-                        Event::Message(messages.recv().await)
+                        Event::Message(inbox.recv().await)
                     } else {
                         std::future::pending().await
                     }
@@ -799,33 +863,44 @@ pub(super) async fn drive_interfaces_with_arbitration(
                     stops.insert(
                         id,
                         RunningInterface {
-                            stop: stop_tx,
+                            stop: Some(stop_tx),
                             registration,
                         },
                     );
                 }
                 Some(DriverMsg::Stop { id }) => {
-                    let Some(registration) = stop_interface(&mut stops, id) else {
-                        continue;
-                    };
-                    let supervisor = supervisor_of.remove(&id);
-                    stop_supervised_members(
-                        &mut stops,
-                        &mut supervisor_of,
-                        &interfaces,
-                        &commands,
-                        id,
-                    );
-                    drain_stopped_interface(
+                    retire_driver_interface(
                         &mut futures,
                         &mut stops,
                         &mut supervisor_of,
                         &interfaces,
                         &commands,
+                        &mut inbox,
                         id,
                     )
                     .await;
-                    registration.retire(&interfaces, id, supervisor);
+                }
+                Some(DriverMsg::StopAndWait { id, reply }) => {
+                    retire_driver_interface(
+                        &mut futures,
+                        &mut stops,
+                        &mut supervisor_of,
+                        &interfaces,
+                        &commands,
+                        &mut inbox,
+                        id,
+                    )
+                    .await;
+                    let (barrier, landed) = oneshot::channel();
+                    let result = if commands
+                        .send(HostCommand::InterfaceLifecycleBarrier { reply: barrier })
+                        .is_ok()
+                    {
+                        landed.await.map_err(|_| InterfaceDetachError::NodeStopped)
+                    } else {
+                        Err(InterfaceDetachError::NodeStopped)
+                    };
+                    let _ = reply.send(result);
                 }
                 None => open = false,
             },
@@ -911,25 +986,84 @@ fn stop_interface(
     id: InterfaceId,
 ) -> Option<StatusRegistration> {
     let running = stops.remove(&id)?;
-    let _ = running.stop.send(());
+    if let Some(stop) = running.stop {
+        let _ = stop.send(());
+    }
     Some(running.registration)
 }
 
-async fn drain_stopped_interface(
+/// No run future or queued child builder belonging to this attachment survives
+/// this boundary. Ordinary fire-and-forget removal uses the same retirement.
+async fn retire_driver_interface(
     futures: &mut FuturesUnordered<Pin<Box<dyn Future<Output = Option<InterfaceId>>>>>,
     stops: &mut HashMap<InterfaceId, RunningInterface>,
     supervisor_of: &mut HashMap<InterfaceId, InterfaceId>,
     interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     commands: &UnboundedSender<HostCommand>,
+    inbox: &mut DriverInbox,
     stopped_id: InterfaceId,
 ) {
-    while let Some(done) = futures.next().await {
-        let Some(id) = done else {
-            continue;
-        };
-        complete_interface(stops, supervisor_of, interfaces, commands, id);
-        if id == stopped_id {
-            return;
+    let mut targets = supervisor_of
+        .iter()
+        .filter_map(|(child, parent)| (*parent == stopped_id).then_some(*child))
+        .collect::<std::vec::Vec<_>>();
+    targets.push(stopped_id);
+    let mut retiring = std::collections::HashSet::new();
+    let mut registrations = std::vec::Vec::new();
+    // Signal all futures before polling any completion. Dropping the parent
+    // first prevents it from producing more children while those children drain.
+    for id in targets {
+        // The caller already removed the root lane in command order. Cascade
+        // only still-live member lanes; an earlier stop already removed the rest.
+        let remove_member_lane =
+            id != stopped_id && stops.get(&id).is_some_and(|running| running.stop.is_some());
+        if let Some(registration) = stop_interface(stops, id) {
+            retiring.insert(id);
+            registrations.push((id, registration, supervisor_of.remove(&id)));
+            if remove_member_lane {
+                let _ = commands.send(HostCommand::RemoveInterface {
+                    id,
+                    departure: Departure::MayReturn,
+                });
+            }
+        }
+    }
+    while !retiring.is_empty() {
+        match futures.next().await {
+            Some(Some(id)) => {
+                if !retiring.remove(&id) {
+                    complete_interface(stops, supervisor_of, interfaces, commands, id);
+                }
+            }
+            Some(None) => {}
+            None => break,
+        }
+    }
+    for (id, registration, supervisor) in registrations {
+        registration.retire(interfaces, id, supervisor);
+    }
+    // The retired parent's last poll may already have enqueued a member. The
+    // builder owns its resources before run() and is dropped without starting.
+    let mut queued = std::mem::take(&mut inbox.deferred);
+    while let Ok(message) = inbox.receiver.try_recv() {
+        queued.push_back(message);
+    }
+    while let Some(message) = queued.pop_front() {
+        match message {
+            DriverMsg::Add {
+                id,
+                supervisor: Some(parent),
+                registration,
+                build,
+            } if parent == stopped_id => {
+                drop(build);
+                registration.retire(interfaces, id, None);
+                let _ = commands.send(HostCommand::RemoveInterface {
+                    id,
+                    departure: Departure::MayReturn,
+                });
+            }
+            other => inbox.deferred.push_back(other),
         }
     }
 }
@@ -942,21 +1076,25 @@ fn complete_interface(
     id: InterfaceId,
 ) {
     if let Some(running) = stops.remove(&id) {
+        // A naturally completed parent already removed this member's lane when
+        // it took the stop signal. Completion still owns status retirement.
+        let lane_already_removed = running.stop.is_none();
         running
             .registration
             .retire(interfaces, id, supervisor_of.remove(&id));
-        let _ = commands.send(HostCommand::RemoveInterface {
-            id,
-            departure: Departure::MayReturn,
-        });
-        stop_supervised_members(stops, supervisor_of, interfaces, commands, id);
+        if !lane_already_removed {
+            let _ = commands.send(HostCommand::RemoveInterface {
+                id,
+                departure: Departure::MayReturn,
+            });
+        }
+        stop_supervised_members(stops, supervisor_of, commands, id);
     }
 }
 
 fn stop_supervised_members(
     stops: &mut HashMap<InterfaceId, RunningInterface>,
     supervisor_of: &mut HashMap<InterfaceId, InterfaceId>,
-    interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     commands: &UnboundedSender<HostCommand>,
     supervisor_id: InterfaceId,
 ) {
@@ -966,10 +1104,14 @@ fn stop_supervised_members(
         .map(|(member, _)| *member)
         .collect();
     for member in members {
-        if let Some(registration) = stop_interface(stops, member) {
-            registration.retire(interfaces, member, None);
+        // Keep the member discoverable until its run future has been dropped.
+        // An acknowledged parent detach can arrive before the next completion
+        // poll and must still find these already-signalled children to drain.
+        if let Some(running) = stops.get_mut(&member) {
+            if let Some(stop) = running.stop.take() {
+                let _ = stop.send(());
+            }
         }
-        supervisor_of.remove(&member);
         let _ = commands.send(HostCommand::RemoveInterface {
             id: member,
             departure: Departure::MayReturn,

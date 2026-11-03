@@ -14,7 +14,7 @@ const ESP32S3_FLASH: [AddressRange; 2] = [
 const ESP32S3_IRAM: [AddressRange; 1] = [AddressRange::new(0x4037_0000, 0x4040_0000)];
 const ESP32S3_DRAM: [AddressRange; 1] = [AddressRange::new(0x3FC0_0000, 0x4000_0000)];
 const ESP32C6_FLASH: [AddressRange; 1] = [AddressRange::new(0x4200_0000, 0x4240_0000)];
-const ESP32C6_RAM: [AddressRange; 1] = [AddressRange::new(0x4080_0000, 0x4090_0000)];
+const ESP32C6_RAM: [AddressRange; 1] = [AddressRange::new(0x4080_0000, 0x4086_E610)];
 
 const ESP32S3_SPACES: [LinkerAddressSpace; 8] = [
     LinkerAddressSpace::explicit(FLASH, &ESP32S3_FLASH),
@@ -35,10 +35,11 @@ const ESP32S3_NO_PSRAM_SPACES: [LinkerAddressSpace; 7] = [
     ESP32S3_SPACES[5],
     ESP32S3_SPACES[6],
 ];
-const ESP32C6_SPACES: [LinkerAddressSpace; 3] = [
+const ESP32C6_SPACES: [LinkerAddressSpace; 4] = [
     LinkerAddressSpace::explicit(FLASH, &ESP32C6_FLASH),
     LinkerAddressSpace::explicit(IRAM, &ESP32C6_RAM),
     LinkerAddressSpace::explicit(DRAM, &ESP32C6_RAM),
+    LinkerAddressSpace::memory_geometry(RECLAIMED_RAM),
 ];
 
 const HELTEC_V3_LINKER: LinkerAddressProfile =

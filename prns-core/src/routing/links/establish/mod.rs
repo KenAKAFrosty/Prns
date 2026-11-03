@@ -4,7 +4,9 @@ use crate::crypto::{
     x25519_diffie_hellman, Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
     X25519SharedSecret,
 };
-use crate::engine::{CommandId, CommandOutcome, EstablishLink, EstablishLinkRejection};
+use crate::engine::{
+    CommandId, CommandOutcome, EstablishLink, EstablishLinkRejection, LinkHandshakePhase,
+};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
@@ -65,6 +67,8 @@ impl EstablishLinkEntropy {
 /// A fresh link's pure key derivation, authorized by the engine but fulfillable by its runtime.
 #[repr(C)]
 pub struct EstablishLinkOwed {
+    source_interface: InterfaceId,
+    source_generation: u32,
     pub command_id: CommandId,
     pub establish: EstablishLink,
     pub requested_at: InstantMillis,
@@ -74,6 +78,8 @@ pub struct EstablishLinkOwed {
 
 #[repr(C)]
 pub struct EstablishLinkCompleted {
+    source_interface: InterfaceId,
+    source_generation: u32,
     pub command_id: CommandId,
     pub establish: EstablishLink,
     pub requested_at: InstantMillis,
@@ -89,6 +95,8 @@ impl EstablishLinkOwed {
     pub fn fulfill(self) -> EstablishLinkCompleted {
         let (initiator_secret, link_signing, ephemeral) = self.entropy.into_parts();
         EstablishLinkCompleted {
+            source_interface: self.source_interface,
+            source_generation: self.source_generation,
             command_id: self.command_id,
             establish: self.establish,
             requested_at: self.requested_at,
@@ -141,6 +149,8 @@ pub enum EstablishLinkWriteOutcome {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteLinkProofError {
+    DestinationRetired,
+    InterfaceUnavailable,
     IdentityNotHeld,
     Serialize,
     LinkTableFull,
@@ -185,14 +195,34 @@ impl<S: StorageLayout> EngineState<S> {
         first_hop_timeout_floor_ms: Option<u64>,
         entropy: EstablishLinkEntropy,
     ) -> Result<EstablishLinkOwed, EstablishLinkRejection> {
-        if self
+        self.prepare_establish_link_with_interfaces(
+            command_id,
+            establish,
+            requested_at,
+            first_hop_timeout_floor_ms,
+            entropy,
+            AttachedInterfaces::new(&[]),
+        )
+    }
+
+    pub fn prepare_establish_link_with_interfaces(
+        &self,
+        command_id: CommandId,
+        establish: EstablishLink,
+        requested_at: InstantMillis,
+        first_hop_timeout_floor_ms: Option<u64>,
+        entropy: EstablishLinkEntropy,
+        interfaces: AttachedInterfaces<'_>,
+    ) -> Result<EstablishLinkOwed, EstablishLinkRejection> {
+        let Some(route) = self
             .routing_table
             .stored_announce_for(&establish.destination)
-            .is_none()
-        {
+        else {
             return Err(EstablishLinkRejection::NoRouteToDestination);
-        }
+        };
         Ok(EstablishLinkOwed {
+            source_interface: route.receiving_interface,
+            source_generation: interfaces.generation_for(route.receiving_interface),
             command_id,
             establish,
             requested_at,
@@ -233,14 +263,22 @@ impl<S: StorageLayout> EngineState<S> {
         timing: FirstHopTiming<'_>,
         buf: &mut [u8],
     ) -> EstablishLinkWriteOutcome {
-        let completed = EstablishLinkOwed {
-            command_id: id,
-            establish: *establish,
-            requested_at: now,
-            first_hop_timeout_floor_ms: timing.shared_instance_floor_ms,
+        let owed = match self.prepare_establish_link_with_interfaces(
+            id,
+            *establish,
+            now,
+            timing.shared_instance_floor_ms,
             entropy,
-        }
-        .fulfill();
+            timing.interfaces,
+        ) {
+            Ok(owed) => owed,
+            Err(_) => {
+                return EstablishLinkWriteOutcome::Rejected {
+                    rejection: WriteEstablishLinkRejection::RouteVanished,
+                };
+            }
+        };
+        let completed = owed.fulfill();
         self.write_commanded_link_request_from_parts(completed, timing, buf)
     }
 
@@ -250,9 +288,31 @@ impl<S: StorageLayout> EngineState<S> {
         timing: FirstHopTiming<'_>,
         buf: &mut [u8],
     ) -> EstablishLinkWriteOutcome {
+        let command_id = completed.command_id;
+        let outcome = self.write_commanded_link_request_from_parts_inner(completed, timing, buf);
+        if let EstablishLinkWriteOutcome::Rejected { rejection } = outcome {
+            self.link_handshake_diagnostics.observe(
+                None,
+                None,
+                Some(command_id),
+                None,
+                LinkHandshakePhase::RequestRejected(rejection),
+            );
+        }
+        outcome
+    }
+
+    fn write_commanded_link_request_from_parts_inner(
+        &mut self,
+        completed: EstablishLinkCompleted,
+        timing: FirstHopTiming<'_>,
+        buf: &mut [u8],
+    ) -> EstablishLinkWriteOutcome {
         use EstablishLinkWriteOutcome::{Rejected, Written};
 
         let EstablishLinkCompleted {
+            source_interface,
+            source_generation,
             command_id: id,
             establish,
             requested_at: now,
@@ -262,6 +322,14 @@ impl<S: StorageLayout> EngineState<S> {
             encryption_public,
             signing_public,
         } = completed;
+
+        if !timing.interfaces.availability_allows(source_interface)
+            || timing.interfaces.generation_for(source_interface) != source_generation
+        {
+            return Rejected {
+                rejection: WriteEstablishLinkRejection::RouteVanished,
+            };
+        }
 
         let Some(stored) = self
             .routing_table
@@ -273,6 +341,11 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let hops = stored.hops;
         let fire_on = stored.receiving_interface;
+        if !timing.interfaces.availability_allows(fire_on) {
+            return Rejected {
+                rejection: WriteEstablishLinkRejection::RouteVanished,
+            };
+        }
         let Some(route_evidence) = self
             .routing_table
             .route_evidence_handle_for(&establish.destination)
@@ -328,6 +401,7 @@ impl<S: StorageLayout> EngineState<S> {
                 .saturating_add(floor.map_or(computed, |floor| computed.max(floor))),
         );
         match self.links.track_initiated(InitiatedLink {
+            attached_interface: fire_on,
             link_id,
             destination: establish.destination,
             route_evidence,
@@ -339,11 +413,28 @@ impl<S: StorageLayout> EngineState<S> {
             timeout_at,
             command_id: id,
         }) {
-            Ok(()) => Written(LinkRequestDispatch {
-                wire_bytes,
-                fire_on,
-                link_id,
-            }),
+            Ok(()) => {
+                self.link_handshake_diagnostics.observe(
+                    None,
+                    Some(link_id),
+                    Some(id),
+                    Some(fire_on),
+                    LinkHandshakePhase::RequestPending {
+                        requested_at: now,
+                        timeout_at,
+                        hops,
+                        bitrate,
+                        first_hop_floor_ms: timing.shared_instance_floor_ms,
+                        computed_timeout_ms: computed,
+                        route_generation: route_evidence.id.get(),
+                    },
+                );
+                Written(LinkRequestDispatch {
+                    wire_bytes,
+                    fire_on,
+                    link_id,
+                })
+            }
             Err(error) => Rejected {
                 rejection: error.into(),
             },
@@ -357,8 +448,55 @@ impl<S: StorageLayout> EngineState<S> {
         responder_encryption: &X25519PublicKey,
         shared: &X25519SharedSecret,
         signature: &Ed25519Signature,
+        interfaces: AttachedInterfaces<'_>,
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkProofError> {
+        if !interfaces
+            .is_egress_eligible(owed.source_interface, crate::interfaces::Egress::Transmit)
+            || interfaces.generation_for(owed.source_interface) != owed.source_generation
+        {
+            return Err(WriteLinkProofError::InterfaceUnavailable);
+        }
+        let result = self.write_owed_link_proof_with_parts_inner(
+            owed,
+            responder_encryption,
+            shared,
+            signature,
+            buf,
+        );
+        let phase = match result {
+            Ok(_) => LinkHandshakePhase::ProofPrepared,
+            Err(error) => LinkHandshakePhase::ProofRejected(error),
+        };
+        self.link_handshake_diagnostics.observe(
+            None,
+            Some(owed.request.link_id),
+            None,
+            Some(owed.source_interface),
+            phase,
+        );
+        result
+    }
+
+    fn write_owed_link_proof_with_parts_inner(
+        &mut self,
+        owed: &LinkProofSignOwed,
+        responder_encryption: &X25519PublicKey,
+        shared: &X25519SharedSecret,
+        signature: &Ed25519Signature,
+        buf: &mut [u8],
+    ) -> Result<usize, WriteLinkProofError> {
+        if !self
+            .upstream_app_destinations
+            .lookup_single(&owed.request.destination)
+            .is_some_and(|row| {
+                row.registration_generation == owed.destination_generation
+                    && row.identity == owed.identity
+                    && row.proof_strategy == owed.proof_strategy
+            })
+        {
+            return Err(WriteLinkProofError::DestinationRetired);
+        }
         let key = LinkKey::derive(&owed.request.link_id, shared);
         let written = write_link_proof_from_parts(
             &owed.request.link_id,
@@ -379,6 +517,7 @@ impl<S: StorageLayout> EngineState<S> {
             },
             key,
             owed.mtu,
+            owed.source_interface,
         )?;
         Ok(written)
     }
@@ -388,6 +527,7 @@ impl<S: StorageLayout> EngineState<S> {
         accepted: &AcceptedLinkRequest,
         key: LinkKey,
         mtu: usize,
+        attached_interface: crate::interfaces::InterfaceId,
     ) -> Result<(), WriteLinkProofError> {
         let &AcceptedLinkRequest {
             ref request,
@@ -407,6 +547,7 @@ impl<S: StorageLayout> EngineState<S> {
         );
         self.links
             .track_responding(RespondingLink {
+                attached_interface,
                 link_id: request.link_id,
                 key,
                 requested_at,

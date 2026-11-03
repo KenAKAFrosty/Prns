@@ -12,7 +12,10 @@ use crate::manifold::reaction_routing::{
     route_reaction as route_engine_reaction, AnnounceDirective, DirectiveEgress,
 };
 
-fn lane_serves(lane_key: InterfaceId, target: InterfaceId) -> bool {
+use super::availability::{Availability, LaneStatus};
+use super::EmbassyInterfaceStatus;
+
+pub(super) fn lane_serves(lane_key: InterfaceId, target: InterfaceId) -> bool {
     if lane_key == target {
         return true;
     }
@@ -35,6 +38,9 @@ pub enum EgressOutcome {
         capacity: usize,
     },
     NoLane,
+    Unavailable {
+        lane: InterfaceId,
+    },
 }
 
 fn egress_outcome(lane: InterfaceId, outcome: LaneWriteOutcome) -> EgressOutcome {
@@ -72,12 +78,20 @@ pub trait ManifoldEgress {
 /// Fixed-set egress with erased slot sizes, allowing heterogeneous lanes in one borrowed slice without allocation.
 pub struct EmbassyEgress<'a> {
     lanes: &'a mut [(InterfaceId, &'a mut dyn ManifoldLaneWriter)],
+    statuses: &'a [&'a EmbassyInterfaceStatus],
 }
 
 impl<'a> EmbassyEgress<'a> {
     #[must_use]
     pub fn new(lanes: &'a mut [(InterfaceId, &'a mut dyn ManifoldLaneWriter)]) -> Self {
-        Self { lanes }
+        Self {
+            lanes,
+            statuses: &[],
+        }
+    }
+
+    pub(super) fn set_statuses(&mut self, statuses: &'a [&'a EmbassyInterfaceStatus]) {
+        self.statuses = statuses;
     }
 }
 
@@ -85,7 +99,18 @@ impl ManifoldEgress for EmbassyEgress<'_> {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressOutcome {
         for (id, producer) in self.lanes.iter_mut() {
             if lane_serves(*id, target) {
-                return egress_outcome(*id, producer.try_write(FrameTarget::Direct(target), bytes));
+                let generation = Availability::fixed(self.statuses).generation(target);
+                if !Availability::fixed(self.statuses).allows(target) {
+                    return EgressOutcome::Unavailable { lane: *id };
+                }
+                let outcome = producer.try_write(FrameTarget::Direct(target), bytes);
+                return if Availability::fixed(self.statuses).allows(target)
+                    && Availability::fixed(self.statuses).generation(target) == generation
+                {
+                    egress_outcome(*id, outcome)
+                } else {
+                    EgressOutcome::Unavailable { lane: *id }
+                };
             }
         }
         EgressOutcome::NoLane
@@ -99,7 +124,18 @@ impl ManifoldEgress for EmbassyEgress<'_> {
     ) -> EgressOutcome {
         for (id, producer) in self.lanes.iter_mut() {
             if id.kind() == Some(supervisor) {
-                return egress_outcome(*id, producer.try_write(FrameTarget::Fan(fan), bytes));
+                let generation = Availability::fixed(self.statuses).generation(*id);
+                if !Availability::fixed(self.statuses).allows(*id) {
+                    return EgressOutcome::Unavailable { lane: *id };
+                }
+                let outcome = producer.try_write(FrameTarget::Fan(fan), bytes);
+                return if Availability::fixed(self.statuses).allows(*id)
+                    && Availability::fixed(self.statuses).generation(*id) == generation
+                {
+                    egress_outcome(*id, outcome)
+                } else {
+                    EgressOutcome::Unavailable { lane: *id }
+                };
             }
         }
         EgressOutcome::NoLane
@@ -130,6 +166,9 @@ pub(super) struct InterfacePacer {
 }
 
 impl InterfacePacer {
+    pub(super) fn discard_pending(&mut self) {
+        self.pacer.clear_queue();
+    }
     pub(super) fn from_descriptor(id: InterfaceId, descriptor: &InterfaceDescriptor) -> Self {
         Self {
             id,
@@ -310,7 +349,9 @@ fn delivery_for_egress_outcome(outcome: EgressOutcome) -> PacerDelivery {
     match outcome {
         EgressOutcome::Enqueued => PacerDelivery::Admitted,
         EgressOutcome::LaneFull { .. } => PacerDelivery::Backpressured,
-        EgressOutcome::FrameTooLarge { .. } | EgressOutcome::NoLane => PacerDelivery::Discarded,
+        EgressOutcome::FrameTooLarge { .. }
+        | EgressOutcome::NoLane
+        | EgressOutcome::Unavailable { .. } => PacerDelivery::Discarded,
     }
 }
 
@@ -412,6 +453,7 @@ pub(super) fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<Instant
 
 pub struct PooledEgress<const LANE_COUNT: usize> {
     pub(crate) lanes: HeaplessVec<(InterfaceId, &'static mut dyn ManifoldLaneWriter), LANE_COUNT>,
+    pub(super) statuses: HeaplessVec<LaneStatus<'static>, LANE_COUNT>,
 }
 
 impl<const LANE_COUNT: usize> PooledEgress<LANE_COUNT> {
@@ -419,6 +461,7 @@ impl<const LANE_COUNT: usize> PooledEgress<LANE_COUNT> {
     pub fn new() -> Self {
         Self {
             lanes: HeaplessVec::new(),
+            statuses: HeaplessVec::new(),
         }
     }
 
@@ -438,6 +481,21 @@ impl<const LANE_COUNT: usize> PooledEgress<LANE_COUNT> {
                 *id = new_id;
             }
         }
+        for binding in &mut self.statuses {
+            if binding.lane == old_id {
+                binding.lane = new_id;
+            }
+        }
+    }
+
+    pub(crate) fn bind_status(
+        &mut self,
+        lane: InterfaceId,
+        status: &'static EmbassyInterfaceStatus,
+    ) {
+        assert!(self.lanes.iter().any(|(id, _)| *id == lane));
+        assert!(!self.statuses.iter().any(|binding| binding.lane == lane));
+        assert!(self.statuses.push(LaneStatus { lane, status }).is_ok());
     }
 }
 
@@ -445,7 +503,18 @@ impl<const LANE_COUNT: usize> ManifoldEgress for PooledEgress<LANE_COUNT> {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressOutcome {
         for (id, producer) in self.lanes.iter_mut() {
             if lane_serves(*id, target) {
-                return egress_outcome(*id, producer.try_write(FrameTarget::Direct(target), bytes));
+                let generation = Availability::bound(&self.statuses).generation(target);
+                if !Availability::bound(&self.statuses).allows(target) {
+                    return EgressOutcome::Unavailable { lane: *id };
+                }
+                let outcome = producer.try_write(FrameTarget::Direct(target), bytes);
+                return if Availability::bound(&self.statuses).allows(target)
+                    && Availability::bound(&self.statuses).generation(target) == generation
+                {
+                    egress_outcome(*id, outcome)
+                } else {
+                    EgressOutcome::Unavailable { lane: *id }
+                };
             }
         }
         EgressOutcome::NoLane
@@ -459,7 +528,18 @@ impl<const LANE_COUNT: usize> ManifoldEgress for PooledEgress<LANE_COUNT> {
     ) -> EgressOutcome {
         for (id, producer) in self.lanes.iter_mut() {
             if id.kind() == Some(supervisor) {
-                return egress_outcome(*id, producer.try_write(FrameTarget::Fan(fan), bytes));
+                let generation = Availability::bound(&self.statuses).generation(*id);
+                if !Availability::bound(&self.statuses).allows(*id) {
+                    return EgressOutcome::Unavailable { lane: *id };
+                }
+                let outcome = producer.try_write(FrameTarget::Fan(fan), bytes);
+                return if Availability::bound(&self.statuses).allows(*id)
+                    && Availability::bound(&self.statuses).generation(*id) == generation
+                {
+                    egress_outcome(*id, outcome)
+                } else {
+                    EgressOutcome::Unavailable { lane: *id }
+                };
             }
         }
         EgressOutcome::NoLane

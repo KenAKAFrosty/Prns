@@ -91,7 +91,7 @@ fn write_proof_is_byte_identical_to_the_rns_1_4_2_implicit_proof() {
 
 #[test]
 fn explicit_non_link_proofs_name_the_proven_packet_hash() {
-    let mut state: EngineState<TestStorageLayout> = EngineState::default();
+    let mut state = personal_node_announcer();
     state.set_protocol_policy(crate::engine::EngineProtocolPolicy {
         proof_form: ProofForm::Explicit,
         ..Default::default()
@@ -101,6 +101,12 @@ fn explicit_non_link_proofs_name_the_proven_packet_hash() {
     let mut wire = Vec::new();
     state.resume_proof_sign(
         ProofSignCompleted {
+            destination: personal_node_destination(),
+            destination_generation: state
+                .upstream_app_destinations
+                .lookup_single(&personal_node_destination())
+                .unwrap()
+                .registration_generation,
             target: InterfaceId::new([0xB4; 8]),
             packet_hash,
             signature,
@@ -277,6 +283,7 @@ fn an_initiator_channel_ack_is_signed_by_the_link_key() {
     state
         .links
         .track_initiated(InitiatedLink {
+            attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
             link_id,
             destination: DestinationHash::new([0x77; 16]),
             route_evidence: crate::routing::routes::RouteEvidenceHandle::new(
@@ -351,6 +358,7 @@ fn a_responder_channel_ack_is_signed_by_the_held_identity() {
     state
         .links
         .track_responding(RespondingLink {
+            attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
             link_id,
             key: LinkKey::derive(&link_id, &shared),
             requested_at: InstantMillis(0),
@@ -419,4 +427,44 @@ fn a_channel_ack_completion_for_a_retired_link_emits_nothing() {
 
     assert_eq!(outcome, ResumeChannelAckSignOutcome::LinkNoLongerActive);
     assert!(!emitted);
+}
+
+#[test]
+fn retired_service_proof_and_link_receipt_completions_emit_nothing() {
+    let mut state = personal_node_announcer();
+    let destination = personal_node_destination();
+    let registered = state
+        .upstream_app_destinations
+        .lookup_single(&destination)
+        .unwrap();
+    let proof = ProofSignCompleted {
+        destination,
+        destination_generation: registered.registration_generation,
+        target: InterfaceId::new([0xEE; 8]),
+        packet_hash: PacketHash::new([0xA5; PACKET_HASH_LEN]),
+        signature: Ed25519Signature([0x5A; 64]),
+    };
+    let _ = state.unregister_destination(&destination);
+    state
+        .register_single_destination(
+            &registered.identity,
+            "personal",
+            &["node"],
+            b"",
+            ProofStrategy::ProveNone,
+            LinkRequestPolicy::AcceptAll,
+            RatchetPolicy::NoRatchets,
+        )
+        .unwrap();
+    state.resume_proof_sign(proof, &mut |_| panic!("stale service proof must not emit"));
+    state.resume_link_receipt_sign(
+        LinkReceiptSignCompleted {
+            target: InterfaceId::new([0xEE; 8]),
+            link_id: crate::routing::links::LinkId::new([1; 16]),
+            packet_hash: PacketHash::new([0xA5; PACKET_HASH_LEN]),
+            signature: Ed25519Signature([0x5A; 64]),
+        },
+        InstantMillis(2000),
+        &mut |_| panic!("a closed Link must not emit a late receipt"),
+    );
 }

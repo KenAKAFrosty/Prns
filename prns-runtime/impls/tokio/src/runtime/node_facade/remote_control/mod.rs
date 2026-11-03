@@ -46,9 +46,10 @@ use prns_core::remote_control::{
     RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
     RemoteControlLoRaProfile, RemoteControlModeOutcome, RemoteControlPeerPage,
     RemoteControlPowerOutcome, RemoteControlRequest, RemoteControlRequestSet,
-    RemoteControlRevokeControllerOutcome, RemoteControlSleepOutcome, RemoteControlStationUplink,
-    RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
-    RemoteControlWifiStation, RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
+    RemoteControlResponse, RemoteControlResponseKind, RemoteControlRevokeControllerOutcome,
+    RemoteControlSleepOutcome, RemoteControlStationUplink, RemoteControlSystemPower,
+    RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome, RemoteControlWifiStation,
+    RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
 };
 
 use super::{PrnsNodeHandle, RequestOptions, StreamId};
@@ -56,6 +57,33 @@ use super::{PrnsNodeHandle, RequestOptions, StreamId};
 pub struct RemoteControlHandle<'a> {
     node: &'a PrnsNodeHandle,
     link_id: LinkId,
+}
+
+/// One submitted canonical exchange. Dropping its observer does not retract
+/// the queued request. Native owners retain this value independently of callers.
+pub struct RemoteControlExchange {
+    expected: RemoteControlResponseKind,
+    settled: super::request_response::PendingRequest,
+}
+
+impl RemoteControlExchange {
+    pub async fn wait(self) -> Result<(RemoteControlResponse, RttMillis), RemoteControlError> {
+        let (bytes, rtt) = PrnsNodeHandle::observe_request(self.settled)
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let response =
+            RemoteControlResponse::parse(&bytes).map_err(RemoteControlError::Response)?;
+        if let RemoteControlResponse::ProtocolError(error) = response {
+            return Err(RemoteControlError::Remote(error));
+        }
+        if response.kind() != self.expected {
+            return Err(RemoteControlError::UnexpectedResponse {
+                expected: self.expected,
+                found: response.kind(),
+            });
+        }
+        Ok((response, rtt))
+    }
 }
 
 macro_rules! remote_control_apply_method {
@@ -150,6 +178,49 @@ impl RemoteControlHandle<'_> {
             rtt,
         ))
     }
+
+    /// Execute any current protocol request using its own bounded response contract.
+    /// This is the shared typed primitive used by host SDKs; callers never marshal
+    /// remote-control packet bytes or reproduce an operation dispatcher.
+    pub async fn exchange(
+        &self,
+        request: RemoteControlRequest,
+    ) -> Result<(RemoteControlResponse, RttMillis), RemoteControlError> {
+        self.begin_exchange(request)?.wait().await
+    }
+
+    /// Encode and admit exactly one request without awaiting its result.
+    /// Failure here establishes that this request was not submitted.
+    pub fn begin_exchange(
+        &self,
+        request: RemoteControlRequest,
+    ) -> Result<RemoteControlExchange, RemoteControlError> {
+        let expected = RemoteControlResponseKind::ALL
+            .into_iter()
+            .find(|kind| kind.wire_value() == request.kind().wire_value())
+            .ok_or(RemoteControlError::UnsupportedRequestKind(request.kind()))?;
+        let maximum_response_bytes =
+            crate::units::ByteLimit::Maximum(request.maximum_response_encoded_len() as u64);
+        let mut encoded = std::vec![0u8; request.encoded_len()];
+        let written = request
+            .write_into(&mut encoded)
+            .map_err(RemoteControlError::Encode)?;
+        encoded.truncate(written);
+        let settled = self
+            .node
+            .begin_request_owned_with_options(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                encoded,
+                RequestOptions {
+                    response_timeout: RequestResponseTimeout::LinkDefault,
+                    maximum_response_bytes,
+                },
+            )
+            .map_err(RemoteControlError::Request)?;
+        Ok(RemoteControlExchange { expected, settled })
+    }
+
     remote_control_apply_method!(
         set_system_power,
         RemoteControlSetSystemPower,

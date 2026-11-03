@@ -15,6 +15,7 @@ use crate::routing::{
 use crate::units::HopCount;
 use crate::wire::{TransportId, WirePacketHeader, BROADCAST_MTU};
 
+#[derive(Debug)]
 enum Response {
     KnownPath,
     OrdinaryEcho,
@@ -22,12 +23,21 @@ enum Response {
     OtherHop,
     OtherNextHop,
     InvalidSignature,
-    Unresponsive,
+    NoPendingRequest,
     Expired,
 }
 
 #[test]
 fn a_verified_cached_response_completes_discovery_without_renewing_route_evidence() {
+    check_retained_response(false);
+}
+
+#[test]
+fn an_unresponsive_cached_response_completes_discovery_without_renewing_route_evidence() {
+    check_retained_response(true);
+}
+
+fn check_retained_response(unresponsive: bool) {
     for response in [
         Response::KnownPath,
         Response::OrdinaryEcho,
@@ -35,14 +45,17 @@ fn a_verified_cached_response_completes_discovery_without_renewing_route_evidenc
         Response::OtherHop,
         Response::OtherNextHop,
         Response::InvalidSignature,
-        Response::Unresponsive,
+        Response::NoPendingRequest,
         Response::Expired,
     ] {
         let source = InterfaceId::new([0xa1; 8]);
         let other = InterfaceId::new([0xb2; 8]);
         let descriptors = [routable_descriptor(source), routable_descriptor(other)];
         let interfaces = AttachedInterfaces::new(&descriptors);
-        let raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
+        let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
+        // Keep the mismatched-hop response shorter: a longer equal-time route
+        // may legitimately replace an unresponsive incumbent under RNS policy.
+        raw[1] = 1;
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&header, payload).unwrap();
         let destination = announce.destination;
@@ -56,7 +69,7 @@ fn a_verified_cached_response_completes_discovery_without_renewing_route_evidenc
             },
             interfaces,
         );
-        if matches!(response, Response::Unresponsive) {
+        if unresponsive {
             engine
                 .routing_table
                 .mark_responsiveness(&destination, RouteResponsiveness::Unresponsive);
@@ -74,21 +87,23 @@ fn a_verified_cached_response_completes_discovery_without_renewing_route_evidenc
         let before = engine.routing_table.path_row(&destination).unwrap();
         let request_id = CommandId(88);
         let mut scratch = [0; BROADCAST_MTU];
-        let _ = engine.write_commanded_path_request_with_interfaces(
-            request_id,
-            &RequestPath {
-                destination,
-                id: PathRequestId::new([0x31; 16]),
-            },
-            now,
-            interfaces,
-            &mut scratch,
-        );
+        if !matches!(response, Response::NoPendingRequest) {
+            let _ = engine.write_commanded_path_request_with_interfaces(
+                request_id,
+                &RequestPath {
+                    destination,
+                    id: PathRequestId::new([0x31; 16]),
+                },
+                now,
+                interfaces,
+                &mut scratch,
+            );
+        }
         let mut wire = [0; BROADCAST_MTU];
         let length = match response {
             Response::OtherNextHop => write_relayed_path_response_wire_packet(
                 &announce,
-                0,
+                1,
                 TransportId::new([0x77; 16]),
                 &mut wire,
             )
@@ -96,9 +111,9 @@ fn a_verified_cached_response_completes_discovery_without_renewing_route_evidenc
             _ => write_path_response_announce_wire_packet(
                 &announce,
                 if matches!(response, Response::OtherHop) {
-                    1
-                } else {
                     0
+                } else {
+                    1
                 },
                 &mut wire,
             )
@@ -143,11 +158,14 @@ fn a_verified_cached_response_completes_discovery_without_renewing_route_evidenc
         let expected = match response {
             Response::KnownPath => std::vec![(
                 request_id,
-                Settlement::RequestPath(Ok(PathFound { hops: HopCount(1) }))
+                Settlement::RequestPath(Ok(PathFound { hops: HopCount(2) }))
             )],
             _ => std::vec::Vec::new(),
         };
-        assert_eq!(settlements, expected);
+        assert_eq!(
+            settlements, expected,
+            "{response:?}, unresponsive={unresponsive}"
+        );
         assert_eq!(announcements, 0);
         assert_eq!(engine.routing_table.path_row(&destination).unwrap(), before);
     }

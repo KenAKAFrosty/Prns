@@ -72,6 +72,7 @@ def validation_command(suites: tuple[str, ...]) -> tuple[str, ...]:
 # Ownership and commands stay in the validation registry. CI contract tests bind
 # these groups to required jobs, so a new suite cannot silently remain local-only.
 REUSABLE_SUITE_GROUPS = frozenset({
+    "group-communication",
     "named-identities", "standalone-libraries", "native-storage",
     "native-bindings",
 })
@@ -171,6 +172,9 @@ def plan_for_paths(paths: set[str]) -> PrePushPlan:
                 "prns-flash-manifest/",
                 "prns-nrf-dfu/",
                 "prns-nrf-dfu-wasm/",
+                "prns-contact-card/",
+                "prns-lxmf/",
+                "prns-storage/",
             ),
         )
     )
@@ -576,9 +580,7 @@ def plan_for_paths(paths: set[str]) -> PrePushPlan:
 
     # Audit the first-party workspace registry, not archived upstream lockfiles.
     # Registered test workspaces can live inside an otherwise vendored subtree.
-    registry = tomllib.loads(
-        (ROOT / "validation/manifest.toml").read_text(encoding="utf-8")
-    )["registry"]
+    registry = validation_manifest["registry"]
     registered_locks = {
         (Path(workspace) / "Cargo.lock").as_posix()
         for workspace in registry["cargo_lock_workspaces"]

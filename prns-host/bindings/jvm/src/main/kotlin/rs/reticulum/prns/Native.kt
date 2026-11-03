@@ -68,7 +68,7 @@ internal class NativeContractInfo : Structure() {
     "retainedEventBytes",
     "diagnostics",
 )
-internal open class NativeLimits : Structure() {
+internal open class RedbLimits : Structure() {
     @JvmField
     var structSize: SizeT = SizeT()
 
@@ -84,7 +84,7 @@ internal open class NativeLimits : Structure() {
     @JvmField
     var diagnostics: SizeT = SizeT()
 
-    class ByValue : NativeLimits(), Structure.ByValue
+    class ByValue : RedbLimits(), Structure.ByValue
 }
 
 @Structure.FieldOrder("structSize", "kind", "secret", "path")
@@ -219,7 +219,7 @@ internal class NativeHostOptions : Structure() {
     var requiredProductVersion: NativeStringView.ByValue = NativeStringView.ByValue()
 
     @JvmField
-    var limits: NativeLimits.ByValue = NativeLimits.ByValue()
+    var limits: RedbLimits.ByValue = RedbLimits.ByValue()
 
     @JvmField
     var role: Int = 0
@@ -267,7 +267,7 @@ internal class NativeCommandResult : Structure() {
     var detail: NativeStringView.ByValue = NativeStringView.ByValue()
 }
 
-internal interface PrnsNative : Library {
+internal interface PrnsServiceRuntime : Library {
     fun prns_contract_info(info: NativeContractInfo): Int
     fun prns_host_create(options: NativeHostOptions, host: PointerByReference): Int
     fun prns_host_release(host: Pointer)
@@ -509,11 +509,11 @@ internal interface PrnsNative : Library {
 }
 
 internal object NativeApi {
-    val library: PrnsNative by lazy {
+    val library: PrnsServiceRuntime by lazy {
         val path = System.getProperty("personal.rns.library")
             ?: System.getenv("PRNS_HOST_LIBRARY")
             ?: "prns_host"
-        Native.load(path, PrnsNative::class.java)
+        Native.load(path, PrnsServiceRuntime::class.java)
     }
 }
 
@@ -731,7 +731,7 @@ internal class NativeArena : AutoCloseable {
         result.requiredAbi = HostContract.ABI
         result.requiredSchemaVersion = HostContract.SCHEMA_VERSION
         result.requiredProductVersion = string(HostContract.PRODUCT_VERSION)
-        result.limits = NativeLimits.ByValue().also {
+        result.limits = RedbLimits.ByValue().also {
             it.structSize = SizeT(it.size().toLong())
             it.pendingCommands = SizeT(value.limits.pendingCommands)
             it.applicationEvents = SizeT(value.limits.applicationEvents)

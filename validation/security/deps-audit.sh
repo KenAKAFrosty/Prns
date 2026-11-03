@@ -15,6 +15,7 @@ fi
 python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
+
     "identity-keys-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu"
     "identity-keys-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin"
     "identity-catalog-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu|catalog"
@@ -55,6 +56,15 @@ graphs=(
     "flasher-linux-x64|personal-hopspot/flasher/Cargo.toml|x86_64-unknown-linux-gnu"
     "flasher-linux-arm64|personal-hopspot/flasher/Cargo.toml|aarch64-unknown-linux-gnu"
     "flasher-windows-x64|personal-hopspot/flasher/Cargo.toml|x86_64-pc-windows-msvc"
+    "host-runtime-connections-linux|prns-host/impls/runtime/Cargo.toml|x86_64-unknown-linux-gnu|connections"
+    "host-connections-linux|prns-host/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu|connections"
+    "host-connections-macos|prns-host/bindings/uniffi/image/Cargo.toml|aarch64-apple-darwin|connections"
+    "host-connections-android|prns-host/bindings/uniffi/image/Cargo.toml|aarch64-linux-android|connections"
+    "host-connections-ios|prns-host/bindings/uniffi/image/Cargo.toml|aarch64-apple-ios|connections"
+    "host-runtime-linux|prns-host/impls/runtime/Cargo.toml|x86_64-unknown-linux-gnu"
+    "expo-host-linux|prns-host/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu"
+    "expo-android|prns-host/bindings/uniffi/image/Cargo.toml|aarch64-linux-android"
+    "expo-ios|prns-host/bindings/uniffi/image/Cargo.toml|aarch64-apple-ios"
 )
 
 for graph in "${graphs[@]}"; do

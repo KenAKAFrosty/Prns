@@ -359,6 +359,7 @@ pub struct Sx126x<SPI, BUSY, DIO1, RST, DLY> {
     dio1: DIO1,
     reset: RST,
     delay: DLY,
+    reset_complete: bool,
     config: BoardConfig,
     radio_activity_control: &'static RadioActivityControl,
     freq_hz: u32,
@@ -391,6 +392,7 @@ where
             dio1,
             reset,
             delay,
+            reset_complete: false,
             config,
             radio_activity_control: &RadioActivityControl::None,
             freq_hz: 915_000_000,
@@ -428,12 +430,16 @@ where
     }
 
     async fn hard_reset(&mut self) -> Result<(), Error> {
+        // Invalidate before yielding so a failed or cancelled reset is retried by idle.
+        self.reset_complete = false;
         self.delay.delay_ms(10).await;
         self.reset.set_low().map_err(|_| Error::Reset)?;
         self.delay.delay_ms(20).await;
         self.reset.set_high().map_err(|_| Error::Reset)?;
         self.delay.delay_ms(10).await;
-        self.wait_busy().await
+        self.wait_busy().await?;
+        self.reset_complete = true;
+        Ok(())
     }
 
     async fn command(&mut self, bytes: &[u8]) -> Result<(), Error> {
@@ -917,9 +923,11 @@ where
         &mut self,
         profile: LoRaProfile,
     ) -> Result<(), BandRadioError<Self::Error>> {
+        #[cfg(not(feature = "lora-2g4"))]
+        let LoRaProfile::SubG(profile) = profile;
+        #[cfg(feature = "lora-2g4")]
         let profile = match profile {
             LoRaProfile::SubG(profile) => profile,
-            #[cfg(feature = "lora-2g4")]
             LoRaProfile::Ghz24(_) => return Err(BandRadioError::UnsupportedBand),
         };
         Sx126x::init(self, radio_config(profile).map_err(BandRadioError::Radio)?)
@@ -928,6 +936,11 @@ where
     }
 
     async fn idle(&mut self) -> Result<(), Self::Error> {
+        // Boards can hand us a radio held in reset. Release it without selecting a
+        // channel or activating RX/TX; subsequent idle calls retain configured registers.
+        if !self.reset_complete {
+            self.hard_reset().await?;
+        }
         self.standby().await
     }
 
@@ -1250,6 +1263,95 @@ mod tests {
         async fn delay_ns(&mut self, _ns: u32) {}
     }
 
+    #[derive(Default)]
+    struct ResetState {
+        high: bool,
+        transitions: Vec<bool>,
+        fail_release: bool,
+        fail_busy: bool,
+        pause_while_low: bool,
+    }
+
+    #[derive(Clone)]
+    struct ResetProbe(Rc<RefCell<ResetState>>);
+
+    impl DigErrorType for ResetProbe {
+        type Error = MockErr;
+    }
+
+    impl OutputPin for ResetProbe {
+        fn set_low(&mut self) -> Result<(), MockErr> {
+            let mut state = self.0.borrow_mut();
+            state.transitions.push(false);
+            state.high = false;
+            Ok(())
+        }
+
+        fn set_high(&mut self) -> Result<(), MockErr> {
+            let mut state = self.0.borrow_mut();
+            state.transitions.push(true);
+            if core::mem::take(&mut state.fail_release) {
+                return Err(MockErr);
+            }
+            state.high = true;
+            Ok(())
+        }
+    }
+
+    impl Wait for ResetProbe {
+        async fn wait_for_low(&mut self) -> Result<(), MockErr> {
+            let mut state = self.0.borrow_mut();
+            if !state.high || core::mem::take(&mut state.fail_busy) {
+                Err(MockErr)
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn wait_for_high(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+
+        async fn wait_for_rising_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+
+        async fn wait_for_falling_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+
+        async fn wait_for_any_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+    }
+
+    impl DelayNs for ResetProbe {
+        async fn delay_ns(&mut self, ns: u32) {
+            poll_fn(|_| {
+                if ns == 20_000_000 && self.0.borrow().pause_while_low {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(())
+                }
+            })
+            .await
+        }
+    }
+
+    fn reset_aware_radio(
+        log: Log,
+        state: Rc<RefCell<ResetState>>,
+    ) -> Sx126x<MockSpi, ResetProbe, MockWait, ResetProbe, ResetProbe> {
+        Sx126x::new(
+            MockSpi::new(log),
+            ResetProbe(state.clone()),
+            MockWait,
+            ResetProbe(state.clone()),
+            ResetProbe(state),
+            board(),
+        )
+    }
+
     type MockRadio = Sx126x<MockSpi, MockWait, MockWait, MockOut, MockDelay>;
 
     fn mock_radio() -> MockRadio {
@@ -1407,6 +1509,91 @@ mod tests {
             Ok(())
         );
         assert_eq!(*band_log.borrow(), *legacy_log.borrow());
+    }
+
+    #[test]
+    fn cold_idle_releases_reset_without_configuring_or_activating_radio() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let state = Rc::new(RefCell::new(ResetState::default()));
+        let mut radio = reset_aware_radio(log.clone(), state.clone());
+
+        assert_eq!(block_on(radio.idle()), Ok(()));
+        assert_eq!(block_on(radio.idle()), Ok(()));
+        assert_eq!(state.borrow().transitions, [false, true]);
+        assert_eq!(
+            *log.borrow(),
+            [vec![op::SET_STANDBY, 0], vec![op::SET_STANDBY, 0]]
+        );
+    }
+
+    #[test]
+    fn cold_idle_retries_reset_after_release_or_busy_failure() {
+        for fail_release in [true, false] {
+            let log: Log = Rc::new(RefCell::new(Vec::new()));
+            let state = Rc::new(RefCell::new(ResetState {
+                fail_release,
+                fail_busy: !fail_release,
+                ..ResetState::default()
+            }));
+            let mut radio = reset_aware_radio(log.clone(), state.clone());
+
+            let error = if fail_release {
+                Error::Reset
+            } else {
+                Error::Busy
+            };
+            assert_eq!(block_on(radio.idle()), Err(error));
+            assert!(log.borrow().is_empty());
+            assert_eq!(block_on(radio.idle()), Ok(()));
+            assert_eq!(state.borrow().transitions, [false, true, false, true]);
+            assert_eq!(*log.borrow(), [vec![op::SET_STANDBY, 0]]);
+        }
+    }
+
+    #[test]
+    fn idle_retries_a_cancelled_reset_even_after_prior_initialization() {
+        for initialized in [false, true] {
+            let log: Log = Rc::new(RefCell::new(Vec::new()));
+            let state = Rc::new(RefCell::new(ResetState::default()));
+            let mut radio = reset_aware_radio(log.clone(), state.clone());
+            if initialized {
+                assert_eq!(block_on(radio.initialize(US915_AUTO_LORA_PROFILE)), Ok(()));
+            }
+            log.borrow_mut().clear();
+            state.borrow_mut().transitions.clear();
+            state.borrow_mut().pause_while_low = true;
+            {
+                let mut pending = Box::pin(async {
+                    if initialized {
+                        radio.initialize(US915_AUTO_LORA_PROFILE).await
+                    } else {
+                        radio.idle().await
+                    }
+                });
+                let mut context = Context::from_waker(Waker::noop());
+                assert!(pending.as_mut().poll(&mut context).is_pending());
+            }
+            assert!(!state.borrow().high);
+            state.borrow_mut().pause_while_low = false;
+
+            assert_eq!(block_on(radio.idle()), Ok(()));
+            assert_eq!(state.borrow().transitions, [false, false, true]);
+            assert_eq!(*log.borrow(), [vec![op::SET_STANDBY, 0]]);
+        }
+    }
+
+    #[test]
+    fn configured_idle_preserves_radio_configuration_without_resetting() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let state = Rc::new(RefCell::new(ResetState::default()));
+        let mut radio = reset_aware_radio(log.clone(), state.clone());
+        assert_eq!(block_on(radio.initialize(US915_AUTO_LORA_PROFILE)), Ok(()));
+        log.borrow_mut().clear();
+        state.borrow_mut().transitions.clear();
+
+        assert_eq!(block_on(radio.idle()), Ok(()));
+        assert!(state.borrow().transitions.is_empty());
+        assert_eq!(*log.borrow(), [vec![op::SET_STANDBY, 0]]);
     }
 
     #[cfg(feature = "lora-2g4")]

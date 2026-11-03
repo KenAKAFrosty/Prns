@@ -39,26 +39,26 @@ def binding_sources(binding):
 class RuntimeOwnershipTests(unittest.TestCase):
     def test_napi_does_not_cross_the_c_capsule(self):
         dependencies = reachable_package_names(ROOT / "prns-napi" / "Cargo.toml")
-        self.assertIn("prns-host-native", dependencies)
+        self.assertIn("prns-host-runtime", dependencies)
         self.assertNotIn("prns-host-c", dependencies)
 
     def test_wasm_does_not_depend_on_the_native_host(self):
         dependencies = reachable_package_names(ROOT / "prns-wasm" / "Cargo.toml")
         self.assertIn("prns-host-cooperative", dependencies)
-        self.assertNotIn("prns-host-native", dependencies)
+        self.assertNotIn("prns-host-runtime", dependencies)
         self.assertNotIn("prns-host-c", dependencies)
 
     def test_c_capsule_owns_the_native_host(self):
         dependencies = reachable_package_names(ROOT / "prns-host" / "abi" / "c" / "Cargo.toml")
-        self.assertIn("prns-host-native", dependencies)
+        self.assertIn("prns-host-runtime", dependencies)
 
     def test_stable_sdk_bindings_enter_through_c_only(self):
         for binding in ("dotnet", "python", "go", "swift", "jvm", "julia"):
             content = "\n".join(path.read_text(errors="ignore") for path in binding_sources(binding))
             with self.subTest(binding=binding):
                 self.assertIn("prns_host_", content)
-                self.assertNotIn("prns-host-native", content)
-                self.assertNotIn("prns_host_native", content)
+                self.assertNotIn("prns-host-runtime", content)
+                self.assertNotIn("prns_host_runtime", content)
 
 
 if __name__ == "__main__":

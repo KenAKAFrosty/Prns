@@ -45,6 +45,7 @@ async fn a_commanded_announce_fans_to_every_interface_and_settles() {
         | Journaled::SelfRatchetRotated { .. }
         | Journaled::Delivered(_)
         | Journaled::AnnounceHeldDropped { .. }
+        | Journaled::PathDiscovery(_)
         | Journaled::RouteRemoved { .. }
         | Journaled::LinkEstablished(_)
         | Journaled::PeerIdentified { .. }

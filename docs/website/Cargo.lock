@@ -2964,6 +2964,7 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "dioxus-i18n",
+ "prns-core",
  "prns-flash-manifest",
  "prns-macros",
  "pulldown-cmark",

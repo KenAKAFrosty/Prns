@@ -22,7 +22,7 @@ use windows::Storage::Streams::{DataReader, DataWriter, IBuffer};
 use data_plane::WinGattLink;
 
 pub use backend::WindowsBleBackend;
-pub use data_plane::{WinGattSink, WinGattSource};
+pub use data_plane::{WinGattControl, WinGattSink, WinGattSource};
 
 #[derive(Debug)]
 pub enum WindowsBleError {

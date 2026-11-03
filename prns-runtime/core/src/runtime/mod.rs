@@ -91,8 +91,11 @@ pub use remote_control_pairing::{
     RemoteControlPairingControl, RemoteControlPairingLinkCleanupOutcome,
 };
 pub use remote_control_pairing_confirmation::{
-    RemoteControlControllerPairingConfirmation, RemoteControlPairingConfirmation,
-    RemoteControlTargetPairingConfirmation,
+    CancelRemoteControlControllerPairingControlError, RemoteControlControllerPairingCancellation,
+    RemoteControlControllerPairingConfirmation, RemoteControlControllerPairingSnapshot,
+    RemoteControlControllerPairingStatus, RemoteControlPairingConfirmation,
+    RemoteControlPairingInspection, RemoteControlPairingInspectionError,
+    RemoteControlPairingStatusInspection, RemoteControlTargetPairingConfirmation,
 };
 pub use remote_control_pairing_initiation::{
     InitiateRemoteControlControllerPairing, InitiateRemoteControlControllerPairingError,
@@ -102,10 +105,11 @@ pub use remote_control_pairing_initiation::{
 pub use remote_control_target_accesses::{
     AuthorizedRemoteControlTarget, ForgetRemoteControlTargetControlError,
     ForgetRemoteControlTargetServiceError, RemoteControlTargetAccessControl,
-    RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
-    RemoteControlTargetInventoryError, RemoteControlTargetInventoryServiceError,
-    ResolveRemoteControlTargetControlError, ResolveRemoteControlTargetServiceError,
-    ResolvedRemoteControlTarget, SetRemoteControlTargetAccessControlError,
+    RemoteControlTargetAccessPersistence, RemoteControlTargetInventory,
+    RemoteControlTargetInventoryControlError, RemoteControlTargetInventoryError,
+    RemoteControlTargetInventoryServiceError, ResolveRemoteControlTargetControlError,
+    ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget,
+    SaveRemoteControlTargetAccessError, SetRemoteControlTargetAccessControlError,
     SetRemoteControlTargetAccessServiceError,
 };
 pub use remote_control_target_connection::{

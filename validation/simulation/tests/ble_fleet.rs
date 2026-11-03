@@ -1,3 +1,4 @@
+use personal_rns::interfaces::bluetooth_auto::BleLinkParts;
 use std::error::Error;
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
@@ -178,8 +179,16 @@ impl Fleet {
         assert_eq!(self.lab.active_connection_count(), self.pairs.len());
         for (index, pair) in self.pairs.into_iter().enumerate() {
             let payload = u64::try_from(index)?.to_be_bytes();
-            let (_dialer_source, mut dialer_sink) = pair.links.0.into_data();
-            let (mut listener_source, _listener_sink) = pair.links.1.into_data();
+            let BleLinkParts {
+                source: _dialer_source,
+                sink: mut dialer_sink,
+                control: _dialer_source_control,
+            } = pair.links.0.into_parts();
+            let BleLinkParts {
+                source: mut listener_source,
+                sink: _listener_sink,
+                control: _listener_source_control,
+            } = pair.links.1.into_parts();
             dialer_sink.send_frame(&payload).await?;
             let mut received = [0; FRAME_LENGTH];
             assert_eq!(

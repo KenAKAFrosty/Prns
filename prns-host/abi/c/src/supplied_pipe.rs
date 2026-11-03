@@ -20,7 +20,7 @@ use prns_host_core::{Status as AbiStatus, SAFE_UINT_MAX};
 
 pub struct PrnsSuppliedPipe {
     #[cfg(unix)]
-    native: prns_host_native::NativeSuppliedPipe,
+    native: prns_host_runtime::HostSuppliedPipe,
     // Only the unix attach path constructs this struct and only unix code reads the field; it
     // stays unconditional so the struct's shape does not vary by platform.
     #[cfg_attr(not(unix), allow(dead_code))]
@@ -42,7 +42,7 @@ impl Drop for PrnsSuppliedPipe {
 
 pub struct PrnsSuppliedPipeOpenRequest {
     #[cfg(unix)]
-    native: prns_host_native::SuppliedPipeOpenRequest,
+    native: prns_host_runtime::SuppliedPipeOpenRequest,
 }
 
 #[no_mangle]
@@ -92,7 +92,7 @@ pub unsafe extern "C" fn prns_host_attach_supplied_pipe(
                 return status(AbiStatus::Stopped);
             };
             let supplied = match native.begin_supplied_pipe(
-                prns_host_native::SuppliedPipeConfig {
+                prns_host_runtime::SuppliedPipeConfig {
                     name,
                     respawn_delay: Duration::from_millis(respawn_delay_millis),
                     bitrate,
@@ -101,10 +101,10 @@ pub unsafe extern "C" fn prns_host_attach_supplied_pipe(
                 Some(request_signal),
             ) {
                 Ok(supplied) => supplied,
-                Err(prns_host_native::NativeSubmitError::Busy) => {
+                Err(prns_host_runtime::HostSubmitError::Busy) => {
                     return status(AbiStatus::QueueFull)
                 }
-                Err(prns_host_native::NativeSubmitError::Stopped) => {
+                Err(prns_host_runtime::HostSubmitError::Stopped) => {
                     return status(AbiStatus::Stopped)
                 }
             };
@@ -121,7 +121,7 @@ pub unsafe extern "C" fn prns_host_attach_supplied_pipe(
 
 // Called only from the unix attach path; on other targets that path compiles out.
 #[cfg_attr(not(unix), allow(dead_code))]
-fn weak_signal(readiness: &Arc<Readiness>) -> prns_host_native::ReadinessSignal {
+fn weak_signal(readiness: &Arc<Readiness>) -> prns_host_runtime::ReadinessSignal {
     let readiness = Arc::downgrade(readiness);
     Arc::new(move || {
         if let Some(readiness) = readiness.upgrade() {
@@ -190,18 +190,18 @@ pub unsafe extern "C" fn prns_supplied_pipe_next_open_request(
                 Some(Duration::from_millis(u64::from(timeout_millis)))
             };
             match supplied_pipe.native.next_request(timeout) {
-                prns_host_native::SuppliedPipeRequestWait::Request(request) => {
+                prns_host_runtime::SuppliedPipeRequestWait::Request(request) => {
                     *out = Box::into_raw(Box::new(PrnsSuppliedPipeOpenRequest { native: request }));
                     status(AbiStatus::Ok)
                 }
-                prns_host_native::SuppliedPipeRequestWait::WouldBlock => {
+                prns_host_runtime::SuppliedPipeRequestWait::WouldBlock => {
                     status(AbiStatus::WouldBlock)
                 }
-                prns_host_native::SuppliedPipeRequestWait::TimedOut => status(AbiStatus::TimedOut),
-                prns_host_native::SuppliedPipeRequestWait::Interrupted => {
+                prns_host_runtime::SuppliedPipeRequestWait::TimedOut => status(AbiStatus::TimedOut),
+                prns_host_runtime::SuppliedPipeRequestWait::Interrupted => {
                     status(AbiStatus::Interrupted)
                 }
-                prns_host_native::SuppliedPipeRequestWait::Stopped => status(AbiStatus::Stopped),
+                prns_host_runtime::SuppliedPipeRequestWait::Stopped => status(AbiStatus::Stopped),
             }
         }
     })
@@ -228,10 +228,11 @@ pub unsafe extern "C" fn prns_supplied_pipe_register_readiness(
             return status(AbiStatus::InvalidArgument);
         };
         let readiness = Arc::clone(&supplied_pipe.request_readiness);
-        let registered = match readiness.register(callback, context) {
-            Ok(registered) => registered,
-            Err(_) => return status(AbiStatus::AlreadyClaimed),
-        };
+        let registered =
+            match readiness.register(crate::readiness::callback_signal(callback, context)) {
+                Ok(registered) => registered,
+                Err(_) => return status(AbiStatus::AlreadyClaimed),
+            };
         *lock(&supplied_pipe.readiness_registration) = Some(Arc::clone(&registered));
         *out = Box::into_raw(Box::new(PrnsReadinessRegistration {
             readiness,
@@ -372,7 +373,7 @@ mod tests {
     use crate::{
         prns_command_release, prns_command_wait, prns_readiness_registration_release,
         AbiBitrateKind, AbiCommandOutcomeKind, CoreLimits, HostConfig, HostRole, IdentityConfig,
-        NativeHost, PersistenceConfig, PrnsCommandResult,
+        HostRuntime, PersistenceConfig, PrnsCommandResult,
     };
 
     unsafe extern "C" fn count_readiness(context: *mut c_void) {
@@ -383,7 +384,7 @@ mod tests {
 
     fn native_host() -> Result<crate::PrnsHost, String> {
         let (host, publisher) = crate::host_capsule(CoreLimits::balanced());
-        let native = NativeHost::start(
+        let native = HostRuntime::start(
             HostConfig {
                 identity: IdentityConfig::GenerateEphemeral,
                 persistence: PersistenceConfig::Ephemeral,

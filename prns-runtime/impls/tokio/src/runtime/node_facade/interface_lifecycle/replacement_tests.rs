@@ -157,3 +157,228 @@ fn retirement_only_removes_its_own_reported_registration() {
     StatusRegistration::new(1, Some(&view)).retire(&interfaces, id, None);
     assert!(interfaces.lock().unwrap().is_empty());
 }
+
+struct Dropped(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl Drop for Dropped {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[tokio::test]
+async fn acknowledged_supervisor_retirement_drops_queued_members_before_the_manifold_barrier() {
+    use super::{DriverMsg, InterfaceDetachError};
+    use crate::manifold::driver::HostCommand;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let supervisor = InterfaceId::new([0x76; 8]);
+    let child = InterfaceId::new([0x77; 8]);
+    let (messages, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (commands, mut command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let interfaces = Arc::new(Mutex::new(HashMap::new()));
+    let parent_dropped = Arc::new(AtomicBool::new(false));
+    let child_dropped = Arc::new(AtomicBool::new(false));
+    let parent_guard = Dropped(parent_dropped.clone());
+    messages
+        .send(DriverMsg::Add {
+            id: supervisor,
+            supervisor: None,
+            registration: StatusRegistration::Unreported,
+            build: Box::new(move || {
+                Box::pin(async move {
+                    let _guard = parent_guard;
+                    std::future::pending::<()>().await
+                })
+            }),
+        })
+        .unwrap_or_else(|_| panic!("parent admitted"));
+    let (reply, retired) = tokio::sync::oneshot::channel::<Result<(), InterfaceDetachError>>();
+    messages
+        .send(DriverMsg::StopAndWait {
+            id: supervisor,
+            reply,
+        })
+        .unwrap_or_else(|_| panic!("stop admitted"));
+    // A final member queued after the stop must never begin run(), and its
+    // resources still have to be released before retirement is confirmed.
+    let child_guard = Dropped(child_dropped.clone());
+    messages
+        .send(DriverMsg::Add {
+            id: child,
+            supervisor: Some(supervisor),
+            registration: StatusRegistration::Unreported,
+            build: Box::new(move || {
+                Box::pin(async move {
+                    let _guard = child_guard;
+                    std::future::pending::<()>().await
+                })
+            }),
+        })
+        .unwrap_or_else(|_| panic!("member admitted"));
+    tokio::join!(
+        drive_interfaces(std::vec![], receiver, commands, interfaces.clone()),
+        async {
+            let mut removed = std::collections::HashSet::new();
+            while let Some(command) = command_receiver.recv().await {
+                match command {
+                    HostCommand::RemoveInterface { id, .. } => {
+                        removed.insert(id);
+                    }
+                    HostCommand::InterfaceLifecycleBarrier { reply } => {
+                        assert!(parent_dropped.load(Ordering::Acquire));
+                        assert!(child_dropped.load(Ordering::Acquire));
+                        assert!(removed.contains(&child));
+                        reply.send(()).expect("waiter remains");
+                        break;
+                    }
+                    _ => panic!("unexpected command"),
+                }
+            }
+            assert_eq!(retired.await, Ok(Ok(())));
+            drop(messages);
+        }
+    );
+}
+
+#[tokio::test]
+async fn acknowledged_retirement_drains_members_stopped_by_natural_parent_completion() {
+    use super::{complete_interface, retire_driver_interface, DriverInbox, RunningInterface};
+    use futures_util::stream::FuturesUnordered;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let parent = InterfaceId::new([0x78; 8]);
+    let child = InterfaceId::new([0x79; 8]);
+    let dropped = Arc::new(AtomicBool::new(false));
+    let owned = Dropped(dropped.clone());
+    let (parent_stop, _parent_stopped) = tokio::sync::oneshot::channel();
+    let (child_stop, child_stopped) = tokio::sync::oneshot::channel();
+    let mut futures: FuturesUnordered<Pin<Box<dyn Future<Output = Option<InterfaceId>>>>> =
+        FuturesUnordered::new();
+    futures.push(Box::pin(async move {
+        let _owned = owned;
+        let _ = child_stopped.await;
+        Some(child)
+    }));
+    let mut stops = HashMap::from([
+        (
+            parent,
+            RunningInterface {
+                stop: Some(parent_stop),
+                registration: StatusRegistration::Unreported,
+            },
+        ),
+        (
+            child,
+            RunningInterface {
+                stop: Some(child_stop),
+                registration: StatusRegistration::Unreported,
+            },
+        ),
+    ]);
+    let mut parents = HashMap::from([(child, parent)]);
+    let interfaces = Arc::new(Mutex::new(HashMap::new()));
+    let (commands, _command_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (_messages, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let mut inbox = DriverInbox::new(receiver);
+
+    // The parent's run future has naturally ended. Its children have received
+    // stop, but their futures have not been polled again to release resources.
+    complete_interface(&mut stops, &mut parents, &interfaces, &commands, parent);
+    assert!(!dropped.load(Ordering::Acquire));
+
+    // An explicit detach can arrive before the driver's next completion poll.
+    // It must still find and drain those stopped children before its barrier.
+    retire_driver_interface(
+        &mut futures,
+        &mut stops,
+        &mut parents,
+        &interfaces,
+        &commands,
+        &mut inbox,
+        parent,
+    )
+    .await;
+    assert!(dropped.load(Ordering::Acquire));
+    assert!(futures.is_empty());
+    assert!(stops.is_empty());
+    assert!(parents.is_empty());
+}
+
+async fn assert_queued_retirement_keeps_replacement_lane(acknowledged: bool) {
+    use super::super::PrnsNodeHandle;
+    use crate::manifold::driver::HostCommand;
+
+    let supervisor = InterfaceId::new([0x7a; 8]);
+    let (fleet, mut tail) = Fleet::detached(supervisor);
+    let original = PendingInterface(StatusInterface::new(b"queued-manifold-replacement"));
+    let member_id = original.0.id();
+    let original = fleet.add(original);
+    let mut driver = pin!(drive_interfaces(
+        std::vec![],
+        tail._iface_build,
+        fleet.commands.clone(),
+        fleet.interfaces.clone(),
+    ));
+    assert_eq!(
+        poll_fn(|context| Poll::Ready(driver.as_mut().poll(context))).await,
+        Poll::Pending
+    );
+
+    let mut handle = PrnsNodeHandle::over(fleet.commands.clone());
+    handle.iface_build = fleet.iface_build.clone();
+    let mut retirement = pin!(handle.remove_interface_and_wait(member_id));
+    if acknowledged {
+        assert_eq!(
+            poll_fn(|context| Poll::Ready(retirement.as_mut().poll(context))).await,
+            Poll::Pending
+        );
+    } else {
+        original.teardown();
+    }
+    // Like a reconnecting supervisor, publish the same wire identity's new
+    // manifold lane before the driver has consumed its old run's stop message.
+    let _replacement = fleet.add(PendingInterface(StatusInterface::new(
+        b"queued-manifold-replacement",
+    )));
+    assert_eq!(
+        poll_fn(|context| Poll::Ready(driver.as_mut().poll(context))).await,
+        Poll::Pending
+    );
+    let mut mutations = std::vec::Vec::new();
+    while let Ok(command) = tail._commands.try_recv() {
+        match command {
+            HostCommand::AddInterface(add) if add.descriptor.id == member_id => {
+                mutations.push("attach");
+            }
+            HostCommand::RemoveInterface { id, .. } if id == member_id => {
+                mutations.push("remove");
+            }
+            HostCommand::InterfaceLifecycleBarrier { reply } => {
+                reply.send(()).expect("driver waits for the manifold");
+            }
+            _ => panic!("unexpected manifold command"),
+        }
+    }
+    assert_eq!(mutations, ["attach", "remove", "attach"]);
+    assert_eq!(
+        poll_fn(|context| Poll::Ready(driver.as_mut().poll(context))).await,
+        Poll::Pending
+    );
+    assert!(tail._commands.try_recv().is_err());
+    if acknowledged {
+        assert_eq!(
+            poll_fn(|context| Poll::Ready(retirement.as_mut().poll(context))).await,
+            Poll::Ready(Ok(()))
+        );
+    }
+}
+
+#[tokio::test]
+async fn queued_normal_retirement_keeps_the_replacement_manifold_lane() {
+    assert_queued_retirement_keeps_replacement_lane(false).await;
+}
+
+#[tokio::test]
+async fn queued_acknowledged_retirement_keeps_the_replacement_manifold_lane() {
+    assert_queued_retirement_keeps_replacement_lane(true).await;
+}

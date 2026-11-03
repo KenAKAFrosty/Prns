@@ -61,11 +61,25 @@ impl<S: StorageLayout> EngineState<S> {
                     #[cfg(feature = "runtime-metrics")]
                     self.path_request_relay_counts
                         .record(PathRequestRelayOutcome::RateLimited);
+                    #[cfg(feature = "path-diagnostics")]
+                    trace_request_egress(
+                        &request,
+                        now,
+                        descriptor.id,
+                        crate::engine::PathRequestEgress::RateLimited,
+                        sink,
+                    );
                     continue;
                 }
+                #[cfg(feature = "path-diagnostics")]
+                let mut dispatched = false;
                 match audience {
                     RelayAudience::OnlineNetworkInterfaces | RelayAudience::BoundaryAndGateway => {
                         let mut record_egress = || {
+                            #[cfg(feature = "path-diagnostics")]
+                            {
+                                dispatched = true;
+                            }
                             self.egress_path_request_limits
                                 .record_egress(descriptor.id, now);
                             #[cfg(feature = "runtime-metrics")]
@@ -79,6 +93,10 @@ impl<S: StorageLayout> EngineState<S> {
                         }));
                     }
                     RelayAudience::AllNetworkInterfaces => {
+                        #[cfg(feature = "path-diagnostics")]
+                        {
+                            dispatched = true;
+                        }
                         self.egress_path_request_limits
                             .record_egress(descriptor.id, now);
                         #[cfg(feature = "runtime-metrics")]
@@ -90,6 +108,10 @@ impl<S: StorageLayout> EngineState<S> {
                         }));
                     }
                     RelayAudience::LocalClients => {
+                        #[cfg(feature = "path-diagnostics")]
+                        {
+                            dispatched = true;
+                        }
                         #[cfg(feature = "runtime-metrics")]
                         self.path_request_relay_counts
                             .record(PathRequestRelayOutcome::Sent);
@@ -99,6 +121,18 @@ impl<S: StorageLayout> EngineState<S> {
                         }))
                     }
                 }
+                #[cfg(feature = "path-diagnostics")]
+                trace_request_egress(
+                    &request,
+                    now,
+                    descriptor.id,
+                    if dispatched {
+                        crate::engine::PathRequestEgress::Dispatched
+                    } else {
+                        crate::engine::PathRequestEgress::Offline
+                    },
+                    sink,
+                );
             }
         }
     }
@@ -148,4 +182,24 @@ impl<S: StorageLayout> EngineState<S> {
             }));
         }
     }
+}
+
+#[cfg(feature = "path-diagnostics")]
+fn trace_request_egress<Work>(
+    request: &RelayPathRequest<'_>,
+    now: InstantMillis,
+    interface: InterfaceId,
+    outcome: crate::engine::PathRequestEgress,
+    sink: &mut impl FnMut(EngineReaction<'_, Work>),
+) {
+    let mut event = crate::engine::PathDiscoveryEvent::new(
+        Some(now),
+        Some(request.destination),
+        Some(interface),
+        crate::engine::PathDiscoveryPhase::RequestEgress(outcome),
+    );
+    event.request_tag = Some(*request.id);
+    sink(EngineReaction::Journaled(
+        crate::engine::Journaled::PathDiscovery(event),
+    ));
 }

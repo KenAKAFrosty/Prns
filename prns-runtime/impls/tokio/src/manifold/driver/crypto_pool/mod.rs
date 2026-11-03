@@ -1719,6 +1719,8 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
         CryptoJob::SignProof(job) => {
             let signature = ed25519_sign(&job.signing_secret, job.packet_hash.as_bytes());
             CryptoResult::ProofSigned(ProofSignCompleted {
+                destination: job.destination,
+                destination_generation: job.destination_generation,
                 target: job.target,
                 packet_hash: job.packet_hash,
                 signature,

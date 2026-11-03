@@ -357,7 +357,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
                 "Path(os.environ['CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n"
             )
             fake_python.chmod(0o755)
-            for name in ("named-identities", "standalone-libraries"):
+            for name in ("named-identities", "standalone-libraries", "host-runtime"):
                 job = jobs[name]
                 self.assertNotRegex(job, r"(?m)^    (?:needs|if):")
                 self.assertNotIn("continue-on-error", job)
@@ -397,9 +397,10 @@ class WorkflowSchedulingTests(unittest.TestCase):
                         flags, suites = arguments[2:-2:2], arguments[3:-2:2]
                         self.assertTrue(flags and set(flags) == {"--suite"})
                         for suite_id in suites:
-                            self.assertIn(suite_id, expected)
-                            self.assertIn(expected[suite_id]["platform"], {"any", platform})
-                            scheduled.setdefault(suite_id, set()).add(platform)
+                            registered = next(suite for suite in manifest["suite"] if suite["id"] == suite_id)
+                            self.assertIn(registered["platform"], {"any", platform})
+                            if suite_id in expected:
+                                scheduled.setdefault(suite_id, set()).add(platform)
         self.assertEqual(set(scheduled), set(expected))
         self.assertEqual(scheduled["identity-key-bindings"], {"linux", "macos"})
         self.assertEqual(scheduled["identity-key-bindings-swift"], {"macos"})
@@ -443,6 +444,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
                         capture_output=True, text=True,
                     )
                     self.assertEqual(result.returncode, expected, result.stderr)
+
 
     def needs(self, block: str) -> set[str]:
         match = re.search(r"(?m)^    needs: (.+)$", block)

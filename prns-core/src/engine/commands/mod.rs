@@ -413,7 +413,10 @@ pub trait Settleable {
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    // Keep command admission shared across execution sinks. Inlining this dispatch into
+    // each sink expands the configured Nordic image beyond its reserved FLASH region.
     #[must_use]
+    #[inline(never)]
     pub fn ingest_command(
         &mut self,
         issued: IssuedCommand,

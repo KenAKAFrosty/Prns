@@ -23,6 +23,16 @@ impl InterfaceId {
         InterfaceKind::from_u8(self.0[0])
     }
 
+    /// Local administrative retirement covers a supervisor's stored children even when
+    /// those children are absent from the currently attached descriptor roster.
+    pub(crate) fn administrative_scope_contains(self, candidate: Self) -> bool {
+        self == candidate
+            || self
+                .kind()
+                .and_then(InterfaceKind::member_kind)
+                .is_some_and(|member| candidate.kind() == Some(member))
+    }
+
     /// The caller must not assign the same `channel_tag` to concurrent channels of the same kind.
     #[must_use]
     pub fn from_channel_tag(kind: InterfaceKind, channel_tag: &[u8]) -> Self {

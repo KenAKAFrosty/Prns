@@ -1,7 +1,8 @@
 use prns_core::interfaces::lora::LORA_MAX_PAYLOAD;
 
 const PACKET_LENGTH_BYTES: usize = size_of::<u16>();
-const MAX_RECORD_BYTES: usize = PACKET_LENGTH_BYTES + LORA_MAX_PAYLOAD;
+const HEADER_BYTES: usize = PACKET_LENGTH_BYTES + size_of::<u64>();
+const MAX_RECORD_BYTES: usize = HEADER_BYTES + LORA_MAX_PAYLOAD;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum TransmitQueueError {
@@ -32,11 +33,20 @@ impl<'a> TransmitQueue<'a> {
         self.storage.len().saturating_sub(self.used) >= MAX_RECORD_BYTES
     }
 
+    #[cfg(test)]
     pub(super) fn push(&mut self, packet: &[u8]) -> Result<(), TransmitQueueError> {
+        self.push_at(packet, 0)
+    }
+
+    pub(super) fn push_at(
+        &mut self,
+        packet: &[u8],
+        enqueued_at_ms: u64,
+    ) -> Result<(), TransmitQueueError> {
         if packet.len() > LORA_MAX_PAYLOAD {
             return Err(TransmitQueueError::PacketTooLarge);
         }
-        let record_bytes = PACKET_LENGTH_BYTES + packet.len();
+        let record_bytes = HEADER_BYTES + packet.len();
         if record_bytes > self.storage.len().saturating_sub(self.used) {
             return Err(TransmitQueueError::Full);
         }
@@ -49,10 +59,61 @@ impl<'a> TransmitQueue<'a> {
         Self::copy_into_ring(
             self.storage,
             (write + PACKET_LENGTH_BYTES) % self.storage.len(),
+            &enqueued_at_ms.to_le_bytes(),
+        );
+        Self::copy_into_ring(
+            self.storage,
+            (write + HEADER_BYTES) % self.storage.len(),
             packet,
         );
         self.used += record_bytes;
         Ok(())
+    }
+
+    pub(super) const fn used_bytes(&self) -> usize {
+        self.used
+    }
+
+    /// Diagnostic prefix only; never dequeues or refreshes the stored age.
+    pub(super) fn front_prefix(&self, output: &mut [u8]) -> Option<(usize, usize)> {
+        if self.is_empty() {
+            return None;
+        }
+        let mut length = [0; PACKET_LENGTH_BYTES];
+        Self::copy_from_ring(self.storage, self.head, &mut length);
+        let length = usize::from(u16::from_le_bytes(length));
+        let copied = length.min(output.len());
+        Self::copy_from_ring(
+            self.storage,
+            (self.head + HEADER_BYTES) % self.storage.len(),
+            &mut output[..copied],
+        );
+        Some((length, copied))
+    }
+
+    pub(super) fn front_enqueued_at(&self) -> Option<u64> {
+        if self.is_empty() {
+            return None;
+        }
+        let mut bytes = [0; 8];
+        Self::copy_from_ring(
+            self.storage,
+            (self.head + PACKET_LENGTH_BYTES) % self.storage.len(),
+            &mut bytes,
+        );
+        Some(u64::from_le_bytes(bytes))
+    }
+
+    pub(super) fn discard_front(&mut self) {
+        if self.is_empty() {
+            return;
+        }
+        let mut bytes = [0; PACKET_LENGTH_BYTES];
+        Self::copy_from_ring(self.storage, self.head, &mut bytes);
+        let record_bytes = HEADER_BYTES + usize::from(u16::from_le_bytes(bytes));
+        assert!(record_bytes <= self.used);
+        self.head = (self.head + record_bytes) % self.storage.len();
+        self.used -= record_bytes;
     }
 
     pub(super) fn pop(&mut self, packet: &mut [u8; LORA_MAX_PAYLOAD]) -> Option<usize> {
@@ -63,12 +124,12 @@ impl<'a> TransmitQueue<'a> {
         let mut encoded_length = [0u8; PACKET_LENGTH_BYTES];
         Self::copy_from_ring(self.storage, self.head, &mut encoded_length);
         let packet_length = usize::from(u16::from_le_bytes(encoded_length));
-        let record_bytes = PACKET_LENGTH_BYTES + packet_length;
+        let record_bytes = HEADER_BYTES + packet_length;
         assert!(packet_length <= LORA_MAX_PAYLOAD);
         assert!(record_bytes <= self.used);
         Self::copy_from_ring(
             self.storage,
-            (self.head + PACKET_LENGTH_BYTES) % self.storage.len(),
+            (self.head + HEADER_BYTES) % self.storage.len(),
             &mut packet[..packet_length],
         );
         self.head = (self.head + record_bytes) % self.storage.len();
@@ -142,19 +203,25 @@ mod tests {
     fn packet_and_length_prefix_wrap_across_the_storage_end() {
         let mut storage = storage();
         let mut queue = TransmitQueue::new(&mut storage);
-        for value in 0..12 {
+        for value in 0..11 {
             queue.push(&packet(LORA_MAX_PAYLOAD, value)).unwrap();
         }
-        queue.push(&packet(21, 12)).unwrap();
+        queue.push(&packet(435, 11)).unwrap();
 
         let mut output = [0; LORA_MAX_PAYLOAD];
-        for _ in 0..13 {
+        for _ in 0..12 {
             queue.pop(&mut output).unwrap();
         }
         assert_eq!(queue.head, LORA_TX_QUEUE_BYTES - 1);
 
         let wrapped = packet(508, 0xA5);
-        queue.push(&wrapped).unwrap();
+        queue.push_at(&wrapped, u64::MAX - 1).unwrap();
+        assert_eq!(queue.front_enqueued_at(), Some(u64::MAX - 1));
+        let mut prefix = [0; 102];
+        assert_eq!(queue.front_prefix(&mut prefix), Some((508, 102)));
+        assert_eq!(prefix, [0xA5; 102]);
+        assert_eq!(queue.used_bytes(), 518);
+        assert_eq!(queue.front_enqueued_at(), Some(u64::MAX - 1));
         assert_eq!(queue.storage[LORA_TX_QUEUE_BYTES - 1], 0xFC);
         assert_eq!(queue.storage[0], 0x01);
         let length = queue.pop(&mut output).unwrap();
@@ -165,10 +232,10 @@ mod tests {
     fn exact_capacity_is_usable_and_one_more_record_is_rejected_without_mutation() {
         let mut storage = storage();
         let mut queue = TransmitQueue::new(&mut storage);
-        for value in 0..12 {
+        for value in 0..11 {
             queue.push(&packet(LORA_MAX_PAYLOAD, value)).unwrap();
         }
-        queue.push(&packet(22, 12)).unwrap();
+        queue.push(&packet(436, 11)).unwrap();
         assert_eq!(queue.used, LORA_TX_QUEUE_BYTES);
         let before = queue.storage.to_vec();
         let before_head = queue.head;
@@ -185,17 +252,17 @@ mod tests {
         let mut queue = TransmitQueue::new(&mut storage);
         let mut output = [0; LORA_MAX_PAYLOAD];
 
-        for value in 0..12 {
+        for value in 0..11 {
             queue.push(&packet(LORA_MAX_PAYLOAD, value)).unwrap();
         }
         for value in 0..6 {
             let length = queue.pop(&mut output).unwrap();
             assert_eq!(&output[..length], packet(LORA_MAX_PAYLOAD, value));
         }
-        for value in 12..18 {
+        for value in 11..17 {
             queue.push(&packet(LORA_MAX_PAYLOAD, value)).unwrap();
         }
-        for value in 6..18 {
+        for value in 6..17 {
             let length = queue.pop(&mut output).unwrap();
             assert_eq!(&output[..length], packet(LORA_MAX_PAYLOAD, value));
         }
@@ -203,12 +270,12 @@ mod tests {
     }
 
     #[test]
-    fn twelve_maximum_packets_fit_but_thirteen_do_not() {
+    fn eleven_maximum_packets_fit_but_twelve_do_not() {
         let mut storage = storage();
         let mut queue = TransmitQueue::new(&mut storage);
         let maximum = [0x5A; LORA_MAX_PAYLOAD];
 
-        for _ in 0..12 {
+        for _ in 0..11 {
             queue.push(&maximum).unwrap();
         }
         assert_eq!(queue.push(&maximum), Err(TransmitQueueError::Full));
@@ -221,15 +288,15 @@ mod tests {
     }
 
     #[test]
-    fn twenty_four_250_byte_packets_fit() {
+    fn twenty_three_250_byte_packets_fit() {
         let mut storage = storage();
         let mut queue = TransmitQueue::new(&mut storage);
         let packet = [0xA5; 250];
 
-        for _ in 0..24 {
+        for _ in 0..23 {
             assert_eq!(queue.push(&packet), Ok(()));
         }
-        assert_eq!(queue.used, 24 * (PACKET_LENGTH_BYTES + packet.len()));
+        assert_eq!(queue.used, 23 * (HEADER_BYTES + packet.len()));
     }
     #[test]
     fn oversized_packet_is_rejected_without_consuming_queue_capacity() {

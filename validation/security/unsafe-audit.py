@@ -30,95 +30,94 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "audits" / "unsafe-snapshot.json"
-GRAPH_FEATURES = {
-    "storage-redb": ("redb",),
-    "identity-key-card-linux": ("contact-card",),
-    "identity-key-card-macos": ("contact-card",),
-    "identity-catalog-card-linux": ("catalog", "contact-card",),
-    "identity-catalog-card-macos": ("catalog", "contact-card",),
-    "identity-catalog-linux": ("catalog",),
-    "identity-catalog-macos": ("catalog",),
-    "identity-storage": ("redb-store",),
-}
-GRAPHS = (
-    ("identity-keys-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
-    ("identity-keys-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
-    ("identity-catalog-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
-    ("identity-catalog-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
-    ("identity-key-card-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
-    ("identity-key-card-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
-    ("identity-catalog-card-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
-    ("identity-catalog-card-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
-    ("contact-card", "prns-contact-card/Cargo.toml", "x86_64-unknown-linux-gnu"),
-    ("identity-storage", "prns-identities/Cargo.toml", "x86_64-unknown-linux-gnu"),
-
-    ("storage-redb", "prns-storage/Cargo.toml", "x86_64-unknown-linux-gnu"),
-    ("engine", "Cargo.toml", "x86_64-unknown-linux-gnu"),
-    ("host-c-linux", "prns-host/abi/c/Cargo.toml", "x86_64-unknown-linux-gnu"),
-    ("host-c-macos", "prns-host/abi/c/Cargo.toml", "aarch64-apple-darwin"),
-    ("host-c-windows", "prns-host/abi/c/Cargo.toml", "x86_64-pc-windows-msvc"),
-    ("daemon-linux", "prnsd/Cargo.toml", "x86_64-unknown-linux-gnu"),
-    ("daemon-macos", "prnsd/Cargo.toml", "aarch64-apple-darwin"),
-    ("daemon-windows", "prnsd/Cargo.toml", "x86_64-pc-windows-msvc"),
-    ("desktop-linux", "personal-hopspot/desktop/Cargo.toml", "x86_64-unknown-linux-gnu"),
-    ("desktop-macos", "personal-hopspot/desktop/Cargo.toml", "aarch64-apple-darwin"),
-    ("desktop-windows", "personal-hopspot/desktop/Cargo.toml", "x86_64-pc-windows-msvc"),
-    (
-        "halow-headless",
-        "personal-hopspot/headless/Cargo.toml",
-        "mipsel-unknown-linux-musl",
-    ),
-    (
-        "halow-appliance-manager",
-        "personal-hopspot/appliance/Cargo.toml",
-        "mipsel-unknown-linux-musl",
-    ),
-    ("android", "personal-hopspot/mobile/android/rust/Cargo.toml", "aarch64-linux-android"),
-    ("ios", "personal-hopspot/mobile/ios/rust/Cargo.toml", "aarch64-apple-ios"),
-    ("nrf52840", "personal-hopspot/embedded/nrf52840/Cargo.toml", "thumbv7em-none-eabihf"),
-    (
-        "esp32-c6",
-        "personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/Cargo.toml",
-        "riscv32imac-unknown-none-elf",
-    ),
-    (
-        "esp32-s3-heltec-e290",
-        "personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml",
-        "xtensa-esp32s3-none-elf",
-    ),
-    (
-        "esp32-s3-heltec-v3",
-        "personal-hopspot/embedded/esp32/boards/heltec-v3/Cargo.toml",
-        "xtensa-esp32s3-none-elf",
-    ),
-    (
-        "esp32-s3-xiao-esp32s3-wio-sx1262",
-        "personal-hopspot/embedded/esp32/boards/xiao-esp32s3-wio-sx1262/Cargo.toml",
-        "xtensa-esp32s3-none-elf",
-    ),
-    (
-        "esp32-s3-heltec",
-        "personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml",
-        "xtensa-esp32s3-none-elf",
-    ),
-    (
-        "esp32-s3-heltec-r8",
-        "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
-        "xtensa-esp32s3-none-elf",
-    ),
-    (
-        "esp32-s3-heltec-wireless-stick-lite-v3",
-        "personal-hopspot/embedded/esp32/boards/heltec-wireless-stick-lite-v3/Cargo.toml",
-        "xtensa-esp32s3-none-elf",
-    ),
-    (
-        "esp32-s3-tbeam",
-        "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
-        "xtensa-esp32s3-none-elf",
-    ),
-    ("wasm", "prns-wasm/Cargo.toml", "wasm32-unknown-unknown"),
-    ("nrf-dfu-browser", "prns-nrf-dfu-wasm/Cargo.toml", "wasm32-unknown-unknown"),
-)
+GRAPH_FEATURES = {'storage-redb': ('redb',),
+ 'identity-key-card-linux': ('contact-card',),
+ 'identity-key-card-macos': ('contact-card',),
+ 'identity-catalog-card-linux': ('catalog', 'contact-card'),
+ 'identity-catalog-card-macos': ('catalog', 'contact-card'),
+ 'identity-catalog-linux': ('catalog',),
+ 'identity-catalog-macos': ('catalog',),
+ 'identity-storage': ('redb-store',),
+ 'host-connections-android': ('connections',),
+ 'host-connections-ios': ('connections',),
+ 'host-connections-linux': ('connections',),
+ 'host-connections-macos': ('connections',),
+ 'host-runtime-connections-linux': ('connections',)}
+GRAPHS = (('engine', 'Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('host-c-linux', 'prns-host/abi/c/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('host-c-macos', 'prns-host/abi/c/Cargo.toml', 'aarch64-apple-darwin'),
+ ('host-c-windows', 'prns-host/abi/c/Cargo.toml', 'x86_64-pc-windows-msvc'),
+ ('daemon-linux', 'prnsd/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('daemon-macos', 'prnsd/Cargo.toml', 'aarch64-apple-darwin'),
+ ('daemon-windows', 'prnsd/Cargo.toml', 'x86_64-pc-windows-msvc'),
+ ('desktop-linux', 'personal-hopspot/desktop/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('desktop-macos', 'personal-hopspot/desktop/Cargo.toml', 'aarch64-apple-darwin'),
+ ('desktop-windows', 'personal-hopspot/desktop/Cargo.toml', 'x86_64-pc-windows-msvc'),
+ ('halow-headless', 'personal-hopspot/headless/Cargo.toml', 'mipsel-unknown-linux-musl'),
+ ('halow-appliance-manager', 'personal-hopspot/appliance/Cargo.toml', 'mipsel-unknown-linux-musl'),
+ ('android', 'personal-hopspot/mobile/android/rust/Cargo.toml', 'aarch64-linux-android'),
+ ('ios', 'personal-hopspot/mobile/ios/rust/Cargo.toml', 'aarch64-apple-ios'),
+ ('nrf52840', 'personal-hopspot/embedded/nrf52840/Cargo.toml', 'thumbv7em-none-eabihf'),
+ ('esp32-c6',
+  'personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/Cargo.toml',
+  'riscv32imac-unknown-none-elf'),
+ ('esp32-s3-heltec-e290',
+  'personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml',
+  'xtensa-esp32s3-none-elf'),
+ ('esp32-s3-heltec-v3',
+  'personal-hopspot/embedded/esp32/boards/heltec-v3/Cargo.toml',
+  'xtensa-esp32s3-none-elf'),
+ ('esp32-s3-xiao-esp32s3-wio-sx1262',
+  'personal-hopspot/embedded/esp32/boards/xiao-esp32s3-wio-sx1262/Cargo.toml',
+  'xtensa-esp32s3-none-elf'),
+ ('esp32-s3-heltec',
+  'personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml',
+  'xtensa-esp32s3-none-elf'),
+ ('esp32-s3-heltec-r8',
+  'personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml',
+  'xtensa-esp32s3-none-elf'),
+ ('esp32-s3-heltec-wireless-stick-lite-v3',
+  'personal-hopspot/embedded/esp32/boards/heltec-wireless-stick-lite-v3/Cargo.toml',
+  'xtensa-esp32s3-none-elf'),
+ ('esp32-s3-tbeam',
+  'personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml',
+  'xtensa-esp32s3-none-elf'),
+ ('wasm', 'prns-wasm/Cargo.toml', 'wasm32-unknown-unknown'),
+ ('nrf-dfu-browser', 'prns-nrf-dfu-wasm/Cargo.toml', 'wasm32-unknown-unknown'),
+ ('identity-keys-linux', 'prns-identities/bindings/uniffi/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('identity-keys-macos', 'prns-identities/bindings/uniffi/Cargo.toml', 'aarch64-apple-darwin'),
+ ('identity-catalog-linux',
+  'prns-identities/bindings/uniffi/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('identity-catalog-macos', 'prns-identities/bindings/uniffi/Cargo.toml', 'aarch64-apple-darwin'),
+ ('identity-key-card-linux',
+  'prns-identities/bindings/uniffi/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('identity-key-card-macos', 'prns-identities/bindings/uniffi/Cargo.toml', 'aarch64-apple-darwin'),
+ ('identity-catalog-card-linux',
+  'prns-identities/bindings/uniffi/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('identity-catalog-card-macos',
+  'prns-identities/bindings/uniffi/Cargo.toml',
+  'aarch64-apple-darwin'),
+ ('contact-card', 'prns-contact-card/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('identity-storage', 'prns-identities/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('storage-redb', 'prns-storage/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('host-runtime-connections-linux',
+  'prns-host/impls/runtime/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('host-connections-linux',
+  'prns-host/bindings/uniffi/image/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('host-connections-macos', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-darwin'),
+ ('host-connections-android',
+  'prns-host/bindings/uniffi/image/Cargo.toml',
+  'aarch64-linux-android'),
+ ('host-connections-ios', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-ios'),
+ ('host-runtime-linux', 'prns-host/impls/runtime/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('expo-host-linux', 'prns-host/bindings/uniffi/image/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('expo-android', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-linux-android'),
+ ('expo-ios', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-ios'))
 UNSAFE_EXCEPTIONS = {
     "prns-core",
     "prns-ffi",
@@ -147,7 +146,7 @@ def run_metadata(manifest: str, target: str, features: tuple[str, ...] = ()) -> 
         str(ROOT / manifest),
     ]
     if features:
-        command.extend(["--features", ",".join(features)])
+        command.extend(("--features", ",".join(features)))
     process = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
     if process.returncode:
         sys.stderr.write(process.stderr)
@@ -239,26 +238,36 @@ def rust_tokens(source: str) -> Iterator[str]:
 
 def unsafe_counts(package_root: Path) -> dict[str, int]:
     counts = {"tokens": 0, "blocks": 0, "functions": 0, "impls": 0, "externs": 0}
-    for path in sorted(package_root.rglob("*.rs")):
-        if "target" in path.parts or ".git" in path.parts:
-            continue
-        try:
-            tokens = list(rust_tokens(path.read_text(encoding="utf-8")))
-        except (OSError, UnicodeDecodeError):
-            continue
-        for index, token in enumerate(tokens):
-            if token != "unsafe":
+    for directory, children, files in os.walk(package_root):
+        # A nested manifest owns its own source, including workspace members,
+        # vendored packages and independent test fixtures. Cargo inventories
+        # those packages separately when the selected graph includes them.
+        children[:] = sorted(
+            child for child in children
+            if child not in {"target", ".git"}
+            and not (Path(directory) / child / "Cargo.toml").is_file()
+        )
+        for name in sorted(files):
+            if not name.endswith(".rs"):
                 continue
-            counts["tokens"] += 1
-            following = tokens[index + 1] if index + 1 < len(tokens) else ""
-            if following == "fn":
-                counts["functions"] += 1
-            elif following == "impl":
-                counts["impls"] += 1
-            elif following == "extern":
-                counts["externs"] += 1
-            elif following == "{":
-                counts["blocks"] += 1
+            path = Path(directory) / name
+            try:
+                tokens = list(rust_tokens(path.read_text(encoding="utf-8")))
+            except (OSError, UnicodeDecodeError):
+                continue
+            for index, token in enumerate(tokens):
+                if token != "unsafe":
+                    continue
+                counts["tokens"] += 1
+                following = tokens[index + 1] if index + 1 < len(tokens) else ""
+                if following == "fn":
+                    counts["functions"] += 1
+                elif following == "impl":
+                    counts["impls"] += 1
+                elif following == "extern":
+                    counts["externs"] += 1
+                elif following == "{":
+                    counts["blocks"] += 1
     return counts
 
 
@@ -361,7 +370,9 @@ def build_snapshot() -> dict:
         "generator": "validation/security/unsafe-audit.py",
         "graphs": [
             {
-                "name": name, "manifest": manifest, "target": target,
+                "name": name,
+                "manifest": manifest,
+                "target": target,
                 **({"features": list(GRAPH_FEATURES[name])} if name in GRAPH_FEATURES else {}),
             }
             for name, manifest, target in GRAPHS

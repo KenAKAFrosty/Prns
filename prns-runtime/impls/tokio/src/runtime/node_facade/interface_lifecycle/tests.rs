@@ -140,6 +140,7 @@ async fn runtime_attachment_carries_ifac_wire_and_status_metadata() {
         handle.interface_inventory(),
         std::vec![InterfaceInventoryEntry {
             name: Some("Protected wire".into()),
+            endpoint: None,
             origin: InterfaceOriginKind::Configured,
             attachment_epoch: 0,
             frame_accounting: FrameAccountingCoverage::Complete(FrameAccounting::default()),

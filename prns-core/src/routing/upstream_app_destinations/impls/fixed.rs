@@ -144,6 +144,8 @@ mod tests {
             table.upsert(
                 dest(2),
                 UpstreamAppDestinationKind::Single {
+                    registration_generation: 1,
+                    ingress_enabled: true,
                     identity: IdentityHash::new([2; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
                     link_request_policy: LinkRequestPolicy::AcceptAll,
@@ -173,6 +175,8 @@ mod tests {
             &[
                 UpstreamAppDestinationKind::Plain,
                 UpstreamAppDestinationKind::Single {
+                    registration_generation: 1,
+                    ingress_enabled: true,
                     identity: IdentityHash::new([2; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
                     link_request_policy: LinkRequestPolicy::AcceptAll,
@@ -192,6 +196,8 @@ mod tests {
             .upsert(
                 dest(1),
                 UpstreamAppDestinationKind::Single {
+                    registration_generation: 1,
+                    ingress_enabled: true,
                     identity: IdentityHash::new([1; 16]),
                     proof_strategy: ProofStrategy::ProveNone,
                     link_request_policy: LinkRequestPolicy::AcceptAll,
@@ -207,6 +213,8 @@ mod tests {
             table.upsert(
                 dest(1),
                 UpstreamAppDestinationKind::Single {
+                    registration_generation: 1,
+                    ingress_enabled: true,
                     identity: IdentityHash::new([1; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
                     link_request_policy: LinkRequestPolicy::AcceptAll,
@@ -225,6 +233,8 @@ mod tests {
         assert_eq!(
             table.kinds(),
             &[UpstreamAppDestinationKind::Single {
+                registration_generation: 1,
+                ingress_enabled: true,
                 identity: IdentityHash::new([1; 16]),
                 proof_strategy: ProofStrategy::ProveAll,
                 link_request_policy: LinkRequestPolicy::AcceptAll,

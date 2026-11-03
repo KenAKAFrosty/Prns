@@ -6,6 +6,8 @@ mod firmware;
 mod heltec_frontend;
 #[cfg(feature = "heltec-v3")]
 mod heltec_v3_face;
+#[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+pub(crate) mod heltec_v3_pairing;
 mod remote_control;
 #[cfg(feature = "heltec-v3")]
 mod ui;
@@ -193,21 +195,40 @@ async fn manifold_task(
     node: &'static mut Node,
     persistence: &'static mut crate::persistence::S3Fn8Persistence,
 ) {
-    let _ = node.restore_embedded_persistence(persistence).await;
+    let report = node.restore_embedded_persistence(persistence).await;
+    #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+    heltec_v3_pairing::set_clock(report.logical_start);
+    #[cfg(not(all(feature = "heltec-v3", feature = "remote-control-pairing")))]
+    let _ = report;
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await
 }
 
 #[embassy_executor::task]
-async fn usb_device_task(rx: UartRx<'static, Async>, tx: UartTx<'static, Async>, seam: UsbSeam) {
+async fn usb_device_task(
+    rx: UartRx<'static, Async>,
+    tx: UartTx<'static, Async>,
+    seam: UsbSeam,
+    enrollment: personal_rns::usb_auto::UsbAutoControllerEnrollment,
+) {
     let device = UsbAutoDevice::new(UsbAutoDeviceInput {
         rx,
         tx,
         status: &USB_STATUS,
         bitrate: USB_UART_PAYLOAD_BITRATE_BPS,
         host_presence: ProtocolHostPresence::new(),
-    });
+    })
+    .with_controller_enrollment(enrollment);
     device.run(seam).await
+}
+
+#[embassy_executor::task]
+async fn controller_enrollment_task() {
+    crate::controller_enrollment::run(personal_rns::runtime::PrnsNodeHandle::new(
+        COMMANDS.sender(),
+        &COMPLETION,
+    ))
+    .await
 }
 
 fn ble_config() -> esp_radio::ble::Config {
@@ -245,6 +266,9 @@ pub(super) fn heltec_lora_frontend(
     (frontend.control(), frontend.rx_gain_db())
 }
 
-fn ignore_events(_event: PrnsEvent<'_>, _state: &AppState) {}
+fn ignore_events(_event: PrnsEvent<'_>, _state: &AppState) {
+    #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+    heltec_v3_pairing::on_event(_event, _state);
+}
 
 pub use firmware::run;

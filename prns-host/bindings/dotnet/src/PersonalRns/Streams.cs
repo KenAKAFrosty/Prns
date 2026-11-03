@@ -33,7 +33,7 @@ public abstract class OwnedAsyncStream<T> : IAsyncEnumerable<T>, IAsyncDisposabl
     public abstract ValueTask DisposeAsync();
 }
 
-internal sealed class NativeEventStream<T> : OwnedAsyncStream<T>
+internal sealed class HostRuntimeEventStream<T> : OwnedAsyncStream<T>
 {
     private readonly EventStreamHandle _handle;
     private readonly Func<EventHandle, T> _decode;
@@ -43,7 +43,7 @@ internal sealed class NativeEventStream<T> : OwnedAsyncStream<T>
     private int _claimed;
     private int _disposed;
 
-    internal NativeEventStream(EventStreamHandle handle, Func<EventHandle, T> decode)
+    internal HostRuntimeEventStream(EventStreamHandle handle, Func<EventHandle, T> decode)
     {
         _handle = handle;
         _decode = decode;
@@ -173,7 +173,7 @@ public sealed class ResourceStream : IDisposable, IAsyncDisposable
             Interlocked.Exchange(ref _handle, null)
             ?? throw new ObjectDisposedException(nameof(ResourceStream));
         return new StreamClaim<ReadOnlyMemory<byte>>.Claimed(
-            new NativeResourceStream(handle)
+            new HostRuntimeResourceStream(handle)
         );
     }
 
@@ -189,12 +189,12 @@ public sealed class ResourceStream : IDisposable, IAsyncDisposable
     }
 }
 
-internal sealed class NativeResourceStream : OwnedAsyncStream<ReadOnlyMemory<byte>>
+internal sealed class HostRuntimeResourceStream : OwnedAsyncStream<ReadOnlyMemory<byte>>
 {
     private readonly ResourceStreamHandle _handle;
     private int _claimed;
 
-    internal NativeResourceStream(ResourceStreamHandle handle)
+    internal HostRuntimeResourceStream(ResourceStreamHandle handle)
     {
         _handle = handle;
     }

@@ -151,6 +151,8 @@ pub trait PacerQueue<M = ()>: Default {
         on_evict: impl FnMut(PacerEntry<M>),
     );
 
+    fn remove_matching(&mut self, predicate: impl FnMut(&[u8]) -> bool) -> usize;
+
     fn next_hops(&self) -> Option<u8>;
     fn is_empty(&self) -> bool;
     fn len(&self) -> usize;
@@ -300,6 +302,13 @@ impl<const DEPTH: usize, M: Copy> PacerQueue<M> for FixedPacerQueue<DEPTH, M> {
                 index += 1;
             }
         }
+    }
+
+    fn remove_matching(&mut self, mut predicate: impl FnMut(&[u8]) -> bool) -> usize {
+        let before = self.entries.len();
+        self.entries
+            .retain(|entry| !predicate(entry.frame.as_ref()));
+        before - self.entries.len()
     }
 
     fn next_hops(&self) -> Option<u8> {
@@ -517,6 +526,13 @@ mod heap {
                     evict(&mut self.entries, now, life_ms, on_evict);
                 }
 
+                fn remove_matching(&mut self, mut predicate: impl FnMut(&[u8]) -> bool) -> usize {
+                    let before = self.entries.len();
+                    self.entries
+                        .retain(|entry| !predicate(entry.frame.as_ref()));
+                    before - self.entries.len()
+                }
+
                 fn next_hops(&self) -> Option<u8> {
                     next_hops(&self.entries)
                 }
@@ -576,6 +592,13 @@ mod heap {
             on_evict: impl FnMut(PacerEntry<M>),
         ) {
             evict(&mut self.entries, now, life_ms, on_evict);
+        }
+
+        fn remove_matching(&mut self, mut predicate: impl FnMut(&[u8]) -> bool) -> usize {
+            let before = self.entries.len();
+            self.entries
+                .retain(|entry| !predicate(entry.frame.as_ref()));
+            before - self.entries.len()
         }
 
         fn next_hops(&self) -> Option<u8> {
@@ -854,6 +877,11 @@ where
 
     pub fn oldest_deferred_at(&self) -> Option<InstantMillis> {
         self.queue.oldest_deferred_at()
+    }
+
+    /// Remove only matching scheduled frames without resetting shared cadence.
+    pub fn remove_matching(&mut self, predicate: impl FnMut(&[u8]) -> bool) -> usize {
+        self.queue.remove_matching(predicate)
     }
 
     pub fn clear_queue(&mut self) -> usize {
@@ -1189,6 +1217,28 @@ mod tests {
                 ..
             })]
         ));
+    }
+
+    #[test]
+    fn selective_retirement_keeps_other_announces_and_shared_cadence() {
+        let mut pacer = AnnouncePacer::<FixedPacerQueue<4>>::new(SLOW, SLOW_BITRATE, RETRY);
+        pacer.offer(&frame(0), 1, InstantMillis(0), |_| PacerDelivery::Admitted);
+        pacer.offer(&frame(1), 1, InstantMillis(100), |_| {
+            PacerDelivery::Admitted
+        });
+        pacer.offer(&frame(2), 1, InstantMillis(200), |_| {
+            PacerDelivery::Admitted
+        });
+        assert_eq!(pacer.remove_matching(|bytes| bytes == frame(1)), 1);
+        assert_eq!(pacer.queued_len(), 1);
+        assert_eq!(pacer.next_release(), Some(InstantMillis(SPACING_MS)));
+        let mut sent = 0;
+        pacer.release_due(InstantMillis(SPACING_MS), |bytes| {
+            assert_eq!(bytes, frame(2));
+            sent += 1;
+            PacerDelivery::Admitted
+        });
+        assert_eq!(sent, 1);
     }
 
     #[test]

@@ -181,6 +181,7 @@ impl TransportState {
 pub struct EngineState<S: StorageLayout> {
     pub(crate) ingested_packet_count: u64,
     pub(crate) ingested_command_count: u64,
+    pub(crate) link_handshake_diagnostics: super::link_diagnostics::LinkHandshakeDiagnostics,
     #[cfg(feature = "runtime-metrics")]
     pub(crate) ignored_packet_counts: super::IgnoreReasonCounts,
     #[cfg(feature = "runtime-metrics")]
@@ -258,6 +259,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
         Self {
             ingested_packet_count: 0,
             ingested_command_count: 0,
+            link_handshake_diagnostics: Default::default(),
             #[cfg(feature = "runtime-metrics")]
             ignored_packet_counts: Default::default(),
             #[cfg(feature = "runtime-metrics")]
@@ -346,6 +348,7 @@ impl<S: StorageLayout> EngineState<S> {
         unsafe {
             write!(ingested_packet_count, 0);
             write!(ingested_command_count, 0);
+            write!(link_handshake_diagnostics, Default::default());
             #[cfg(feature = "runtime-metrics")]
             write!(ignored_packet_counts, Default::default());
             #[cfg(feature = "runtime-metrics")]
@@ -647,6 +650,9 @@ impl<S: StorageLayout> EngineState<S> {
         departure: Departure,
         now: crate::units::InstantMillis,
     ) {
+        // Recursive obligations are scoped to a live requester, unlike cached
+        // announce evidence which may survive a temporary interface departure.
+        self.recursive_path_requests.retire_interface(interface);
         match departure {
             Departure::Forgotten => self.held_announces.drop_interface(interface),
             Departure::MayReturn => {}

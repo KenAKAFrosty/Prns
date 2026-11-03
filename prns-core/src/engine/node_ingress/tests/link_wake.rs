@@ -34,6 +34,7 @@ fn engine_with_active_link() -> (EngineState<TestStorageLayout>, LinkId, Interfa
     engine
         .links
         .track_initiated(InitiatedLink {
+            attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
             link_id,
             destination: DestinationHash::new([0x77; 16]),
             route_evidence: crate::routing::routes::RouteEvidenceHandle::new(
@@ -176,6 +177,7 @@ fn pooled_link_delivery_defers_receipt_signing_and_completion_preserves_the_wire
     engine
         .links
         .track_responding(RespondingLink {
+            attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
             link_id,
             key: key.cloned(),
             requested_at: InstantMillis(0),

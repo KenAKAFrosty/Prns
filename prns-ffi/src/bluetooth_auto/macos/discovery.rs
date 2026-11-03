@@ -71,8 +71,18 @@ pub(super) enum StaleCancellation {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StaleLinkRecovery {
-    Disabled,
     Enabled,
+    /// A system connection is not an application-owned session. Offer it to the normal dial
+    /// admission path, which acquires a local connection before touching GATT.
+    AcquireLocal,
+}
+
+pub(super) const fn link_recovery() -> StaleLinkRecovery {
+    if cfg!(target_os = "ios") {
+        StaleLinkRecovery::AcquireLocal
+    } else {
+        StaleLinkRecovery::Enabled
+    }
 }
 
 pub(super) const fn discover_disposition(
@@ -95,6 +105,12 @@ pub(super) const fn discover_disposition(
             StaleCancellation::Idle,
             StaleLinkRecovery::Enabled,
         ) => DiscoverDisposition::CancelStale,
+        (
+            PeripheralLinkState::Connecting | PeripheralLinkState::Connected,
+            SessionPresence::Absent,
+            StaleCancellation::Idle,
+            StaleLinkRecovery::AcquireLocal,
+        ) => DiscoverDisposition::Adopt,
         (
             PeripheralLinkState::Connecting
             | PeripheralLinkState::Connected

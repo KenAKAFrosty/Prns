@@ -8,16 +8,39 @@ use prns_core::interfaces::bluetooth_auto::StreamDeframer;
 /// can drain, then try again under the caller's operation deadline. Every other error remains
 /// terminal because retrying malformed state or a vanished connection cannot make progress.
 async fn notify_with_backpressure(
+    server: &GattServer,
     characteristic: &GattCharacteristic,
     connection: &GattConnection<'_, '_, DefaultPacketPool>,
     value: &GattVec<u8, GATT_VALUE_CAP>,
 ) -> Result<(), trouble_host::Error> {
     loop {
+        // This NoopRawMutex server is confined to one executor. Neither this check nor
+        // notify's subscription recheck yields before assembling the outbound packet,
+        // so a CCCD update cannot turn admission into notify's unsubscribed no-op.
+        let subscribed = server
+            .get_cccd_table(connection.raw())
+            .is_some_and(|table| {
+                notification_subscribed(characteristic.cccd_handle, table.inner())
+            });
+        if !subscribed {
+            return Err(trouble_host::Error::NotFound);
+        }
         match characteristic.notify(connection, value).await {
             Err(trouble_host::Error::OutOfMemory) => yield_now().await,
             result => return result,
         }
     }
+}
+
+fn notification_subscribed(
+    cccd: Option<u16>,
+    values: &[(u16, trouble_host::attribute::CCCD)],
+) -> bool {
+    cccd.is_some_and(|cccd| {
+        values
+            .iter()
+            .any(|(handle, value)| *handle == cccd && value.should_notify())
+    })
 }
 
 fn reticulum_uuid(last: u8) -> Uuid {
@@ -357,6 +380,11 @@ async fn serve_peer_gatt_requests(
     }
 }
 
+pub(super) struct PeripheralGattSetup<'a> {
+    pub server: &'a GattServer,
+    pub characteristics: ReticulumGattCharacteristics<'a>,
+}
+
 pub(super) async fn serve_peripheral<T: TroubleTransport>(
     hub: &'static BleHub,
     stack: &'static TroubleStack<T>,
@@ -364,8 +392,12 @@ pub(super) async fn serve_peripheral<T: TroubleTransport>(
     link: BleSlotLink,
     worker: &BleSlotWorker,
     connection: &GattConnection<'_, '_, DefaultPacketPool>,
-    characteristics: ReticulumGattCharacteristics<'_>,
+    setup: PeripheralGattSetup<'_>,
 ) {
+    let PeripheralGattSetup {
+        server,
+        characteristics,
+    } = setup;
     let setup_activity = hub.begin_busy_operation();
     let ReticulumGattCharacteristics {
         control,
@@ -505,23 +537,36 @@ pub(super) async fn serve_peripheral<T: TroubleTransport>(
         }
     };
 
+    let control_writes = GattWriteArbiter::new(worker);
     let control_outbound = async move {
         if peer_protocol == PeerProtocol::Columba {
             core::future::pending::<()>().await;
         }
         loop {
-            let message = control_out_rx.receive().await;
+            let request = control_out_rx.receive().await;
             let mut buf = [0u8; CONTROL_MAX_LEN];
-            if let Some(len) = message.encode(&mut buf) {
+            if let Some(len) = request.message.encode(&mut buf) {
                 let mut value = GattVec::<u8, GATT_VALUE_CAP>::new();
                 let _ = value.extend_from_slice(&buf[..len]);
                 let activity = hub.begin_busy_operation();
-                let _ = with_timeout(
-                    GATT_OPERATION_TIMEOUT,
-                    notify_with_backpressure(control, connection, &value),
-                )
-                .await;
+                let result = control_writes
+                    .run(request.ticket.deadline(), async {
+                        notify_with_backpressure(server, control, connection, &value)
+                            .await
+                            .map_err(|_| ControlIoError)
+                    })
+                    .await;
                 drop(activity);
+                let success = result.is_ok();
+                slot.control_completion.complete(request.ticket, success);
+                if !success {
+                    worker.request_close();
+                    return;
+                }
+            } else {
+                slot.control_completion.complete(request.ticket, false);
+                worker.request_close();
+                return;
             }
         }
     };
@@ -585,7 +630,7 @@ pub(super) async fn serve_peripheral<T: TroubleTransport>(
                         let activity = hub.begin_busy_operation();
                         match with_timeout(
                             GATT_OPERATION_TIMEOUT,
-                            notify_with_backpressure(characteristic, connection, &value),
+                            notify_with_backpressure(server, characteristic, connection, &value),
                         )
                         .await
                         {
@@ -894,29 +939,48 @@ pub(super) async fn serve_central<T: TroubleTransport>(
         }
     };
 
+    let writes = GattWriteArbiter::new(worker);
     let control_outbound = async {
         if peer_protocol == PeerProtocol::Columba {
             let identity = slot.identity_out.receive().await;
             let activity = hub.begin_busy_operation();
-            let _ = with_timeout(
-                GATT_OPERATION_TIMEOUT,
-                client.write_characteristic(&control, identity.as_bytes()),
-            )
-            .await;
+            let result = writes
+                .run(Instant::now() + GATT_OPERATION_TIMEOUT, async {
+                    client
+                        .write_characteristic(&control, identity.as_bytes())
+                        .await
+                        .map_err(|_| ControlIoError)
+                })
+                .await;
             drop(activity);
+            if result.is_err() {
+                return;
+            }
             core::future::pending::<()>().await;
         }
         loop {
-            let message = control_out_rx.receive().await;
+            let request = control_out_rx.receive().await;
             let mut buf = [0u8; CONTROL_MAX_LEN];
-            if let Some(len) = message.encode(&mut buf) {
+            if let Some(len) = request.message.encode(&mut buf) {
                 let activity = hub.begin_busy_operation();
-                let _ = with_timeout(
-                    GATT_OPERATION_TIMEOUT,
-                    client.write_characteristic(&control, &buf[..len]),
-                )
-                .await;
+                let result = writes
+                    .run(request.ticket.deadline(), async {
+                        client
+                            .write_characteristic(&control, &buf[..len])
+                            .await
+                            .map_err(|_| ControlIoError)
+                    })
+                    .await;
                 drop(activity);
+                slot.control_completion
+                    .complete(request.ticket, result.is_ok());
+                if result.is_err() {
+                    return;
+                }
+            } else {
+                slot.control_completion.complete(request.ticket, false);
+                worker.request_close();
+                return;
             }
         }
     };
@@ -978,37 +1042,39 @@ pub(super) async fn serve_central<T: TroubleTransport>(
                         let written = match peer_protocol {
                             PeerProtocol::Native => {
                                 let activity = hub.begin_busy_operation();
-                                let written = with_timeout(
-                                    GATT_OPERATION_TIMEOUT,
-                                    client.write_characteristic(&data, &buf[..len]),
-                                )
-                                .await;
+                                let written = writes
+                                    .run(Instant::now() + GATT_OPERATION_TIMEOUT, async {
+                                        client
+                                            .write_characteristic(&data, &buf[..len])
+                                            .await
+                                            .map_err(|_| ControlIoError)
+                                    })
+                                    .await;
                                 drop(activity);
                                 written
                             }
                             PeerProtocol::Columba => {
                                 let activity = hub.begin_busy_operation();
-                                let written = with_timeout(
-                                    GATT_OPERATION_TIMEOUT,
-                                    client
-                                        .write_characteristic_without_response(&data, &buf[..len]),
-                                )
-                                .await;
+                                let written = writes
+                                    .run(Instant::now() + GATT_OPERATION_TIMEOUT, async {
+                                        client
+                                            .write_characteristic_without_response(
+                                                &data,
+                                                &buf[..len],
+                                            )
+                                            .await
+                                            .map_err(|_| ControlIoError)
+                                    })
+                                    .await;
                                 drop(activity);
                                 written
                             }
                         };
                         match written {
-                            Ok(Ok(())) => sent_fragments += 1,
-                            Ok(Err(error)) => {
+                            Ok(()) => sent_fragments += 1,
+                            Err(error) => {
                                 crate::diagnostic_log::warn!(
                                     "ble: dialed GATT write failed after {sent_fragments} fragments: {error:?}"
-                                );
-                                return;
-                            }
-                            Err(_) => {
-                                crate::diagnostic_log::warn!(
-                                    "ble: dialed GATT write timed out after {sent_fragments} fragments"
                                 );
                                 return;
                             }
@@ -1058,6 +1124,18 @@ pub(super) async fn serve_central<T: TroubleTransport>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_the_matching_enabled_notification_subscription_allows_admission() {
+        use trouble_host::attribute::CCCD;
+        let entries = [(1, CCCD::from(0)), (2, CCCD::from(1)), (3, CCCD::from(2))];
+        assert!(!super::notification_subscribed(None, &entries));
+        assert!(!super::notification_subscribed(Some(1), &entries));
+        assert!(super::notification_subscribed(Some(2), &entries));
+        assert!(!super::notification_subscribed(Some(3), &entries));
+        assert!(!super::notification_subscribed(Some(4), &entries));
+        assert!(!super::notification_subscribed(Some(2), &[]));
+    }
+
     use core::future::Future;
     use core::pin::pin;
     use core::task::{Context, Poll, Waker};

@@ -1,5 +1,6 @@
 use super::*;
 use crate::ble::{BleWireCapture, BleWireChannel, BleWireValue};
+use personal_rns::interfaces::bluetooth_auto::BleLinkParts;
 use personal_rns::interfaces::bluetooth_auto::{BleSink, BleSource};
 use std::future::{poll_fn, Future};
 use std::task::Poll;
@@ -167,7 +168,11 @@ async fn control_capture_is_queue_acceptance_not_parsing_or_attempts() {
 #[tokio::test]
 async fn data_capture_contains_exact_queued_fragments_including_partial_cancellation() {
     let (first, mut second, capture) = links();
-    let (_source, mut sink) = first.into_data();
+    let BleLinkParts {
+        source: _source,
+        mut sink,
+        control: _source_control,
+    } = first.into_parts();
     let payload = [42; 96];
     let (sent, queued) = tokio::join!(sink.send_frame(&payload), async {
         let mut queued = Vec::new();
@@ -226,8 +231,16 @@ async fn data_capture_contains_exact_queued_fragments_including_partial_cancella
 #[tokio::test]
 async fn captured_fragmentation_still_delivers_the_whole_frame() {
     let (first, second, capture) = links();
-    let (_source, mut sink) = first.into_data();
-    let (mut source, _sink) = second.into_data();
+    let BleLinkParts {
+        source: _source,
+        mut sink,
+        control: _source_control,
+    } = first.into_parts();
+    let BleLinkParts {
+        mut source,
+        sink: _sink,
+        control: _source_control,
+    } = second.into_parts();
     let payload = [7; 256];
     let mut output = [0; BLE_HW_MTU];
     let (sent, received) = tokio::join!(sink.send_frame(&payload), source.recv_frame(&mut output));

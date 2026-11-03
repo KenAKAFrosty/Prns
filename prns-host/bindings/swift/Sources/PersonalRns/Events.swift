@@ -7,7 +7,7 @@ private enum NativeEventPoll<Element> {
     case stopped
 }
 
-final class NativeEventStream: @unchecked Sendable {
+final class HostRuntimeEventStream: @unchecked Sendable {
     private let stateLock = NSLock()
     private let waitLock = NSLock()
     private let readiness: NativeReadiness
@@ -116,12 +116,12 @@ final class NativeEventStream: @unchecked Sendable {
 
 public final class EventSequence<Element: Sendable>: AsyncSequence, @unchecked Sendable {
     public struct AsyncIterator: AsyncIteratorProtocol {
-        private let source: NativeEventStream?
+        private let source: HostRuntimeEventStream?
         private let decode: (@Sendable (OpaquePointer) throws -> Element)?
         private var initialFailure: StatusFailure?
 
         init(
-            source: NativeEventStream?,
+            source: HostRuntimeEventStream?,
             decode: (@Sendable (OpaquePointer) throws -> Element)?,
             initialFailure: StatusFailure?
         ) {
@@ -143,12 +143,12 @@ public final class EventSequence<Element: Sendable>: AsyncSequence, @unchecked S
     }
 
     private let claimLock = NSLock()
-    private let native: NativeEventStream
+    private let native: HostRuntimeEventStream
     private let decode: @Sendable (OpaquePointer) throws -> Element
     private var claimed = false
 
     init(
-        native: NativeEventStream,
+        native: HostRuntimeEventStream,
         decode: @escaping @Sendable (OpaquePointer) throws -> Element
     ) {
         self.native = native
@@ -378,7 +378,9 @@ func decodeApplicationEvent(_ pointer: OpaquePointer) throws -> ApplicationEvent
         return .linkDelivery(
             linkId: try LinkId(event.bytes(.linkId)),
             sourceInterface: try InterfaceId(event.bytes(.sourceInterface)),
-            plaintext: try event.bytes(.plaintext)
+            plaintext: try event.bytes(.plaintext),
+            localDestination: try event.optionalBytes(.localDestination).map { try DestinationHash($0) },
+            arrivedAtMillis: try event.u64(.arrivedAtMillis)
         )
     case .request:
         let requester = try event.optionalBytes(.requester).map {

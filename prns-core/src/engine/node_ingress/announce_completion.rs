@@ -111,6 +111,26 @@ impl<S: StorageLayout> EngineState<S> {
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
             &mut effects,
         );
+        #[cfg(feature = "path-diagnostics")]
+        if arrival.is_path_response {
+            use crate::engine::{PathDiscoveryEvent, PathDiscoveryPhase, PathResponseDisposition};
+            let disposition = match ingest {
+                AnnounceIngest::Accepted(_) => PathResponseDisposition::Accepted,
+                AnnounceIngest::Ignored if effects.discovered_path.is_some() => {
+                    PathResponseDisposition::RetainedRouteMatched
+                }
+                AnnounceIngest::Blackholed => PathResponseDisposition::Blackholed,
+                _ => PathResponseDisposition::Ignored,
+            };
+            sink(EngineReaction::Journaled(Journaled::PathDiscovery(
+                PathDiscoveryEvent::new(
+                    Some(arrival.arrived_at),
+                    Some(arrival.announce.destination),
+                    Some(source),
+                    PathDiscoveryPhase::ResponseIngress(disposition),
+                ),
+            )));
+        }
         self.apply_announce_ingest(ingest, &mut effects, source, interfaces, &mut wake, sink);
         if let Some(expiry) = effects.destination_identity_expiry {
             wake.expired_destination_identities = WakeSchedule::AtMost(expiry);

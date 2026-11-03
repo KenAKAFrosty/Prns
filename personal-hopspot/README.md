@@ -151,7 +151,7 @@ website build. This makes the assembled local candidate internally verifiable,
 but it is not production signing, published release custody, or hardware and
 browser qualification evidence. A successful local flash does not qualify a
 signed release. Qualification receipts and their remaining limits live under
-[`validation/qualifications/`](../validation/qualifications/).
+[`validation/qualifications/`](../validation/qualifications).
 
 ## Embedded flash-layout upgrade
 

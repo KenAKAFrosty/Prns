@@ -55,6 +55,7 @@ Feature names keep platform costs explicit. Common choices include:
 | --- | --- |
 | Native async host | `tokio-host` |
 | Embedded async host | `embassy-host` |
+| Precomputed curve tables on embedded targets | `crypto-precomputed` |
 | TCP | `tcp` |
 | Automatic LAN discovery | `wifi-auto` |
 | Native dual-transport DNS-SD discovery for the stock AutoInterface profile | `wifi-auto-mdns` |
@@ -63,6 +64,12 @@ Feature names keep platform costs explicit. Common choices include:
 | Plain WebSocket server without TLS client dependencies | `websocket-server` |
 | USB or Bluetooth discovery | `usb`, `bluetooth-auto` |
 | LoRa or ESP-NOW on embedded targets | `lora`, `esp-now` |
+
+`std` enables precomputed curve tables. Allocation-free consumers otherwise use
+compact arithmetic and can opt into `crypto-precomputed` when flash permits. The
+choice preserves wire bytes, algorithms, and existing zeroize features; it changes
+the flash/CPU tradeoff. ESP firmware opts in explicitly; Nordic firmware uses
+compact arithmetic.
 
 See the [complete SDK guide](../docs/sdks.md) for release readiness and the [embedded guide](../docs/embedded.md) for allocation-free and hardware-backed targets.
 

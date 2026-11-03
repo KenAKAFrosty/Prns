@@ -21,6 +21,19 @@ SPEC.loader.exec_module(parity)
 
 
 class PrePushCiParityTests(unittest.TestCase):
+    def test_group_suites_follow_registry_inputs_and_current_platform(self) -> None:
+        suites = [
+            {"id": "current", "group": "group-communication", "tiers": ["pr"], "platform": "any", "inputs": ["prns-groups/store"]},
+            {"id": "other-platform", "group": "group-communication", "tiers": ["pr"], "platform": "windows", "inputs": ["prns-groups/store"]},
+            {"id": "scheduled", "group": "group-communication", "tiers": ["scheduled"], "platform": "any", "inputs": ["prns-groups/store"]},
+        ]
+        with mock.patch.object(parity.host_platform, "system", return_value="Linux"):
+            gates = parity.reusable_library_gates({"prns-groups/store/src/lib.rs"}, {"suite": suites})
+            self.assertEqual(tuple(g.command for g in gates), (("python3", "validation/run.py", "run", "--suite", "current"),))
+            self.assertEqual(parity.reusable_library_gates({"docs/testing.md"}, {"suite": suites}), ())
+            self.assertEqual(parity.reusable_library_gates({"prns-groups/store-neighbor/src/lib.rs"}, {"suite": suites}), ())
+            self.assertEqual(parity.reusable_library_gates({"validation/manifest.toml"}, {"suite": suites}), gates)
+
     def gate_names(self, paths: set[str]) -> set[str]:
         return {gate.name for gate in parity.plan_for_paths(paths).gates}
 
