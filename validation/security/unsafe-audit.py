@@ -45,6 +45,7 @@ GRAPH_FEATURES = {'group-secure-storage': ('prns-groups-store/secure',),
  'host-connections-macos': ('connections',),
  'host-runtime-connections-linux': ('connections',),
  'group-headless-peer': ('headless',),
+ 'lxmf-runtime': ('runtime',),
  }
 GRAPHS = (('group-mls-adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('group-secure-storage', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
@@ -138,6 +139,9 @@ GRAPHS = (('group-mls-adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
   'aarch64-apple-darwin'),
  ('group-headless-peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('lxmf-wire', 'prns-lxmf/wire/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('lxmf-runtime',
+  'prns-lxmf/service/tests/fixtures/consumer/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
  )
 UNSAFE_EXCEPTIONS = {
     "prns-core",

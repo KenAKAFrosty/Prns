@@ -16,6 +16,7 @@ python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
     "lxmf-wire|prns-lxmf/wire/Cargo.toml|x86_64-unknown-linux-gnu"
+    "lxmf-runtime|prns-lxmf/service/tests/fixtures/consumer/Cargo.toml|x86_64-unknown-linux-gnu|runtime"
     "group-native-local-linux|prns-groups/tests/fixtures/local-consumer/Cargo.toml|x86_64-unknown-linux-gnu"
     "group-native-local-macos|prns-groups/tests/fixtures/local-consumer/Cargo.toml|aarch64-apple-darwin"
     "group-native-bindings-linux|prns-groups/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu"

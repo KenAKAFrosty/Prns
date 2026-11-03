@@ -34,6 +34,7 @@ GRAPH_FEATURES = {'Group secure storage': ('prns-groups-store/secure',),
  'Host connections macOS': ('connections',),
  'Host runtime connections': ('connections',),
  'Group headless peer': ('headless',),
+ 'LXMF runtime': ('runtime',),
  }
 GRAPHS = (('Group MLS adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('Group secure storage', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
@@ -131,6 +132,9 @@ GRAPHS = (('Group MLS adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
   'aarch64-apple-darwin'),
  ('Group headless peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('LXMF wire', 'prns-lxmf/wire/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('LXMF runtime',
+  'prns-lxmf/service/tests/fixtures/consumer/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
  )
 MAVEN = (
     ("androidx.annotation:annotation:1.5.0", "Apache-2.0"),

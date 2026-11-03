@@ -357,7 +357,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
                 "Path(os.environ['CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n"
             )
             fake_python.chmod(0o755)
-            for name in ("named-identities", "standalone-libraries", "host-runtime", "group-libraries", "lxmf-wire"):
+            for name in ("named-identities", "standalone-libraries", "host-runtime", "group-libraries", "lxmf-direct"):
                 job = jobs[name]
                 self.assertNotRegex(job, r"(?m)^    (?:needs|if):")
                 self.assertNotIn("continue-on-error", job)
@@ -519,7 +519,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
         })
         self.assertEqual(selected["uv"], {
             suite["id"] for suite in suites if suite["domain"] in {"oracles", "interop"}
-        } | {"release-contracts", "lxmf-wire"})
+        } | {"release-contracts", "lxmf-direct"})
         self.assertEqual(selected["llvm"], {
             "embedded-builds", "esp32-firmware-check", "shipping-firmware",
             "embedded-isa-riscv32imac", "embedded-isa-thumbv7em", "embedded-isa-xtensa-esp32s3",

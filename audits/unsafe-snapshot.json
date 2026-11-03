@@ -317,6 +317,14 @@
       "manifest": "prns-lxmf/wire/Cargo.toml",
       "name": "lxmf-wire",
       "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "features": [
+        "runtime"
+      ],
+      "manifest": "prns-lxmf/service/tests/fixtures/consumer/Cargo.toml",
+      "name": "lxmf-runtime",
+      "target": "x86_64-unknown-linux-gnu"
     }
   ],
   "packages": [
@@ -477,6 +485,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -2158,6 +2167,9 @@
         "ios": [
           "zeroize"
         ],
+        "lxmf-runtime": [
+          "zeroize"
+        ],
         "lxmf-wire": [
           "zeroize"
         ],
@@ -2228,6 +2240,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -2824,6 +2837,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -3376,6 +3390,9 @@
         "ios": [
           "block-padding"
         ],
+        "lxmf-runtime": [
+          "block-padding"
+        ],
         "nrf52840": [
           "block-padding"
         ],
@@ -3541,6 +3558,7 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-runtime": [],
         "lxmf-wire": [],
         "nrf-dfu-browser": [],
         "nrf52840": [],
@@ -3839,6 +3857,10 @@
           "rng",
           "zeroize"
         ],
+        "lxmf-runtime": [
+          "rng",
+          "zeroize"
+        ],
         "nrf52840": [
           "rng",
           "zeroize"
@@ -4090,6 +4112,9 @@
           "block-padding"
         ],
         "ios": [
+          "block-padding"
+        ],
+        "lxmf-runtime": [
           "block-padding"
         ],
         "nrf52840": [
@@ -4432,6 +4457,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -4913,7 +4939,8 @@
         "identity-keys-linux": [],
         "identity-keys-macos": [],
         "identity-storage": [],
-        "ios": []
+        "ios": [],
+        "lxmf-runtime": []
       },
       "name": "cpufeatures",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4943,6 +4970,7 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-runtime": [],
         "lxmf-wire": []
       },
       "name": "cpufeatures",
@@ -5828,6 +5856,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -5981,6 +6010,7 @@
         "ios": [
           "rand_core"
         ],
+        "lxmf-runtime": [],
         "lxmf-wire": [
           "rand_core"
         ],
@@ -6065,6 +6095,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -6465,6 +6496,10 @@
           "rand_core",
           "zeroize"
         ],
+        "lxmf-runtime": [
+          "digest",
+          "zeroize"
+        ],
         "lxmf-wire": [
           "alloc",
           "digest",
@@ -6521,6 +6556,7 @@
         "identity-key-card-linux": [],
         "identity-keys-linux": [],
         "identity-storage": [],
+        "lxmf-runtime": [],
         "lxmf-wire": []
       },
       "name": "curve25519-dalek-derive",
@@ -8280,6 +8316,12 @@
           "rand_core",
           "zeroize"
         ],
+        "lxmf-runtime": [
+          "block-api",
+          "default",
+          "mac",
+          "zeroize"
+        ],
         "lxmf-wire": [
           "alloc",
           "block-api",
@@ -8977,6 +9019,7 @@
         "ios": [
           "alloc"
         ],
+        "lxmf-runtime": [],
         "lxmf-wire": [
           "alloc"
         ],
@@ -9381,6 +9424,10 @@
           "rand_core",
           "signature",
           "strobe-rs",
+          "zeroize"
+        ],
+        "lxmf-runtime": [
+          "hazmat",
           "zeroize"
         ],
         "lxmf-wire": [
@@ -16372,6 +16419,9 @@
         "ios": [
           "more_lengths"
         ],
+        "lxmf-runtime": [
+          "more_lengths"
+        ],
         "nrf52840": [
           "more_lengths"
         ],
@@ -16790,6 +16840,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -16985,6 +17036,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -17270,6 +17322,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -17427,6 +17480,9 @@
           "zeroize"
         ],
         "ios": [
+          "zeroize"
+        ],
+        "lxmf-runtime": [
           "zeroize"
         ],
         "lxmf-wire": [
@@ -17858,6 +17914,9 @@
           "zeroize"
         ],
         "ios": [
+          "zeroize"
+        ],
+        "lxmf-runtime": [
           "zeroize"
         ],
         "lxmf-wire": [
@@ -18706,6 +18765,9 @@
           "block-padding"
         ],
         "ios": [
+          "block-padding"
+        ],
+        "lxmf-runtime": [
           "block-padding"
         ],
         "nrf52840": [
@@ -27593,6 +27655,7 @@
           "wifi-auto",
           "wifi-auto-apple"
         ],
+        "lxmf-runtime": [],
         "nrf52840": [
           "bluetooth-auto",
           "embassy-host",
@@ -27711,6 +27774,7 @@
         "identity-catalog-linux": [],
         "identity-catalog-macos": [],
         "ios": [],
+        "lxmf-runtime": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -29254,6 +29318,9 @@
           "rns-management-wire",
           "std",
           "tokio-host"
+        ],
+        "lxmf-runtime": [
+          "rns-management-wire"
         ],
         "nrf52840": [
           "alloc",
@@ -31027,6 +31094,42 @@
     },
     {
       "graphs": {
+        "lxmf-runtime": [
+          "tokio-runtime"
+        ]
+      },
+      "name": "prns-lxmf",
+      "source": "prns-lxmf/service",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "lxmf-runtime": [
+          "default",
+          "runtime"
+        ]
+      },
+      "name": "prns-lxmf-feature-consumer",
+      "source": "prns-lxmf/service/tests/fixtures/consumer",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.0.0"
+    },
+    {
+      "graphs": {
+        "lxmf-runtime": [],
         "lxmf-wire": [
           "default"
         ]
@@ -31091,6 +31194,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -31418,6 +31522,7 @@
           "resource-bzip2",
           "std"
         ],
+        "lxmf-runtime": [],
         "nrf52840": [
           "alloc",
           "movable-frame-forwarding",
@@ -32027,6 +32132,10 @@
           "default",
           "proc-macro"
         ],
+        "lxmf-runtime": [
+          "default",
+          "proc-macro"
+        ],
         "lxmf-wire": [
           "default",
           "proc-macro"
@@ -32395,6 +32504,10 @@
           "proc-macro"
         ],
         "ios": [
+          "default",
+          "proc-macro"
+        ],
+        "lxmf-runtime": [
           "default",
           "proc-macro"
         ],
@@ -32945,6 +33058,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -33940,6 +34054,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -35235,6 +35350,10 @@
           "std"
         ],
         "ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-runtime": [
           "default",
           "std"
         ],
@@ -36865,6 +36984,9 @@
         "ios": [
           "zeroize"
         ],
+        "lxmf-runtime": [
+          "zeroize"
+        ],
         "lxmf-wire": [
           "alloc",
           "default",
@@ -37321,6 +37443,7 @@
           "alloc",
           "rand_core"
         ],
+        "lxmf-runtime": [],
         "lxmf-wire": [
           "alloc",
           "rand_core"
@@ -38737,6 +38860,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -39354,6 +39478,9 @@
         "ios": [
           "const-generics"
         ],
+        "lxmf-runtime": [
+          "const-generics"
+        ],
         "lxmf-wire": [
           "const-generics"
         ],
@@ -39734,6 +39861,17 @@
           "proc-macro",
           "visit",
           "visit-mut"
+        ],
+        "lxmf-runtime": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit"
         ],
         "lxmf-wire": [
           "clone-impls",
@@ -42023,6 +42161,13 @@
           "tokio-macros",
           "windows-sys"
         ],
+        "lxmf-runtime": [
+          "macros",
+          "rt",
+          "sync",
+          "time",
+          "tokio-macros"
+        ],
         "nrf52840": [
           "bytes",
           "default",
@@ -42070,6 +42215,7 @@
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "ios": [],
+        "lxmf-runtime": [],
         "nrf52840": []
       },
       "name": "tokio-macros",
@@ -44004,6 +44150,9 @@
         "halow-appliance-manager": [
           "const-generics"
         ],
+        "lxmf-runtime": [
+          "const-generics"
+        ],
         "lxmf-wire": [
           "const-generics"
         ]
@@ -44284,6 +44433,7 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-runtime": [],
         "lxmf-wire": [],
         "nrf-dfu-browser": [],
         "nrf52840": [],
@@ -45331,6 +45481,7 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-runtime": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -46677,6 +46828,9 @@
           "precomputed-tables",
           "static_secrets"
         ],
+        "lxmf-runtime": [
+          "static_secrets"
+        ],
         "nrf52840": [
           "precomputed-tables",
           "static_secrets"
@@ -47286,6 +47440,10 @@
           "derive",
           "zeroize_derive"
         ],
+        "lxmf-runtime": [
+          "derive",
+          "zeroize_derive"
+        ],
         "lxmf-wire": [
           "alloc",
           "default",
@@ -47539,6 +47697,7 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "halow-appliance-manager": [],
         "ios": [],
+        "lxmf-runtime": [],
         "lxmf-wire": [],
         "nrf52840": []
       },

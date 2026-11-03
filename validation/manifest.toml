@@ -72,6 +72,7 @@ cargo_lock_workspaces = [
     "prns-host/bindings/uniffi",
     "prns-host/bindings/uniffi/image",
     "prns-host/impls/runtime",
+    "prns-lxmf/service/tests/fixtures/consumer",
 ]
 cargo_manifests = [
     "prns-groups/bindings/uniffi/Cargo.toml",
@@ -168,6 +169,8 @@ cargo_manifests = [
     "prns-host/bindings/uniffi/image/Cargo.toml",
     "prns-host/impls/runtime/Cargo.toml",
     "prns-lxmf/wire/Cargo.toml",
+    "prns-lxmf/service/Cargo.toml",
+    "prns-lxmf/service/tests/fixtures/consumer/Cargo.toml",
 ]
 format_manifests = [
     "prns-identities/Cargo.toml",
@@ -196,6 +199,7 @@ format_manifests = [
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",
     "validation/simulation/Cargo.toml",
+    "prns-lxmf/service/tests/fixtures/consumer/Cargo.toml",
 ]
 
 [registry.format_package_overrides]
@@ -2878,7 +2882,7 @@ inputs = ["prns-groups", "prns-identities", "prns-storage", "prns-host/core", "p
 artifacts = "validation-artifacts/results/group-native-bindings-kotlin"
 
 [[suite]]
-id = "lxmf-wire"
+id = "lxmf-direct"
 domain = "native"
 group = "standalone-libraries"
 tiers = ["pr", "release", "scheduled"]
@@ -2887,7 +2891,7 @@ toolchain = "stable"
 timeout_seconds = 1800
 command = ["./tools/prns", "build", "lxmf", "verify"]
 inputs = ["tools/tests/test_lxmf_publication_contracts.py", "tools/prns", "tools/tasks.toml", "tools/build/lxmf.sh", "Cargo.toml", "Cargo.lock", "prns-lxmf", "personal-rns", "prns-core", "prns-host", "prns-interfaces", "prns-runtime"]
-artifacts = "validation-artifacts/results/lxmf-wire"
+artifacts = "validation-artifacts/results/lxmf-direct"
 
 [[suite]]
 id = "standalone-libraries-portable"
@@ -2897,6 +2901,6 @@ tiers = ["pr"]
 platform = "any"
 toolchain = "stable"
 timeout_seconds = 600
-command = ["cargo", "check", "--locked", "-p", "prns-lxmf-wire", "--lib", "--no-default-features", "--target", "thumbv7em-none-eabihf"]
+command = ["cargo", "check", "--locked", "-p", "prns-lxmf-wire", "-p", "prns-lxmf", "--lib", "--no-default-features", "--target", "thumbv7em-none-eabihf"]
 inputs = ["Cargo.toml", "Cargo.lock", "prns-lxmf", "prns-core", "prns-macros"]
 artifacts = "validation-artifacts/results/standalone-libraries-portable"

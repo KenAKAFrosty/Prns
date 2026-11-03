@@ -24,6 +24,7 @@ members = [
     "personal-hopspot/appliance",
     "validation/simulation",
     "prns-lxmf/wire",
+    "prns-lxmf/service",
 ]
 default-members = [
     "personal-rns",
@@ -46,6 +47,8 @@ exclude = [
     "prns-interfaces/impls/tokio",
     "prns-interfaces/impls/embassy",
     "validation/integration",
+    "prns-host/impls/runtime",
+    "prns-host/impls/snapshot",
 ]
 resolver = "3"
 

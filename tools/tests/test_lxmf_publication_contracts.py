@@ -21,7 +21,7 @@ class LxmfPublicationContracts(unittest.TestCase):
                              ("validation/security/unsafe-audit.py", "lxmf-")):
             data = selected(path)
             rows = [row for row in data["GRAPHS"] if row[0].startswith(prefix)]
-            self.assertEqual(len(rows), 1)
+            self.assertEqual(len(rows), 2)
             self.assertEqual(len({row[0] for row in data["GRAPHS"]}), len(data["GRAPHS"]))
             for name, manifest, _ in rows:
                 self.assertTrue((ROOT / manifest).is_file())
@@ -34,7 +34,7 @@ class LxmfPublicationContracts(unittest.TestCase):
                     self.assertNotIn("tokio-host", data["GRAPH_FEATURES"][name])
         rows = [line for line in (ROOT / "validation/security/deps-audit.sh").read_text().splitlines()
                 if re.match(r'    "lxmf-', line)]
-        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows), 2)
 
     def test_storage_feature_is_qualified_when_lxmf_shares_the_workspace(self):
         for path, graph in (("tools/repo/generate-third-party-notices.py", "Storage redb"),
@@ -48,21 +48,22 @@ class LxmfPublicationContracts(unittest.TestCase):
     def test_owner_checks_are_required_and_prepared(self):
         manifest = tomllib.loads((ROOT / "validation/manifest.toml").read_text())
         suites = {suite["id"]: suite for suite in manifest["suite"]}
-        self.assertEqual(suites["lxmf-wire"]["command"], ["./tools/prns", "build", "lxmf", "verify"])
+        self.assertEqual(suites["lxmf-direct"]["command"], ["./tools/prns", "build", "lxmf", "verify"])
         portable = suites["standalone-libraries-portable"]["command"]
         self.assertIn("--no-default-features", portable)
         self.assertIn("thumbv7em-none-eabihf", portable)
         self.assertIn("prns-lxmf-wire", portable)
+        self.assertIn("prns-lxmf", portable)
         if "prns-contact-card" in portable:
             self.assertTrue((ROOT / "prns-contact-card/Cargo.toml").is_file())
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
-        for text in ("--suite lxmf-wire", "--suite standalone-libraries-portable", "LXMF_WIRE_RESULT", "rustup toolchain install 1.90.0 --profile minimal"):
+        for text in ("--suite lxmf-direct", "--suite standalone-libraries-portable", "LXMF_DIRECT_RESULT", "rustup toolchain install 1.90.0 --profile minimal"):
             self.assertIn(text, ci)
         release = (ROOT / ".github/workflows/release-readiness.yml").read_text()
-        self.assertIn("matrix.id == 'lxmf-wire' || matrix.id == 'standalone-libraries-portable'", release)
+        self.assertIn("matrix.id == 'lxmf-direct' || matrix.id == 'standalone-libraries-portable'", release)
         self.assertIn("Prepare isolated LXMF MSRV consumers", release)
         parity = (ROOT / "validation/hygiene/pre-push-ci-parity.py").read_text()
-        self.assertIn('LXMF wire vectors (macOS)', parity)
+        self.assertIn('LXMF direct exchange (macOS)', parity)
         self.assertIn('"standalone-libraries"', parity)
 
 

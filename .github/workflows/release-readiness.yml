@@ -118,7 +118,7 @@ jobs:
         if: startsWith(matrix.id, 'group-mls-adapter-portable-')
         run: rustup target add --toolchain 1.96.0 thumbv7em-none-eabihf riscv32imac-unknown-none-elf
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-        if: matrix.domain == 'oracles' || matrix.domain == 'interop' || matrix.domain == 'release' || matrix.id == 'lxmf-wire'
+        if: matrix.domain == 'oracles' || matrix.domain == 'interop' || matrix.domain == 'release' || matrix.id == 'lxmf-direct'
       - name: Prepare nightly validation toolchain
         if: matrix.toolchain == 'nightly' || matrix.toolchain == 'kani'
         run: |
@@ -128,10 +128,10 @@ jobs:
         if: matrix.group == 'embedded' || matrix.group == 'esp' || matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
         run: rustup target add --toolchain 1.96.0 riscv32imac-unknown-none-elf thumbv7em-none-eabihf
       - name: Prepare isolated LXMF MSRV consumers
-        if: matrix.id == 'lxmf-wire'
+        if: matrix.id == 'lxmf-direct'
         run: rustup toolchain install 1.90.0 --profile minimal
       - name: Prepare standalone portable target
-        if: matrix.id == 'lxmf-wire' || matrix.id == 'standalone-libraries-portable'
+        if: matrix.id == 'lxmf-direct' || matrix.id == 'standalone-libraries-portable'
         run: rustup target add --toolchain 1.96.0 thumbv7em-none-eabihf
       - name: Prepare embedded object inspection tools
         if: matrix.group == 'embedded' || matrix.group == 'esp' || matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'

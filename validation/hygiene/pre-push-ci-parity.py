@@ -101,9 +101,9 @@ def reusable_library_gates(paths: set[str], manifest: dict) -> tuple[Gate, ...]:
             continue
         if suite["platform"] in {"any", platform}:
             selected.append(suite["id"])
-        elif suite["id"] == "lxmf-wire" and platform == "macos":
+        elif suite["id"] == "lxmf-direct" and platform == "macos":
             # Run the POSIX authority launcher without claiming Linux evidence.
-            equivalents.append(Gate("LXMF wire vectors (macOS)", tuple(suite["command"])))
+            equivalents.append(Gate("LXMF direct exchange (macOS)", tuple(suite["command"])))
     registered = (
         (Gate("reusable library suites", validation_command(tuple(selected))),)
         if selected else ()

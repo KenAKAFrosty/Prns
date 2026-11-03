@@ -10,6 +10,8 @@ lxmf_venv="${LXMF_VENV:-${repository_root}/target/interop/lxmf-1.1.0}"
 requirements="${repository_root}/prns-lxmf/wire/interop/python/requirements-lxmf-1.1.0.txt"
 vector_generator="${repository_root}/prns-lxmf/wire/interop/python/generate_lxmf_1_1_0_vectors.py"
 vector_tests="${repository_root}/prns-lxmf/wire/interop/python"
+live_harness="${repository_root}/prns-lxmf/service/interop/python/run_live_tcp_lxmf.py"
+live_fixture_tests="${repository_root}/prns-lxmf/service/interop/python"
 
 if [[ ! -x "${lxmf_venv}/bin/python" ]]; then
   if command -v uv >/dev/null 2>&1; then
@@ -34,7 +36,7 @@ fi
 
 "${bootstrap_python}" -m unittest tools.tests.test_lxmf_publication_contracts
 
-cargo fmt --manifest-path Cargo.toml -p prns-lxmf-wire -- --check
+cargo fmt --manifest-path Cargo.toml -p prns-lxmf -p prns-lxmf-wire -- --check
 
 cargo check --locked \
   --manifest-path prns-lxmf/wire/Cargo.toml \
@@ -49,9 +51,37 @@ cargo clippy --locked \
   -- \
   -D warnings
 
+cargo check --locked \
+  --manifest-path prns-lxmf/service/Cargo.toml \
+  --no-default-features
+cargo check --locked \
+  --manifest-path prns-lxmf/service/Cargo.toml \
+  --no-default-features \
+  --target thumbv7em-none-eabihf
+cargo test --locked \
+  --manifest-path prns-lxmf/service/Cargo.toml \
+  --features tokio-host
+"${bootstrap_python}" prns-lxmf/service/tests/check_features.py
+rustup run 1.90.0 "${bootstrap_python}" prns-lxmf/service/tests/check_features.py
+for features in tokio-runtime; do
+  cargo test --locked --manifest-path prns-lxmf/service/Cargo.toml --no-default-features --features "${features}"
+done
+cargo clippy --locked \
+  --manifest-path prns-lxmf/service/Cargo.toml \
+  --all-targets \
+  --features tokio-host \
+  -- \
+  -D warnings
+
 "${lxmf_venv}/bin/python" "${vector_generator}" --check
 "${lxmf_venv}/bin/python" -m unittest discover \
   --start-directory "${vector_tests}" \
   --pattern 'test_*.py' \
   --verbose
-echo "PRNS_LXMF_WIRE_GATE_OK"
+"${lxmf_venv}/bin/python" -m unittest discover \
+  --start-directory "${live_fixture_tests}" \
+  --pattern 'test_*.py' \
+  --verbose
+"${lxmf_venv}/bin/python" "${live_harness}"
+
+echo "PRNS_LXMF_DIRECT_GATE_OK"
