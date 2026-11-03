@@ -428,6 +428,16 @@
       "manifest": "prns-groups/Cargo.toml",
       "name": "group-headless-peer",
       "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "manifest": "applications/prns/chat-app/Cargo.toml",
+      "name": "app-android",
+      "target": "aarch64-linux-android"
+    },
+    {
+      "manifest": "applications/prns/chat-app/Cargo.toml",
+      "name": "app-ios",
+      "target": "aarch64-apple-ios"
     }
   ],
   "packages": [
@@ -487,6 +497,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "getrandom",
+          "rand_core"
+        ],
+        "app-ios": [
+          "alloc",
+          "getrandom",
+          "rand_core"
+        ],
         "group-headless-peer": [
           "alloc",
           "getrandom",
@@ -612,6 +632,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -688,6 +710,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "zeroize"
+        ],
+        "app-ios": [
+          "zeroize"
+        ],
         "service-runtime-connections-linux": [
           "zeroize"
         ],
@@ -782,6 +810,20 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "aes",
+          "alloc",
+          "default",
+          "getrandom",
+          "zeroize"
+        ],
+        "app-ios": [
+          "aes",
+          "alloc",
+          "default",
+          "getrandom",
+          "zeroize"
+        ],
         "group-headless-peer": [
           "aes",
           "alloc",
@@ -1239,6 +1281,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "service-runtime-connections-linux": [
           "default",
           "std"
@@ -1391,6 +1441,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -1463,6 +1515,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -1583,6 +1637,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc"
+        ],
+        "app-ios": [
+          "alloc"
+        ],
         "group-headless-peer": [
           "alloc"
         ],
@@ -1709,6 +1769,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "default",
@@ -1919,6 +1989,12 @@
     {
       "graphs": {
         "android": [
+          "alloc"
+        ],
+        "app-android": [
+          "alloc"
+        ],
+        "app-ios": [
           "alloc"
         ],
         "contact-card": [
@@ -2295,6 +2371,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [
           "default"
         ],
@@ -2385,6 +2463,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "std"
+        ],
+        "app-ios": [
+          "std"
+        ],
         "contact-card": [
           "serde",
           "serde_core",
@@ -2675,6 +2759,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -2737,6 +2823,12 @@
     {
       "graphs": {
         "android": [
+          "zeroize"
+        ],
+        "app-android": [
+          "zeroize"
+        ],
+        "app-ios": [
           "zeroize"
         ],
         "contact-card": [
@@ -2944,6 +3036,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -3020,6 +3114,10 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "alloc",
+          "std"
+        ],
         "daemon-macos": [
           "alloc",
           "default",
@@ -3075,6 +3173,11 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "daemon-macos": [
           "alloc",
           "default",
@@ -3478,6 +3581,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -3656,6 +3761,8 @@
           "default",
           "std"
         ],
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "daemon-linux": [
           "default",
@@ -3778,6 +3885,14 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "std"
+        ],
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
           "default",
           "std"
         ],
@@ -4054,6 +4169,12 @@
         "android": [
           "default"
         ],
+        "app-android": [
+          "default"
+        ],
+        "app-ios": [
+          "default"
+        ],
         "daemon-linux": [
           "default"
         ],
@@ -4212,6 +4333,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
@@ -4250,6 +4373,12 @@
     {
       "graphs": {
         "android": [
+          "block-padding"
+        ],
+        "app-android": [
+          "block-padding"
+        ],
+        "app-ios": [
           "block-padding"
         ],
         "daemon-linux": [
@@ -4492,6 +4621,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "service-runtime-connections-linux": [],
         "service-runtime-connections-macos": [],
         "service-runtime-groups-network-android": [],
@@ -4574,6 +4705,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "expo-android": [],
         "host-connections-android": [],
         "service-runtime-groups-network-android": []
@@ -4592,6 +4724,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -4734,6 +4868,18 @@
       "graphs": {
         "android": [
           "rng",
+          "zeroize"
+        ],
+        "app-android": [
+          "cipher",
+          "rng",
+          "xchacha",
+          "zeroize"
+        ],
+        "app-ios": [
+          "cipher",
+          "rng",
+          "xchacha",
           "zeroize"
         ],
         "daemon-linux": [
@@ -5088,6 +5234,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "getrandom"
+        ],
+        "app-ios": [
+          "alloc",
+          "getrandom"
+        ],
         "group-headless-peer": [
           "alloc",
           "getrandom"
@@ -5191,6 +5345,12 @@
     {
       "graphs": {
         "android": [
+          "block-padding"
+        ],
+        "app-android": [
+          "block-padding"
+        ],
+        "app-ios": [
           "block-padding"
         ],
         "daemon-linux": [
@@ -5397,6 +5557,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "block-buffer",
+          "stream-wrapper"
+        ],
+        "app-ios": [
+          "block-buffer",
+          "stream-wrapper"
+        ],
         "engine": [
           "block-buffer",
           "stream-wrapper"
@@ -5733,6 +5901,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5836,6 +6006,12 @@
           "default",
           "std"
         ],
+        "app-android": [
+          "alloc",
+          "bytes",
+          "default",
+          "std"
+        ],
         "service-runtime-groups-network-android": [
           "alloc",
           "bytes",
@@ -5926,6 +6102,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -6267,6 +6445,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -6304,6 +6484,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -6370,6 +6552,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -6451,6 +6635,14 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "std"
+        ],
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
           "default",
           "std"
         ],
@@ -6693,6 +6885,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -6848,6 +7042,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "service-runtime-connections-linux": [
           "default",
           "std"
@@ -7026,6 +7228,14 @@
           "alloc",
           "std"
         ],
+        "app-android": [
+          "alloc",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "std"
@@ -7183,6 +7393,14 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "std"
+        ],
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
           "default",
           "std"
         ],
@@ -7356,6 +7574,18 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "hybrid-array",
+          "rand_core",
+          "subtle",
+          "zeroize"
+        ],
+        "app-ios": [
+          "hybrid-array",
+          "rand_core",
+          "subtle",
+          "zeroize"
+        ],
         "group-headless-peer": [
           "hybrid-array",
           "rand_core",
@@ -7503,6 +7733,12 @@
     {
       "graphs": {
         "android": [
+          "std"
+        ],
+        "app-android": [
+          "std"
+        ],
+        "app-ios": [
           "std"
         ],
         "daemon-linux": [
@@ -7653,6 +7889,14 @@
     {
       "graphs": {
         "android": [
+          "rand_core"
+        ],
+        "app-android": [
+          "getrandom",
+          "rand_core"
+        ],
+        "app-ios": [
+          "getrandom",
           "rand_core"
         ],
         "contact-card": [
@@ -7866,6 +8110,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -7994,6 +8240,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "subtle"
+        ],
+        "app-ios": [
+          "subtle"
+        ],
         "contact-card": [
           "subtle"
         ],
@@ -8084,6 +8336,20 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
+        "app-android": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
+        "app-ios": [
           "alloc",
           "digest",
           "precomputed-tables",
@@ -8648,6 +8914,14 @@
           "default",
           "suggestions"
         ],
+        "app-android": [
+          "default",
+          "suggestions"
+        ],
+        "app-ios": [
+          "default",
+          "suggestions"
+        ],
         "daemon-linux": [
           "default",
           "suggestions"
@@ -8920,6 +9194,14 @@
           "strsim",
           "suggestions"
         ],
+        "app-android": [
+          "strsim",
+          "suggestions"
+        ],
+        "app-ios": [
+          "strsim",
+          "suggestions"
+        ],
         "daemon-linux": [
           "strsim",
           "suggestions"
@@ -9186,6 +9468,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -9286,6 +9570,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -9328,6 +9614,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "default",
@@ -9693,6 +9989,18 @@
         "android": [
           "alloc",
           "oid",
+          "zeroize"
+        ],
+        "app-android": [
+          "alloc",
+          "oid",
+          "pem",
+          "zeroize"
+        ],
+        "app-ios": [
+          "alloc",
+          "oid",
+          "pem",
           "zeroize"
         ],
         "contact-card": [
@@ -10076,6 +10384,20 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "block-buffer",
@@ -10389,6 +10711,22 @@
           "block-api",
           "default",
           "mac",
+          "rand_core",
+          "zeroize"
+        ],
+        "app-android": [
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
+        ],
+        "app-ios": [
+          "block-api",
+          "default",
+          "mac",
+          "oid",
           "rand_core",
           "zeroize"
         ],
@@ -10894,6 +11232,14 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "alloc",
+          "block2",
+          "default",
+          "libc",
+          "objc2",
+          "std"
+        ],
         "daemon-macos": [
           "alloc",
           "block2",
@@ -11191,6 +11537,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "expo-android": [],
         "host-connections-android": [],
         "service-runtime-groups-network-android": []
@@ -11253,6 +11600,12 @@
     {
       "graphs": {
         "android": [
+          "default"
+        ],
+        "app-android": [
+          "default"
+        ],
+        "app-ios": [
           "default"
         ],
         "daemon-linux": [
@@ -11440,6 +11793,24 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "algorithm",
+          "alloc",
+          "der",
+          "digest",
+          "pem",
+          "pkcs8",
+          "spki"
+        ],
+        "app-ios": [
+          "algorithm",
+          "alloc",
+          "der",
+          "digest",
+          "pem",
+          "pkcs8",
+          "spki"
+        ],
         "group-headless-peer": [
           "algorithm",
           "alloc",
@@ -11655,6 +12026,12 @@
         "android": [
           "alloc"
         ],
+        "app-android": [
+          "alloc"
+        ],
+        "app-ios": [
+          "alloc"
+        ],
         "contact-card": [
           "alloc"
         ],
@@ -11842,6 +12219,24 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
+        "app-android": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
+        "app-ios": [
           "alloc",
           "batch",
           "fast",
@@ -12377,6 +12772,14 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [
+          "std",
+          "use_std"
+        ],
+        "app-ios": [
+          "std",
+          "use_std"
+        ],
         "daemon-linux": [
           "std",
           "use_std"
@@ -12558,6 +12961,28 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ff",
+          "group",
+          "pem",
+          "pkcs8",
+          "sec1"
+        ],
+        "app-ios": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ff",
+          "group",
+          "pem",
+          "pkcs8",
+          "sec1"
+        ],
         "group-headless-peer": [
           "alloc",
           "arithmetic",
@@ -12958,6 +13383,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -13062,6 +13489,22 @@
     {
       "graphs": {
         "android": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "app-android": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "app-ios": [
           "medium-ethernet",
           "multicast",
           "proto-ipv4",
@@ -13462,6 +13905,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -13524,6 +13969,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -13656,6 +14103,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -13718,6 +14167,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -13807,6 +14258,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -13964,6 +14417,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14022,6 +14477,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14287,6 +14744,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14367,6 +14826,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14429,6 +14890,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14529,6 +14992,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14584,6 +15049,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14646,6 +15113,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14701,6 +15170,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14763,6 +15234,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14824,6 +15297,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14885,6 +15360,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -14968,6 +15445,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -15198,6 +15677,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -15251,6 +15732,14 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "std"
+        ],
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
           "default",
           "std"
         ],
@@ -16952,6 +17441,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "default",
@@ -17243,6 +17742,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc"
+        ],
+        "app-ios": [
+          "alloc"
+        ],
         "group-headless-peer": [
           "alloc"
         ],
@@ -17361,6 +17866,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -17574,6 +18081,14 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "std"
+        ],
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
           "default",
           "std"
         ],
@@ -17847,6 +18362,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
@@ -17923,6 +18440,22 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "app-android": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "app-ios": [
           "alloc",
           "async-await",
           "default",
@@ -18293,6 +18826,20 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "app-android": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "app-ios": [
           "alloc",
           "default",
           "futures-sink",
@@ -18629,6 +19176,16 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "app-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "app-ios": [
           "alloc",
           "default",
           "std"
@@ -18916,6 +19473,12 @@
         "android": [
           "std"
         ],
+        "app-android": [
+          "std"
+        ],
+        "app-ios": [
+          "std"
+        ],
         "daemon-linux": [
           "std"
         ],
@@ -19135,6 +19698,12 @@
           "default",
           "std"
         ],
+        "app-android": [
+          "std"
+        ],
+        "app-ios": [
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "std"
@@ -19350,6 +19919,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -19439,6 +20010,16 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "app-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "app-ios": [
           "alloc",
           "default",
           "std"
@@ -19694,6 +20275,14 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "std"
+        ],
+        "app-android": [
+          "alloc",
+          "std"
+        ],
+        "app-ios": [
           "alloc",
           "std"
         ],
@@ -19982,6 +20571,36 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "app-android": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "app-ios": [
           "alloc",
           "async-await",
           "async-await-macro",
@@ -20746,6 +21365,12 @@
         "android": [
           "more_lengths"
         ],
+        "app-android": [
+          "more_lengths"
+        ],
+        "app-ios": [
+          "more_lengths"
+        ],
         "daemon-linux": [
           "more_lengths"
         ],
@@ -20952,6 +21577,8 @@
         "android": [
           "std"
         ],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [
           "std"
         ],
@@ -21029,6 +21656,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "std"
+        ],
+        "app-ios": [
+          "std"
+        ],
         "daemon-linux": [
           "std"
         ],
@@ -21159,6 +21792,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "sys_rng",
+          "wasm_js"
+        ],
+        "app-ios": [
+          "sys_rng",
+          "wasm_js"
+        ],
         "contact-card": [
           "sys_rng",
           "wasm_js"
@@ -21331,6 +21972,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "zeroize"
+        ],
+        "app-ios": [
+          "zeroize"
+        ],
         "group-headless-peer": [
           "zeroize"
         ],
@@ -21411,6 +22058,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc"
+        ],
+        "app-ios": [
+          "alloc"
+        ],
         "group-headless-peer": [
           "alloc"
         ],
@@ -21507,6 +22160,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -21602,6 +22257,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "raw"
+        ],
+        "app-ios": [
+          "raw"
+        ],
         "daemon-linux": [
           "raw"
         ],
@@ -21700,6 +22361,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -21753,6 +22416,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -21830,6 +22495,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -21914,6 +22581,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -21972,6 +22641,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "contact-card": [
           "alloc",
           "default",
@@ -22137,6 +22816,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -22215,6 +22896,12 @@
     {
       "graphs": {
         "android": [
+          "zeroize"
+        ],
+        "app-android": [
+          "zeroize"
+        ],
+        "app-ios": [
           "zeroize"
         ],
         "daemon-linux": [
@@ -22418,6 +23105,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -22594,6 +23283,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "std"
@@ -22738,6 +23435,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "std"
@@ -23000,6 +23705,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "subtle",
+          "zeroize"
+        ],
+        "app-ios": [
+          "alloc",
+          "subtle",
+          "zeroize"
+        ],
         "contact-card": [
           "alloc",
           "subtle",
@@ -23328,6 +24043,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -23445,6 +24162,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -23545,6 +24264,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "serde",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "serde",
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "std"
@@ -23757,6 +24486,12 @@
         "android": [
           "block-padding"
         ],
+        "app-android": [
+          "block-padding"
+        ],
+        "app-ios": [
+          "block-padding"
+        ],
         "daemon-linux": [
           "block-padding"
         ],
@@ -23958,6 +24693,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "engine": [],
         "group-headless-peer": [],
         "group-libraries": [],
@@ -24041,6 +24778,10 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "std"
+        ],
+        "app-android": [
           "default",
           "std"
         ],
@@ -24252,6 +24993,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "use_alloc",
+          "use_std"
+        ],
+        "app-ios": [
+          "default",
+          "use_alloc",
+          "use_std"
+        ],
         "daemon-linux": [
           "default",
           "use_alloc",
@@ -24388,6 +25139,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -24497,6 +25250,9 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default"
+        ],
         "expo-android": [
           "default"
         ],
@@ -24521,6 +25277,9 @@
     {
       "graphs": {
         "android": [
+          "default"
+        ],
+        "app-android": [
           "default"
         ],
         "expo-android": [
@@ -24549,6 +25308,9 @@
         "android": [
           "default"
         ],
+        "app-android": [
+          "default"
+        ],
         "expo-android": [
           "default"
         ],
@@ -24573,6 +25335,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "expo-android": [],
         "host-connections-android": [],
         "service-runtime-groups-network-android": []
@@ -24591,6 +25354,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "expo-android": [],
         "host-connections-android": [],
         "service-runtime-groups-network-android": []
@@ -24645,6 +25409,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -24800,6 +25566,12 @@
     {
       "graphs": {
         "android": [
+          "rust-allocator"
+        ],
+        "app-android": [
+          "rust-allocator"
+        ],
+        "app-ios": [
           "rust-allocator"
         ],
         "daemon-linux": [
@@ -24961,6 +25733,16 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "app-android": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "app-ios": [
           "default",
           "extra_traits",
           "std"
@@ -25445,6 +26227,20 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "auxvec",
+          "default",
+          "elf",
+          "errno",
+          "general",
+          "if_ether",
+          "ioctl",
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
+        ],
         "daemon-linux": [
           "auxvec",
           "default",
@@ -25830,6 +26626,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -25892,6 +26690,14 @@
     {
       "graphs": {
         "android": [
+          "atomic_usize",
+          "default"
+        ],
+        "app-android": [
+          "atomic_usize",
+          "default"
+        ],
+        "app-ios": [
           "atomic_usize",
           "default"
         ],
@@ -26065,6 +26871,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "std"
+        ],
+        "app-ios": [
+          "std"
+        ],
         "service-runtime-connections-linux": [
           "std"
         ],
@@ -26278,6 +27090,10 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "std"
+        ],
+        "app-android": [
           "default",
           "std"
         ],
@@ -26550,6 +27366,12 @@
         "android": [
           "map"
         ],
+        "app-android": [
+          "map"
+        ],
+        "app-ios": [
+          "map"
+        ],
         "daemon-linux": [
           "map"
         ],
@@ -26806,6 +27628,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default"
+        ],
+        "app-ios": [
+          "default"
+        ],
         "group-headless-peer": [
           "default"
         ],
@@ -26988,6 +27816,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "contact-card": [
           "alloc",
           "default",
@@ -27405,6 +28243,16 @@
           "os-ext",
           "os-poll"
         ],
+        "app-android": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "app-ios": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
         "daemon-linux": [
           "default",
           "log",
@@ -27688,6 +28536,20 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "by_ref_proposal",
+          "fast_serialize",
+          "out_of_order",
+          "prior_epoch",
+          "private_message"
+        ],
+        "app-ios": [
+          "by_ref_proposal",
+          "fast_serialize",
+          "out_of_order",
+          "prior_epoch",
+          "private_message"
+        ],
         "group-headless-peer": [
           "by_ref_proposal",
           "fast_serialize",
@@ -27856,6 +28718,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "preallocate"
+        ],
+        "app-ios": [
+          "preallocate"
+        ],
         "group-headless-peer": [
           "preallocate"
         ],
@@ -27936,6 +28804,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -27972,6 +28842,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "fast_serialize"
+        ],
+        "app-ios": [
+          "fast_serialize"
+        ],
         "group-headless-peer": [
           "fast_serialize"
         ],
@@ -28052,6 +28928,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -28088,6 +28966,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -28124,6 +29004,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -28241,6 +29123,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -28321,6 +29205,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -28383,6 +29269,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "expo-android": [],
         "host-connections-android": [],
         "service-runtime-groups-network-android": []
@@ -28401,6 +29288,12 @@
     {
       "graphs": {
         "android": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "app-android": [
           "android-extra",
           "apple-system-configuration-extra",
           "default",
@@ -28637,6 +29530,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "daemon-linux": [],
         "desktop-linux": [],
         "expo-android": [],
@@ -28669,6 +29563,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "daemon-linux": [],
         "desktop-linux": [],
         "expo-android": [],
@@ -28701,6 +29596,9 @@
     {
       "graphs": {
         "android": [
+          "default"
+        ],
+        "app-android": [
           "default"
         ],
         "daemon-linux": [
@@ -29188,6 +30086,14 @@
           "i128",
           "std"
         ],
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "i128",
@@ -29550,6 +30456,10 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "alloc",
+          "std"
+        ],
         "daemon-macos": [
           "alloc",
           "std"
@@ -29604,6 +30514,11 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "daemon-macos": [
           "alloc",
           "default",
@@ -29669,6 +30584,11 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "daemon-macos": [
           "alloc",
           "default",
@@ -29857,6 +30777,22 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "CBAdvertisementData",
+          "CBAttribute",
+          "CBCentralManager",
+          "CBCentralManagerConstants",
+          "CBCharacteristic",
+          "CBDescriptor",
+          "CBManager",
+          "CBPeer",
+          "CBPeripheral",
+          "CBService",
+          "CBUUID",
+          "alloc",
+          "bitflags",
+          "std"
+        ],
         "daemon-macos": [
           "CBAdvertisementData",
           "CBAttribute",
@@ -30031,6 +30967,32 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "CBATTRequest",
+          "CBAdvertisementData",
+          "CBAttribute",
+          "CBCentral",
+          "CBCentralManager",
+          "CBCentralManagerConstants",
+          "CBCharacteristic",
+          "CBDefines",
+          "CBDescriptor",
+          "CBError",
+          "CBL2CAPChannel",
+          "CBManager",
+          "CBPeer",
+          "CBPeripheral",
+          "CBPeripheralManager",
+          "CBPeripheralManagerConstants",
+          "CBService",
+          "CBUUID",
+          "alloc",
+          "bitflags",
+          "default",
+          "dispatch2",
+          "objc2-core-foundation",
+          "std"
+        ],
         "daemon-macos": [
           "CBATTRequest",
           "CBAdvertisementData",
@@ -30428,6 +31390,61 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "CFArray",
+          "CFAttributedString",
+          "CFAvailability",
+          "CFBag",
+          "CFBinaryHeap",
+          "CFBitVector",
+          "CFBundle",
+          "CFByteOrder",
+          "CFCGTypes",
+          "CFCalendar",
+          "CFCharacterSet",
+          "CFData",
+          "CFDate",
+          "CFDateFormatter",
+          "CFDictionary",
+          "CFError",
+          "CFFileDescriptor",
+          "CFFileSecurity",
+          "CFLocale",
+          "CFMachPort",
+          "CFMessagePort",
+          "CFNotificationCenter",
+          "CFNumber",
+          "CFNumberFormatter",
+          "CFPlugIn",
+          "CFPlugInCOM",
+          "CFPreferences",
+          "CFPropertyList",
+          "CFRunLoop",
+          "CFSet",
+          "CFSocket",
+          "CFStream",
+          "CFString",
+          "CFStringEncodingExt",
+          "CFStringTokenizer",
+          "CFTimeZone",
+          "CFTree",
+          "CFURL",
+          "CFURLAccess",
+          "CFURLEnumerator",
+          "CFUUID",
+          "CFUserNotification",
+          "CFUtilities",
+          "CFXMLNode",
+          "CFXMLParser",
+          "alloc",
+          "bitflags",
+          "block2",
+          "default",
+          "dispatch2",
+          "libc",
+          "objc2",
+          "std"
+        ],
         "daemon-macos": [
           "CFArray",
           "CFAttributedString",
@@ -31417,6 +32434,10 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "alloc",
+          "std"
+        ],
         "daemon-macos": [
           "alloc",
           "std"
@@ -31487,6 +32508,21 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "NSArray",
+          "NSData",
+          "NSDictionary",
+          "NSEnumerator",
+          "NSError",
+          "NSObject",
+          "NSString",
+          "NSUUID",
+          "NSValue",
+          "alloc",
+          "bitflags",
+          "block2",
+          "std"
+        ],
         "daemon-macos": [
           "NSArray",
           "NSAttributedString",
@@ -31683,6 +32719,185 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "FoundationErrors",
+          "FoundationLegacySwiftCompatibility",
+          "NSAffineTransform",
+          "NSAppleEventDescriptor",
+          "NSAppleEventManager",
+          "NSAppleScript",
+          "NSArchiver",
+          "NSArray",
+          "NSAttributedString",
+          "NSAutoreleasePool",
+          "NSBackgroundActivityScheduler",
+          "NSBundle",
+          "NSByteCountFormatter",
+          "NSByteOrder",
+          "NSCache",
+          "NSCalendar",
+          "NSCalendarDate",
+          "NSCharacterSet",
+          "NSClassDescription",
+          "NSCoder",
+          "NSComparisonPredicate",
+          "NSCompoundPredicate",
+          "NSConnection",
+          "NSData",
+          "NSDate",
+          "NSDateComponentsFormatter",
+          "NSDateFormatter",
+          "NSDateInterval",
+          "NSDateIntervalFormatter",
+          "NSDebug",
+          "NSDecimal",
+          "NSDecimalNumber",
+          "NSDictionary",
+          "NSDistantObject",
+          "NSDistributedLock",
+          "NSDistributedNotificationCenter",
+          "NSEnergyFormatter",
+          "NSEnumerator",
+          "NSError",
+          "NSException",
+          "NSExpression",
+          "NSExtensionContext",
+          "NSExtensionItem",
+          "NSExtensionRequestHandling",
+          "NSFileCoordinator",
+          "NSFileHandle",
+          "NSFileManager",
+          "NSFilePresenter",
+          "NSFileVersion",
+          "NSFileWrapper",
+          "NSFormatter",
+          "NSGarbageCollector",
+          "NSGeometry",
+          "NSHFSFileTypes",
+          "NSHTTPCookie",
+          "NSHTTPCookieStorage",
+          "NSHashTable",
+          "NSHost",
+          "NSISO8601DateFormatter",
+          "NSIndexPath",
+          "NSIndexSet",
+          "NSInflectionRule",
+          "NSInvocation",
+          "NSItemProvider",
+          "NSJSONSerialization",
+          "NSKeyValueCoding",
+          "NSKeyValueObserving",
+          "NSKeyValueSharedObservers",
+          "NSKeyedArchiver",
+          "NSLengthFormatter",
+          "NSLinguisticTagger",
+          "NSListFormatter",
+          "NSLocale",
+          "NSLocalizedNumberFormatRule",
+          "NSLock",
+          "NSMapTable",
+          "NSMassFormatter",
+          "NSMeasurement",
+          "NSMeasurementFormatter",
+          "NSMetadata",
+          "NSMetadataAttributes",
+          "NSMethodSignature",
+          "NSMorphology",
+          "NSNetServices",
+          "NSNotification",
+          "NSNotificationQueue",
+          "NSNull",
+          "NSNumberFormatter",
+          "NSObjCRuntime",
+          "NSObject",
+          "NSObjectScripting",
+          "NSOperation",
+          "NSOrderedCollectionChange",
+          "NSOrderedCollectionDifference",
+          "NSOrderedSet",
+          "NSOrthography",
+          "NSPathUtilities",
+          "NSPersonNameComponents",
+          "NSPersonNameComponentsFormatter",
+          "NSPointerArray",
+          "NSPointerFunctions",
+          "NSPort",
+          "NSPortCoder",
+          "NSPortMessage",
+          "NSPortNameServer",
+          "NSPredicate",
+          "NSProcessInfo",
+          "NSProgress",
+          "NSPropertyList",
+          "NSProtocolChecker",
+          "NSProxy",
+          "NSRange",
+          "NSRegularExpression",
+          "NSRelativeDateTimeFormatter",
+          "NSRunLoop",
+          "NSScanner",
+          "NSScriptClassDescription",
+          "NSScriptCoercionHandler",
+          "NSScriptCommand",
+          "NSScriptCommandDescription",
+          "NSScriptExecutionContext",
+          "NSScriptKeyValueCoding",
+          "NSScriptObjectSpecifiers",
+          "NSScriptStandardSuiteCommands",
+          "NSScriptSuiteRegistry",
+          "NSScriptWhoseTests",
+          "NSSet",
+          "NSSortDescriptor",
+          "NSSpellServer",
+          "NSStream",
+          "NSString",
+          "NSTask",
+          "NSTermOfAddress",
+          "NSTextCheckingResult",
+          "NSThread",
+          "NSTimeZone",
+          "NSTimer",
+          "NSURL",
+          "NSURLAuthenticationChallenge",
+          "NSURLCache",
+          "NSURLConnection",
+          "NSURLCredential",
+          "NSURLCredentialStorage",
+          "NSURLDownload",
+          "NSURLError",
+          "NSURLHandle",
+          "NSURLProtectionSpace",
+          "NSURLProtocol",
+          "NSURLRequest",
+          "NSURLResponse",
+          "NSURLSession",
+          "NSUUID",
+          "NSUbiquitousKeyValueStore",
+          "NSUndoManager",
+          "NSUnit",
+          "NSUserActivity",
+          "NSUserDefaults",
+          "NSUserNotification",
+          "NSUserScriptTask",
+          "NSValue",
+          "NSValueTransformer",
+          "NSXMLDTD",
+          "NSXMLDTDNode",
+          "NSXMLDocument",
+          "NSXMLElement",
+          "NSXMLNode",
+          "NSXMLNodeOptions",
+          "NSXMLParser",
+          "NSXPCConnection",
+          "NSZone",
+          "alloc",
+          "bitflags",
+          "block2",
+          "default",
+          "libc",
+          "objc2-core-foundation",
+          "std"
+        ],
         "daemon-macos": [
           "FoundationErrors",
           "FoundationLegacySwiftCompatibility",
@@ -34203,6 +35418,12 @@
     },
     {
       "graphs": {
+        "app-ios": [
+          "alloc",
+          "libc",
+          "serial",
+          "std"
+        ],
         "daemon-macos": [
           "alloc",
           "libc",
@@ -34555,6 +35776,18 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "app-android": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "app-ios": [
           "alloc",
           "default",
           "race",
@@ -34917,6 +36150,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "expo-android": [],
         "expo-host-linux": [],
@@ -35015,6 +36250,30 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha256"
+        ],
+        "app-ios": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha256"
+        ],
         "group-headless-peer": [
           "alloc",
           "arithmetic",
@@ -35293,6 +36552,30 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha384"
+        ],
+        "app-ios": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha384"
+        ],
         "group-headless-peer": [
           "alloc",
           "arithmetic",
@@ -35602,6 +36885,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -35645,6 +36930,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "daemon-linux": [],
         "desktop-linux": [],
         "esp32-c6": [],
@@ -35700,6 +36986,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc"
+        ],
+        "app-ios": [
+          "alloc"
+        ],
         "contact-card": [
           "alloc"
         ],
@@ -36173,6 +37465,56 @@
           "wifi-auto",
           "wifi-aware",
           "wifi-direct"
+        ],
+        "app-android": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto",
+          "wifi-auto-apple"
+        ],
+        "app-ios": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "daemon-linux": [
           "alloc",
@@ -37227,6 +38569,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -37299,6 +38643,14 @@
       "graphs": {
         "android": [
           "alloc"
+        ],
+        "app-android": [
+          "alloc",
+          "pem"
+        ],
+        "app-ios": [
+          "alloc",
+          "pem"
         ],
         "contact-card": [
           "alloc",
@@ -37625,6 +38977,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -37661,6 +39015,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "hazmat",
+          "zeroize"
+        ],
+        "app-ios": [
+          "hazmat",
+          "zeroize"
+        ],
         "group-headless-peer": [
           "hazmat",
           "zeroize"
@@ -37767,6 +39129,20 @@
           "critical-section",
           "default",
           "fallback",
+          "std"
+        ],
+        "app-android": [
+          "critical-section",
+          "default",
+          "fallback",
+          "require-cas",
+          "std"
+        ],
+        "app-ios": [
+          "critical-section",
+          "default",
+          "fallback",
+          "require-cas",
           "std"
         ],
         "daemon-linux": [
@@ -38257,6 +39633,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "simd",
+          "std"
+        ],
+        "app-ios": [
+          "simd",
+          "std"
+        ],
         "daemon-linux": [
           "simd",
           "std"
@@ -38411,6 +39795,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -38447,6 +39833,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc"
+        ],
+        "app-ios": [
+          "alloc"
+        ],
         "group-headless-peer": [
           "alloc"
         ],
@@ -38527,6 +39919,28 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default"
+        ],
+        "app-ios": [
+          "default"
+        ]
+      },
+      "name": "prns-chat-app",
+      "source": "applications/prns/chat-app",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -38569,6 +39983,18 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "default",
+          "prns-identity",
+          "uniffi-bindings"
+        ],
+        "app-ios": [
+          "alloc",
+          "default",
+          "prns-identity",
+          "uniffi-bindings"
+        ],
         "contact-card": [
           "default"
         ],
@@ -38670,6 +40096,40 @@
           "resource-work-offload",
           "rns-management-wire",
           "shared-instance-rpc",
+          "std",
+          "tokio-host"
+        ],
+        "app-android": [
+          "alloc",
+          "crypto-precomputed",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "lora-2g4",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "tokio-host"
+        ],
+        "app-ios": [
+          "alloc",
+          "crypto-precomputed",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "lora-2g4",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -39512,6 +40972,7 @@
     },
     {
       "graphs": {
+        "app-android": [],
         "expo-android": [],
         "host-connections-android": []
       },
@@ -39530,6 +40991,12 @@
       "graphs": {
         "android": [
           "log"
+        ],
+        "app-android": [
+          "owned-async-fd"
+        ],
+        "app-ios": [
+          "owned-async-fd"
         ],
         "daemon-linux": [
           "log"
@@ -39676,6 +41143,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-secure-storage": [],
@@ -39695,6 +41164,18 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "archive",
+          "network",
+          "text",
+          "uniffi-bindings"
+        ],
+        "app-ios": [
+          "archive",
+          "network",
+          "text",
+          "uniffi-bindings"
+        ],
         "group-headless-peer": [
           "default",
           "headless",
@@ -39781,6 +41262,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "serde",
+          "uniffi-bindings"
+        ],
+        "app-ios": [
+          "serde",
+          "uniffi-bindings"
+        ],
         "group-headless-peer": [
           "serde"
         ],
@@ -39883,6 +41372,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -39919,6 +41410,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "contact-card",
+          "network"
+        ],
+        "app-ios": [
+          "contact-card",
+          "network"
+        ],
         "group-headless-peer": [
           "contact-card",
           "default",
@@ -40000,6 +41499,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "uniffi-bindings"
+        ],
+        "app-ios": [
+          "uniffi-bindings"
+        ],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-native-bindings-linux": [
@@ -40051,6 +41556,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default"
+        ],
+        "app-ios": [
+          "default"
+        ],
         "group-headless-peer": [
           "default"
         ],
@@ -40133,6 +41644,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "serde",
+          "uniffi-bindings"
+        ],
+        "app-ios": [
+          "default",
+          "serde",
+          "uniffi-bindings"
+        ],
         "group-headless-peer": [
           "default",
           "serde"
@@ -40271,6 +41792,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "serde"
+        ],
+        "app-ios": [
+          "default",
+          "serde"
+        ],
         "expo-android": [
           "default"
         ],
@@ -40428,6 +41957,18 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "android-platform",
+          "apple-platform",
+          "connections",
+          "default"
+        ],
+        "app-ios": [
+          "android-platform",
+          "apple-platform",
+          "connections",
+          "default"
+        ],
         "expo-android": [
           "android-platform",
           "default"
@@ -40533,6 +42074,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
@@ -40572,6 +42115,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "connections",
+          "default"
+        ],
+        "app-ios": [
+          "connections",
+          "default"
+        ],
         "expo-android": [
           "default"
         ],
@@ -40662,6 +42213,20 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "contact-card",
+          "default",
+          "owner",
+          "redb-store",
+          "uniffi-bindings"
+        ],
+        "app-ios": [
+          "contact-card",
+          "default",
+          "owner",
+          "redb-store",
+          "uniffi-bindings"
+        ],
         "group-native-bindings-linux": [
           "default"
         ],
@@ -40800,6 +42365,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-native-bindings-linux": [],
         "group-native-bindings-macos": [],
         "identity-catalog-card-linux": [],
@@ -40839,6 +42406,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "uniffi-bindings"
+        ],
+        "app-ios": [
+          "default",
+          "uniffi-bindings"
+        ],
         "group-native-bindings-linux": [
           "default"
         ],
@@ -40938,6 +42513,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "uniffi-bindings"
+        ],
+        "app-ios": [
+          "default",
+          "uniffi-bindings"
+        ],
         "group-native-bindings-linux": [
           "default"
         ],
@@ -41037,6 +42620,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "catalog",
+          "contact-card",
+          "default"
+        ],
+        "app-ios": [
+          "catalog",
+          "contact-card",
+          "default"
+        ],
         "group-native-bindings-linux": [
           "default"
         ],
@@ -41118,6 +42711,18 @@
         "android": [
           "bluetooth-auto",
           "log",
+          "usb",
+          "wifi-auto"
+        ],
+        "app-android": [
+          "bluetooth-auto",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "app-ios": [
+          "bluetooth-auto",
+          "tcp",
           "usb",
           "wifi-auto"
         ],
@@ -41469,6 +43074,50 @@
           "wifi-auto",
           "wifi-aware",
           "wifi-direct"
+        ],
+        "app-android": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto",
+          "wifi-auto-apple"
+        ],
+        "app-ios": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "daemon-linux": [
           "ax25",
@@ -42254,6 +43903,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -42366,6 +44017,22 @@
           "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
+          "std"
+        ],
+        "app-android": [
+          "alloc",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
+          "resource-bzip2",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
+          "resource-bzip2",
           "std"
         ],
         "daemon-linux": [
@@ -42781,6 +44448,8 @@
         "android": [
           "log"
         ],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [
           "alloc",
           "log",
@@ -42906,6 +44575,16 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "rns-management"
+        ],
+        "app-android": [
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash"
+        ],
+        "app-ios": [
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash"
         ],
         "daemon-linux": [
           "interface-discovery",
@@ -43107,6 +44786,28 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "archive",
+          "connections",
+          "contact-card",
+          "default",
+          "groups",
+          "groups-network",
+          "identities",
+          "standalone",
+          "uniffi-bindings"
+        ],
+        "app-ios": [
+          "archive",
+          "connections",
+          "contact-card",
+          "default",
+          "groups",
+          "groups-network",
+          "identities",
+          "standalone",
+          "uniffi-bindings"
+        ],
         "service-runtime-connections-linux": [
           "connections",
           "default",
@@ -43225,6 +44926,20 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "archive",
+          "connections",
+          "contact-card",
+          "default",
+          "text"
+        ],
+        "app-ios": [
+          "archive",
+          "connections",
+          "contact-card",
+          "default",
+          "text"
+        ],
         "service-runtime-connections-linux": [
           "connections",
           "default"
@@ -43309,6 +45024,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "redb"
+        ],
+        "app-ios": [
+          "default",
+          "redb"
+        ],
         "group-headless-peer": [
           "default",
           "redb"
@@ -43629,6 +45352,14 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "proc-macro"
+        ],
+        "app-android": [
+          "default",
+          "proc-macro"
+        ],
+        "app-ios": [
           "default",
           "proc-macro"
         ],
@@ -44167,6 +45898,14 @@
           "default",
           "proc-macro"
         ],
+        "app-android": [
+          "default",
+          "proc-macro"
+        ],
+        "app-ios": [
+          "default",
+          "proc-macro"
+        ],
         "contact-card": [
           "default",
           "proc-macro"
@@ -44491,6 +46230,24 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
+        "app-ios": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
         "engine": [
           "alloc",
           "os_rng",
@@ -44810,6 +46567,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "std"
+        ],
+        "app-ios": [
+          "std"
+        ],
         "daemon-linux": [
           "std"
         ],
@@ -44930,6 +46693,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -45042,6 +46807,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "os_rng",
+          "std"
+        ],
+        "app-ios": [
+          "os_rng",
+          "std"
+        ],
         "daemon-linux": [
           "os_rng",
           "std"
@@ -45230,6 +47003,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -45277,6 +47052,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -45323,6 +47100,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "group-headless-peer": [
           "default",
           "std"
@@ -45733,6 +47518,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -45769,6 +47556,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "app-ios": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
         "daemon-linux": [
           "alloc",
           "default",
@@ -46065,6 +47862,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -46171,6 +47970,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -46235,6 +48036,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -46312,6 +48115,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -46390,6 +48195,26 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
+        ],
+        "app-ios": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
+        ],
         "daemon-linux": [
           "alloc",
           "default",
@@ -46837,6 +48662,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "ring",
+          "std"
+        ],
+        "app-ios": [
+          "ring",
+          "std"
+        ],
         "daemon-linux": [
           "ring",
           "std"
@@ -46975,6 +48808,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -47017,6 +48852,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "default",
@@ -47185,6 +49030,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "ring",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "ring",
@@ -47469,6 +49324,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "expo-android": [],
         "host-connections-android": [],
         "service-runtime-groups-network-android": []
@@ -47503,6 +49359,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -47638,6 +49496,26 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "ctutils",
+          "default",
+          "der",
+          "pem",
+          "point",
+          "subtle",
+          "zeroize"
+        ],
+        "app-ios": [
+          "alloc",
+          "ctutils",
+          "default",
+          "der",
+          "pem",
+          "point",
+          "subtle",
+          "zeroize"
+        ],
         "group-headless-peer": [
           "alloc",
           "ctutils",
@@ -48008,6 +49886,14 @@
           "default",
           "std"
         ],
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "contact-card": [
           "default",
           "std"
@@ -48294,6 +50180,20 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "app-android": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "app-ios": [
           "alloc",
           "default",
           "derive",
@@ -48799,6 +50699,16 @@
           "result",
           "std"
         ],
+        "app-android": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "result",
+          "std"
+        ],
         "contact-card": [
           "alloc",
           "default",
@@ -49150,6 +51060,12 @@
         "android": [
           "default"
         ],
+        "app-android": [
+          "default"
+        ],
+        "app-ios": [
+          "default"
+        ],
         "contact-card": [
           "default"
         ],
@@ -49358,6 +51274,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "contact-card": [
           "default",
           "std"
@@ -49564,6 +51488,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "serde",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "serde",
@@ -49730,6 +51664,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc"
+        ],
+        "app-ios": [
+          "alloc"
+        ],
         "group-headless-peer": [
           "alloc"
         ],
@@ -49811,6 +51751,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -49880,6 +51822,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -49948,6 +51892,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "service-runtime-connections-linux": [
           "default",
           "std"
@@ -50092,6 +52044,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [
           "default",
           "std"
@@ -50169,6 +52123,12 @@
     {
       "graphs": {
         "android": [
+          "zeroize"
+        ],
+        "app-android": [
+          "zeroize"
+        ],
+        "app-ios": [
           "zeroize"
         ],
         "contact-card": [
@@ -50442,6 +52402,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "std"
@@ -50568,6 +52536,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "std"
@@ -50707,6 +52683,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "desktop-linux": [],
@@ -50752,6 +52730,16 @@
       "graphs": {
         "android": [
           "alloc",
+          "rand_core"
+        ],
+        "app-android": [
+          "alloc",
+          "digest",
+          "rand_core"
+        ],
+        "app-ios": [
+          "alloc",
+          "digest",
           "rand_core"
         ],
         "contact-card": [
@@ -51068,6 +53056,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "expo-android": [
           "default",
           "std"
@@ -51175,6 +53171,14 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "std"
+        ],
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
           "default",
           "std"
         ],
@@ -51416,6 +53420,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [
           "const_generics"
         ],
@@ -51526,6 +53532,26 @@
     {
       "graphs": {
         "android": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "app-android": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "app-ios": [
           "async",
           "medium-ethernet",
           "multicast",
@@ -52055,6 +54081,12 @@
         "android": [
           "all"
         ],
+        "app-android": [
+          "all"
+        ],
+        "app-ios": [
+          "all"
+        ],
         "daemon-linux": [
           "all"
         ],
@@ -52268,6 +54300,18 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "mutex",
+          "portable-atomic",
+          "portable_atomic",
+          "spin_mutex"
+        ],
+        "app-ios": [
+          "mutex",
+          "portable-atomic",
+          "portable_atomic",
+          "spin_mutex"
+        ],
         "group-headless-peer": [
           "mutex",
           "portable-atomic",
@@ -52414,6 +54458,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "mutex",
+          "spin_mutex"
+        ],
+        "app-ios": [
+          "mutex",
+          "spin_mutex"
+        ],
         "daemon-linux": [
           "barrier",
           "default",
@@ -52551,6 +54603,14 @@
       "graphs": {
         "android": [
           "alloc"
+        ],
+        "app-android": [
+          "alloc",
+          "pem"
+        ],
+        "app-ios": [
+          "alloc",
+          "pem"
         ],
         "contact-card": [
           "alloc",
@@ -52832,6 +54892,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -52938,6 +55000,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -53000,6 +55064,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -53062,6 +55128,12 @@
     {
       "graphs": {
         "android": [
+          "default"
+        ],
+        "app-android": [
+          "default"
+        ],
+        "app-ios": [
           "default"
         ],
         "contact-card": [
@@ -53241,6 +55313,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -53495,6 +55569,14 @@
       "graphs": {
         "android": [
           "const-generics"
+        ],
+        "app-android": [
+          "const-generics",
+          "i128"
+        ],
+        "app-ios": [
+          "const-generics",
+          "i128"
         ],
         "contact-card": [
           "const-generics",
@@ -53892,6 +55974,30 @@
           "derive",
           "extra-traits",
           "fold",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "app-android": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "app-ios": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
           "full",
           "parsing",
           "printing",
@@ -55211,6 +57317,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "getrandom"
+        ],
+        "app-ios": [
+          "default",
+          "getrandom"
+        ],
         "daemon-linux": [
           "default",
           "getrandom"
@@ -55440,6 +57554,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "expo-android": [],
         "host-connections-android": [],
         "service-runtime-groups-network-android": []
@@ -55457,6 +57572,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "std"
@@ -55686,6 +57809,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "expo-android": [],
         "host-connections-android": [],
         "service-runtime-groups-network-android": []
@@ -55703,6 +57827,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -56087,6 +58213,44 @@
           "time",
           "tokio-macros",
           "tracing",
+          "windows-sys"
+        ],
+        "app-android": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
+        "app-ios": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
           "windows-sys"
         ],
         "daemon-linux": [
@@ -57001,6 +59165,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -57090,6 +59256,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -57132,6 +59300,18 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "app-ios": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
         "daemon-linux": [
           "default",
           "sync",
@@ -57332,6 +59512,28 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
+        ],
+        "app-ios": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
+        ],
         "daemon-linux": [
           "__rustls-tls",
           "connect",
@@ -57674,6 +59876,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default"
+        ],
+        "app-ios": [
+          "default"
+        ],
         "daemon-linux": [
           "default"
         ],
@@ -57786,6 +59994,20 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "app-ios": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
         "expo-android": [
           "default",
           "display",
@@ -57996,6 +60218,16 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "serde",
+          "std"
+        ],
         "expo-android": [
           "alloc",
           "serde",
@@ -58246,6 +60478,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "std"
+        ],
         "desktop-linux": [
           "alloc",
           "default",
@@ -58426,6 +60666,14 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "alloc",
+          "std"
+        ],
+        "app-ios": [
+          "alloc",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "std"
@@ -59085,6 +61333,26 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
+        ],
+        "app-ios": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
+        ],
         "daemon-linux": [
           "__rustls-tls",
           "data-encoding",
@@ -59386,6 +61654,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "const-generics"
+        ],
+        "app-ios": [
+          "const-generics"
+        ],
         "contact-card": [
           "const-generics"
         ],
@@ -59692,6 +61966,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -59874,6 +62150,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
@@ -59911,6 +62189,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default"
+        ],
+        "app-ios": [
+          "default"
+        ],
         "expo-android": [
           "default"
         ],
@@ -59994,6 +62278,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default"
+        ],
+        "app-ios": [
+          "default"
+        ],
         "expo-android": [
           "default"
         ],
@@ -60077,6 +62367,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "default"
+        ],
+        "app-ios": [
+          "default"
+        ],
         "expo-android": [
           "default"
         ],
@@ -60160,6 +62456,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
@@ -60197,6 +62495,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
@@ -60250,6 +62550,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -60308,6 +62610,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -60448,6 +62752,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -60607,6 +62913,18 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "app-android": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "app-ios": [
           "default",
           "rng",
           "std",
@@ -60901,6 +63219,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -60979,6 +63299,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -61080,6 +63402,7 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
         "expo-android": [],
         "host-connections-android": [],
         "service-runtime-groups-network-android": []
@@ -61930,6 +64253,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
@@ -61967,6 +64292,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "esp32-c6": [
           "alloc",
           "ascii",
@@ -62114,6 +64441,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "group-headless-peer": [],
         "group-libraries": [],
         "group-mls-adapter": [],
@@ -62169,6 +64498,14 @@
     {
       "graphs": {
         "android": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "app-android": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "app-ios": [
           "precomputed-tables",
           "static_secrets"
         ],
@@ -62691,6 +65028,12 @@
     },
     {
       "graphs": {
+        "app-android": [
+          "simd"
+        ],
+        "app-ios": [
+          "simd"
+        ],
         "engine": [
           "simd"
         ],
@@ -62973,6 +65316,20 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
+        "app-android": [
+          "aarch64",
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
+        "app-ios": [
+          "aarch64",
           "alloc",
           "default",
           "derive",
@@ -63401,6 +65758,8 @@
     {
       "graphs": {
         "android": [],
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -63571,6 +65930,8 @@
     },
     {
       "graphs": {
+        "app-android": [],
+        "app-ios": [],
         "contact-card": [],
         "desktop-linux": [],
         "engine": [],

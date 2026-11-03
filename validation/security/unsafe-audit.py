@@ -161,7 +161,10 @@ GRAPHS = (('group-mls-adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
  ('group-native-bindings-macos',
   'prns-groups/bindings/uniffi/image/Cargo.toml',
   'aarch64-apple-darwin'),
- ('group-headless-peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'))
+ ('group-headless-peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+    ('app-android', 'applications/prns/chat-app/Cargo.toml', 'aarch64-linux-android'),
+    ('app-ios', 'applications/prns/chat-app/Cargo.toml', 'aarch64-apple-ios'),
+)
 UNSAFE_EXCEPTIONS = {
     "prns-core",
     "prns-ffi",

@@ -75,6 +75,7 @@ cargo_lock_workspaces = [
     "prns-host/impls/runtime",
   "prns-service-runtime/bindings/uniffi",
     "prns-react-native/platform/android",
+    "applications",
 ]
 cargo_manifests = [
     "prns-groups/bindings/uniffi/Cargo.toml",
@@ -175,6 +176,8 @@ cargo_manifests = [
   "prns-service-runtime/bindings/uniffi/Cargo.toml",
   "prns-service-runtime/bindings/uniffi/image/Cargo.toml",
     "prns-react-native/platform/android/Cargo.toml",
+    "applications/Cargo.toml",
+    "applications/prns/chat-app/Cargo.toml",
 ]
 format_manifests = [
     "prns-identities/Cargo.toml",
@@ -205,6 +208,7 @@ format_manifests = [
     "validation/simulation/Cargo.toml",
   "prns-service-runtime/bindings/uniffi/Cargo.toml",
     "prns-react-native/platform/android/Cargo.toml",
+    "applications/Cargo.toml",
 ]
 
 [registry.format_package_overrides]
@@ -485,7 +489,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "validation/hygiene/application-boundary.py"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card", "prns-service-runtime", "prns-react-native"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card", "prns-service-runtime", "prns-react-native", "applications"]
 artifacts = "validation-artifacts/results/application-boundary"
 
 [[suite]]
@@ -496,7 +500,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "-m", "unittest", "validation.tests.test_application_boundary"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card", "prns-service-runtime", "prns-react-native"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card", "prns-service-runtime", "prns-react-native", "applications"]
 artifacts = "validation-artifacts/results/application-boundary-tests"
 
 [[suite]]
@@ -3149,3 +3153,27 @@ timeout_seconds = 1800
 command = ["node", "prns-react-native/tools/detached-consumer.mjs", "--ios", "--require-ios", "--keep"]
 inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi"]
 artifacts = "validation-artifacts/results/react-native-apple-consumer"
+
+[[suite]]
+id = "app-native"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["cargo", "test", "--locked", "--manifest-path", "applications/Cargo.toml", "--workspace", "--all-targets", "--all-features"]
+inputs = ["applications", "prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-runtime", "prns-interfaces", "prns-contact-card"]
+artifacts = "validation-artifacts/results/app-native"
+
+[[suite]]
+id = "app-native-clippy"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["cargo", "clippy", "--locked", "--manifest-path", "applications/Cargo.toml", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]
+inputs = ["applications", "prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-runtime", "prns-interfaces", "prns-contact-card"]
+artifacts = "validation-artifacts/results/app-native-clippy"

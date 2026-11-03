@@ -794,6 +794,10 @@ jobs:
         working-directory: prns-napi
       - run: cargo check --workspace --locked
         working-directory: prnsd
+      - name: Prepare app workspace MSRV dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Check the entire app workspace at the declared MSRV
+        run: cargo check --locked --manifest-path applications/Cargo.toml --workspace --all-targets --all-features
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.95.0
@@ -1553,6 +1557,58 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  app-consumers:
+    name: App consumers (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: macos
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      RUSTUP_TOOLCHAIN: "1.98.1"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.98.1"
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: app-consumers-${{ matrix.platform }}
+          workspaces: |
+            .
+            applications -> ../target
+      - name: Qualify the app native product
+        run: >-
+          python3 validation/run.py run
+          --suite app-native
+          --suite app-native-clippy
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain app validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: app-consumers-${{ matrix.platform }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
   release-critical:
     name: Release critical
     if: always()
@@ -1587,6 +1643,7 @@ jobs:
       - windows-desktop
       - local-interop
       - deny
+      - app-consumers
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -1625,6 +1682,7 @@ jobs:
       WINDOWS_RESULT: ${{ needs.windows-desktop.result }}
       INTEROP_RESULT: ${{ needs.local-interop.result }}
       DENY_RESULT: ${{ needs.deny.result }}
+      APP_CONSUMERS_RESULT: ${{ needs.app-consumers.result }}
     steps:
       - name: Require every release-critical lane
         run: |
@@ -1652,6 +1710,7 @@ jobs:
             "$APPLE_RESULT" \
             "$WINDOWS_RESULT" \
             "$INTEROP_RESULT" \
+            "$APP_CONSUMERS_RESULT" \
             "$DENY_RESULT"; do
             test "$result" = "success"
           done

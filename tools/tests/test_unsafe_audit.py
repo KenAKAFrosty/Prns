@@ -45,3 +45,19 @@ class UnsafeAuditTests(unittest.TestCase):
                 expected = {"tokens": 1, "blocks": 0, "functions": 0, "impls": 0, "externs": 0}
                 expected[kind] = 1
                 self.assertEqual(audit.unsafe_counts(root / relative), expected)
+
+
+    def test_composed_and_app_images_keep_independent_shipping_feature_graphs(self) -> None:
+            graphs = {name: (manifest, target) for name, manifest, target in audit.GRAPHS}
+            self.assertEqual(graphs['service-runtime-linux'], ("prns-service-runtime/bindings/uniffi/image/Cargo.toml", 'x86_64-unknown-linux-gnu'))
+            self.assertNotIn('service-runtime-linux', audit.GRAPH_FEATURES)
+            self.assertEqual(graphs['service-runtime-selected-linux'], graphs['service-runtime-linux'])
+            self.assertEqual(audit.GRAPH_FEATURES['service-runtime-selected-linux'], ("archive", "text", "contact-card", "connections"))
+            self.assertEqual(graphs['service-runtime-macos'], ("prns-service-runtime/bindings/uniffi/image/Cargo.toml", 'aarch64-apple-darwin'))
+            self.assertNotIn('service-runtime-macos', audit.GRAPH_FEATURES)
+            self.assertEqual(graphs['service-runtime-selected-macos'], graphs['service-runtime-macos'])
+            self.assertEqual(audit.GRAPH_FEATURES['service-runtime-selected-macos'], ("archive", "text", "contact-card", "connections"))
+            self.assertEqual(graphs['app-android'], ("applications/prns/chat-app/Cargo.toml", 'aarch64-linux-android'))
+            self.assertNotIn('app-android', audit.GRAPH_FEATURES)
+            self.assertEqual(graphs['app-ios'], ("applications/prns/chat-app/Cargo.toml", 'aarch64-apple-ios'))
+            self.assertNotIn('app-ios', audit.GRAPH_FEATURES)

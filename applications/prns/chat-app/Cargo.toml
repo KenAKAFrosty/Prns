@@ -1,0 +1,38 @@
+[package]
+name = "prns-chat-app"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "prns_chat_app"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+required-features = ["uniffi-bindgen"]
+
+[features]
+default = []
+uniffi-bindgen = ["uniffi/cli", "uniffi/cargo-metadata"]
+
+[dependencies]
+getrandom = "0.3"
+prns-service-runtime-uniffi = { path = "../../../prns-service-runtime/bindings/uniffi", features = ["archive", "text", "contact-card", "connections"] }
+uniffi = { version = "=0.31.2", default-features = false }
+prns-host = { path = "../../../prns-host/core" }
+prns-core = { path = "../../../prns-core", default-features = false }
+prns-host-runtime = { path = "../../../prns-host/impls/runtime", features = ["connections"] }
+prns-storage = { path = "../../../prns-storage" }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+prns-host-runtime = { path = "../../../prns-host/impls/runtime", features = ["apple-platform"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+prns-expo-android = { path = "../../../prns-react-native/platform/android" }
+
+[lints]
+workspace = true

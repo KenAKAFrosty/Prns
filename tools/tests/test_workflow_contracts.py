@@ -357,11 +357,11 @@ class WorkflowSchedulingTests(unittest.TestCase):
                 "Path(os.environ['CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n"
             )
             fake_python.chmod(0o755)
-            for name in ("named-identities", "standalone-libraries", "host-runtime", "group-libraries", "service-runtime"):
+            for name in ("named-identities", "standalone-libraries", "host-runtime", "group-libraries", "service-runtime", "app-consumers"):
                 job = jobs[name]
                 self.assertNotRegex(job, r"(?m)^    (?:needs|if):")
                 self.assertNotIn("continue-on-error", job)
-                self.assertIn('toolchain: "1.96.0"', job)
+                self.assertIn('toolchain: "1.98.1"' if name.startswith('app-') else 'toolchain: "1.96.0"', job)
                 steps = re.split(r"(?m)(?=^      - )", job)
                 rows = re.findall(
                     r"- platform: (\w+)\n            runner: ([^\n]+)(?:\n            native-suite: ([^\n]+))?",

@@ -1,0 +1,5 @@
+[bindings.swift]
+module_name = "PrnsChatApp"
+
+[bindings.kotlin]
+package_name = "rs.reticulum.prns.chat.app"
