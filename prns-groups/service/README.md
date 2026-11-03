@@ -214,7 +214,7 @@ reopen, stale plans, receipt reservations and bounded reclamation. Codec tests
 cover canonical framing and malformed input. The MLS and redb adapters separately
 own crypto rollback and backend crash-boundary tests.
 
-These are host library checks. The Reticulum carrier
+These are host library checks. The [Reticulum carrier](../transport/reticulum/README.md)
 owns network exchanges, and the group owner adds managed enrollment,
 scheduling and foreign consumers. Physical storage protection, mobile execution
 and firmware resources require evidence for their actual embeddings.

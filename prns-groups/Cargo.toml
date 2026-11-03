@@ -1,7 +1,7 @@
 [workspace]
-members = ["core", "store", "store/redb", "service", "profiles/text"]
+members = ["core", "store", "store/redb", "service", "profiles/text", "transport/reticulum"]
 exclude = ["security/mls-rs"]
-default-members = ["core", "store", "store/redb", "service", "profiles/text"]
+default-members = ["core", "store", "store/redb", "service", "profiles/text", "transport/reticulum"]
 resolver = "3"
 
 [workspace.package]

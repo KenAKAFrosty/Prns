@@ -74,6 +74,7 @@ cargo_lock_workspaces = [
 ]
 cargo_manifests = [
 
+    "prns-groups/transport/reticulum/Cargo.toml",
     "prns-contact-card/Cargo.toml",
     "prns-identities/Cargo.toml",
     "prns-identities/bindings/uniffi/Cargo.toml",
@@ -2639,8 +2640,8 @@ tiers = ["pr"]
 platform = "any"
 toolchain = "stable"
 timeout_seconds = 1200
-command = ["cargo", "test", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "--workspace", "--features", "prns-groups-store/secure"]
-inputs = ["prns-groups/Cargo.toml", "prns-groups/Cargo.lock", "prns-groups/core", "prns-groups/store", "prns-groups/service", "prns-groups/profiles/text", "prns-groups", "prns-groups/security/mls-rs", "prns-core", "prns-macros", "prns-host", "personal-rns", "prns-interfaces", "prns-runtime", "prns-storage", "prns-contact-card"]
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "--workspace", "--features", "prns-groups-store/secure,prns-groups-reticulum/contact-card"]
+inputs = ["prns-groups/Cargo.toml", "prns-groups/Cargo.lock", "prns-groups/core", "prns-groups/store", "prns-groups/service", "prns-groups/transport/reticulum", "prns-groups/profiles/text", "prns-groups", "prns-groups/security/mls-rs", "prns-core", "prns-macros", "prns-host", "personal-rns", "prns-interfaces", "prns-runtime", "prns-storage", "prns-contact-card"]
 artifacts = "validation-artifacts/results/group-communication-tests"
 
 [[suite]]
@@ -2651,8 +2652,8 @@ tiers = ["pr"]
 platform = "any"
 toolchain = "stable"
 timeout_seconds = 1200
-command = ["cargo", "clippy", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "--workspace", "--all-targets", "--features", "prns-groups-store/secure", "--", "-D", "warnings"]
-inputs = ["prns-groups/Cargo.toml", "prns-groups/Cargo.lock", "prns-groups/core", "prns-groups/store", "prns-groups/service", "prns-groups/profiles/text", "prns-groups", "prns-groups/security/mls-rs", "prns-core", "prns-macros", "prns-host", "personal-rns", "prns-interfaces", "prns-runtime", "prns-storage", "prns-contact-card"]
+command = ["cargo", "clippy", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "--workspace", "--all-targets", "--features", "prns-groups-store/secure,prns-groups-reticulum/contact-card", "--", "-D", "warnings"]
+inputs = ["prns-groups/Cargo.toml", "prns-groups/Cargo.lock", "prns-groups/core", "prns-groups/store", "prns-groups/service", "prns-groups/transport/reticulum", "prns-groups/profiles/text", "prns-groups", "prns-groups/security/mls-rs", "prns-core", "prns-macros", "prns-host", "personal-rns", "prns-interfaces", "prns-runtime", "prns-storage", "prns-contact-card"]
 artifacts = "validation-artifacts/results/group-communication-clippy"
 
 [[suite]]
