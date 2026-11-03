@@ -63,13 +63,13 @@ cargo test --locked \
   --features tokio-host
 "${bootstrap_python}" prns-lxmf/service/tests/check_features.py
 rustup run 1.90.0 "${bootstrap_python}" prns-lxmf/service/tests/check_features.py
-for features in tokio-runtime; do
+for features in tokio-runtime redb-mailbox tokio-runtime,redb-mailbox tokio-host,redb-mailbox; do
   cargo test --locked --manifest-path prns-lxmf/service/Cargo.toml --no-default-features --features "${features}"
 done
 cargo clippy --locked \
   --manifest-path prns-lxmf/service/Cargo.toml \
   --all-targets \
-  --features tokio-host \
+  --features tokio-host,redb-mailbox \
   -- \
   -D warnings
 

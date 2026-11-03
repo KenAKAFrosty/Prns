@@ -21,7 +21,7 @@ class LxmfPublicationContracts(unittest.TestCase):
                              ("validation/security/unsafe-audit.py", "lxmf-")):
             data = selected(path)
             rows = [row for row in data["GRAPHS"] if row[0].startswith(prefix)]
-            self.assertEqual(len(rows), 2)
+            self.assertEqual(len(rows), 7)
             self.assertEqual(len({row[0] for row in data["GRAPHS"]}), len(data["GRAPHS"]))
             for name, manifest, _ in rows:
                 self.assertTrue((ROOT / manifest).is_file())
@@ -34,7 +34,7 @@ class LxmfPublicationContracts(unittest.TestCase):
                     self.assertNotIn("tokio-host", data["GRAPH_FEATURES"][name])
         rows = [line for line in (ROOT / "validation/security/deps-audit.sh").read_text().splitlines()
                 if re.match(r'    "lxmf-', line)]
-        self.assertEqual(len(rows), 2)
+        self.assertEqual(len(rows), 7)
 
     def test_storage_feature_is_qualified_when_lxmf_shares_the_workspace(self):
         for path, graph in (("tools/repo/generate-third-party-notices.py", "Storage redb"),

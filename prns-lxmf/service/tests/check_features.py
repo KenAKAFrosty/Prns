@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 
 manifest = Path(__file__).resolve().parent / "fixtures/consumer/Cargo.toml"
-for features in ("", "runtime", "host"):
+for features in ("", "runtime", "mailbox", "runtime,mailbox", "host,mailbox"):
     flags = ["--locked", "--manifest-path", str(manifest), "--no-default-features"]
     if features:
         flags += ["--features", features]
@@ -16,12 +16,13 @@ for features in ("", "runtime", "host"):
     selected = {packages[node["id"]] for node in metadata["resolve"]["nodes"]}
     host = "host" in features
     runtime = host or "runtime" in features
+    mailbox = "mailbox" in features
     for package, expected in {
         "tokio": runtime,
         "personal-rns": runtime,
         "prns-host-runtime": host,
         "prns-runtime-tokio": host,
-        "redb": False,
+        "redb": mailbox,
     }.items():
         if (package in selected) != expected:
             raise SystemExit(f"{features or 'portable'}: unexpected {package} presence")

@@ -1370,7 +1370,7 @@ setup = "Pass a fresh --output directory. Functional lifecycle findings are sepa
 
 [[task]]
 id = "build.lxmf.verify"
-summary = "Verify standalone LXMF wire and direct exchange against the pinned Python authority."
+summary = "Verify standalone LXMF wire, mailbox and direct exchange against the pinned Python authority."
 domain = "build"
 effect = "workspace-write"
 platforms = ["linux", "macos"]

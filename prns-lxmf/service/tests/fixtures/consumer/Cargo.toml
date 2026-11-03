@@ -13,6 +13,7 @@ resolver = "3"
 [features]
 default = []
 runtime = ["prns-lxmf/tokio-runtime"]
+mailbox = ["prns-lxmf/redb-mailbox"]
 host = ["prns-lxmf/tokio-host"]
 
 [dependencies]

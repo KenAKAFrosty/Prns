@@ -325,6 +325,50 @@
       "manifest": "prns-lxmf/service/tests/fixtures/consumer/Cargo.toml",
       "name": "lxmf-runtime",
       "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "features": [
+        "mailbox"
+      ],
+      "manifest": "prns-lxmf/service/tests/fixtures/consumer/Cargo.toml",
+      "name": "lxmf-storage",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "features": [
+        "runtime",
+        "mailbox"
+      ],
+      "manifest": "prns-lxmf/service/tests/fixtures/consumer/Cargo.toml",
+      "name": "lxmf-runtime-storage",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "features": [
+        "tokio-host",
+        "redb-mailbox"
+      ],
+      "manifest": "prns-lxmf/service/Cargo.toml",
+      "name": "lxmf-mailbox-linux",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "features": [
+        "tokio-host",
+        "redb-mailbox"
+      ],
+      "manifest": "prns-lxmf/service/Cargo.toml",
+      "name": "lxmf-mailbox-android",
+      "target": "aarch64-linux-android"
+    },
+    {
+      "features": [
+        "tokio-host",
+        "redb-mailbox"
+      ],
+      "manifest": "prns-lxmf/service/Cargo.toml",
+      "name": "lxmf-mailbox-ios",
+      "target": "aarch64-apple-ios"
     }
   ],
   "packages": [
@@ -485,7 +529,11 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -1015,7 +1063,10 @@
       "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
-        "daemon-windows": []
+        "daemon-windows": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "async-trait",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1120,6 +1171,9 @@
         "identity-keys-linux": [],
         "identity-keys-macos": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "autocfg",
@@ -1389,6 +1443,21 @@
           "alloc",
           "default",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "std"
         ]
       },
       "name": "base64",
@@ -1524,6 +1593,15 @@
         "ios": [
           "alloc"
         ],
+        "lxmf-mailbox-android": [
+          "alloc"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc"
+        ],
         "lxmf-wire": [
           "alloc"
         ],
@@ -1551,6 +1629,18 @@
         "halow-appliance-manager": [
           "default",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
         ]
       },
       "name": "bit-set",
@@ -1571,6 +1661,18 @@
           "std"
         ],
         "halow-appliance-manager": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "default",
           "std"
         ]
@@ -1723,7 +1825,16 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
-        "ios": []
+        "ios": [],
+        "lxmf-mailbox-android": [
+          "default"
+        ],
+        "lxmf-mailbox-ios": [
+          "default"
+        ],
+        "lxmf-mailbox-linux": [
+          "default"
+        ]
       },
       "name": "bitflags",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1749,6 +1860,21 @@
           "std"
         ],
         "halow-appliance-manager": [
+          "serde",
+          "serde_core",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "serde",
+          "serde_core",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "serde",
+          "serde_core",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "serde",
           "serde_core",
           "std"
@@ -2007,7 +2133,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "block-buffer",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2167,9 +2296,22 @@
         "ios": [
           "zeroize"
         ],
+        "lxmf-mailbox-android": [
+          "zeroize"
+        ],
+        "lxmf-mailbox-ios": [
+          "zeroize"
+        ],
+        "lxmf-mailbox-linux": [
+          "zeroize"
+        ],
         "lxmf-runtime": [
           "zeroize"
         ],
+        "lxmf-runtime-storage": [
+          "zeroize"
+        ],
+        "lxmf-storage": [],
         "lxmf-wire": [
           "zeroize"
         ],
@@ -2240,7 +2382,11 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -2275,6 +2421,10 @@
           "std"
         ],
         "host-connections-macos": [
+          "alloc",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
           "alloc",
           "std"
         ]
@@ -2323,6 +2473,11 @@
           "std"
         ],
         "ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
           "alloc",
           "default",
           "std"
@@ -2470,6 +2625,19 @@
           "lazy_static",
           "pin-project",
           "tokio-stream"
+        ],
+        "lxmf-mailbox-linux": [
+          "bluetoothd",
+          "custom_debug",
+          "dbus",
+          "dbus-crossroads",
+          "dbus-tokio",
+          "default",
+          "displaydoc",
+          "l2cap",
+          "lazy_static",
+          "pin-project",
+          "tokio-stream"
         ]
       },
       "name": "bluer",
@@ -2493,7 +2661,8 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "bluez-async",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2516,7 +2685,8 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "bluez-generated",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2621,7 +2791,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "btleplug",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2837,7 +3010,11 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -2902,6 +3079,18 @@
           "std"
         ],
         "ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "default",
           "std"
         ]
@@ -3198,6 +3387,15 @@
         "ios": [
           "default"
         ],
+        "lxmf-mailbox-android": [
+          "default"
+        ],
+        "lxmf-mailbox-ios": [
+          "default"
+        ],
+        "lxmf-mailbox-linux": [
+          "default"
+        ],
         "nrf52840": [
           "default"
         ],
@@ -3390,7 +3588,19 @@
         "ios": [
           "block-padding"
         ],
+        "lxmf-mailbox-android": [
+          "block-padding"
+        ],
+        "lxmf-mailbox-ios": [
+          "block-padding"
+        ],
+        "lxmf-mailbox-linux": [
+          "block-padding"
+        ],
         "lxmf-runtime": [
+          "block-padding"
+        ],
+        "lxmf-runtime-storage": [
           "block-padding"
         ],
         "nrf52840": [
@@ -3453,6 +3663,23 @@
     },
     {
       "graphs": {
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
+      },
+      "name": "cc",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 13,
+        "externs": 0,
+        "functions": 2,
+        "impls": 2,
+        "tokens": 17
+      },
+      "version": "1.3.0"
+    },
+    {
+      "graphs": {
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -3512,7 +3739,8 @@
       "graphs": {
         "android": [],
         "expo-android": [],
-        "host-connections-android": []
+        "host-connections-android": [],
+        "lxmf-mailbox-android": []
       },
       "name": "cesu8",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3558,7 +3786,12 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": [],
         "nrf-dfu-browser": [],
         "nrf52840": [],
@@ -3613,7 +3846,8 @@
         "daemon-macos": [],
         "daemon-windows": [],
         "desktop-linux": [],
-        "engine": []
+        "engine": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "cfg_aliases",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3857,7 +4091,23 @@
           "rng",
           "zeroize"
         ],
+        "lxmf-mailbox-android": [
+          "rng",
+          "zeroize"
+        ],
+        "lxmf-mailbox-ios": [
+          "rng",
+          "zeroize"
+        ],
+        "lxmf-mailbox-linux": [
+          "rng",
+          "zeroize"
+        ],
         "lxmf-runtime": [
+          "rng",
+          "zeroize"
+        ],
+        "lxmf-runtime-storage": [
           "rng",
           "zeroize"
         ],
@@ -4114,7 +4364,19 @@
         "ios": [
           "block-padding"
         ],
+        "lxmf-mailbox-android": [
+          "block-padding"
+        ],
+        "lxmf-mailbox-ios": [
+          "block-padding"
+        ],
+        "lxmf-mailbox-linux": [
+          "block-padding"
+        ],
         "lxmf-runtime": [
+          "block-padding"
+        ],
+        "lxmf-runtime-storage": [
           "block-padding"
         ],
         "nrf52840": [
@@ -4457,7 +4719,12 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -4495,6 +4762,12 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "bytes",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
           "alloc",
           "bytes",
           "default",
@@ -4623,6 +4896,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-wire": [],
         "nrf52840": []
       },
@@ -4940,7 +5216,11 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
-        "lxmf-runtime": []
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
+        "lxmf-runtime": [],
+        "lxmf-runtime-storage": []
       },
       "name": "cpufeatures",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4970,7 +5250,12 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": []
       },
       "name": "cpufeatures",
@@ -5113,6 +5398,18 @@
           "std"
         ],
         "ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "default",
           "std"
         ],
@@ -5267,6 +5564,18 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [
+          "restore-state-bool",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "restore-state-bool",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "restore-state-bool",
+          "std"
+        ],
         "nrf52840": [
           "restore-state-bool"
         ]
@@ -5325,6 +5634,32 @@
         "tokens": 68
       },
       "version": "0.5.16"
+    },
+    {
+      "graphs": {
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "crossbeam-deque",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 29,
+        "externs": 0,
+        "functions": 6,
+        "impls": 6,
+        "tokens": 41
+      },
+      "version": "0.8.6"
     },
     {
       "graphs": {
@@ -5527,6 +5862,18 @@
         "ios": [
           "alloc",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "std"
         ]
       },
       "name": "crossbeam-epoch",
@@ -5581,6 +5928,18 @@
           "std"
         ],
         "desktop-windows": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "default",
           "std"
         ]
@@ -5856,7 +6215,17 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "std"
+        ],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -6010,7 +6379,18 @@
         "ios": [
           "rand_core"
         ],
+        "lxmf-mailbox-android": [
+          "rand_core"
+        ],
+        "lxmf-mailbox-ios": [
+          "rand_core"
+        ],
+        "lxmf-mailbox-linux": [
+          "rand_core"
+        ],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": [
           "rand_core"
         ],
@@ -6095,7 +6475,12 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -6496,9 +6881,37 @@
           "rand_core",
           "zeroize"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
         "lxmf-runtime": [
           "digest",
           "zeroize"
+        ],
+        "lxmf-runtime-storage": [
+          "digest",
+          "zeroize"
+        ],
+        "lxmf-storage": [
+          "digest"
         ],
         "lxmf-wire": [
           "alloc",
@@ -6556,7 +6969,10 @@
         "identity-key-card-linux": [],
         "identity-keys-linux": [],
         "identity-storage": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": []
       },
       "name": "curve25519-dalek-derive",
@@ -6581,7 +6997,8 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "custom_debug",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6605,7 +7022,8 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "custom_debug_derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -6750,6 +7168,10 @@
           "default",
           "suggestions"
         ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "suggestions"
+        ],
         "nrf52840": [
           "default",
           "suggestions"
@@ -6966,6 +7388,10 @@
           "strsim",
           "suggestions"
         ],
+        "lxmf-mailbox-linux": [
+          "strsim",
+          "suggestions"
+        ],
         "nrf52840": [
           "strsim",
           "suggestions"
@@ -7095,6 +7521,7 @@
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "darling_macro",
@@ -7171,7 +7598,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "dashmap",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7222,6 +7652,21 @@
           "std"
         ],
         "host-runtime-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "alloc",
           "default",
           "std"
@@ -7319,6 +7764,12 @@
           "futures",
           "futures-channel",
           "futures-util"
+        ],
+        "lxmf-mailbox-linux": [
+          "futures",
+          "futures-channel",
+          "futures-util",
+          "vendored"
         ]
       },
       "name": "dbus",
@@ -7405,7 +7856,8 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "dbus-crossroads",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7429,7 +7881,8 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "dbus-tokio",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -7582,6 +8035,21 @@
           "zeroize"
         ],
         "ios": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "lxmf-mailbox-linux": [
           "alloc",
           "oid",
           "zeroize"
@@ -7954,6 +8422,27 @@
           "core-api",
           "default",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
         ]
       },
       "name": "digest",
@@ -8316,11 +8805,49 @@
           "rand_core",
           "zeroize"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
+        ],
         "lxmf-runtime": [
           "block-api",
           "default",
           "mac",
           "zeroize"
+        ],
+        "lxmf-runtime-storage": [
+          "block-api",
+          "default",
+          "mac",
+          "zeroize"
+        ],
+        "lxmf-storage": [
+          "block-api",
+          "default",
+          "mac"
         ],
         "lxmf-wire": [
           "alloc",
@@ -8422,6 +8949,14 @@
           "std"
         ],
         "ios": [
+          "alloc",
+          "block2",
+          "default",
+          "libc",
+          "objc2",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
           "alloc",
           "block2",
           "default",
@@ -8548,6 +9083,10 @@
         "host-runtime-linux": [
           "default",
           "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
         ]
       },
       "name": "displaydoc",
@@ -8599,7 +9138,8 @@
       "graphs": {
         "android": [],
         "expo-android": [],
-        "host-connections-android": []
+        "host-connections-android": [],
+        "lxmf-mailbox-android": []
       },
       "name": "dlopen2",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -8755,6 +9295,15 @@
           "default"
         ],
         "ios": [
+          "default"
+        ],
+        "lxmf-mailbox-android": [
+          "default"
+        ],
+        "lxmf-mailbox-ios": [
+          "default"
+        ],
+        "lxmf-mailbox-linux": [
           "default"
         ],
         "nrf52840": [
@@ -9019,7 +9568,18 @@
         "ios": [
           "alloc"
         ],
+        "lxmf-mailbox-android": [
+          "alloc"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc"
+        ],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": [
           "alloc"
         ],
@@ -9426,9 +9986,46 @@
           "strobe-rs",
           "zeroize"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "batch",
+          "fast",
+          "hazmat",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "batch",
+          "fast",
+          "hazmat",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "batch",
+          "fast",
+          "hazmat",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
         "lxmf-runtime": [
           "hazmat",
           "zeroize"
+        ],
+        "lxmf-runtime-storage": [
+          "hazmat",
+          "zeroize"
+        ],
+        "lxmf-storage": [
+          "hazmat"
         ],
         "lxmf-wire": [
           "alloc",
@@ -9483,7 +10080,19 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "ios": []
+        "ios": [],
+        "lxmf-mailbox-android": [
+          "std",
+          "use_std"
+        ],
+        "lxmf-mailbox-ios": [
+          "std",
+          "use_std"
+        ],
+        "lxmf-mailbox-linux": [
+          "std",
+          "use_std"
+        ]
       },
       "name": "either",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9809,6 +10418,15 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "timer-item-size-6-words"
         ],
+        "lxmf-mailbox-android": [
+          "timer-item-size-6-words"
+        ],
+        "lxmf-mailbox-ios": [
+          "timer-item-size-6-words"
+        ],
+        "lxmf-mailbox-linux": [
+          "timer-item-size-6-words"
+        ],
         "nrf52840": [
           "timer-item-size-6-words"
         ]
@@ -9860,6 +10478,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "embassy-futures",
@@ -10193,6 +10814,30 @@
           "proto-ipv6",
           "tcp",
           "udp"
+        ],
+        "lxmf-mailbox-android": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "lxmf-mailbox-ios": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "lxmf-mailbox-linux": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
         ]
       },
       "name": "embassy-net",
@@ -10241,6 +10886,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "embassy-net-driver",
@@ -10286,6 +10934,9 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "embassy-net-driver-channel",
@@ -10411,6 +11062,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "embassy-sync",
@@ -10462,6 +11116,18 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [
+          "generic-queue-64",
+          "tick-hz-1_000_000"
+        ],
+        "lxmf-mailbox-ios": [
+          "generic-queue-64",
+          "tick-hz-1_000_000"
+        ],
+        "lxmf-mailbox-linux": [
+          "generic-queue-64",
+          "tick-hz-1_000_000"
+        ],
         "nrf52840": []
       },
       "name": "embassy-time",
@@ -10528,6 +11194,15 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [
+          "tick-hz-1_000_000"
+        ],
+        "lxmf-mailbox-ios": [
+          "tick-hz-1_000_000"
+        ],
+        "lxmf-mailbox-linux": [
+          "tick-hz-1_000_000"
+        ],
         "nrf52840": [
           "tick-hz-32_768"
         ]
@@ -10557,6 +11232,18 @@
         "esp32-s3-heltec-wireless-stick-lite-v3": [],
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
+        "lxmf-mailbox-android": [
+          "_generic-queue",
+          "generic-queue-64"
+        ],
+        "lxmf-mailbox-ios": [
+          "_generic-queue",
+          "generic-queue-64"
+        ],
+        "lxmf-mailbox-linux": [
+          "_generic-queue",
+          "generic-queue-64"
+        ],
         "nrf52840": []
       },
       "name": "embassy-time-queue-utils",
@@ -10602,6 +11289,9 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": [
           "default",
           "usbd-hid"
@@ -10650,6 +11340,9 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "embassy-usb-driver",
@@ -10924,6 +11617,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": [
           "unproven"
         ]
@@ -10974,6 +11670,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "embedded-hal",
@@ -11022,6 +11721,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "embedded-hal-async",
@@ -11105,6 +11807,9 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "embedded-io",
@@ -11153,6 +11858,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "embedded-io",
@@ -11198,6 +11906,9 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "embedded-io-async",
@@ -11246,6 +11957,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "embedded-io-async",
@@ -11293,7 +12007,10 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
-        "ios": []
+        "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "embedded-nal",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11340,7 +12057,10 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
-        "ios": []
+        "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "embedded-nal-async",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11385,6 +12105,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -11454,6 +12177,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -11809,6 +12535,18 @@
           "std"
         ],
         "ios": [
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
           "std"
         ]
       },
@@ -13360,6 +14098,21 @@
           "alloc",
           "default",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "std"
         ]
       },
       "name": "fastrand",
@@ -13643,7 +14396,10 @@
         "host-c-macos": [],
         "host-c-windows": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "find-msvc-tools",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -13955,6 +14711,18 @@
           "default",
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
+        ],
         "nrf52840": [
           "default",
           "std"
@@ -14242,6 +15010,30 @@
           "futures-executor",
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
         "nrf52840": [
           "alloc",
           "async-await",
@@ -14518,6 +15310,27 @@
           "std"
         ],
         "ios": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "alloc",
           "default",
           "futures-sink",
@@ -14759,6 +15572,21 @@
           "std"
         ],
         "ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "alloc",
           "default",
           "std"
@@ -14942,6 +15770,18 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
+        ],
         "nrf52840": [
           "std"
         ]
@@ -15119,6 +15959,15 @@
         "ios": [
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "std"
+        ],
         "nrf52840": [
           "std"
         ]
@@ -15254,6 +16103,9 @@
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "futures-macro",
@@ -15379,6 +16231,21 @@
         ],
         "ios": [
           "alloc",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
           "std"
         ],
         "nrf52840": [
@@ -15571,6 +16438,18 @@
           "alloc",
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "std"
+        ],
         "nrf52840": [
           "alloc",
           "std"
@@ -15686,6 +16565,18 @@
     {
       "graphs": {
         "engine": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "default",
           "std"
         ]
@@ -15945,6 +16836,51 @@
           "std"
         ],
         "ios": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "alloc",
           "async-await",
           "async-await-macro",
@@ -16419,7 +17355,19 @@
         "ios": [
           "more_lengths"
         ],
+        "lxmf-mailbox-android": [
+          "more_lengths"
+        ],
+        "lxmf-mailbox-ios": [
+          "more_lengths"
+        ],
+        "lxmf-mailbox-linux": [
+          "more_lengths"
+        ],
         "lxmf-runtime": [
+          "more_lengths"
+        ],
+        "lxmf-runtime-storage": [
           "more_lengths"
         ],
         "nrf52840": [
@@ -16493,6 +17441,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "getrandom",
@@ -16581,7 +17532,16 @@
         "identity-key-card-macos": [],
         "identity-keys-linux": [],
         "identity-keys-macos": [],
-        "identity-storage": []
+        "identity-storage": [],
+        "lxmf-mailbox-android": [
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "std"
+        ]
       },
       "name": "getrandom",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16597,7 +17557,10 @@
     {
       "graphs": {
         "engine": [],
-        "halow-appliance-manager": []
+        "halow-appliance-manager": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "getrandom",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16840,7 +17803,11 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -16928,6 +17895,15 @@
           "raw"
         ],
         "host-runtime-linux": [
+          "raw"
+        ],
+        "lxmf-mailbox-android": [
+          "raw"
+        ],
+        "lxmf-mailbox-ios": [
+          "raw"
+        ],
+        "lxmf-mailbox-linux": [
           "raw"
         ]
       },
@@ -17036,7 +18012,11 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -17086,6 +18066,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "heapless",
@@ -17160,7 +18143,8 @@
         "identity-key-card-linux": [],
         "identity-key-card-macos": [],
         "identity-keys-linux": [],
-        "identity-keys-macos": []
+        "identity-keys-macos": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "heck",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -17255,6 +18239,21 @@
           "default",
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "lxmf-wire": [
           "alloc",
           "default",
@@ -17322,7 +18321,12 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -17482,9 +18486,22 @@
         "ios": [
           "zeroize"
         ],
+        "lxmf-mailbox-android": [
+          "zeroize"
+        ],
+        "lxmf-mailbox-ios": [
+          "zeroize"
+        ],
+        "lxmf-mailbox-linux": [
+          "zeroize"
+        ],
         "lxmf-runtime": [
           "zeroize"
         ],
+        "lxmf-runtime-storage": [
+          "zeroize"
+        ],
+        "lxmf-storage": [],
         "lxmf-wire": [
           "zeroize"
         ],
@@ -17525,7 +18542,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "home",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -17683,6 +18703,18 @@
           "std"
         ],
         "daemon-windows": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "default",
           "std"
         ]
@@ -17853,6 +18885,18 @@
         "host-runtime-linux": [
           "default",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
         ]
       },
       "name": "httparse",
@@ -17916,9 +18960,22 @@
         "ios": [
           "zeroize"
         ],
+        "lxmf-mailbox-android": [
+          "zeroize"
+        ],
+        "lxmf-mailbox-ios": [
+          "zeroize"
+        ],
+        "lxmf-mailbox-linux": [
+          "zeroize"
+        ],
         "lxmf-runtime": [
           "zeroize"
         ],
+        "lxmf-runtime-storage": [
+          "zeroize"
+        ],
+        "lxmf-storage": [],
         "lxmf-wire": [
           "zeroize"
         ],
@@ -18285,6 +19342,7 @@
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "ident_case",
@@ -18390,7 +19448,10 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
-        "ios": []
+        "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "if-addrs",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18767,7 +19828,19 @@
         "ios": [
           "block-padding"
         ],
+        "lxmf-mailbox-android": [
+          "block-padding"
+        ],
+        "lxmf-mailbox-ios": [
+          "block-padding"
+        ],
+        "lxmf-mailbox-linux": [
+          "block-padding"
+        ],
         "lxmf-runtime": [
+          "block-padding"
+        ],
+        "lxmf-runtime-storage": [
           "block-padding"
         ],
         "nrf52840": [
@@ -18963,6 +20036,14 @@
         "host-runtime-linux": [
           "default",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
         ]
       },
       "name": "ipnet",
@@ -19087,6 +20168,11 @@
           "default",
           "use_alloc",
           "use_std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "use_alloc",
+          "use_std"
         ]
       },
       "name": "itertools",
@@ -19137,6 +20223,11 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": []
       },
       "name": "itoa",
@@ -19203,6 +20294,9 @@
         ],
         "host-connections-android": [
           "default"
+        ],
+        "lxmf-mailbox-android": [
+          "default"
         ]
       },
       "name": "jni",
@@ -19225,6 +20319,9 @@
           "default"
         ],
         "host-connections-android": [
+          "default"
+        ],
+        "lxmf-mailbox-android": [
           "default"
         ]
       },
@@ -19249,6 +20346,9 @@
         ],
         "host-connections-android": [
           "default"
+        ],
+        "lxmf-mailbox-android": [
+          "default"
         ]
       },
       "name": "jni-sys",
@@ -19266,7 +20366,8 @@
       "graphs": {
         "android": [],
         "expo-android": [],
-        "host-connections-android": []
+        "host-connections-android": [],
+        "lxmf-mailbox-android": []
       },
       "name": "jni-sys",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19283,7 +20384,8 @@
       "graphs": {
         "android": [],
         "expo-android": [],
-        "host-connections-android": []
+        "host-connections-android": [],
+        "lxmf-mailbox-android": []
       },
       "name": "jni-sys-macros",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19369,6 +20471,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-wire": [],
         "nrf52840": []
       },
@@ -19457,7 +20562,8 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "lazy_static",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19571,6 +20677,15 @@
         "ios": [
           "rust-allocator"
         ],
+        "lxmf-mailbox-android": [
+          "rust-allocator"
+        ],
+        "lxmf-mailbox-ios": [
+          "rust-allocator"
+        ],
+        "lxmf-mailbox-linux": [
+          "rust-allocator"
+        ],
         "nrf52840": [
           "rust-allocator"
         ],
@@ -19672,6 +20787,21 @@
           "std"
         ],
         "ios": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "default",
           "extra_traits",
           "std"
@@ -19905,6 +21035,12 @@
           "vendored"
         ],
         "host-runtime-linux": [
+          "cc",
+          "default",
+          "pkg-config",
+          "vendored"
+        ],
+        "lxmf-mailbox-linux": [
           "cc",
           "default",
           "pkg-config",
@@ -20230,6 +21366,34 @@
           "general",
           "ioctl",
           "no_std"
+        ],
+        "lxmf-mailbox-android": [
+          "auxvec",
+          "default",
+          "elf",
+          "errno",
+          "general",
+          "if_ether",
+          "ioctl",
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
+        ],
+        "lxmf-mailbox-linux": [
+          "auxvec",
+          "default",
+          "elf",
+          "errno",
+          "general",
+          "if_ether",
+          "ioctl",
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
         ]
       },
       "name": "linux-raw-sys",
@@ -20296,6 +21460,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "litrs",
@@ -20430,6 +21597,18 @@
         "host-runtime-linux": [
           "atomic_usize",
           "default"
+        ],
+        "lxmf-mailbox-android": [
+          "atomic_usize",
+          "default"
+        ],
+        "lxmf-mailbox-ios": [
+          "atomic_usize",
+          "default"
+        ],
+        "lxmf-mailbox-linux": [
+          "atomic_usize",
+          "default"
         ]
       },
       "name": "lock_api",
@@ -20442,6 +21621,29 @@
         "tokens": 297
       },
       "version": "0.4.14"
+    },
+    {
+      "graphs": {
+        "lxmf-mailbox-android": [
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "std"
+        ]
+      },
+      "name": "log",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 0,
+        "functions": 2,
+        "impls": 1,
+        "tokens": 6
+      },
+      "version": "0.4.30"
     },
     {
       "graphs": {
@@ -20724,6 +21926,14 @@
         "host-runtime-linux": [
           "default",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
         ]
       },
       "name": "mac-addr",
@@ -20776,6 +21986,10 @@
           "std"
         ],
         "host-runtime-linux": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "default",
           "std"
         ]
@@ -20916,6 +22130,15 @@
           "map"
         ],
         "ios": [
+          "map"
+        ],
+        "lxmf-mailbox-android": [
+          "map"
+        ],
+        "lxmf-mailbox-ios": [
+          "map"
+        ],
+        "lxmf-mailbox-linux": [
           "map"
         ]
       },
@@ -21189,6 +22412,29 @@
         "halow-appliance-manager": [
           "alloc",
           "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-runtime-storage": [
+          "alloc",
+          "std"
+        ],
+        "lxmf-storage": [
+          "alloc",
           "std"
         ],
         "lxmf-wire": [
@@ -21610,6 +22856,21 @@
           "os-poll"
         ],
         "ios": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "lxmf-mailbox-android": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "lxmf-mailbox-ios": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "lxmf-mailbox-linux": [
           "net",
           "os-ext",
           "os-poll"
@@ -22104,6 +23365,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": [
           "unstable"
         ]
@@ -22154,6 +23418,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "nb",
@@ -22171,7 +23438,8 @@
       "graphs": {
         "android": [],
         "expo-android": [],
-        "host-connections-android": []
+        "host-connections-android": [],
+        "lxmf-mailbox-android": []
       },
       "name": "ndk-context",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -22353,6 +23621,18 @@
           "apple-system-configuration-extra",
           "default",
           "gateway"
+        ],
+        "lxmf-mailbox-android": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "lxmf-mailbox-linux": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
         ]
       },
       "name": "netdev",
@@ -22380,7 +23660,9 @@
         "host-connections-android": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "netlink-packet-core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -22407,7 +23689,9 @@
         "host-connections-android": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "netlink-packet-route",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -22460,6 +23744,12 @@
         ],
         "host-runtime-linux": [
           "default"
+        ],
+        "lxmf-mailbox-android": [
+          "default"
+        ],
+        "lxmf-mailbox-linux": [
+          "default"
         ]
       },
       "name": "netlink-sys",
@@ -22503,6 +23793,9 @@
           "ioctl"
         ],
         "host-runtime-linux": [
+          "ioctl"
+        ],
+        "lxmf-mailbox-linux": [
           "ioctl"
         ]
       },
@@ -22575,6 +23868,13 @@
         "host-runtime-linux": [
           "process",
           "sched"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "process",
+          "sched",
+          "signal",
+          "time"
         ]
       },
       "name": "nix",
@@ -22787,7 +24087,8 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "num-derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -22988,6 +24289,18 @@
           "default",
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
+        ],
         "nrf52840": [
           "default",
           "std"
@@ -23059,6 +24372,9 @@
           "tokio"
         ],
         "desktop-windows": [
+          "tokio"
+        ],
+        "lxmf-mailbox-linux": [
           "tokio"
         ]
       },
@@ -23150,6 +24466,10 @@
         "host-connections-macos": [
           "alloc",
           "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "std"
         ]
       },
       "name": "objc-sys",
@@ -23187,6 +24507,11 @@
           "std"
         ],
         "host-connections-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
           "alloc",
           "default",
           "std"
@@ -23236,6 +24561,11 @@
           "std"
         ],
         "ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
           "alloc",
           "default",
           "std"
@@ -23437,6 +24767,22 @@
           "alloc",
           "bitflags",
           "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "CBAdvertisementData",
+          "CBAttribute",
+          "CBCentralManager",
+          "CBCentralManagerConstants",
+          "CBCharacteristic",
+          "CBDescriptor",
+          "CBManager",
+          "CBPeer",
+          "CBPeripheral",
+          "CBService",
+          "CBUUID",
+          "alloc",
+          "bitflags",
+          "std"
         ]
       },
       "name": "objc2-core-bluetooth",
@@ -23609,6 +24955,32 @@
           "std"
         ],
         "ios": [
+          "CBATTRequest",
+          "CBAdvertisementData",
+          "CBAttribute",
+          "CBCentral",
+          "CBCentralManager",
+          "CBCentralManagerConstants",
+          "CBCharacteristic",
+          "CBDefines",
+          "CBDescriptor",
+          "CBError",
+          "CBL2CAPChannel",
+          "CBManager",
+          "CBPeer",
+          "CBPeripheral",
+          "CBPeripheralManager",
+          "CBPeripheralManagerConstants",
+          "CBService",
+          "CBUUID",
+          "alloc",
+          "bitflags",
+          "default",
+          "dispatch2",
+          "objc2-core-foundation",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
           "CBATTRequest",
           "CBAdvertisementData",
           "CBAttribute",
@@ -24051,6 +25423,61 @@
           "libc",
           "objc2",
           "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "CFArray",
+          "CFAttributedString",
+          "CFAvailability",
+          "CFBag",
+          "CFBinaryHeap",
+          "CFBitVector",
+          "CFBundle",
+          "CFByteOrder",
+          "CFCGTypes",
+          "CFCalendar",
+          "CFCharacterSet",
+          "CFData",
+          "CFDate",
+          "CFDateFormatter",
+          "CFDictionary",
+          "CFError",
+          "CFFileDescriptor",
+          "CFFileSecurity",
+          "CFLocale",
+          "CFMachPort",
+          "CFMessagePort",
+          "CFNotificationCenter",
+          "CFNumber",
+          "CFNumberFormatter",
+          "CFPlugIn",
+          "CFPlugInCOM",
+          "CFPreferences",
+          "CFPropertyList",
+          "CFRunLoop",
+          "CFSet",
+          "CFSocket",
+          "CFStream",
+          "CFString",
+          "CFStringEncodingExt",
+          "CFStringTokenizer",
+          "CFTimeZone",
+          "CFTree",
+          "CFURL",
+          "CFURLAccess",
+          "CFURLEnumerator",
+          "CFUUID",
+          "CFUserNotification",
+          "CFUtilities",
+          "CFXMLNode",
+          "CFXMLParser",
+          "alloc",
+          "bitflags",
+          "block2",
+          "default",
+          "dispatch2",
+          "libc",
+          "objc2",
+          "std"
         ]
       },
       "name": "objc2-core-foundation",
@@ -24226,6 +25653,10 @@
         "ios": [
           "alloc",
           "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "std"
         ]
       },
       "name": "objc2-encode",
@@ -24334,6 +25765,21 @@
           "std"
         ],
         "host-connections-macos": [
+          "NSArray",
+          "NSData",
+          "NSDictionary",
+          "NSEnumerator",
+          "NSError",
+          "NSObject",
+          "NSString",
+          "NSUUID",
+          "NSValue",
+          "alloc",
+          "bitflags",
+          "block2",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
           "NSArray",
           "NSData",
           "NSDictionary",
@@ -25614,6 +27060,185 @@
           "libc",
           "objc2-core-foundation",
           "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "FoundationErrors",
+          "FoundationLegacySwiftCompatibility",
+          "NSAffineTransform",
+          "NSAppleEventDescriptor",
+          "NSAppleEventManager",
+          "NSAppleScript",
+          "NSArchiver",
+          "NSArray",
+          "NSAttributedString",
+          "NSAutoreleasePool",
+          "NSBackgroundActivityScheduler",
+          "NSBundle",
+          "NSByteCountFormatter",
+          "NSByteOrder",
+          "NSCache",
+          "NSCalendar",
+          "NSCalendarDate",
+          "NSCharacterSet",
+          "NSClassDescription",
+          "NSCoder",
+          "NSComparisonPredicate",
+          "NSCompoundPredicate",
+          "NSConnection",
+          "NSData",
+          "NSDate",
+          "NSDateComponentsFormatter",
+          "NSDateFormatter",
+          "NSDateInterval",
+          "NSDateIntervalFormatter",
+          "NSDebug",
+          "NSDecimal",
+          "NSDecimalNumber",
+          "NSDictionary",
+          "NSDistantObject",
+          "NSDistributedLock",
+          "NSDistributedNotificationCenter",
+          "NSEnergyFormatter",
+          "NSEnumerator",
+          "NSError",
+          "NSException",
+          "NSExpression",
+          "NSExtensionContext",
+          "NSExtensionItem",
+          "NSExtensionRequestHandling",
+          "NSFileCoordinator",
+          "NSFileHandle",
+          "NSFileManager",
+          "NSFilePresenter",
+          "NSFileVersion",
+          "NSFileWrapper",
+          "NSFormatter",
+          "NSGarbageCollector",
+          "NSGeometry",
+          "NSHFSFileTypes",
+          "NSHTTPCookie",
+          "NSHTTPCookieStorage",
+          "NSHashTable",
+          "NSHost",
+          "NSISO8601DateFormatter",
+          "NSIndexPath",
+          "NSIndexSet",
+          "NSInflectionRule",
+          "NSInvocation",
+          "NSItemProvider",
+          "NSJSONSerialization",
+          "NSKeyValueCoding",
+          "NSKeyValueObserving",
+          "NSKeyValueSharedObservers",
+          "NSKeyedArchiver",
+          "NSLengthFormatter",
+          "NSLinguisticTagger",
+          "NSListFormatter",
+          "NSLocale",
+          "NSLocalizedNumberFormatRule",
+          "NSLock",
+          "NSMapTable",
+          "NSMassFormatter",
+          "NSMeasurement",
+          "NSMeasurementFormatter",
+          "NSMetadata",
+          "NSMetadataAttributes",
+          "NSMethodSignature",
+          "NSMorphology",
+          "NSNetServices",
+          "NSNotification",
+          "NSNotificationQueue",
+          "NSNull",
+          "NSNumberFormatter",
+          "NSObjCRuntime",
+          "NSObject",
+          "NSObjectScripting",
+          "NSOperation",
+          "NSOrderedCollectionChange",
+          "NSOrderedCollectionDifference",
+          "NSOrderedSet",
+          "NSOrthography",
+          "NSPathUtilities",
+          "NSPersonNameComponents",
+          "NSPersonNameComponentsFormatter",
+          "NSPointerArray",
+          "NSPointerFunctions",
+          "NSPort",
+          "NSPortCoder",
+          "NSPortMessage",
+          "NSPortNameServer",
+          "NSPredicate",
+          "NSProcessInfo",
+          "NSProgress",
+          "NSPropertyList",
+          "NSProtocolChecker",
+          "NSProxy",
+          "NSRange",
+          "NSRegularExpression",
+          "NSRelativeDateTimeFormatter",
+          "NSRunLoop",
+          "NSScanner",
+          "NSScriptClassDescription",
+          "NSScriptCoercionHandler",
+          "NSScriptCommand",
+          "NSScriptCommandDescription",
+          "NSScriptExecutionContext",
+          "NSScriptKeyValueCoding",
+          "NSScriptObjectSpecifiers",
+          "NSScriptStandardSuiteCommands",
+          "NSScriptSuiteRegistry",
+          "NSScriptWhoseTests",
+          "NSSet",
+          "NSSortDescriptor",
+          "NSSpellServer",
+          "NSStream",
+          "NSString",
+          "NSTask",
+          "NSTermOfAddress",
+          "NSTextCheckingResult",
+          "NSThread",
+          "NSTimeZone",
+          "NSTimer",
+          "NSURL",
+          "NSURLAuthenticationChallenge",
+          "NSURLCache",
+          "NSURLConnection",
+          "NSURLCredential",
+          "NSURLCredentialStorage",
+          "NSURLDownload",
+          "NSURLError",
+          "NSURLHandle",
+          "NSURLProtectionSpace",
+          "NSURLProtocol",
+          "NSURLRequest",
+          "NSURLResponse",
+          "NSURLSession",
+          "NSUUID",
+          "NSUbiquitousKeyValueStore",
+          "NSUndoManager",
+          "NSUnit",
+          "NSUserActivity",
+          "NSUserDefaults",
+          "NSUserNotification",
+          "NSUserScriptTask",
+          "NSValue",
+          "NSValueTransformer",
+          "NSXMLDTD",
+          "NSXMLDTDNode",
+          "NSXMLDocument",
+          "NSXMLElement",
+          "NSXMLNode",
+          "NSXMLNodeOptions",
+          "NSXMLParser",
+          "NSXPCConnection",
+          "NSZone",
+          "alloc",
+          "bitflags",
+          "block2",
+          "default",
+          "libc",
+          "objc2-core-foundation",
+          "std"
         ]
       },
       "name": "objc2-foundation",
@@ -25666,6 +27291,12 @@
           "std"
         ],
         "ios": [
+          "alloc",
+          "libc",
+          "serial",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
           "alloc",
           "libc",
           "serial",
@@ -26103,6 +27734,24 @@
           "race",
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
         "nrf-dfu-browser": [
           "alloc",
           "default",
@@ -26169,7 +27818,10 @@
         "host-connections-ios": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "openssl-probe",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -26517,7 +28169,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "parking_lot_core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -26552,7 +28207,9 @@
         "host-connections-android": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "paste",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -27655,7 +29312,95 @@
           "wifi-auto",
           "wifi-auto-apple"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "default",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "resource-work-offload",
+          "rnode",
+          "serial",
+          "std",
+          "std-sync-host",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto",
+          "wifi-halow"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "default",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "resource-work-offload",
+          "rnode",
+          "serial",
+          "std",
+          "std-sync-host",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto",
+          "wifi-halow"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "default",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "resource-work-offload",
+          "rnode",
+          "serial",
+          "std",
+          "std-sync-host",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto",
+          "wifi-halow"
+        ],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": [
           "bluetooth-auto",
           "embassy-host",
@@ -27693,7 +29438,10 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "pin-project",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -27718,7 +29466,10 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "pin-project-internal",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -27774,7 +29525,11 @@
         "identity-catalog-linux": [],
         "identity-catalog-macos": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -27919,6 +29674,15 @@
         "ios": [
           "alloc"
         ],
+        "lxmf-mailbox-android": [
+          "alloc"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc"
+        ],
         "lxmf-wire": [
           "alloc"
         ],
@@ -27945,7 +29709,8 @@
         "desktop-windows": [],
         "host-c-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "pkg-config",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -28224,6 +29989,24 @@
           "unsafe-assume-single-core"
         ],
         "ios": [
+          "critical-section",
+          "default",
+          "fallback",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "critical-section",
+          "default",
+          "fallback",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "critical-section",
+          "default",
+          "fallback",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "critical-section",
           "default",
           "fallback",
@@ -28585,6 +30368,18 @@
         "host-runtime-linux": [
           "simd",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "simd",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "simd",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "simd",
+          "std"
         ]
       },
       "name": "ppv-lite86",
@@ -28677,7 +30472,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "prns-config",
       "source": "prns-config",
@@ -29319,7 +31117,70 @@
           "std",
           "tokio-host"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "crypto-precomputed",
+          "default",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "large-static-responses",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "std-sync-host",
+          "test-support",
+          "tokio-host"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "crypto-precomputed",
+          "default",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "large-static-responses",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "std-sync-host",
+          "test-support",
+          "tokio-host"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "crypto-precomputed",
+          "default",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "large-static-responses",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "std-sync-host",
+          "test-support",
+          "tokio-host"
+        ],
         "lxmf-runtime": [
+          "rns-management-wire"
+        ],
+        "lxmf-runtime-storage": [
           "rns-management-wire"
         ],
         "nrf52840": [
@@ -29428,6 +31289,18 @@
         ],
         "ios": [
           "default"
+        ],
+        "lxmf-mailbox-android": [
+          "linux-packet",
+          "owned-async-fd"
+        ],
+        "lxmf-mailbox-ios": [
+          "linux-packet",
+          "owned-async-fd"
+        ],
+        "lxmf-mailbox-linux": [
+          "linux-packet",
+          "owned-async-fd"
         ]
       },
       "name": "prns-ffi",
@@ -29825,6 +31698,15 @@
         "host-runtime-linux": [
           "default"
         ],
+        "lxmf-mailbox-android": [
+          "default"
+        ],
+        "lxmf-mailbox-ios": [
+          "default"
+        ],
+        "lxmf-mailbox-linux": [
+          "default"
+        ],
         "wasm": [
           "default"
         ]
@@ -29923,6 +31805,15 @@
         ],
         "host-runtime-linux": [
           "default"
+        ],
+        "lxmf-mailbox-android": [
+          "default"
+        ],
+        "lxmf-mailbox-ios": [
+          "default"
+        ],
+        "lxmf-mailbox-linux": [
+          "default"
         ]
       },
       "name": "prns-host-runtime",
@@ -29952,7 +31843,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "prns-host-snapshot",
       "source": "prns-host/impls/snapshot",
@@ -30511,6 +32405,27 @@
         "ios": [
           "bluetooth-auto",
           "tcp",
+          "wifi-auto"
+        ],
+        "lxmf-mailbox-android": [
+          "bluetooth-auto",
+          "lora",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "lxmf-mailbox-ios": [
+          "bluetooth-auto",
+          "lora",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "lxmf-mailbox-linux": [
+          "bluetooth-auto",
+          "lora",
+          "tcp",
+          "usb",
           "wifi-auto"
         ],
         "nrf52840": [
@@ -31073,6 +32988,72 @@
           "wifi-auto",
           "wifi-auto-apple"
         ],
+        "lxmf-mailbox-android": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto",
+          "wifi-halow"
+        ],
+        "lxmf-mailbox-ios": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto",
+          "wifi-halow"
+        ],
+        "lxmf-mailbox-linux": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto",
+          "wifi-halow"
+        ],
         "nrf52840": [
           "bluetooth-auto",
           "bluetooth-auto-runtime",
@@ -31094,8 +33075,33 @@
     },
     {
       "graphs": {
+        "lxmf-mailbox-android": [
+          "default",
+          "redb-mailbox",
+          "tokio-host",
+          "tokio-runtime"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "redb-mailbox",
+          "tokio-host",
+          "tokio-runtime"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "redb-mailbox",
+          "tokio-host",
+          "tokio-runtime"
+        ],
         "lxmf-runtime": [
           "tokio-runtime"
+        ],
+        "lxmf-runtime-storage": [
+          "redb-mailbox",
+          "tokio-runtime"
+        ],
+        "lxmf-storage": [
+          "redb-mailbox"
         ]
       },
       "name": "prns-lxmf",
@@ -31114,6 +33120,15 @@
         "lxmf-runtime": [
           "default",
           "runtime"
+        ],
+        "lxmf-runtime-storage": [
+          "default",
+          "mailbox",
+          "runtime"
+        ],
+        "lxmf-storage": [
+          "default",
+          "mailbox"
         ]
       },
       "name": "prns-lxmf-feature-consumer",
@@ -31129,7 +33144,18 @@
     },
     {
       "graphs": {
+        "lxmf-mailbox-android": [
+          "default"
+        ],
+        "lxmf-mailbox-ios": [
+          "default"
+        ],
+        "lxmf-mailbox-linux": [
+          "default"
+        ],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": [
           "default"
         ]
@@ -31194,7 +33220,11 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -31522,7 +33552,35 @@
           "resource-bzip2",
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
+          "resource-bzip2",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
+          "resource-bzip2",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
+          "resource-bzip2",
+          "std"
+        ],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": [
           "alloc",
           "movable-frame-forwarding",
@@ -31627,6 +33685,15 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [
+          "large-static-responses"
+        ],
+        "lxmf-mailbox-ios": [
+          "large-static-responses"
+        ],
+        "lxmf-mailbox-linux": [
+          "large-static-responses"
+        ],
         "nrf52840": []
       },
       "name": "prns-runtime-embassy",
@@ -31775,6 +33842,21 @@
           "parallel-resource-hash"
         ],
         "ios": [
+          "parallel-persistence",
+          "parallel-resource-hash"
+        ],
+        "lxmf-mailbox-android": [
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash"
+        ],
+        "lxmf-mailbox-ios": [
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash"
+        ],
+        "lxmf-mailbox-linux": [
+          "interface-discovery",
           "parallel-persistence",
           "parallel-resource-hash"
         ],
@@ -32132,7 +34214,27 @@
           "default",
           "proc-macro"
         ],
+        "lxmf-mailbox-android": [
+          "default",
+          "proc-macro"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "proc-macro"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "proc-macro"
+        ],
         "lxmf-runtime": [
+          "default",
+          "proc-macro"
+        ],
+        "lxmf-runtime-storage": [
+          "default",
+          "proc-macro"
+        ],
+        "lxmf-storage": [
           "default",
           "proc-macro"
         ],
@@ -32348,6 +34450,36 @@
           "std",
           "tempfile",
           "timeout"
+        ],
+        "lxmf-mailbox-android": [
+          "bit-set",
+          "default",
+          "fork",
+          "regex-syntax",
+          "rusty-fork",
+          "std",
+          "tempfile",
+          "timeout"
+        ],
+        "lxmf-mailbox-ios": [
+          "bit-set",
+          "default",
+          "fork",
+          "regex-syntax",
+          "rusty-fork",
+          "std",
+          "tempfile",
+          "timeout"
+        ],
+        "lxmf-mailbox-linux": [
+          "bit-set",
+          "default",
+          "fork",
+          "regex-syntax",
+          "rusty-fork",
+          "std",
+          "tempfile",
+          "timeout"
         ]
       },
       "name": "proptest",
@@ -32402,7 +34534,10 @@
     {
       "graphs": {
         "engine": [],
-        "halow-appliance-manager": []
+        "halow-appliance-manager": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "quick-error",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -32507,7 +34642,27 @@
           "default",
           "proc-macro"
         ],
+        "lxmf-mailbox-android": [
+          "default",
+          "proc-macro"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "proc-macro"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "proc-macro"
+        ],
         "lxmf-runtime": [
+          "default",
+          "proc-macro"
+        ],
+        "lxmf-runtime-storage": [
+          "default",
+          "proc-macro"
+        ],
+        "lxmf-storage": [
           "default",
           "proc-macro"
         ],
@@ -32732,6 +34887,33 @@
           "alloc",
           "os_rng",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
         ]
       },
       "name": "rand",
@@ -32994,6 +35176,15 @@
         ],
         "host-runtime-linux": [
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "std"
         ]
       },
       "name": "rand_chacha",
@@ -33058,7 +35249,11 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -33202,6 +35397,18 @@
           "os_rng",
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "os_rng",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "os_rng",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "os_rng",
+          "std"
+        ],
         "nrf52840": []
       },
       "name": "rand_core",
@@ -33218,7 +35425,10 @@
     {
       "graphs": {
         "engine": [],
-        "halow-appliance-manager": []
+        "halow-appliance-manager": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "rand_xorshift",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -33255,7 +35465,10 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
-        "ios": []
+        "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "rayon",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -33292,7 +35505,10 @@
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
-        "ios": []
+        "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "rayon-core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -33356,6 +35572,26 @@
           "std"
         ],
         "identity-storage": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
+        ],
+        "lxmf-runtime-storage": [
+          "default",
+          "std"
+        ],
+        "lxmf-storage": [
           "default",
           "std"
         ],
@@ -33550,6 +35786,42 @@
           "unicode-perl",
           "unicode-script",
           "unicode-segment"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std",
+          "unicode",
+          "unicode-age",
+          "unicode-bool",
+          "unicode-case",
+          "unicode-gencat",
+          "unicode-perl",
+          "unicode-script",
+          "unicode-segment"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std",
+          "unicode",
+          "unicode-age",
+          "unicode-bool",
+          "unicode-case",
+          "unicode-gencat",
+          "unicode-perl",
+          "unicode-script",
+          "unicode-segment"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std",
+          "unicode",
+          "unicode-age",
+          "unicode-bool",
+          "unicode-case",
+          "unicode-gencat",
+          "unicode-perl",
+          "unicode-script",
+          "unicode-segment"
         ]
       },
       "name": "regex-syntax",
@@ -33673,6 +35945,21 @@
           "dev_urandom_fallback"
         ],
         "host-runtime-linux": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "lxmf-mailbox-linux": [
           "alloc",
           "default",
           "dev_urandom_fallback"
@@ -33861,7 +36148,19 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
+        ]
       },
       "name": "rmp",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -33877,7 +36176,10 @@
     {
       "graphs": {
         "engine": [],
-        "halow-appliance-manager": []
+        "halow-appliance-manager": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "rmpv",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -33926,6 +36228,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -33975,6 +36280,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "rtrb",
@@ -34054,7 +36362,12 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": [],
         "nrf52840": [],
         "wasm": []
@@ -34242,6 +36555,36 @@
           "default",
           "fs",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
         ]
       },
       "name": "rustix",
@@ -34450,6 +36793,27 @@
         "host-runtime-linux": [
           "ring",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "log",
+          "logging",
+          "ring",
+          "std",
+          "tls12"
+        ],
+        "lxmf-mailbox-ios": [
+          "log",
+          "logging",
+          "ring",
+          "std",
+          "tls12"
+        ],
+        "lxmf-mailbox-linux": [
+          "log",
+          "logging",
+          "ring",
+          "std",
+          "tls12"
         ]
       },
       "name": "rustls",
@@ -34482,7 +36846,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "rustls-native-certs",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -34508,6 +36875,21 @@
           "std"
         ],
         "daemon-windows": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "alloc",
           "default",
           "std"
@@ -34704,6 +37086,21 @@
           "alloc",
           "ring",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "ring",
+          "std"
         ]
       },
       "name": "rustls-webpki",
@@ -34732,6 +37129,7 @@
         "host-c-linux": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-linux": [],
         "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
@@ -34775,6 +37173,18 @@
         "halow-appliance-manager": [
           "timeout",
           "wait-timeout"
+        ],
+        "lxmf-mailbox-android": [
+          "timeout",
+          "wait-timeout"
+        ],
+        "lxmf-mailbox-ios": [
+          "timeout",
+          "wait-timeout"
+        ],
+        "lxmf-mailbox-linux": [
+          "timeout",
+          "wait-timeout"
         ]
       },
       "name": "rusty-fork",
@@ -34814,7 +37224,8 @@
       "graphs": {
         "android": [],
         "expo-android": [],
-        "host-connections-android": []
+        "host-connections-android": [],
+        "lxmf-mailbox-android": []
       },
       "name": "same-file",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -34874,7 +37285,19 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [
+          "default",
+          "use_std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "use_std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "use_std"
+        ]
       },
       "name": "scopeguard",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -35353,7 +37776,27 @@
           "default",
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
+        ],
         "lxmf-runtime": [
+          "default",
+          "std"
+        ],
+        "lxmf-runtime-storage": [
+          "default",
+          "std"
+        ],
+        "lxmf-storage": [
           "default",
           "std"
         ],
@@ -35526,6 +37969,39 @@
         ],
         "ios": [
           "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "lxmf-runtime-storage": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "lxmf-storage": [
           "default",
           "derive",
           "serde_derive",
@@ -35789,7 +38265,8 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "serde-xml-rs",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -35899,6 +38376,32 @@
         ],
         "ios": [
           "alloc",
+          "result",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "result",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "result",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "result",
+          "std"
+        ],
+        "lxmf-runtime-storage": [
+          "result",
+          "std"
+        ],
+        "lxmf-storage": [
           "result",
           "std"
         ],
@@ -36142,6 +38645,21 @@
         "ios": [
           "default"
         ],
+        "lxmf-mailbox-android": [
+          "default"
+        ],
+        "lxmf-mailbox-ios": [
+          "default"
+        ],
+        "lxmf-mailbox-linux": [
+          "default"
+        ],
+        "lxmf-runtime-storage": [
+          "default"
+        ],
+        "lxmf-storage": [
+          "default"
+        ],
         "lxmf-wire": [
           "default"
         ],
@@ -36282,6 +38800,26 @@
           "std"
         ],
         "halow-appliance-manager": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
+        ],
+        "lxmf-runtime-storage": [
+          "default",
+          "std"
+        ],
+        "lxmf-storage": [
           "default",
           "std"
         ],
@@ -36605,6 +39143,9 @@
         "host-c-windows": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "serial2",
@@ -36664,6 +39205,9 @@
         "host-c-windows": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "serial2-tokio",
@@ -36700,6 +39244,32 @@
         "tokens": 11
       },
       "version": "0.1.25"
+    },
+    {
+      "graphs": {
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "sha1",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 3,
+        "externs": 0,
+        "functions": 1,
+        "impls": 0,
+        "tokens": 4
+      },
+      "version": "0.10.6"
     },
     {
       "graphs": {
@@ -36984,9 +39554,31 @@
         "ios": [
           "zeroize"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "oid",
+          "zeroize"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "oid",
+          "zeroize"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "oid",
+          "zeroize"
+        ],
         "lxmf-runtime": [
           "zeroize"
         ],
+        "lxmf-runtime-storage": [
+          "zeroize"
+        ],
+        "lxmf-storage": [],
         "lxmf-wire": [
           "alloc",
           "default",
@@ -37119,6 +39711,18 @@
         "host-runtime-linux": [
           "default",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
         ]
       },
       "name": "shlex",
@@ -37217,6 +39821,18 @@
         "host-runtime-linux": [
           "default",
           "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
         ]
       },
       "name": "shlex",
@@ -37251,7 +39867,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "signal-hook-registry",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -37443,7 +40062,21 @@
           "alloc",
           "rand_core"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "rand_core"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "rand_core"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "rand_core"
+        ],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": [
           "alloc",
           "rand_core"
@@ -37728,6 +40361,18 @@
         "ios": [
           "std"
         ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "std"
+        ],
         "nrf52840": [
           "default",
           "std"
@@ -37800,7 +40445,16 @@
         "host-c-macos": [],
         "host-c-windows": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [
+          "const_generics"
+        ],
+        "lxmf-mailbox-ios": [
+          "const_generics"
+        ],
+        "lxmf-mailbox-linux": [
+          "const_generics"
+        ]
       },
       "name": "smallvec",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -38234,6 +40888,36 @@
           "socket",
           "socket-tcp",
           "socket-udp"
+        ],
+        "lxmf-mailbox-android": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "lxmf-mailbox-ios": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "lxmf-mailbox-linux": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
         ]
       },
       "name": "smoltcp",
@@ -38315,6 +40999,15 @@
           "all"
         ],
         "ios": [
+          "all"
+        ],
+        "lxmf-mailbox-android": [
+          "all"
+        ],
+        "lxmf-mailbox-ios": [
+          "all"
+        ],
+        "lxmf-mailbox-linux": [
           "all"
         ],
         "nrf52840": [
@@ -38677,6 +41370,15 @@
         "ios": [
           "alloc"
         ],
+        "lxmf-mailbox-android": [
+          "alloc"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc"
+        ],
         "lxmf-wire": [
           "alloc"
         ],
@@ -38860,7 +41562,20 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "std"
+        ],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -38909,7 +41624,10 @@
         "identity-key-card-linux": [],
         "identity-key-card-macos": [],
         "identity-keys-linux": [],
-        "identity-keys-macos": []
+        "identity-keys-macos": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "static_assertions",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -38957,6 +41675,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "static_cell",
@@ -39077,6 +41798,15 @@
         "ios": [
           "default"
         ],
+        "lxmf-mailbox-android": [
+          "default"
+        ],
+        "lxmf-mailbox-ios": [
+          "default"
+        ],
+        "lxmf-mailbox-linux": [
+          "default"
+        ],
         "lxmf-wire": [
           "default"
         ],
@@ -39142,6 +41872,7 @@
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "strsim",
@@ -39216,6 +41947,12 @@
           "derive",
           "std",
           "strum_macros"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "derive",
+          "std",
+          "strum_macros"
         ]
       },
       "name": "strum",
@@ -39286,7 +42023,8 @@
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "strum_macros",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -39478,7 +42216,22 @@
         "ios": [
           "const-generics"
         ],
+        "lxmf-mailbox-android": [
+          "const-generics"
+        ],
+        "lxmf-mailbox-ios": [
+          "const-generics"
+        ],
+        "lxmf-mailbox-linux": [
+          "const-generics"
+        ],
         "lxmf-runtime": [
+          "const-generics"
+        ],
+        "lxmf-runtime-storage": [
+          "const-generics"
+        ],
+        "lxmf-storage": [
           "const-generics"
         ],
         "lxmf-wire": [
@@ -39862,6 +42615,45 @@
           "visit",
           "visit-mut"
         ],
+        "lxmf-mailbox-android": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "fold",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "lxmf-mailbox-ios": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "fold",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "lxmf-mailbox-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "fold",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
         "lxmf-runtime": [
           "clone-impls",
           "default",
@@ -39872,6 +42664,26 @@
           "printing",
           "proc-macro",
           "visit"
+        ],
+        "lxmf-runtime-storage": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit"
+        ],
+        "lxmf-storage": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro"
         ],
         "lxmf-wire": [
           "clone-impls",
@@ -40786,6 +43598,10 @@
         "host-runtime-linux": [
           "default",
           "proc-macro"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "proc-macro"
         ]
       },
       "name": "synstructure",
@@ -40955,6 +43771,18 @@
         "ios": [
           "default",
           "getrandom"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "getrandom"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "getrandom"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "getrandom"
         ]
       },
       "name": "tempfile",
@@ -40994,7 +43822,8 @@
       "graphs": {
         "android": [],
         "expo-android": [],
-        "host-connections-android": []
+        "host-connections-android": [],
+        "lxmf-mailbox-android": []
       },
       "name": "thiserror",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -41030,6 +43859,18 @@
           "std"
         ],
         "halow-appliance-manager": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "std"
+        ],
+        "lxmf-mailbox-linux": [
           "default",
           "std"
         ],
@@ -41199,7 +44040,8 @@
       "graphs": {
         "android": [],
         "expo-android": [],
-        "host-connections-android": []
+        "host-connections-android": [],
+        "lxmf-mailbox-android": []
       },
       "name": "thiserror-impl",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -41220,6 +44062,9 @@
         "desktop-macos": [],
         "desktop-windows": [],
         "halow-appliance-manager": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf-dfu-browser": []
       },
       "name": "thiserror-impl",
@@ -42161,7 +45006,74 @@
           "tokio-macros",
           "windows-sys"
         ],
+        "lxmf-mailbox-android": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "test-util",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
+        "lxmf-mailbox-ios": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "test-util",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
+        "lxmf-mailbox-linux": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "test-util",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
         "lxmf-runtime": [
+          "macros",
+          "rt",
+          "sync",
+          "time",
+          "tokio-macros"
+        ],
+        "lxmf-runtime-storage": [
           "macros",
           "rt",
           "sync",
@@ -42215,7 +45127,11 @@
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": []
       },
       "name": "tokio-macros",
@@ -42292,7 +45208,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "tokio-rustls",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -42328,6 +45247,24 @@
         "desktop-linux": [
           "default",
           "time"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
         ]
       },
       "name": "tokio-stream",
@@ -42649,6 +45586,39 @@
           "rustls-tls-native-roots",
           "stream",
           "tokio-rustls"
+        ],
+        "lxmf-mailbox-android": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
+        ],
+        "lxmf-mailbox-ios": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
+        ],
+        "lxmf-mailbox-linux": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
         ]
       },
       "name": "tokio-tungstenite",
@@ -42686,6 +45656,15 @@
           "default"
         ],
         "daemon-windows": [
+          "default"
+        ],
+        "lxmf-mailbox-android": [
+          "default"
+        ],
+        "lxmf-mailbox-ios": [
+          "default"
+        ],
+        "lxmf-mailbox-linux": [
           "default"
         ]
       },
@@ -44126,6 +47105,36 @@
           "rustls",
           "rustls-pki-types",
           "sha1"
+        ],
+        "lxmf-mailbox-android": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
+        ],
+        "lxmf-mailbox-ios": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
+        ],
+        "lxmf-mailbox-linux": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
         ]
       },
       "name": "tungstenite",
@@ -44150,7 +47159,22 @@
         "halow-appliance-manager": [
           "const-generics"
         ],
+        "lxmf-mailbox-android": [
+          "const-generics"
+        ],
+        "lxmf-mailbox-ios": [
+          "const-generics"
+        ],
+        "lxmf-mailbox-linux": [
+          "const-generics"
+        ],
         "lxmf-runtime": [
+          "const-generics"
+        ],
+        "lxmf-runtime-storage": [
+          "const-generics"
+        ],
+        "lxmf-storage": [
           "const-generics"
         ],
         "lxmf-wire": [
@@ -44366,7 +47390,10 @@
     {
       "graphs": {
         "engine": [],
-        "halow-appliance-manager": []
+        "halow-appliance-manager": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "unarray",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -44433,7 +47460,12 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": [],
         "nrf-dfu-browser": [],
         "nrf52840": [],
@@ -44938,7 +47970,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "untrusted",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -45069,7 +48104,10 @@
         "host-connections-linux": [],
         "host-connections-macos": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "utf-8",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -45223,6 +48261,24 @@
           "default",
           "rng",
           "serde",
+          "std",
+          "v4"
+        ],
+        "lxmf-mailbox-android": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "lxmf-mailbox-ios": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "lxmf-mailbox-linux": [
+          "default",
+          "rng",
           "std",
           "v4"
         ]
@@ -45481,7 +48537,11 @@
         "identity-keys-macos": [],
         "identity-storage": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -45531,6 +48591,9 @@
         "host-runtime-connections-linux": [],
         "host-runtime-linux": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "nrf52840": []
       },
       "name": "void",
@@ -45562,7 +48625,10 @@
     {
       "graphs": {
         "engine": [],
-        "halow-appliance-manager": []
+        "halow-appliance-manager": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "wait-timeout",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -45579,7 +48645,8 @@
       "graphs": {
         "android": [],
         "expo-android": [],
-        "host-connections-android": []
+        "host-connections-android": [],
+        "lxmf-mailbox-android": []
       },
       "name": "walkdir",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -46828,7 +49895,22 @@
           "precomputed-tables",
           "static_secrets"
         ],
+        "lxmf-mailbox-android": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "lxmf-mailbox-ios": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "lxmf-mailbox-linux": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
         "lxmf-runtime": [
+          "static_secrets"
+        ],
+        "lxmf-runtime-storage": [
           "static_secrets"
         ],
         "nrf52840": [
@@ -46856,7 +49938,8 @@
         "daemon-linux": [],
         "host-c-linux": [],
         "host-runtime-connections-linux": [],
-        "host-runtime-linux": []
+        "host-runtime-linux": [],
+        "lxmf-mailbox-linux": []
       },
       "name": "xml",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -47109,6 +50192,15 @@
           "simd"
         ],
         "halow-appliance-manager": [
+          "simd"
+        ],
+        "lxmf-mailbox-android": [
+          "simd"
+        ],
+        "lxmf-mailbox-ios": [
+          "simd"
+        ],
+        "lxmf-mailbox-linux": [
           "simd"
         ],
         "nrf52840": [
@@ -47440,7 +50532,29 @@
           "derive",
           "zeroize_derive"
         ],
+        "lxmf-mailbox-android": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
+        "lxmf-mailbox-ios": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
+        "lxmf-mailbox-linux": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
         "lxmf-runtime": [
+          "derive",
+          "zeroize_derive"
+        ],
+        "lxmf-runtime-storage": [
           "derive",
           "zeroize_derive"
         ],
@@ -47697,7 +50811,11 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "halow-appliance-manager": [],
         "ios": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
         "lxmf-runtime": [],
+        "lxmf-runtime-storage": [],
         "lxmf-wire": [],
         "nrf52840": []
       },
@@ -47844,6 +50962,11 @@
         "desktop-linux": [],
         "engine": [],
         "halow-appliance-manager": [],
+        "lxmf-mailbox-android": [],
+        "lxmf-mailbox-ios": [],
+        "lxmf-mailbox-linux": [],
+        "lxmf-runtime-storage": [],
+        "lxmf-storage": [],
         "lxmf-wire": []
       },
       "name": "zmij",

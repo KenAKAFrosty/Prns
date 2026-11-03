@@ -22,7 +22,7 @@ security and record layers are described in the
 [group architecture](../prns-groups/docs/design.md).
 
 The independent [LXMF wire and direct runtime](../prns-lxmf/README.md)
-provides LXMF message exchange with an optional host adapter.
+provides LXMF message exchange with optional host and mailbox adapters.
 It is separate from group communication; applications choose their protocol.
 
 ## Storage choices

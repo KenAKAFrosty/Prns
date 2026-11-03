@@ -35,7 +35,11 @@ GRAPH_FEATURES = {'Group secure storage': ('prns-groups-store/secure',),
  'Host runtime connections': ('connections',),
  'Group headless peer': ('headless',),
  'LXMF runtime': ('runtime',),
- }
+ 'LXMF storage': ('mailbox',),
+ 'LXMF runtime storage': ('runtime', 'mailbox'),
+ 'LXMF mailbox Linux': ('tokio-host', 'redb-mailbox'),
+ 'LXMF mailbox Android': ('tokio-host', 'redb-mailbox'),
+ 'LXMF mailbox iOS': ('tokio-host', 'redb-mailbox')}
 GRAPHS = (('Group MLS adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('Group secure storage', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('Group libraries', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
@@ -135,7 +139,15 @@ GRAPHS = (('Group MLS adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
  ('LXMF runtime',
   'prns-lxmf/service/tests/fixtures/consumer/Cargo.toml',
   'x86_64-unknown-linux-gnu'),
- )
+ ('LXMF storage',
+  'prns-lxmf/service/tests/fixtures/consumer/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('LXMF runtime storage',
+  'prns-lxmf/service/tests/fixtures/consumer/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('LXMF mailbox Linux', 'prns-lxmf/service/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('LXMF mailbox Android', 'prns-lxmf/service/Cargo.toml', 'aarch64-linux-android'),
+ ('LXMF mailbox iOS', 'prns-lxmf/service/Cargo.toml', 'aarch64-apple-ios'))
 MAVEN = (
     ("androidx.annotation:annotation:1.5.0", "Apache-2.0"),
     ("com.github.mik3y:usb-serial-for-android:3.7.0", "MIT"),

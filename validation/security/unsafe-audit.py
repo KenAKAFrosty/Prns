@@ -46,7 +46,11 @@ GRAPH_FEATURES = {'group-secure-storage': ('prns-groups-store/secure',),
  'host-runtime-connections-linux': ('connections',),
  'group-headless-peer': ('headless',),
  'lxmf-runtime': ('runtime',),
- }
+ 'lxmf-storage': ('mailbox',),
+ 'lxmf-runtime-storage': ('runtime', 'mailbox'),
+ 'lxmf-mailbox-linux': ('tokio-host', 'redb-mailbox'),
+ 'lxmf-mailbox-android': ('tokio-host', 'redb-mailbox'),
+ 'lxmf-mailbox-ios': ('tokio-host', 'redb-mailbox')}
 GRAPHS = (('group-mls-adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('group-secure-storage', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('group-libraries', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
@@ -142,7 +146,15 @@ GRAPHS = (('group-mls-adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
  ('lxmf-runtime',
   'prns-lxmf/service/tests/fixtures/consumer/Cargo.toml',
   'x86_64-unknown-linux-gnu'),
- )
+ ('lxmf-storage',
+  'prns-lxmf/service/tests/fixtures/consumer/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('lxmf-runtime-storage',
+  'prns-lxmf/service/tests/fixtures/consumer/Cargo.toml',
+  'x86_64-unknown-linux-gnu'),
+ ('lxmf-mailbox-linux', 'prns-lxmf/service/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('lxmf-mailbox-android', 'prns-lxmf/service/Cargo.toml', 'aarch64-linux-android'),
+ ('lxmf-mailbox-ios', 'prns-lxmf/service/Cargo.toml', 'aarch64-apple-ios'))
 UNSAFE_EXCEPTIONS = {
     "prns-core",
     "prns-ffi",

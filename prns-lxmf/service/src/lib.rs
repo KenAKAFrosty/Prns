@@ -1,6 +1,6 @@
 //! Caller-owned LXMF values and optional host direct-packet engine.
 
-#![cfg_attr(not(feature = "tokio-runtime"), no_std)]
+#![cfg_attr(not(any(feature = "tokio-runtime", feature = "redb-mailbox")), no_std)]
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]
 
@@ -64,5 +64,11 @@ pub struct LxmfHealth {
 #[cfg(feature = "tokio-runtime")]
 pub mod direct;
 
+#[cfg(feature = "redb-mailbox")]
+pub mod mailbox;
+
 #[cfg(feature = "tokio-runtime")]
 pub use direct::*;
+
+#[cfg(feature = "redb-mailbox")]
+pub use mailbox::*;

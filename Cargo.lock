@@ -3519,6 +3519,8 @@ dependencies = [
  "prns-host",
  "prns-host-runtime",
  "prns-lxmf-wire",
+ "redb",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
