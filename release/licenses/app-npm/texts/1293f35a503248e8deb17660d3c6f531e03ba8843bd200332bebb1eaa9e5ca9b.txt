@@ -1,0 +1,738 @@
+# Casework 🕵️‍♂️
+
+### Tag your evidence. Match your leads. Every case closed.
+
+-   "Tagged unions"?
+-   "Discriminated unions"??
+-   "Sum types"?!
+
+Buncha mumbo jumbo if you ask me, but there's somethin' real useful under all that ivory tower talk. And you don't need a PhD to use it.
+
+You've got work to do, and just need good tools to make it happen.
+
+And hey, you're busy too. No time to learn a whole new "something". Got good news for you pal:
+
+No paradigm shift. Just objects and functions you already know how to use.
+
+**Here's the beat:**
+
+###### 💼 Packed light
+
+No dependencies. Pure TypeScript. Under 300 bytes minified. Easy to type.
+
+###### 📂 Open case files
+
+No magic. Just POJOs. Tiny API surface. Wire-safe & JSON-friendly.
+
+###### 🔍 Follow your instincts
+
+Use good ol' `if` statements, or our easy exhaustive matching. Your choice.
+
+###### 🔒 Safety locked down
+
+Your types tell the whole story. Don't skip a chapter. Miss a case? TypeScript lets you know.
+
+###### No big commitment required
+
+Sprinkle it into one corner of your codebase or use it everywhere. It plays nice either way.
+
+---
+
+## The Case: Death by a Thousand Optionals
+
+It always starts simple. A boolean here, a flag there. Then the requirements keep comin' and suddenly you're drowning in `?` and `undefined` checks, with types that lie to your face.
+
+### Exhibit A: The Boolean That Grew
+
+```ts
+// Monday: "Just track if the user is verified"
+type User = { name: string; isVerified: boolean };
+```
+
+Simple. Clean. You ship it.
+
+```ts
+// Thursday: "We need to know HOW they verified"
+type User = {
+    name: string;
+    isVerified: boolean;
+    verifiedVia?: "email" | "phone"; // only set if verified... probably
+};
+```
+
+Okay, one optional field. No big deal.
+
+```ts
+// Two sprints later: "Add suspension and ban states"
+type User = {
+    name: string;
+    isVerified: boolean;
+    verifiedVia?: "email" | "phone";
+    verifiedAt?: Date;
+    isSuspended?: boolean;
+    suspendedReason?: string; // only if suspended...
+    suspendedUntil?: Date; // only if suspended...
+    isBanned?: boolean;
+    bannedAt?: Date; // only if banned...
+    bannedReason?: string; // only if banned...
+};
+```
+
+Now you're checking `if (user.isBanned)` but TypeScript has no clue that `bannedAt` and `bannedReason` are definitely there. You start sprinklin' `!` assertions everywhere. Or worse, you double up on the checks:
+
+```ts
+if (user.isBanned && user.bannedAt && user.bannedReason) {
+    // NOW we're safe... right?
+}
+```
+
+And nothin' stops someone from settin' `isBanned: true` without a `bannedReason`. Or `isSuspended` AND `isBanned` at the same time. The type is lying to you, and it's gonna burn you eventually.
+
+**This same story plays out across your whole codebase.** Forms with multiple steps. API calls in various states. Orders moving through fulfillment. Documents going through review. Every one of 'em: a pile of optionals, a mess of flags, and bugs waitin' to happen.
+
+### Cracking the Case: One Field, Every State, Proper Evidence
+
+```ts
+import { Tag, match } from "casework/briefcase";
+
+type AccountStatus =
+    | Tag<"Unverified">
+    | Tag<"PendingVerification", { method: "email" | "phone"; sentAt: Date }>
+    | Tag<"Verified", { method: "email" | "phone"; verifiedAt: Date }>
+    | Tag<"Suspended", { reason: string; until: Date }>
+    | Tag<"Banned", { reason: string; bannedAt: Date }>;
+
+type User = { name: string; status: AccountStatus };
+```
+
+Now the user has _one_ status field. Each status carries _exactly_ the evidence it needs; no more, no less. TypeScript _knows_ what exists in each case. And impossible states? Literally unrepresentable. Can't even write 'em.
+
+You operate in a UI precinct? Casework has your back when it's time to render. Just match that status and follow every lead.
+
+```ts
+function AccountBadge({ status }: { status: AccountStatus }) {
+    return match(status, {
+        Unverified: () => <VerifyPrompt />,
+        PendingVerification: ({ method, sentAt }) => (
+            <PendingBadge method={method} since={sentAt} />
+        ),
+        Verified: ({ verifiedAt }) => <VerifiedBadge date={verifiedAt} />,
+        Suspended: ({ reason, until }) => (
+            <SuspensionNotice reason={reason} until={until} />
+        ),
+        Banned: ({ reason }) => <BannedNotice reason={reason} />,
+    });
+}
+```
+
+Each component gets _only_ the props it needs. No optional juggling. No type assertions. No lying.
+
+Work the backend beat? Same story, different street:
+
+```ts
+function exportAccountDetails(user: User): ApiResponse {
+    return match(user.status, {
+        Unverified: () => ({
+            status: 403,
+            error: "Account must be verified first",
+        }),
+        PendingVerification: ({ method }) => ({
+            status: 403,
+            error: `Verification for payment with ${method} in progress — please complete it first`,
+        }),
+        Verified: () => {
+            return exportVerifiedUser(user);
+        },
+        Suspended: ({ until }) => ({
+            status: 403,
+            error: `Account suspended until ${until.toISOString()}`,
+        }),
+        Banned: () => ({
+            status: 403,
+            error: "Account banned — contact support",
+        }),
+    });
+}
+```
+
+Every branch returns the right shape. TypeScript holds you to it.
+
+Add a sixth status next month? TypeScript lights up every `match` that needs updating. No case goes cold.
+
+## Why Not Just Use Native TypeScript?
+
+Well, ya sure _can_. TypeScript supports discriminated unions out of the box:
+
+```ts
+type Status =
+    | { type: "pending" }
+    | { type: "active"; since: Date }
+    | { type: "suspended"; reason: string };
+
+function handle(s: Status): string {
+    switch (s.type) {
+        case "pending":
+            return "Waiting...";
+        case "active":
+            return `Active since ${s.since}`;
+        case "suspended":
+            return `Suspended: ${s.reason}`;
+        default:
+            const _exhaustive: never = s;
+            throw new Error(`Unhandled: ${_exhaustive}`);
+    }
+}
+```
+
+This works. But there's friction.
+
+### Exhaustiveness is opt-in and awkward
+
+That `default` block with the `never` trick? It's the _only_ way to get compile-time exhaustiveness from a switch. Skip it (like most folks do), and TypeScript won't complain when you forget a case. You'll find out at runtime.
+
+With Casework, exhaustiveness is the default. Miss a case in `match`? Red squiggles immediately.
+
+### Types must be declared upfront
+
+With native patterns, you gotta define the union type first before you can match it:
+
+```ts
+// Must declare this first
+type UserResult =
+    | { type: "NotFound" }
+    | { type: "Found"; user: User }
+    | { type: "Banned"; reason: string };
+
+// Then annotate your function
+function getUser(id: string): UserResult {
+    // ...
+}
+```
+
+That's extra paperwork before you even start the investigation.
+
+With Casework, inference just works:
+
+```ts
+function getUser(id: string) {
+    if (!id) return Tag("InvalidId");
+    const user = db.find(id);
+    if (!user) return Tag("NotFound");
+    if (user.banned) return Tag("Banned", { reason: user.banReason });
+    return Tag("Found", { user });
+}
+
+// Return type is inferred as:
+// | Tag<"InvalidId">
+// | Tag<"NotFound">
+// | Tag<"Banned", { reason: string }>
+// | Tag<"Found", { user: User }>
+//
+// No need for upfront declaration. The evidence speaks for itself.
+```
+
+### Bottom line
+
+Casework is the native pattern, streamlined. Same underlying concept, much less ceremony, exhaustiveness by default, and basically as fast — in fact, faster when you have lots of cases.
+
+## The Tools of the Trade
+
+Two exports. That's the whole briefcase.
+
+### `Tag(name, data?)` — File Your Evidence
+
+Create a tagged value. The tag is the label, the data is the payload.
+
+```ts
+import { Tag } from "casework/briefcase";
+
+//Create the value on the fly no problem, if you don't need an explicit type.
+
+const verified = Tag("Verified", {
+    method: "email" as const,
+    verifiedAt: new Date(),
+});
+//  { tag: "Verified", data: { method: "email", verifiedAt: Date } }
+//
+// aka Tag<"Verified", {method: "email"; verifiedAt: Date;}>
+
+const unverified = Tag("Unverified");
+// { tag: "Unverified", data: undefined }
+//
+// aka Tag<"Unverified">
+```
+
+Tags are plain objects. No classes, no prototypes, no magic. `JSON.stringify` just works.
+
+### `match(value, handlers)` — Work Every Case
+
+Exhaustive pattern matching. Miss a case? Red squiggles. Every branch gets the right type, automatically narrowed.
+
+```ts
+import { match } from "casework/briefcase";
+
+//But when you do want to create your own types with Tag, it's dirt simple.
+//It's just a union of Tags.
+
+type DocStatus =
+    | Tag<"Draft", { wordCount: number }>
+    | Tag<"Published", { url: string; publishedAt: Date }>;
+
+const status: DocStatus = getDocStatus();
+
+// match returns whatever your handlers return — use it
+const summary = match(status, {
+    Draft: ({ wordCount }) => `${wordCount} words, unpublished`,
+    Published: ({ url }) => `Live at ${url}`,
+});
+```
+
+`match` isn't just for side effects. Return strings, numbers, JSX, even other Tags — whatever the case calls for.
+
+## Cases from the Files
+
+Real patterns. Real problems. Real solutions.
+
+### The Order That Wouldn't Stay Still
+
+Orders don't just 'succeed' or 'fail.' They got histories. They got baggage. They live entire lives:
+
+```ts
+type OrderState =
+    | Tag<"Draft", { items: CartItem[] }>
+    | Tag<"Submitted", { orderId: string; submittedAt: Date }>
+    | Tag<
+          "PaymentHold",
+          { orderId: string; holdReason: "fraud_review" | "insufficient_funds" }
+      >
+    | Tag<"Confirmed", { orderId: string; estimatedShip: Date }>
+    | Tag<"Shipped", { orderId: string; carrier: string; tracking: string }>
+    | Tag<"Delivered", { orderId: string; deliveredAt: Date }>
+    | Tag<
+          "Cancelled",
+          { orderId: string; reason: string; cancellationId: string }
+      >
+    | Tag<
+          "ReturnRequested",
+          { orderId: string; returnReason: string; requestedAt: Date }
+      >;
+```
+
+Each state carries exactly the evidence it needs. Nothin' more, nothin' less.
+
+```ts
+function OrderTimeline({ state }: { state: OrderState }) {
+    return match(state, {
+        PaymentHold: ({ holdReason }) => (
+            <HoldNotice
+                message={match(holdReason, {
+                    fraud_review: () => "Additional verification needed",
+                    insufficient_funds: () =>
+                        "Payment issue — please update billing",
+                })}
+            />
+        ),
+        Draft: ({ items }) => <DraftView itemCount={items.length} />,
+        Submitted: ({ submittedAt }) => (
+            <PendingView message="Processing your order" since={submittedAt} />
+        ),
+        Confirmed: ({ estimatedShip }) => (
+            <ConfirmedView shipDate={estimatedShip} />
+        ),
+        Shipped: ({ carrier, tracking }) => (
+            <TrackingView carrier={carrier} trackingNumber={tracking} />
+        ),
+        Delivered: ({ deliveredAt }) => <DeliveredView date={deliveredAt} />,
+        Cancelled: ({ reason, cancellationId }) => (
+            <CancelledView reason={reason} cancellationId={cancellationId} />
+        ),
+        ReturnRequested: ({ returnReason, requestedAt }) => (
+            <ReturnView reason={returnReason} since={requestedAt} />
+        ),
+    });
+}
+```
+
+### See that `match` on `holdReason`? That's right, `match` works on string literals too.
+
+No wrapper or refactor needed. If you've already got string unions in your codebase, `match` handles 'em just fine.
+
+One less excuse not to try it out.
+
+### The Upload That Takes Its Time
+
+File uploads ain't a binary "workin' or not" situation. Users are starin' at the screen through every stage:
+
+```ts
+type UploadState =
+    | Tag<"Idle">
+    | Tag<"Picking">
+    | Tag<"Validating", { file: File }>
+    | Tag<"Uploading", { file: File; progress: number }>
+    | Tag<"Processing", { uploadId: string }>
+    | Tag<"Complete", { url: string; size: number }>
+    | Tag<"Rejected", { reason: "too_large" | "wrong_type" | "corrupted" }>;
+```
+
+Drop a `match` right in your JSX — no ternary pileups, no `&&` chains:
+
+```tsx
+function UploadZone({ state, onSelect }: Props) {
+    return (
+        <div className="upload-zone">
+            {match(state, {
+                Idle: () => <button onClick={onSelect}>Choose file</button>,
+                Picking: () => (
+                    <span className="muted">Opening file picker...</span>
+                ),
+                Validating: ({ file }) => <span>Checking {file.name}...</span>,
+                Uploading: ({ file, progress }) => (
+                    <ProgressBar label={file.name} percent={progress} />
+                ),
+                Processing: () => <Spinner message="Processing on server..." />,
+                Complete: ({ url, size }) => (
+                    <SuccessMessage url={url} size={size} />
+                ),
+                Rejected: ({ reason }) => (
+                    <ErrorMessage
+                        message={match(reason, {
+                            too_large: () => "File exceeds 10MB limit",
+                            wrong_type: () => "Only images are allowed",
+                            corrupted: () => "File appears to be corrupted",
+                        })}
+                    />
+                ),
+            })}
+        </div>
+    );
+}
+```
+
+Seven states, all handled, each component getting exactly the props it needs. And that `Rejected` branch? Another `match` on a string literal union. Beats the hell out of ternary chains.
+
+### The Response That Tells Its Own Story
+
+API calls don't just "work" or "fail" either. If you work the backend streets, you're often shaping data for the next step:
+
+```ts
+type ApiResult<T> =
+    // Success ain't always simple
+    | Tag<"Fresh", { data: T }>
+    | Tag<"Cached", { data: T; cachedAt: Date }>
+    // Not found isn't really an error
+    | Tag<"NotFound">
+    // But these are
+    | Tag<"ValidationFailed", { fields: Record<string, string> }>
+    | Tag<"Unauthorized", { reason: "expired" | "invalid" | "missing" }>
+    | Tag<"RateLimited", { retryAfter: number }>
+    | Tag<"ServerError", { status: number; requestId: string }>;
+```
+
+Two kinds of success (fresh data vs stale cache). A "not found" that's often not an error at all — just an empty result. Auth failures with enough info to act on. Server errors with a request ID for the logs.
+
+Now wire it up to your HTTP layer:
+
+```ts
+function toHttpResponse<T>(result: ApiResult<T>): HttpResponse {
+    return match(result, {
+        Fresh: ({ data }) => ({
+            status: 200,
+            body: data,
+        }),
+        Cached: ({ data, cachedAt }) => ({
+            status: 200,
+            body: data,
+            headers: {
+                "X-Cache": "HIT",
+                "X-Cached-At": cachedAt.toISOString(),
+            },
+        }),
+        NotFound: () => ({
+            status: 404,
+            body: { error: "Resource not found" },
+        }),
+        ValidationFailed: ({ fields }) => ({
+            status: 400,
+            body: { error: "Validation failed", fields },
+        }),
+        Unauthorized: ({ reason }) => ({
+            status: 401,
+            body: { error: "Unauthorized" },
+            headers: reason === "expired" ? { "X-Token-Expired": "true" } : {},
+        }),
+        RateLimited: ({ retryAfter }) => ({
+            status: 429,
+            body: { error: "Too many requests" },
+            headers: { "Retry-After": String(retryAfter) },
+        }),
+        ServerError: ({ status, requestId }) => ({
+            status,
+            body: { error: "Internal server error", requestId },
+        }),
+    });
+}
+```
+
+Each case maps to the right status code, the right body shape, the right headers. The types make sure you don't forget to include `retryAfter` when it matters or `requestId` when you need it for debugging. And if a new result variant shows up next week? TypeScript tells you exactly where to handle it.
+
+### The Input That Could Be Anything
+
+Sometimes the evidence shows up contaminated. Legacy code, third-party APIs, different teams, user input. The real world don't always play by your rules. Casework's `match` handles the chaos:
+
+```ts
+import { Tag, match } from "casework/briefcase";
+
+// A config that evolved over time — started as strings, now mixed
+type FeatureFlag =
+    // New style: structured Tags with metadata
+    | Tag<"Enabled", { since: Date; enabledBy: string }>
+    | Tag<"Disabled", { reason: string }>
+    | Tag<"RollingOut", { percentage: number }>
+    // Old style: literal strings (still in the database)
+    | "on"
+    | "off"
+    // Ancient style: someone just stored 1 or 0. Can't change it now, gotta roll with the punches.
+    | number;
+
+function isFeatureEnabled(flag: FeatureFlag): boolean {
+    return match(flag, {
+        // Handle structured Tags
+        Enabled: () => true,
+        Disabled: () => false,
+        RollingOut: ({ percentage }) => Math.random() * 100 < percentage,
+
+        // Handle legacy string literals
+        on: () => true,
+        off: () => false,
+
+        // Handle ancient numeric values (or anything else weird)
+        UNTAGGED: (value) => value === 1,
+    });
+}
+```
+
+Tags, string literals, and a fallback — all in one match. The UNTAGGED handler catches anything that isn't a Tag or a known literal. And only exists when those cases do. Great for migrations, legacy integrations, or anywhere the real world doesn't match your ideal types.
+
+## The Briefcase
+
+The `briefcase` module is your everyday carry. Light, essential, always at hand.
+
+Everything you've seen — `Tag` and `match` — that's the briefcase. Two exports, under 300 bytes, zero dependencies. Enough to crack most cases wide open.
+
+```ts
+import { Tag, match } from "casework/briefcase";
+```
+
+There's a couple more tools in there for specific situations — `from` and `match_into` — but they're nice-to-haves. We'll cover 'em in the tips section.
+
+### What's on the Desk?
+
+More utilities are in the works - specialized equipment for the tricky parts of the job. Think tools that play well with Tags (but don't need 'em) while helpin' with common struggles.
+
+They'll land in the `desk` module when they're ready. But the briefcase? That's your daily carry. Stays lean. Ain't goin' anywhere.
+
+---
+
+## Tips from the Beat
+
+You've seen what `Tag` and `match` can do. Now here's how to work 'em into your beat without upending the whole precinct.
+
+### You Can Still Use `if` Statements
+
+Tags are just objects with a `tag` field. Check 'em however you like:
+
+```ts
+if (result.tag === "Success") {
+    // TypeScript narrows automatically
+    console.log(result.data.items);
+}
+
+// Guard clauses work great for early returns
+if (state.tag === "Idle") return null;
+if (state.tag === "Error") throw new Error(state.data.message);
+
+// Handle the rest knowing those cases are gone
+```
+
+`match` is convenient, and packs a _mighty_ punch. But it's not the only way. Use what reads best for you and your crew.
+
+### Sprinkle It In
+
+Zero dependencies. Tiny footprint. You don't have to rewrite your codebase.
+
+Got one gnarly function with a mess of optional flags? Try tagging just that part. Got a component drowning in ternaries? Drop in a `match`. Casework plays nice with whatever you've already got — it's just objects and functions.
+
+Don't overthink it. A boolean's still fine when a boolean's all you need. But the moment you catch yourself reachin' for a second flag? That's when you know it's time to tag. **Second flag? Time to tag!**
+
+### Tags Serialize Clean
+
+No classes, no methods, no prototype chain. Just plain data:
+
+```ts
+const tag = Tag("Shipped", { tracking: "1Z999AA10" });
+
+// Stringify it
+const json = JSON.stringify(tag);
+// '{"tag":"Shipped","data":{"tracking":"1Z999AA10"}}'
+```
+
+Send 'em over the wire, stash 'em in a database, log 'em to disk. They're just objects.
+
+## A couple more optional tools in the kit
+
+### Guided Tag Creation with `from<YourTagsType>().MakeTag()`
+
+When you're returning on-the-fly Tags inside a function with a declared return type, TypeScript can get... uncooperative. You know the union. You know what fits. Even TS will tell you if it's wrong. But autocomplete's playing dumb.
+
+`from` fixes that. Call it with your union type, get back a `MakeTag`; identical to `Tag` but it enforces intellisense to play along.
+
+You're still typesafe either way, but cats these days love their autocomplete.
+
+```ts
+import { Tag, from } from "casework/briefcase";
+
+type Ticket =
+    | Tag<"Open", { title: string; reporter: string }>
+    | Tag<"InProgress", { title: string; assignee: string }>
+    | Tag<"Resolved", { title: string; resolution: string }>
+    | Tag<"Wontfix", { title: string; reason: string }>;
+
+function resolveTicket(ticket: Ticket, resolution: string): Ticket {
+    if (ticket.tag === "Resolved" || ticket.tag === "Wontfix") {
+        return ticket; // Already closed, return as-is
+    }
+
+    return from<Ticket>().MakeTag("Resolved", {
+        title: ticket.data.title,
+        resolution,
+    });
+    //     ^ autocomplete knows exactly what data shape "Resolved" needs. It won't suggest `assignee`, `reporter`, or `reason`
+}
+
+//Need to use it more than once? No problem. Grab it out with a lil destructure.
+function triageIncomingTicket(
+    title: string,
+    reporter: string,
+    keywords: string[]
+): Ticket {
+    const { MakeTag } = from<Ticket>();
+
+    // Security issues go straight to review
+    if (keywords.some((k) => ["breach", "leak", "unauthorized"].includes(k))) {
+        return MakeTag("InProgress", { title, assignee: "security-team" });
+    }
+
+    // Known wontfix patterns
+    if (
+        keywords.includes("feature-request") &&
+        keywords.includes("enterprise")
+    ) {
+        return MakeTag("Wontfix", {
+            title,
+            reason: "Enterprise features tracked separately",
+        });
+    }
+
+    // Everything else starts fresh
+    return MakeTag("Open", { title, reporter });
+}
+```
+
+Totally optional, but a nice perk when ya need it.
+
+### Locking Down Return Types with `match_into`
+
+Sometimes every lead's gotta point to the same conclusion. You need every branch returning the same type, no exceptions.
+
+Maybe you're building a response object, or mapping to a specific format. `match_into` enforces it.
+
+You'd still get the type-safety without it, but this just keeps the errors closer to where they happen, for convenience.
+
+```ts
+import { Tag, match_into } from "casework/briefcase";
+
+type Priority = Tag<"Low"> | Tag<"Medium"> | Tag<"High"> | Tag<"Critical">;
+
+const getPriorityScore = (priority: Priority): number =>
+    match(priority, {
+        Low: () => 1,
+        Medium: () => 2,
+        High: () => 3,
+        Critical: () => "4",
+    });
+// This works just fine, and is type-safe.
+// But the error appears on all of `match` -  "Type 'string | number' is not assignable to type 'number'".
+// Easy to see the issue here, but a more involved function body might make that a bit of a pain.
+```
+
+To help with situations like these, `match_into().from(` can slot right in where `match(` was
+
+```ts
+const getPriorityScore = (priority: Priority): number =>
+    // Every branch MUST return a number
+    match_into<number>().from(priority, {
+        Low: () => 1,
+        Medium: () => 2,
+        High: () => 3,
+        Critical: () => "4", //Type 'string' is not assignable to type 'number' shows up right here in this branch only
+    });
+
+function sortByPriority(items: Array<{ priority: Priority }>) {
+    return items.sort(
+        (a, b) => getPriorityScore(a.priority) - getPriorityScore(b.priority)
+    );
+}
+```
+
+Another optional helper, useful when ya want that extra guidance.
+
+We got a few type helpers for ya too; take a gander at the Quick Reference below.
+
+## Grab your gear & hit the streets
+
+```sh
+npm install casework
+# or
+pnpm install casework
+# or
+bun add casework
+```
+
+```ts
+import { Tag, match } from "casework/briefcase";
+```
+
+## The Dossier
+
+Some notecards on the types and functions in case ya need 'em.
+
+### Types
+
+| Type               | Description                                                                               |
+| ------------------ | ----------------------------------------------------------------------------------------- |
+| `Tag<Name, Data?>` | A tagged value. `Name` is the tag string, `Data` is the payload (defaults to `undefined`) |
+| `TagFrom<T>`       | Extract the tag name type from a Tag                                                      |
+| `DataFrom<T>`      | Extract the data type from a Tag                                                          |
+
+### Functions
+
+| Function                                         | Description                                                                                          |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `Tag(name, data?)`                               | Create a tagged value                                                                                |
+| `match(value, handlers)`                         | Exhaustively match on Tags or string literals. Returns handlers' return value                        |
+| `from<UnionOfTags>().MakeTag(name, data?)`       | **[Optional Helper]** Type constrained to valid tags/shapes for that Tag union                       |
+| `match_into<TargetType>().from(value, handlers)` | **[Optional Helper]** Constrains return paths in every case to the TargetType, for convenient errors |
+
+## Why "Casework"?
+
+Every bug is a case to crack. Every state is evidence to file.
+
+Data comes in from all angles: user input, API responses, async flows, database queries. Some of it's good, some of it's trouble, and plenty falls somewhere in between. You gotta tag it, file it, and handle every possibility.
+
+Miss a case and it'll come back to bite you. Cover 'em all, and the cases close clean.
+
+That's the job. That's casework.
+
+## License
+
+MIT or Apache 2.0. Take your pick; we don't ask questions.

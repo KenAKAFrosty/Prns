@@ -1,0 +1,7 @@
+module prns_groups_store_redbFFI {
+    header "prns_groups_store_redbFFI.h"
+    export *
+    use "Darwin"
+    use "_Builtin_stdbool"
+    use "_Builtin_stdint"
+}

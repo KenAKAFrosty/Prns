@@ -113,6 +113,14 @@ class PrePushCiParityTests(unittest.TestCase):
                 self.assertFalse(swift & self.reusable_suites({path}, "Windows")[0])
         self.assertTrue(swift <= self.reusable_suites({"tools/uniffi/tooling.py"}, "Darwin")[0])
 
+    def test_app_selects_owning_suites_without_cross_platform_foreign_checks(self) -> None:
+        common = {"app-native", "app-native-clippy", "app-generated", "app-ui"}
+        for platform, foreign in (("Linux", {"app-android-consumer"}), ("Darwin", {"app-image-swift"}), ("Windows", set())):
+            selected, _ = self.reusable_suites({"applications/prns/app/src/IdentityPanel.tsx"}, platform)
+            self.assertEqual({identifier for identifier in selected if identifier.startswith("app-")}, common | foreign)
+        self.assertIn("app-image-swift", self.reusable_suites({"tools/uniffi/tooling.py"}, "Darwin")[0])
+        self.assertIn("app-generated", self.reusable_suites({"tools/uniffi/react-native.json"}, "Linux")[0])
+
     def test_core_change_checks_root_feature_and_native_consumers(self) -> None:
         names = self.gate_names({"prns-core/src/engine.rs"})
 

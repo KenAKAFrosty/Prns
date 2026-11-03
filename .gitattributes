@@ -16,3 +16,16 @@ prns-react-native/android/src/main/java/rs/reticulum/prns/expo/NativeImage.gener
 # Byte-exact exports of the generic Android Bluetooth source owner.
 prns-react-native/android/src/main/java/rs/reticulum/prns/bluetooth/** linguist-generated=true
 prns-react-native/android/src/test/java/rs/reticulum/prns/bluetooth/** linguist-generated=true
+
+# Machine-collected provenance remains byte-exact and reviewable on demand.
+release/licenses/app-maven/pom-sources/** -text whitespace=-blank-at-eol,-blank-at-eof,cr-at-eol linguist-generated=true
+release/licenses/app-maven/artifact-notice-sources/** -text whitespace=-blank-at-eol,-blank-at-eof,cr-at-eol linguist-generated=true
+release/licenses/app-maven/pom-license-evidence.json linguist-generated=true
+release/licenses/app-maven/pom-origins.json linguist-generated=true
+release/licenses/app-maven/resolved-runtime.json linguist-generated=true
+release/licenses/app-maven/artifact-notices.json linguist-generated=true
+applications/prns/bindings/typescript/** linguist-generated=true
+applications/prns/bindings/swift/** linguist-generated=true
+applications/prns/bindings/kotlin/** linguist-generated=true
+applications/prns/bindings/index.ts linguist-generated=true
+applications/prns/bindings/index.native.ts linguist-generated=true

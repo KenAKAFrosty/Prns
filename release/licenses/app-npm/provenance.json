@@ -1,0 +1,659 @@
+{
+  "schema": 1,
+  "scope": "Evidence for exact npm archives lacking standalone license files. This records source attribution, not policy approval.",
+  "packages": [
+    {
+      "name": "@react-native/assets-registry",
+      "version": "0.86.3",
+      "integrity": "sha512-TDhgCZA4wjJg84d5A9swiOQYPIWSKEEVdg9IwMFZDupQzW/F3QoLUrfAJOcalgqTDA9/buTB8awhE3Whwg6u9Q==",
+      "registry": "https://registry.npmjs.org/@react-native%2fassets-registry/0.86.3",
+      "git_head": "4829a675c80e64f7c170b0f30d24b3808b7663d3",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/react-native/4829a675c80e64f7c170b0f30d24b3808b7663d3/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@react-native/babel-plugin-codegen",
+      "version": "0.86.3",
+      "integrity": "sha512-O6Xza4JBGPIU8J7YbKTyBoYL4thpy8jMW/oaLDWdAyOwYHKIjK47pAL5HUEbOe2bWz2PEKjbYRF2ApkJv1ottQ==",
+      "registry": "https://registry.npmjs.org/@react-native%2fbabel-plugin-codegen/0.86.3",
+      "git_head": "4829a675c80e64f7c170b0f30d24b3808b7663d3",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/react-native/4829a675c80e64f7c170b0f30d24b3808b7663d3/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@react-native/codegen",
+      "version": "0.86.3",
+      "integrity": "sha512-Ux4jHi0fh+bdtVEcL0gaPLbY56V+SvFUDl/8sRAE1jdb4k+o7fT/4Nc29yz4X+qfjstkSqObQTMBGhdzxH9JvA==",
+      "registry": "https://registry.npmjs.org/@react-native%2fcodegen/0.86.3",
+      "git_head": "4829a675c80e64f7c170b0f30d24b3808b7663d3",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/react-native/4829a675c80e64f7c170b0f30d24b3808b7663d3/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@react-native/community-cli-plugin",
+      "version": "0.86.3",
+      "integrity": "sha512-qSDL9LQc5mZSZPNczT95WU9YQuPzxBklgON9vLhhqfI0yWIwKInqFx88dQ/uiEXBtf0yossthaQIqA4Ml6bF6g==",
+      "registry": "https://registry.npmjs.org/@react-native%2fcommunity-cli-plugin/0.86.3",
+      "git_head": "4829a675c80e64f7c170b0f30d24b3808b7663d3",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/react-native/4829a675c80e64f7c170b0f30d24b3808b7663d3/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@react-native/debugger-shell",
+      "version": "0.86.3",
+      "integrity": "sha512-O4ds+J7xZfxkbih9T+cAGegBdvKSPKYJm/lDgC9CpEjFMkmzWTpVLU3Qsv9sqZuo58z+sGhIcJfPsCFFWHpqbQ==",
+      "registry": "https://registry.npmjs.org/@react-native%2fdebugger-shell/0.86.3",
+      "git_head": "4829a675c80e64f7c170b0f30d24b3808b7663d3",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/react-native/4829a675c80e64f7c170b0f30d24b3808b7663d3/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@react-native/dev-middleware",
+      "version": "0.86.3",
+      "integrity": "sha512-LiEPTqTg/63bYUnrPyHLfjTDCNhA/+CUqI1+DsA9tYyewtSbULd5awsva6SgE10I+2iMhgKXS3ymkhU/kSCrGA==",
+      "registry": "https://registry.npmjs.org/@react-native%2fdev-middleware/0.86.3",
+      "git_head": "4829a675c80e64f7c170b0f30d24b3808b7663d3",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/react-native/4829a675c80e64f7c170b0f30d24b3808b7663d3/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@react-native/gradle-plugin",
+      "version": "0.86.3",
+      "integrity": "sha512-lxmx0GqLEWRIpZfpYFXlYVIs3ENQwaW6Vmp6oi29l2GoQJ1wZfFZRdMimDWlGEk8LKfHar3QH3iaPMkTcK9lEQ==",
+      "registry": "https://registry.npmjs.org/@react-native%2fgradle-plugin/0.86.3",
+      "git_head": "4829a675c80e64f7c170b0f30d24b3808b7663d3",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/react-native/4829a675c80e64f7c170b0f30d24b3808b7663d3/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@react-native/jest-preset",
+      "version": "0.86.3",
+      "integrity": "sha512-oMmBwXUpTgJvGlcXQQPuiQLykoM8jsWYp6RwdJ2NWyIWzJcGp1rmSr3XV7istoIcUt0wdOVLtQs0A0nDm9ND+A==",
+      "registry": "https://registry.npmjs.org/@react-native%2fjest-preset/0.86.3",
+      "git_head": "4829a675c80e64f7c170b0f30d24b3808b7663d3",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/react-native/4829a675c80e64f7c170b0f30d24b3808b7663d3/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@react-native/js-polyfills",
+      "version": "0.86.3",
+      "integrity": "sha512-eYIJ0es967+tePBFQDnl/gidVFxLns3fnbiK6rxscQrGodvuUO6hwxpQnfNynJ8MjbbndImXihXjcnJdc7SzJg==",
+      "registry": "https://registry.npmjs.org/@react-native%2fjs-polyfills/0.86.3",
+      "git_head": "4829a675c80e64f7c170b0f30d24b3808b7663d3",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/react-native/4829a675c80e64f7c170b0f30d24b3808b7663d3/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@react-native/normalize-colors",
+      "version": "0.86.3",
+      "integrity": "sha512-Cv3CDkprb67GrzuaS9BGbBJC/6G4lIw3nyKOHRKTqTTum4bn37y5+R0Z04L8mcbQN85eEohNrRwb7IOM4j6uvg==",
+      "registry": "https://registry.npmjs.org/@react-native%2fnormalize-colors/0.86.3",
+      "git_head": "4829a675c80e64f7c170b0f30d24b3808b7663d3",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/react-native/4829a675c80e64f7c170b0f30d24b3808b7663d3/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@react-native/virtualized-lists",
+      "version": "0.86.3",
+      "integrity": "sha512-1j44NEyNn05Ut40vHAmoSWbsIcybFkMAOBTwQt1PrESyfSS+qBoyU1LGIogNva0VIa0rQyEC5PzbA7R4/7Nhyw==",
+      "registry": "https://registry.npmjs.org/@react-native%2fvirtualized-lists/0.86.3",
+      "git_head": "4829a675c80e64f7c170b0f30d24b3808b7663d3",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/react-native/4829a675c80e64f7c170b0f30d24b3808b7663d3/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@ubjs/core",
+      "version": "0.31.0-6",
+      "integrity": "sha512-pscv6Zj8mVmd5+ikb1Zr6XZ0yqYwKGeIV8HU8rf9sTvs7GW34OARAp03xFJ7rE9XE4R6LgwQhzYW9knAuz5yxA==",
+      "registry": "https://registry.npmjs.org/@ubjs%2fcore/0.31.0-6",
+      "git_head": "3dd1cd1353750dc3bfbbf4bb4d4ccde26b0fbd2e",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the upstream repository license; the official archive omits that file.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d.txt",
+          "sha256": "d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d",
+          "source": "https://raw.githubusercontent.com/jhugman/uniffi-bindgen-react-native/3dd1cd1353750dc3bfbbf4bb4d4ccde26b0fbd2e/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "@ubjs/react-native",
+      "version": "0.31.0-6",
+      "integrity": "sha512-vD1033OqUFy968F/3yUKFfN/Im7sfSM5NXRZcUlpUWwuzC9vQn81vtX9P1Fz/xuLxNc88MnNym3zari7PkClNQ==",
+      "registry": "https://registry.npmjs.org/@ubjs%2freact-native/0.31.0-6",
+      "git_head": "3dd1cd1353750dc3bfbbf4bb4d4ccde26b0fbd2e",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the upstream repository license; the official archive omits that file.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d.txt",
+          "sha256": "d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d",
+          "source": "https://raw.githubusercontent.com/jhugman/uniffi-bindgen-react-native/3dd1cd1353750dc3bfbbf4bb4d4ccde26b0fbd2e/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "babel-plugin-react-compiler",
+      "version": "1.0.0",
+      "integrity": "sha512-Ixm8tFfoKKIPYdCCKYTsqv+Fd4IJ0DQqMyEimo+pxUOMUR9cVPlwTrFt9Avu+3cb6Zp3mAzl+t1MrG2fxxKsxw==",
+      "registry": "https://registry.npmjs.org/babel-plugin-react-compiler/1.0.0",
+      "git_head": "5c15c1cd3442f28044217703b5625f98c40042ee",
+      "verification": "exact-published-revision",
+      "provenance": "Exact published npm gitHead; repository root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/facebook/react/5c15c1cd3442f28044217703b5625f98c40042ee/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "boolbase",
+      "version": "1.0.0",
+      "integrity": "sha512-JZOSA7Mo9sNGB8+UjSgzdLtokWAky1zbztM3WRLCbZ70/3cTANmQmOdR7y2g+J0e2WXywy1yS468tY+IruqEww==",
+      "registry": "https://registry.npmjs.org/boolbase/1.0.0",
+      "git_head": null,
+      "verification": "same-version-identical-implementation",
+      "provenance": "No published gitHead or v1 tag. Maintainer merged license commit b566b40fabb9310c9e1e8bd5719afb6eece98425 still declares version1.0.0; its index.js is byte-identical to the integrity-checked published archive (SHA256c62510fca8738c7444cdf5012bdd0ce214a1b6f7eaff7facb3a919e4656d7341).",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/cdf4d87ae0a6c160227263bf4e39a0a10e30e89ae7256e0f7ac7bde0836552c6.txt",
+          "sha256": "cdf4d87ae0a6c160227263bf4e39a0a10e30e89ae7256e0f7ac7bde0836552c6",
+          "source": "https://raw.githubusercontent.com/fb55/boolbase/b566b40fabb9310c9e1e8bd5719afb6eece98425/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "bplist-parser",
+      "version": "0.3.1",
+      "integrity": "sha512-PyJxiNtA5T2PlLIeBot4lbp7rj4OadzjnMZD/G5zuBNt8ei/yCU7+wW0h2bag9vr8c+/WuRWmSxbqAl9hL1rBA==",
+      "verification": "published-archive-readme",
+      "provenance": "Complete License section from package/README.md; archive integrity is checked before use.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/ee3cfbe17c87702b4e1b1ce52be0d0cb923d39de3745a60a2ca09798977566b2.txt",
+          "sha256": "ee3cfbe17c87702b4e1b1ce52be0d0cb923d39de3745a60a2ca09798977566b2",
+          "source": "https://registry.npmjs.org/bplist-parser/-/bplist-parser-0.3.1.tgz#package/README.md"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "bplist-parser",
+      "version": "0.3.2",
+      "integrity": "sha512-apC2+fspHGI3mMKj+dGevkGo/tCqVB8jMb6i+OX+E29p0Iposz07fABkRIfVUPNd5A5VbuOz1bZbnmkKLYF+wQ==",
+      "verification": "published-archive-readme",
+      "provenance": "Complete License section from package/README.md; archive integrity is checked before use.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/ee3cfbe17c87702b4e1b1ce52be0d0cb923d39de3745a60a2ca09798977566b2.txt",
+          "sha256": "ee3cfbe17c87702b4e1b1ce52be0d0cb923d39de3745a60a2ca09798977566b2",
+          "source": "https://registry.npmjs.org/bplist-parser/-/bplist-parser-0.3.2.tgz#package/README.md"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "casework",
+      "version": "0.2.2",
+      "integrity": "sha512-mTsUU/+4e0mTvWNfI1/uYL5ZtHiSrgk7CCzqlx/RbUleEEIk9y/jjGMSDobO8HycNu9t46aFumrC+Ev1X8YF0g==",
+      "registry": "https://registry.npmjs.org/casework/0.2.2",
+      "git_head": "fabf349ec826e9916c025a5bc3a2b2c0ff810467",
+      "verification": "unresolved-full-text",
+      "provenance": "Exact archive/gitHead package.json saysMIT; publishedREADME finalLicense section saysMIT or Apache2.0. No full license text or copyright notice present. Primary repository has no LICENSE/License.md history. No full attributed license text was invented.",
+      "texts": [],
+      "unresolved": [
+        "Published package says MIT and README says MIT or Apache-2.0, but no complete attributed license text was found at the exact published revision."
+      ],
+      "additional_evidence": {
+        "path": "release/licenses/app-npm/texts/1293f35a503248e8deb17660d3c6f531e03ba8843bd200332bebb1eaa9e5ca9b.txt",
+        "sha256": "1293f35a503248e8deb17660d3c6f531e03ba8843bd200332bebb1eaa9e5ca9b",
+        "source": "integrity-checked published package README"
+      }
+    },
+    {
+      "name": "fb-dotslash",
+      "version": "0.5.8",
+      "integrity": "sha512-XHYLKk9J4BupDxi9bSEhkfss0m+Vr9ChTrjhf9l2iw3jB5C7BnY4GVPoMcqbrTutsKJso6yj2nAB6BI/F2oZaA==",
+      "registry": "https://registry.npmjs.org/fb-dotslash/0.5.8",
+      "git_head": "8060e2dec764bceba5809cf6a15906644aad0078",
+      "verification": "exact-published-revision",
+      "provenance": "Exact published npm gitHead; repository dual-license files.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/facebook/dotslash/8060e2dec764bceba5809cf6a15906644aad0078/LICENSE-MIT"
+        },
+        {
+          "path": "release/licenses/app-npm/texts/50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a.txt",
+          "sha256": "50e6751797c50dedd75ef1b8a0d9e42f5f8472e9fbce91f34718e9f97b0c780a",
+          "source": "https://raw.githubusercontent.com/facebook/dotslash/8060e2dec764bceba5809cf6a15906644aad0078/LICENSE-APACHE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "hermes-compiler",
+      "version": "250829098.0.17",
+      "integrity": "sha512-qG1PXzTEtriF6oQLZF3vyHhSMxOdW5h2TqqLri0rdpstPustd2fSvRZQMVAPdlhgFwBfYnj3OUZtiO6LjYsEFw==",
+      "registry": "https://registry.npmjs.org/hermes-compiler/250829098.0.17",
+      "git_head": "3477757eb2475555cf8d8df24bfb1deb0613880d",
+      "verification": "exact-published-revision",
+      "provenance": "Exact published npm gitHead; repository root license. Package also contains native binaries; this does not inventory their embedded third-party code.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/facebook/hermes/3477757eb2475555cf8d8df24bfb1deb0613880d/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "imurmurhash",
+      "version": "0.1.4",
+      "integrity": "sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==",
+      "verification": "published-archive-readme",
+      "provenance": "Complete License (MIT) section from the integrity-checked published package/README.md.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/338b862a4b5959b1583d99ab35801b23375150693c6cc3bf8fcd9156a0e25ddd.txt",
+          "sha256": "338b862a4b5959b1583d99ab35801b23375150693c6cc3bf8fcd9156a0e25ddd",
+          "source": "https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz#package/README.md"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "jimp-compact",
+      "version": "0.16.1",
+      "integrity": "sha512-dZ6Ra7u1G8c4Letq/B5EzAxj4tLFHL+cGtdpR+PVm4yzPDj+lCk+AbivWt1eOM+ikzkowtyV7qSqX6qr3t71Ww==",
+      "registry": "https://registry.npmjs.org/jimp-compact/0.16.1",
+      "git_head": "c4cdbe12832de484d83d38aa0c14d7709f5ca657",
+      "verification": "explicit-derived-source-attribution",
+      "provenance": "PublishedREADME attributes MIT license to Jimp. Published gitHead yarn.lock pins Jimp0.16.1; build.js bundles Jimp and copies its version. This is the exact Jimp0.16.1 gitHead license; no separate compact-wrapper copyright notice found. The minified bundle includes dependencies and this is not a full bundled-dependency notice audit.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/942eab097945c835cf41abcbf1b9a6659c5d0c3493e60c56796d2e045c219278.txt",
+          "sha256": "942eab097945c835cf41abcbf1b9a6659c5d0c3493e60c56796d2e045c219278",
+          "source": "https://raw.githubusercontent.com/jimp-dev/jimp/909f06eac36ef5ba36ebb1e0853fd006c4da3560/LICENSE"
+        }
+      ],
+      "unresolved": [
+        "Exact Jimp source attribution is reproduced, but the compiled dependency bundle and compact wrapper have not received a complete notice review."
+      ],
+      "additional_evidence": {
+        "path": "release/licenses/app-npm/texts/972c97f9a3650668316b09c45508054ebb51b6630010dde5d64b4c92687e5b29.txt",
+        "sha256": "972c97f9a3650668316b09c45508054ebb51b6630010dde5d64b4c92687e5b29",
+        "source": "integrity-checked published package README"
+      }
+    },
+    {
+      "name": "metro",
+      "version": "0.84.5",
+      "integrity": "sha512-r1liLkyFZMVSEMNjU1CJU5pRzs3NdkxHqXS60O25c0rCIqAR+cGk7rPydw/g0WAIKVXojIBIF45yYBPagJGcgw==",
+      "registry": "https://registry.npmjs.org/metro/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-babel-transformer",
+      "version": "0.84.5",
+      "integrity": "sha512-2WbHILKMiJUzfdjmGOQOqU1bWi9//gqiclc/tkk/AIsrrVw3efhZ1uhkOwMTxUEPOzqoo091H0olLmVZH5FHGQ==",
+      "registry": "https://registry.npmjs.org/metro-babel-transformer/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-cache",
+      "version": "0.84.5",
+      "integrity": "sha512-WHS0n2OxQqtwEjSeQFPePNrMvEFhmQcUQM9cRJMHByWoi/GMWFBEWOf7hVkAM/0KRutAXNbDlSu/cZB6CyxgQQ==",
+      "registry": "https://registry.npmjs.org/metro-cache/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-cache-key",
+      "version": "0.84.5",
+      "integrity": "sha512-3dPB2TnvGjjf0/9O7AXVQURKXuQNauTZE7WpTGTlR017Gh/B5y0m/2wcqxfveUguHSpu89KhVxCAlr2k/H7uhQ==",
+      "registry": "https://registry.npmjs.org/metro-cache-key/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-config",
+      "version": "0.84.5",
+      "integrity": "sha512-zie+uN6oohscowi2S7ByU+wUw6CrT4ZxW9uAbONOObSxx86RGmnIAmjXHLkfmcdYoY7jzOPEbqcI6oeVmqyBQA==",
+      "registry": "https://registry.npmjs.org/metro-config/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-core",
+      "version": "0.84.5",
+      "integrity": "sha512-xwm605hCi5Y6eJTTb8ZWo6pkUcoBEIyiQOfkZh5GwtDwUrP9SNhTQZhzJHrBCwwxlf3Ptl/pxWJgQ1rsNYMnrA==",
+      "registry": "https://registry.npmjs.org/metro-core/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-file-map",
+      "version": "0.84.5",
+      "integrity": "sha512-mlm/JL8toSbSc2akpKIGmzvrVRSCgZ5vkbycI34oMLoOnLGuLyC8WTyVJ6P0hZG/usDaGwZSl/s9BCRriqjGJA==",
+      "registry": "https://registry.npmjs.org/metro-file-map/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-minify-terser",
+      "version": "0.84.5",
+      "integrity": "sha512-BJoFwCEDsYnagPqarayInv2+diCDNDdLlaof/p6s9w4gh+gc9HXYM+pDvsKGKKUumpZswNF3Z/ftTMqKl/5IBg==",
+      "registry": "https://registry.npmjs.org/metro-minify-terser/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-resolver",
+      "version": "0.84.5",
+      "integrity": "sha512-VSSnepg1k6LyCwtb6eirWdAWlpKwBG8Rdtsr1mU38rMelFyWgh3/QuMSiZIZAIjwg/fsa8GhW5/FO54CAUPCEA==",
+      "registry": "https://registry.npmjs.org/metro-resolver/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-runtime",
+      "version": "0.84.5",
+      "integrity": "sha512-U1m2+d1Pr+JO2/iVXBB2OfXXityz7tqwIorxfrT15IEgaHvpJBq/OHiqnOWPKJbUl3JcxjcdviZZOKk85oK4Qg==",
+      "registry": "https://registry.npmjs.org/metro-runtime/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-source-map",
+      "version": "0.84.5",
+      "integrity": "sha512-2BtV5L9uPc49F13Gn5wiP6bX/EncqzqTIk2VL/0F/96Vo0YEOjluT/qktQjFODfqGFsucwnh5mPEAl/2jVEfeg==",
+      "registry": "https://registry.npmjs.org/metro-source-map/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-symbolicate",
+      "version": "0.84.5",
+      "integrity": "sha512-rQ40zYDAkaWBN9yvjUuAD0ZpzBMZSoKyGYXnb5JrfbKjun7fTvfoLHL3KXFYenBTYZkQtlp4cKSCv/1utxFyOw==",
+      "registry": "https://registry.npmjs.org/metro-symbolicate/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-transform-plugins",
+      "version": "0.84.5",
+      "integrity": "sha512-+InaSVGaOyt0DyRo4Y/zIdPI6CZwnbNho5LAL23tgmuGwv7fyfkF7kKfPjZcfxXBcoYdTLLFnCfCH/dHSiCqNg==",
+      "registry": "https://registry.npmjs.org/metro-transform-plugins/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "metro-transform-worker",
+      "version": "0.84.5",
+      "integrity": "sha512-ui1Z8x4s5RL36gMmKLaMMO7O9NNDHNdthEZSCDQHAau3JcAsTaFOK6I+2q4I/kW5u8hSEjJk9L45TXSVJw6g1A==",
+      "registry": "https://registry.npmjs.org/metro-transform-worker/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "ob1",
+      "version": "0.84.5",
+      "integrity": "sha512-aH9RkoZc7w/90HBamFxTw8ZLFr05wXS+iOnvmrgo53Ep8Pyrm5FieQSaPIVROkfFVQISeD/zo92fes26TOwe+A==",
+      "registry": "https://registry.npmjs.org/ob1/0.84.5",
+      "git_head": "b71015ef83904e7086342ddb72205b7242dcd129",
+      "verification": "exact-published-revision",
+      "provenance": "The published npm gitHead identifies the monorepo root license.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93.txt",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "source": "https://raw.githubusercontent.com/react/metro/b71015ef83904e7086342ddb72205b7242dcd129/LICENSE"
+        }
+      ],
+      "unresolved": []
+    },
+    {
+      "name": "structured-headers",
+      "version": "0.4.1",
+      "integrity": "sha512-0MP/Cxx5SzeeZ10p/bZI0S6MpgD+yxAhi1BOQ34jgnMXsCq3j1t6tQnZu+KdlL7dvJTLT3g9xN8tl10TqgFMcg==",
+      "registry": "https://registry.npmjs.org/structured-headers/0.4.1",
+      "git_head": "f83b278e51d6b6cf565908342e0ca3f57f5b7bd1",
+      "verification": "same-version-identical-implementation",
+      "provenance": "Published gitHead/tagv0.4.1 lacks LICENSE. First license commit080859e568bac3f128cfff3c8a9b924180f429ca still declares0.4.1; all six publishedsrc/*.ts files are byte-identical. See structured-source-comparison.json.",
+      "texts": [
+        {
+          "path": "release/licenses/app-npm/texts/e897643af2c5e3027bf40e8d254f92ec9f96b248aba160e7110d21862dbd684d.txt",
+          "sha256": "e897643af2c5e3027bf40e8d254f92ec9f96b248aba160e7110d21862dbd684d",
+          "source": "https://raw.githubusercontent.com/evert/structured-header/080859e568bac3f128cfff3c8a9b924180f429ca/LICENSE"
+        }
+      ],
+      "unresolved": []
+    }
+  ]
+}

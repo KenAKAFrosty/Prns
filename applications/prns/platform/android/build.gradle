@@ -1,0 +1,20 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+group = 'rs.reticulum.prns.app.platform'
+version = '0.1.0'
+android {
+  namespace 'rs.reticulum.prns.app.platform'
+  defaultConfig {
+    minSdkVersion 29
+    versionCode 1
+    versionName project.version.toString()
+  }
+}
+dependencies {
+  // The selected SDK compiles every owning namespace and packages one image.
+  implementation project(':personal-rns-expo')
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
+  testImplementation 'junit:junit:4.13.2'
+}

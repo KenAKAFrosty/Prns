@@ -18,7 +18,7 @@
   "inputs": [
     {
       "path": "Cargo.toml",
-      "sha256": "e310543d1142ff3d637c1023f52023df625f1918ff81929bf9515e90cd1a5c4e"
+      "sha256": "4c5db74cd9f9601c9fd7be470363f8e38c4faf7bad6da97879a9f8b65044ba39"
     },
     {
       "path": "LICENSE-APACHE",
@@ -122,7 +122,7 @@
     },
     {
       "path": "tools/repo/generate-third-party-notices.py",
-      "sha256": "6b0dfa72fb603b23b35db9a3069d1ec2b9ecf2fab5021ec4c95fd3061286980f"
+      "sha256": "e4d9aa4391140f4fbd1823046767eb40a641d7b16e8d335ad5352a38a1336c40"
     },
     {
       "path": "tools/uniffi/licenses/ubrn-MPL-2.0.txt",

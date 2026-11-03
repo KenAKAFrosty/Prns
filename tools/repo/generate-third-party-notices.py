@@ -17,6 +17,9 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "validation/security"))
+import app_maven
+import app_npm
 sys.path.insert(0, str(ROOT / "tools/uniffi"))
 import runtime_notices
 OUTPUT = ROOT / "THIRD_PARTY_NOTICES.md"
@@ -156,7 +159,10 @@ GRAPHS = (('Group MLS adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
  ('Group native bindings macOS',
   'prns-groups/bindings/uniffi/image/Cargo.toml',
   'aarch64-apple-darwin'),
- ('Group headless peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'))
+ ('Group headless peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+    ('App Android', 'applications/prns/chat-app/Cargo.toml', 'aarch64-linux-android'),
+    ('App iOS', 'applications/prns/chat-app/Cargo.toml', 'aarch64-apple-ios'),
+)
 MAVEN = (
     ("androidx.annotation:annotation:1.5.0", "Apache-2.0"),
     ("com.github.mik3y:usb-serial-for-android:3.7.0", "MIT"),
@@ -221,6 +227,8 @@ def notice_input_paths() -> tuple[Path, ...]:
         if "node_modules" not in Path(relative).parts
     )
     paths.update(runtime_notices.input_paths())
+    paths.update(app_npm.notice_inputs(ROOT))
+    paths.update(app_maven.inputs(ROOT))
     paths.update(ROOT / relative for _, _, relative, _ in VENDORED)
     tracked = subprocess.run(
         ["git", "ls-files", "--cached", "--full-name", "-z"],
@@ -449,7 +457,59 @@ def license_text_lines(notices):
     return lines
 
 
+def app_notice_data() -> tuple[dict, dict]:
+    cache = Path(os.environ.get('npm_config_cache', Path.home()/'.npm')) / 'prns-notice-archives'
+    return app_npm.notice_report(ROOT, cache), app_maven.report(ROOT)
+
+def app_notice_lines(npm: dict, maven: dict) -> list[str]:
+    lines = ['', '## Application npm runtime declaration closure', '',
+        'This is conservative package-manifest reachability from the application, including required peers and source-linked packages. It is not a claim that every package is embedded in the JS bundle. Exact archive integrity is checked; ignored staged SDK output and installer development roots are not inputs.', '',
+        f"{len(npm['packages'])} exact package archives; {len(npm['unresolved_required_peers'])} unresolved required peer declarations; {len(npm['unresolved_optional'])} unresolved optional platform placeholders; {len(npm['unselected_optional_peers'])} optional peer capabilities not selected by a required path.", '',
+        'The following labels reproduce declarations, not new license selections or approval. The release audit rejects disallowed policy, unresolved attribution and advisories independently of notice generation.', '']
+    for package in npm['packages']:
+        issues = package['attribution_issues'] + package['policy_issues']
+        suffix = ' **Unresolved:** ' + ' '.join(issues) if issues else ''
+        lines.append(f"- `{package['name']} {package['version']}` — `{package['license']}`.{suffix}")
+    lines.extend(['', '### Unresolved required npm peers', '',
+        'Missing required peers remain release-audit failures. This package declaration inventory does not prove runtime dependency completeness or determine which optional entry points the application uses.', ''])
+    if not npm['unresolved_required_peers']:
+        lines.append('No required peer declarations are unresolved.')
+    for project, requester, name, requirement in npm['unresolved_required_peers']:
+        lines.append(f'- **Unresolved required peer:** `{project}/{requester}` requires `{name}@{requirement}`, but no archive is selected in the lockfile.')
+    lines.extend(['', '### Optional npm inputs not selected', ''])
+    for project, requester, name in npm['unresolved_optional']:
+        lines.append(f'- Absent optional platform archive: `{project}/{requester}` -> `{name}` (no resolved source in lock).')
+    for project, requester, name in npm['unselected_optional_peers']:
+        lines.append(f'- Optional peer not required by this application closure: `{project}/{requester}` -> `{name}`.')
+    lines.extend(['', '## Application Android Maven declarations', '',
+        'The checked baseline comes from independent resolution of `debugRuntimeClasspath` and `releaseRuntimeClasspath`. Release metadata resolution is not a compiled or signed release. Project components are recorded by the qualification recipe separately.', '',
+        '**Manual release-policy review pending:** ' + maven['manual_review']['summary'], '',
+        'Exact POM bytes, verified POM repository origins, inherited declarations, resolved artifact hashes and available packaged notice text are preserved under `release/licenses/app-maven/`. POM origin is distinct from artifact origin; cache locations do not establish repository origin. Packaged component labels are not inferred license selections. Standard license terms elsewhere in this file do not imply approval of the declarations below.', ''])
+    for item in maven['manual_review']['declarations']:
+        coordinates = ', '.join(f'`{coordinate}`' for coordinate in item['coordinates'])
+        lines.append(f"- **Manual review — {item['name']}:** {coordinates}")
+    lines.append('')
+    for item in maven['packages']:
+        declarations = '; '.join(f"{d.get('name', '(unnamed)')} ({d.get('url', 'no URL')})" for d in item['declarations'])
+        parent = f"; inherited from `{item['declared_at']}`" if item['declared_at'] != item['coordinate'] else ''
+        lines.append(f"- `{item['coordinate']}` — {declarations}{parent}")
+    return lines
+
+def add_maven_notices(notices: dict, report: dict) -> None:
+    """Preserve attributed text; component names are not inferred SPDX selections."""
+    for item in report.get('notices', []):
+        text = normalized_notice_text(item['text'])
+        notice = notices.setdefault(
+            ('Maven-packaged-attribution', text),
+            {'name': 'Exact packaged attribution; policy review remains unresolved',
+             'packages': set(), 'graphs': set()},
+        )
+        notice['packages'].add(f"{item['coordinate']} / {item['name']}")
+        notice['graphs'].update(f'application Android {profile}' for profile in item['profiles'])
+
+
 def notice_bundle() -> str:
+    npm_report, maven_report = app_notice_data()
     version, notices = collect_rust_notices(GRAPHS, GRAPH_FEATURES)
     for package, identifier, relative in NPM:
         path = ROOT / relative
@@ -475,6 +535,14 @@ def notice_bundle() -> str:
         )
         notice["packages"].add(package)
         notice["graphs"].update(graphs)
+    for package in npm_report['packages']:
+        for source in package['texts']:
+            text = normalized_notice_text(source['text'])
+            identifier = package['license'] or 'Unspecified npm license'
+            notice = notices.setdefault((identifier, text), {'name':identifier,'packages':set(),'graphs':set()})
+            notice['packages'].add(f"{package['name']} {package['version']}")
+            notice['graphs'].add('application npm declaration closure')
+    add_maven_notices(notices, maven_report)
     nordic = [key for key in notices if key[0] == "LicenseRef-Nordic-SoftDevice"]
     if len(nordic) != 1:
         raise RuntimeError("Nordic SoftDevice notice was not generated exactly once")
@@ -482,12 +550,12 @@ def notice_bundle() -> str:
     lines = [
         "# Third-Party Notices",
         "",
-        "This checked bundle covers the shipped and qualification Rust, JavaScript, and Android product graphs.",
+        "This evidence bundle inventories the shipped and qualification Rust, JavaScript, and Android product graphs. Unresolved application attribution, policy and advisory review remains a release blocker; successful generation is not approval.",
         f"It was generated with `{version}` by `./tools/prns repo notices generate`.",
         f"{INPUT_FINGERPRINT_PREFIX}{notice_input_fingerprint()}`.",
         "Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before "
         "cargo-about reads its target-filtered packaged license material offline.",
-        "Entries are deduplicated by SPDX identifier and canonical notice text; line endings, "
+        "Entries are deduplicated by license identifier or attribution label and canonical notice text; line endings, "
         "trailing space, and repeated blank lines are normalized without changing legal words.",
         "",
         "## Release graphs",
@@ -495,8 +563,11 @@ def notice_bundle() -> str:
     ]
     for graph, manifest, target in GRAPHS:
         features = GRAPH_FEATURES.get(graph, ())
-        selected = ", default features plus " + ", ".join(features) if features else ""
-        lines.append(f"- {graph}: `{manifest}` (`{target}`, locked resolution{selected})")
+        selection = (
+            ", default features plus " + ", ".join(f"`{feature}`" for feature in features)
+            if features else ""
+        )
+        lines.append(f"- {graph}: `{manifest}` (`{target}`, locked resolution{selection})")
     lines.extend(["", "## Website JavaScript runtime", ""])
     lines.extend(
         [
@@ -508,6 +579,7 @@ def notice_bundle() -> str:
         ]
     )
     lines.extend(runtime_notices.declaration_lines(runtime_notices.evidence()))
+    lines.extend(app_notice_lines(npm_report, maven_report))
     lines.extend(["", "## Vendored native code", ""])
     lines.extend(
         [
@@ -521,13 +593,13 @@ def notice_bundle() -> str:
             "full Linux `prnsd` native release.",
         ]
     )
-    lines.extend(["", "## Android Maven runtime", ""])
+    lines.extend(["", "## Existing mobile Android Maven runtime", ""])
     for coordinate, expression in MAVEN:
         lines.append(f"- `{coordinate}` — `{expression}`")
     lines.extend(
         [
             "",
-            "The Maven coordinate list is checked by Gradle's "
+            "This existing mobile coordinate list is checked by Gradle's "
             "`verifyReleaseRuntimeDependencies` task. Its MIT and Apache-2.0 terms are reproduced "
             "among the deduplicated license texts below.",
             "",

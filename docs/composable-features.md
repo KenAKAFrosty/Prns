@@ -96,3 +96,18 @@ platform callbacks remain SDK-owned; applications choose installation paths,
 permissions and startup policy. An owned host session can stop its host; a
 borrowed host client can only release its own resources. Domain APIs remain in
 their owning bindings, without adding product methods to the SDK wrapper.
+
+## Chat application
+
+The [chat application](../applications/README.md) selects identities, groups,
+archived text history and saved host connections in one generated native image.
+It owns installation policy, permission recovery, private import/reset flows,
+contacts, drafts, navigation and optional remote-node controls. Its
+[product guide](../applications/docs/product-scope.md) describes those workflows
+and limits; the [validation guide](../applications/docs/validation.md) separates
+source and image checks from physical-device evidence.
+
+The product retains local data independently of network readiness. Stopping
+networking leaves saved contacts and history available. Its platform module
+supplies operating-system integration while the reusable SDK owns generic
+transport mechanics; domain libraries remain usable without the application.

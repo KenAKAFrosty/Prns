@@ -15,6 +15,8 @@ fi
 python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
+    "app-android|applications/prns/chat-app/Cargo.toml|aarch64-linux-android"
+    "app-ios|applications/prns/chat-app/Cargo.toml|aarch64-apple-ios"
     "service-runtime-connections-linux|prns-service-runtime/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu|connections"
     "service-runtime-connections-macos|prns-service-runtime/bindings/uniffi/image/Cargo.toml|aarch64-apple-darwin|connections"
     "service-runtime-linux|prns-service-runtime/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu"

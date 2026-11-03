@@ -343,7 +343,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
         groups = {"group-communication", "named-identities", "standalone-libraries", "native-storage", "native-bindings"}
         expected = {
             suite["id"]: suite for suite in manifest["suite"]
-            if (suite.get("group") in groups) and "pr" in suite["tiers"]
+            if (suite.get("group") in groups or suite["id"] == "app-ui") and "pr" in suite["tiers"]
         }
         jobs = self.workflow_jobs("ci.yml")
         scheduled: dict[str, set[str]] = {}
@@ -357,7 +357,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
                 "Path(os.environ['CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n"
             )
             fake_python.chmod(0o755)
-            for name in ("named-identities", "standalone-libraries", "host-runtime", "group-libraries", "service-runtime", "app-consumers"):
+            for name in ("named-identities", "standalone-libraries", "host-runtime", "group-libraries", "service-runtime", "app-consumers", "app-android-consumer"):
                 job = jobs[name]
                 self.assertNotRegex(job, r"(?m)^    (?:needs|if):")
                 self.assertNotIn("continue-on-error", job)
@@ -417,6 +417,29 @@ class WorkflowSchedulingTests(unittest.TestCase):
         release = (ROOT / ".github/workflows/release-readiness.yml").read_text()
         self.assertIn("matrix.id == 'service-runtime-msrv'", release)
         self.assertIn("startsWith(matrix.id, 'native-service-bindings-msrv-')", release)
+
+    def test_app_jobs_cover_all_six_suites_and_select_the_pinned_toolchain(self) -> None:
+        jobs = self.workflow_jobs("ci.yml")
+        self.assertIn("cargo check --locked --manifest-path applications/Cargo.toml --workspace --all-targets --all-features", jobs["msrv"])
+        self.assertIn("max-parallel: 16", jobs["app-consumers"])
+        for name in ("app-consumers", "app-android-consumer"):
+            self.assertIn("      - " + name + "\n", jobs["release-critical"])
+            self.assertIn("${{ needs." + name + ".result }}", jobs["release-critical"])
+            self.assertIn('"$' + name.upper().replace("-", "_") + '_RESULT"', jobs["release-critical"])
+        release = self.workflow_jobs("release-readiness.yml")["qualify"]
+        parts = re.split(r"(?m)(?=^      - )", release)
+        pin = next(part for part in parts if "name: Prepare the pinned app Rust toolchain" in part)
+        choose = next(part for part in parts if "name: Select the app Rust toolchain" in part)
+        execute = next(part for part in parts if "name: Run exact-SHA suite" in part)
+        self.assertIn('toolchain: "1.98.1"', pin)
+        self.assertIn("components: clippy,rustfmt", pin)
+        self.assertIn("RUSTUP_TOOLCHAIN=1.98.1", choose)
+        for identifier in ("app-native", "app-native-clippy", "app-generated", "app-ui", "app-image-swift", "app-android-consumer"):
+            self.assertIn("matrix.id == '" + identifier + "'", pin)
+            self.assertIn("matrix.id == '" + identifier + "'", choose)
+            self.assertIn(identifier, execute)
+        self.assertLess(release.index("name: Prepare the pinned app Rust toolchain"), release.index("name: Prepare the pinned app Android toolchain"))
+        self.assertLess(release.index("name: Select the app Rust toolchain"), release.index("name: Prepare the selected app generation and JavaScript dependencies"))
 
     def test_deployment_deferral_does_not_accept_fake_qualification_inputs(self) -> None:
         workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
@@ -527,6 +550,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
             "flasher-web", "esp32-firmware-check", "shipping-firmware",
             "dependency-audit", "release-contracts",
             "react-native-sdk", "react-native-notices", "react-native-generated",
+            "app-generated", "app-ui", "app-android-consumer",
         })
         self.assertEqual(selected["uv"], {
             suite["id"] for suite in suites if suite["domain"] in {"oracles", "interop"}

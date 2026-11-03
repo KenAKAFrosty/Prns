@@ -90,7 +90,7 @@ def reusable_library_gates(paths: set[str], manifest: dict) -> tuple[Gate, ...]:
     selected: list[str] = []
     for suite in manifest.get("suite", []):
         reusable = (suite.get("group") in REUSABLE_SUITE_GROUPS
-                    or suite["id"].startswith("react-native-"))
+                    or suite["id"] == "app-ui" or suite["id"].startswith("react-native-"))
         if not reusable or "pr" not in suite["tiers"]:
             continue
         affected = orchestration_changed or any(

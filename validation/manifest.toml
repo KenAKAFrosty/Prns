@@ -537,6 +537,17 @@ inputs = [
   "validation/security/npm_lockfile.py",
   "deny.toml",
   "about.toml",
+  "validation/security/app_npm.py",
+  "validation/security/app_maven.py",
+  "applications/package.json",
+  "applications/package-lock.json",
+  "applications/prns/app/package.json",
+  "applications/prns/bindings/package.json",
+  "applications/prns/platform/package.json",
+  "release/licenses/app-npm",
+  "release/licenses/app-maven",
+  "applications/tools/native-bindings/android-maven-baseline.json",
+  "applications/tools/native-bindings/android_maven.py",
 ]
 artifacts = "validation-artifacts/results/dependency-audit"
 
@@ -3177,3 +3188,51 @@ timeout_seconds = 1800
 command = ["cargo", "clippy", "--locked", "--manifest-path", "applications/Cargo.toml", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]
 inputs = ["applications", "prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-runtime", "prns-interfaces", "prns-contact-card"]
 artifacts = "validation-artifacts/results/app-native-clippy"
+
+[[suite]]
+id = "app-generated"
+domain = "platform"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 2400
+command = ["__RUNNER_PYTHON__", "applications/tools/native-bindings/generate.py", "generate", "--check"]
+inputs = ["applications", "prns-react-native", "prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-host", "prns-contact-card", "tools/uniffi"]
+artifacts = "validation-artifacts/results/app-generated"
+
+[[suite]]
+id = "app-ui"
+domain = "platform"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "node"
+timeout_seconds = 300
+command = ["npm", "--prefix", "applications", "run", "app:verify"]
+inputs = ["applications", "prns-react-native", "prns-js"]
+artifacts = "validation-artifacts/results/app-ui"
+
+[[suite]]
+id = "app-image-swift"
+domain = "platform"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "applications/tools/native-bindings/check_image.py"]
+inputs = ["applications", "prns-react-native", "prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-host", "prns-contact-card", "tools/uniffi"]
+artifacts = "validation-artifacts/results/app-image-swift"
+
+[[suite]]
+id = "app-android-consumer"
+domain = "platform"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["__RUNNER_PYTHON__", "applications/tools/native-bindings/check_android.py"]
+inputs = ["applications", "prns-react-native", "prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-runtime", "prns-interfaces", "prns-contact-card", "tools/uniffi"]
+artifacts = "validation-artifacts/results/app-android-consumer"

@@ -1,0 +1,31 @@
+{
+  "name": "@prns/app-bindings",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Generated canonical APIs from the selected PRNS application image",
+  "license": "MIT OR Apache-2.0",
+  "main": "index.ts",
+  "react-native": "index.native.ts",
+  "types": "index.ts",
+  "sideEffects": ["index.native.ts"],
+  "files": ["index.ts", "index.native.ts", "typescript", "swift", "kotlin", "README.md"],
+  "exports": {
+    ".": {
+      "react-native": "./index.native.ts",
+      "types": "./index.ts",
+      "default": "./index.ts"
+    },
+    "./native": "./index.native.ts",
+    "./*": "./typescript/*.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "personal-rns-expo": "file:../../target/react-native-sdk"
+  },
+  "peerDependencies": {
+    "@ubjs/core": "0.31.0-6",
+    "@ubjs/react-native": "0.31.0-6",
+    "personal-rns": "0.3.8"
+  }
+}
