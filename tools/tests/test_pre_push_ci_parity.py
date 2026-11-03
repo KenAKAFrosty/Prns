@@ -40,6 +40,25 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("group-communication-tests", selected.command)
         self.assertIn("group-communication-clippy", selected.command)
 
+    def test_sdk_suites_follow_the_registered_source_and_platform_inputs(self) -> None:
+        manifest = parity.tomllib.loads((ROOT / "validation/manifest.toml").read_text())
+        for platform, tag in (("Linux", "linux"), ("Darwin", "macos"), ("Windows", "windows")):
+            for path in ("prns-react-native/src/index.ts", "tools/uniffi/react-native.json",
+                         "prns-host/bindings/uniffi/image/Cargo.toml"):
+                expected = {
+                    suite["id"] for suite in manifest["suite"]
+                    if suite["id"].startswith("react-native-") and "pr" in suite["tiers"]
+                    and suite["platform"] in {"any", tag}
+                    and any(path == source or path.startswith(source.rstrip("/") + "/")
+                            for source in suite["inputs"])
+                }
+                with self.subTest(platform=platform, path=path):
+                    selected, _ = self.reusable_suites({path}, platform)
+                    self.assertEqual({name for name in selected if name.startswith("react-native-")}, expected)
+        for path in ("tools/uniffi/runtime_notices.py", "tools/uniffi/react-native.json"):
+            self.assertIn("third-party notice inputs", self.gate_names({path}))
+
+
     def gate_names(self, paths: set[str]) -> set[str]:
         return {gate.name for gate in parity.plan_for_paths(paths).gates}
 

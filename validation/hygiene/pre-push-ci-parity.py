@@ -89,7 +89,8 @@ def reusable_library_gates(paths: set[str], manifest: dict) -> tuple[Gate, ...]:
     })
     selected: list[str] = []
     for suite in manifest.get("suite", []):
-        reusable = suite.get("group") in REUSABLE_SUITE_GROUPS
+        reusable = (suite.get("group") in REUSABLE_SUITE_GROUPS
+                    or suite["id"].startswith("react-native-"))
         if not reusable or "pr" not in suite["tiers"]:
             continue
         affected = orchestration_changed or any(
@@ -123,7 +124,7 @@ def plan_for_paths(paths: set[str]) -> PrePushPlan:
             "nrf-softdevice-s140-v6/LICENSE-NORDIC",
             "tools/repo/generate-third-party-notices.py",
         }
-    ) or _has_prefix(paths, ("release/licenses/",))
+    ) or _has_prefix(paths, ("release/licenses/", "tools/uniffi/", "prns-react-native/patches/"))
     if notice_surface:
         gates.append(
             Gate(

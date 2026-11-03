@@ -1,0 +1,38 @@
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
+index bd3cd96..46a1a71 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
+@@ -237,15 +237,11 @@ fn render_variant_discr(config: &Config, discr: &general::LiteralNode) -> String
+ pub(super) fn build_field(config: &Config, field: &general::Field) -> TsField {
+     let name = field.name.to_lower_camel_case();
+     let is_optional = matches!(&field.ty.ty, general::Type::Optional { .. });
+-    let ts_type = if is_optional {
+-        // Unwrap Optional<T> to just T; the `?:` in the type declaration handles optionality.
+-        match &field.ty.ty {
+-            general::Type::Optional { inner_type } => type_label_for(config, inner_type),
+-            _ => unreachable!(),
+-        }
+-    } else {
+-        type_label_for(config, &field.ty.ty)
+-    };
++    // Keep `undefined` in the type even when a named field also has `?`:
++    // converters produce explicit undefined values for None, and callers may
++    // pass those values with exactOptionalPropertyTypes enabled. Tuple fields
++    // also need the union, since their declarations have no optional key.
++    let ts_type = type_label_for(config, &field.ty.ty);
+     let ffi_converter = ffi_converter_name_for(config, &field.ty);
+     let default_value = field
+         .default
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/CallBodyMacros.ts b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/CallBodyMacros.ts
+index 427cb2a..2ed6ce4 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/CallBodyMacros.ts
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/CallBodyMacros.ts
+@@ -232,7 +232,7 @@ console.debug(`-- {{ ffi_name }}`);
+     try {
+         return {# space #}{%- call to_ffi_async_call(callable, obj_factory) %};
+     } catch (__error: any) {
+-        if (uniffiIsDebug && __error instanceof Error) {
++        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+             __error.stack = __stack;
+         }
+         throw __error;

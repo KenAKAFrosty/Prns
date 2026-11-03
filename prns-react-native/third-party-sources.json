@@ -1,0 +1,343 @@
+{
+  "schemaVersion": 1,
+  "selection": {
+    "schemaVersion": 1,
+    "provider": "default",
+    "libraryName": "prns_host_mobile"
+  },
+  "provider": "prns-react-native/providers/default.json",
+  "manifest": "prns-host/bindings/uniffi/image/Cargo.toml",
+  "features": [],
+  "targets": [
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-sim",
+    "x86_64-apple-ios",
+    "aarch64-linux-android",
+    "x86_64-linux-android"
+  ],
+  "inputs": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "77e8f27fda67a37e34401cc22c6944eb5e9349036756459da0d098942590ba9c"
+    },
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "c10feb7b34593505604abed81a9dcbb3d7001436442b6394d51ae2fa2107ec03"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "5bf49eb9322d0041f79e6b64d26f1cc8f3afbac69241f4798d5bd5b82ce6c094"
+    },
+    {
+      "path": "about.toml",
+      "sha256": "9de3cd8155665ae7409ea1186df43294fe0cc85262ee59655272143193ca3273"
+    },
+    {
+      "path": "deny.toml",
+      "sha256": "eff6d72d6516a4ee1eddb459fbe4114c61a0db0f5514788c0dfc5e568faf3cd6"
+    },
+    {
+      "path": "personal-rns/Cargo.toml",
+      "sha256": "ea25de050d5930058835cfe59c27a2d410330b0d695c61e9cc070b4446ec92ca"
+    },
+    {
+      "path": "prns-config/Cargo.toml",
+      "sha256": "9a29be0bf42daf8e263b5531ba0a46ac213fec2312fb3738b43a2c4f30ac92a8"
+    },
+    {
+      "path": "prns-core/Cargo.toml",
+      "sha256": "07fe6d05c5ac826653a8da093f3b00020133eeb52f4ec3ffae5e100a006c081b"
+    },
+    {
+      "path": "prns-ffi/Cargo.toml",
+      "sha256": "5b68754253997532b90e1dcbc906f46c8d6462a82160e744b850685caeb38f21"
+    },
+    {
+      "path": "prns-host/bindings/uniffi/Cargo.toml",
+      "sha256": "92315c7304e0bec0446af153db24e915d795abb16b25327ceea69f55c1a165dc"
+    },
+    {
+      "path": "prns-host/bindings/uniffi/image/Cargo.lock",
+      "sha256": "4279202df3acd9d1f2bc9d9c01aa993e44e1015931dd6ab961683a12b2ea9c2a"
+    },
+    {
+      "path": "prns-host/bindings/uniffi/image/Cargo.toml",
+      "sha256": "8e4df73c90484aa009085294215b56ea0ac9074fea3eef3cc7c6d4136e48ac6d"
+    },
+    {
+      "path": "prns-host/core/Cargo.toml",
+      "sha256": "283adbbc94e96fcdaf3d79cfe6cf612bbc63166d0003dda86fbdcde635effeb6"
+    },
+    {
+      "path": "prns-host/impls/runtime/Cargo.toml",
+      "sha256": "9bfb6691e79c4d80b8661a54bedef8b35d48a8553a4f8ce03218955887c908d3"
+    },
+    {
+      "path": "prns-host/impls/snapshot/Cargo.toml",
+      "sha256": "93cf7dacab8332c11a8c624671a0696db6a7930162eb3371353f0a6f82135500"
+    },
+    {
+      "path": "prns-interfaces/impls/embassy/Cargo.toml",
+      "sha256": "33a34538f0215c8dc514e01337da8a1c5d8c7d2bbd9618d3965654f982893b59"
+    },
+    {
+      "path": "prns-interfaces/impls/tokio/Cargo.toml",
+      "sha256": "7b4a51f81c00ecf6616da30601101403d33df2828a69a603b60bcc016e11d995"
+    },
+    {
+      "path": "prns-macros/Cargo.toml",
+      "sha256": "79249943a142d7fcbe696f3a2d28ff1f5b8913e6fb5b2b2692228ed7188939f9"
+    },
+    {
+      "path": "prns-react-native/package.json",
+      "sha256": "36f01ad92cadfbebb9f96ecfba2cb64f18312dafe37cf9d7ed521612de717079"
+    },
+    {
+      "path": "prns-react-native/patches/@ubjs+react-native+0.31.0-6.patch",
+      "sha256": "5cce949e138cbad43bd9d663e98bd635326031852b936ca143f684dacca74613"
+    },
+    {
+      "path": "prns-react-native/platform/android/Cargo.toml",
+      "sha256": "d95ede5d83aff64221be197c2d09a10338d123578ee5b5a4d109231a8262d9c3"
+    },
+    {
+      "path": "prns-react-native/providers/default.json",
+      "sha256": "c8717d0e573d23c1a68173bae1f9a5d7ad00e0a49071f0d14b33bd7e91404b8e"
+    },
+    {
+      "path": "prns-react-native/tools/package_notices.py",
+      "sha256": "e706fe6dc69b122090dc959ac9a3e07a1c4e2bc707ec94c218bdd66209903feb"
+    },
+    {
+      "path": "prns-runtime/core/Cargo.toml",
+      "sha256": "56e1fd0f681795d3e0b8a244edd400049d741d008503f8ae5b8d6d382b3bdd1d"
+    },
+    {
+      "path": "prns-runtime/impls/embassy/Cargo.toml",
+      "sha256": "754b25f4abe43fcf148820fd345d9d08de6789fff90738a55428e74ccf26e801"
+    },
+    {
+      "path": "prns-runtime/impls/tokio/Cargo.toml",
+      "sha256": "1f06fb7b84bc4d83f20ec450411f954b4e76f9972011fa0a3b4208dd72498c09"
+    },
+    {
+      "path": "tools/repo/generate-third-party-notices.py",
+      "sha256": "2ba1bbea3cf83921255573290eaafca05563a33b6040450dc38060193884394f"
+    },
+    {
+      "path": "tools/uniffi/licenses/ubrn-MPL-2.0.txt",
+      "sha256": "d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d"
+    },
+    {
+      "path": "tools/uniffi/patches/0001-exact-optional-properties.patch",
+      "sha256": "dbd70e408dcd986eabd1237b0394362eece59b37299717119c4999b0523a0769"
+    },
+    {
+      "path": "tools/uniffi/patches/0002-jsi-native-object-lifetime.patch",
+      "sha256": "b69afc0e6204f570b4ad57f43f7320891f863d0a6ed55ed978270044d027d592"
+    },
+    {
+      "path": "tools/uniffi/patches/0003-strict-error-override.patch",
+      "sha256": "7092a98f5ad9ff251d6630abe8c3a89c38159e9892400f0e8cdb4065b002661e"
+    },
+    {
+      "path": "tools/uniffi/patches/0004-ffi-argument-keywords.patch",
+      "sha256": "60a61d59b08161154ec23cf8d4fcd966e05f3a120a9946074af60769a8f0e0b3"
+    },
+    {
+      "path": "tools/uniffi/react-native.json",
+      "sha256": "727f3f1fee8ac80cb08ba4dbcc66e0a1f3def50fc08a9e65ceac09fba0fec372"
+    },
+    {
+      "path": "tools/uniffi/react_native.py",
+      "sha256": "780f538ebe103bd230eb26b71b3e98a56715af8d7e86d3a43bb5a160dc760bfe"
+    },
+    {
+      "path": "tools/uniffi/runtime_notices.py",
+      "sha256": "24f540f5d9e8e636fea556e3ae849849619cccad506371fb93bf009687f92b13"
+    }
+  ],
+  "local_packages": {
+    "prns-host/bindings/uniffi/image/Cargo.toml": {
+      "name": "prns-host-uniffi-image",
+      "version": "0.3.8"
+    },
+    "prns-host/bindings/uniffi/Cargo.toml": {
+      "name": "prns-host-uniffi",
+      "version": "0.3.8"
+    },
+    "prns-host/impls/runtime/Cargo.toml": {
+      "name": "prns-host-runtime",
+      "version": "0.3.8"
+    },
+    "prns-host/impls/snapshot/Cargo.toml": {
+      "name": "prns-host-snapshot",
+      "version": "0.3.8"
+    },
+    "prns-host/core/Cargo.toml": {
+      "name": "prns-host",
+      "version": "0.3.8"
+    },
+    "prns-runtime/core/Cargo.toml": {
+      "name": "prns-runtime",
+      "version": "0.3.8"
+    },
+    "prns-macros/Cargo.toml": {
+      "name": "prns-macros",
+      "version": "0.3.8"
+    },
+    "prns-core/Cargo.toml": {
+      "name": "prns-core",
+      "version": "0.3.8"
+    },
+    "personal-rns/Cargo.toml": {
+      "name": "personal-rns",
+      "version": "0.3.8"
+    },
+    "prns-runtime/impls/tokio/Cargo.toml": {
+      "name": "prns-runtime-tokio",
+      "version": "0.3.8"
+    },
+    "prns-interfaces/impls/tokio/Cargo.toml": {
+      "name": "prns-interfaces-tokio",
+      "version": "0.3.8"
+    },
+    "prns-ffi/Cargo.toml": {
+      "name": "prns-ffi",
+      "version": "0.3.8"
+    },
+    "prns-config/Cargo.toml": {
+      "name": "prns-config",
+      "version": "0.3.8"
+    },
+    "prns-interfaces/impls/embassy/Cargo.toml": {
+      "name": "prns-interfaces-embassy",
+      "version": "0.3.8"
+    },
+    "prns-runtime/impls/embassy/Cargo.toml": {
+      "name": "prns-runtime-embassy",
+      "version": "0.3.8"
+    },
+    "prns-react-native/platform/android/Cargo.toml": {
+      "name": "prns-expo-android",
+      "version": "0.3.8"
+    }
+  },
+  "runtime_archives": {
+    "packages": [
+      {
+        "name": "@ubjs/core",
+        "version": "0.31.0-6",
+        "archive": "https://registry.npmjs.org/@ubjs/core/-/core-0.31.0-6.tgz",
+        "sha256": "a3b946739f4baec75cdf9e98ca780d689ac06d2844595a19a9acdf9ad9c2c48f",
+        "integrity": "sha512-pscv6Zj8mVmd5+ikb1Zr6XZ0yqYwKGeIV8HU8rf9sTvs7GW34OARAp03xFJ7rE9XE4R6LgwQhzYW9knAuz5yxA==",
+        "license": "MPL-2.0",
+        "license_notice": "This Source Code Form is subject to the terms of the Mozilla Public\nLicense, v. 2.0. If a copy of the MPL was not distributed with this\nfile, You can obtain one at http://mozilla.org/MPL/2.0/\n",
+        "license_notice_sha256": "d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d",
+        "upstream": {
+          "repository": "https://github.com/jhugman/uniffi-bindgen-react-native.git",
+          "revision": "3dd1cd1353750dc3bfbbf4bb4d4ccde26b0fbd2e"
+        },
+        "unresolved_policy": [
+          "Existing license policy does not permit 'MPL-2.0'; crate-specific exceptions do not approve this npm package."
+        ]
+      },
+      {
+        "name": "@ubjs/react-native",
+        "version": "0.31.0-6",
+        "archive": "https://registry.npmjs.org/@ubjs/react-native/-/react-native-0.31.0-6.tgz",
+        "sha256": "3b27ee9708351db5b6e4baa281af2c802763055086d55db54811b804e2871a87",
+        "integrity": "sha512-vD1033OqUFy968F/3yUKFfN/Im7sfSM5NXRZcUlpUWwuzC9vQn81vtX9P1Fz/xuLxNc88MnNym3zari7PkClNQ==",
+        "license": "MPL-2.0",
+        "license_notice": "This Source Code Form is subject to the terms of the Mozilla Public\nLicense, v. 2.0. If a copy of the MPL was not distributed with this\nfile, You can obtain one at http://mozilla.org/MPL/2.0/\n",
+        "license_notice_sha256": "d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d",
+        "upstream": {
+          "repository": "https://github.com/jhugman/uniffi-bindgen-react-native.git",
+          "revision": "3dd1cd1353750dc3bfbbf4bb4d4ccde26b0fbd2e"
+        },
+        "unresolved_policy": [
+          "Existing license policy does not permit 'MPL-2.0'; crate-specific exceptions do not approve this npm package."
+        ]
+      }
+    ],
+    "source": {
+      "schemaVersion": 1,
+      "upstream": {
+        "repository": "https://github.com/jhugman/uniffi-bindgen-react-native.git",
+        "revision": "3dd1cd1353750dc3bfbbf4bb4d4ccde26b0fbd2e"
+      },
+      "patches": [
+        {
+          "file": "patches/0001-exact-optional-properties.patch",
+          "sha256": "dbd70e408dcd986eabd1237b0394362eece59b37299717119c4999b0523a0769"
+        },
+        {
+          "file": "patches/0002-jsi-native-object-lifetime.patch",
+          "sha256": "b69afc0e6204f570b4ad57f43f7320891f863d0a6ed55ed978270044d027d592"
+        },
+        {
+          "file": "patches/0003-strict-error-override.patch",
+          "sha256": "7092a98f5ad9ff251d6630abe8c3a89c38159e9892400f0e8cdb4065b002661e"
+        },
+        {
+          "file": "patches/0004-ffi-argument-keywords.patch",
+          "sha256": "60a61d59b08161154ec23cf8d4fcd966e05f3a120a9946074af60769a8f0e0b3"
+        }
+      ],
+      "runtime_patch": {
+        "file": "prns-react-native/patches/@ubjs+react-native+0.31.0-6.patch",
+        "sha256": "5cce949e138cbad43bd9d663e98bd635326031852b936ca143f684dacca74613"
+      },
+      "toolchain": {
+        "node": "24.18.0",
+        "npm": "11.16.0",
+        "rust": "1.98.1",
+        "cargoNdk": "4.1.2",
+        "androidNdk": "27.1.12297006",
+        "xcode": "27.1",
+        "xcodeBuild": "27A9275"
+      },
+      "targets": [
+        "aarch64-apple-ios",
+        "aarch64-apple-ios-sim",
+        "x86_64-apple-ios",
+        "aarch64-linux-android",
+        "x86_64-linux-android"
+      ],
+      "packages": [
+        {
+          "name": "@ubjs/core",
+          "version": "0.31.0-6",
+          "archive": "https://registry.npmjs.org/@ubjs/core/-/core-0.31.0-6.tgz",
+          "integrity": "sha512-pscv6Zj8mVmd5+ikb1Zr6XZ0yqYwKGeIV8HU8rf9sTvs7GW34OARAp03xFJ7rE9XE4R6LgwQhzYW9knAuz5yxA==",
+          "sha256": "a3b946739f4baec75cdf9e98ca780d689ac06d2844595a19a9acdf9ad9c2c48f",
+          "license": "MPL-2.0",
+          "license_file": "licenses/ubrn-MPL-2.0.txt",
+          "license_sha256": "d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d"
+        },
+        {
+          "name": "@ubjs/react-native",
+          "version": "0.31.0-6",
+          "archive": "https://registry.npmjs.org/@ubjs/react-native/-/react-native-0.31.0-6.tgz",
+          "integrity": "sha512-vD1033OqUFy968F/3yUKFfN/Im7sfSM5NXRZcUlpUWwuzC9vQn81vtX9P1Fz/xuLxNc88MnNym3zari7PkClNQ==",
+          "sha256": "3b27ee9708351db5b6e4baa281af2c802763055086d55db54811b804e2871a87",
+          "license": "MPL-2.0",
+          "license_file": "licenses/ubrn-MPL-2.0.txt",
+          "license_sha256": "d1cc4c0ada218e8a336dc8c3d8bb7d5b1c8dedfa31f5b25c9ea1759d21b8b62d"
+        }
+      ]
+    },
+    "source_lock_sha256": "727f3f1fee8ac80cb08ba4dbcc66e0a1f3def50fc08a9e65ceac09fba0fec372",
+    "source_patches": [
+      {
+        "file": "prns-react-native/patches/@ubjs+react-native+0.31.0-6.patch",
+        "sha256": "5cce949e138cbad43bd9d663e98bd635326031852b936ca143f684dacca74613",
+        "patch": "diff --git a/node_modules/@ubjs/react-native/android/cpp-adapter.cpp b/node_modules/@ubjs/react-native/android/cpp-adapter.cpp\nindex bc0ba7e..7ce52e6 100644\n--- a/node_modules/@ubjs/react-native/android/cpp-adapter.cpp\n+++ b/node_modules/@ubjs/react-native/android/cpp-adapter.cpp\n@@ -9,7 +9,7 @@\n \n #include \"ubrn_jsi_player.h\"\n \n-extern \"C\" JNIEXPORT jboolean JNICALL\n+extern \"C\" JNIEXPORT jlong JNICALL\n Java_dev_ubjs_reactnative_UniffiPlayerModule_nativeInstall(\n     JNIEnv *env, jobject /*thiz*/, jlong rtPtr,\n     jobject callInvokerHolderJavaObj) {\n@@ -22,7 +22,19 @@ Java_dev_ubjs_reactnative_UniffiPlayerModule_nativeInstall(\n \n   // A library's jniLibs land in the app's native-library directory, which the\n   // linker already searches, so a soname is enough.\n-  ubrn::jsi_player::install(*runtime, jsCallInvoker,\n-                            [](const std::string &name) { return \"lib\" + name + \".so\"; });\n-  return JNI_TRUE;\n+  auto cleanup = ubrn::jsi_player::install(\n+      *runtime, jsCallInvoker,\n+      [](const std::string &name) { return \"lib\" + name + \".so\"; });\n+  return reinterpret_cast<jlong>(\n+      new ubrn::jsi_player::RuntimeCleanup(std::move(cleanup)));\n+}\n+\n+extern \"C\" JNIEXPORT void JNICALL\n+Java_dev_ubjs_reactnative_UniffiPlayerModule_nativeRelease(\n+    JNIEnv *, jobject, jlong token, jboolean jsQueueStopped) {\n+  auto cleanup = std::unique_ptr<ubrn::jsi_player::RuntimeCleanup>(\n+      reinterpret_cast<ubrn::jsi_player::RuntimeCleanup *>(token));\n+  if (cleanup && jsQueueStopped == JNI_TRUE) {\n+    (*cleanup)();\n+  }\n }\ndiff --git a/node_modules/@ubjs/react-native/android/src/main/java/dev/ubjs/reactnative/UniffiPlayerModule.kt b/node_modules/@ubjs/react-native/android/src/main/java/dev/ubjs/reactnative/UniffiPlayerModule.kt\nindex c780f4e..acebe39 100644\n--- a/node_modules/@ubjs/react-native/android/src/main/java/dev/ubjs/reactnative/UniffiPlayerModule.kt\n+++ b/node_modules/@ubjs/react-native/android/src/main/java/dev/ubjs/reactnative/UniffiPlayerModule.kt\n@@ -5,6 +5,7 @@\n  */\n package dev.ubjs.reactnative\n \n+import android.util.Log\n import com.facebook.react.bridge.ReactApplicationContext\n import com.facebook.react.module.annotations.ReactModule\n import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder\n@@ -13,17 +14,52 @@ import com.facebook.react.turbomodule.core.interfaces.CallInvokerHolder\n class UniffiPlayerModule(reactContext: ReactApplicationContext) :\n   NativeUniffiPlayerSpec(reactContext) {\n \n+  private var nativeToken: Long = 0\n+  private var installedJSThread: Thread? = null\n+  private var invalidated = false\n+\n   override fun getName(): String = NAME\n \n   // Implemented in cpp-adapter.cpp: installs `globalThis.uniffi` on the runtime.\n-  external fun nativeInstall(runtimePointer: Long, callInvoker: CallInvokerHolder): Boolean\n+  external fun nativeInstall(runtimePointer: Long, callInvoker: CallInvokerHolder): Long\n+  external fun nativeRelease(token: Long, jsQueueStopped: Boolean)\n \n+  @Synchronized\n   override fun install(): Boolean {\n+    if (invalidated) return false\n+    if (nativeToken != 0L) return true\n     val context = reactApplicationContext\n-    return nativeInstall(\n+    check(context.isOnJSQueueThread) { \"UniffiPlayer.install must run on the JS thread\" }\n+    nativeToken = nativeInstall(\n       context.javaScriptContextHolder!!.get(),\n       context.jsCallInvokerHolder!!,\n     )\n+    installedJSThread = Thread.currentThread()\n+    return nativeToken != 0L\n+  }\n+\n+  @Synchronized\n+  override fun invalidate() {\n+    invalidated = true\n+    val token = nativeToken\n+    nativeToken = 0\n+    val thread = installedJSThread\n+    installedJSThread = null\n+    if (token != 0L) {\n+      // RN's ReactInstance.destroy quits and joins its queues before calling\n+      // TurboModuleManager.invalidate, then destroys Hermes on the host thread.\n+      // Verify the actual installed JS thread terminated; never infer that an\n+      // arbitrary module invalidation or HostObject GC is safe to abort.\n+      val queueStopped = thread != null && !thread.isAlive\n+      if (!queueStopped) {\n+        Log.e(NAME, \"JS queue still alive during invalidation; retaining native work for safety\")\n+      }\n+      nativeRelease(token, queueStopped)\n+      if (queueStopped) {\n+        Log.d(NAME, \"Native teardown completed after JS thread termination\")\n+      }\n+    }\n+    super.invalidate()\n   }\n \n   companion object {\ndiff --git a/node_modules/@ubjs/react-native/cpp/callbacks.cpp b/node_modules/@ubjs/react-native/cpp/callbacks.cpp\nindex 1c4e463..63b0cad 100644\n--- a/node_modules/@ubjs/react-native/cpp/callbacks.cpp\n+++ b/node_modules/@ubjs/react-native/cpp/callbacks.cpp\n@@ -434,6 +434,15 @@ const void *trampolineForJsFn(jsi::Runtime &rt, UbrnJsiModule *module,\n static void cb_on_js_thread_impl(const uint8_t *args, uint8_t *ret,\n                                  const void *udPtr) {\n   const auto *ud = static_cast<const CbUserData *>(udPtr);\n+  // Dropping a pending Rust future during teardown can synchronously invoke\n+  // its continuation. The core is still callable so we can free it, but no\n+  // callback may touch the runtime while its HostObjects are finalizing.\n+  if (ud->abortState != nullptr) {\n+    std::lock_guard<std::mutex> lk(ud->abortState->mtx);\n+    if (ud->abortState->aborted) {\n+      return;\n+    }\n+  }\n   jsi::Runtime &rt = *ud->rt;\n   const CallbackShape &shape = ud->shape;\n \ndiff --git a/node_modules/@ubjs/react-native/cpp/callbacks.h b/node_modules/@ubjs/react-native/cpp/callbacks.h\nindex 71ca688..b2a2632 100644\n--- a/node_modules/@ubjs/react-native/cpp/callbacks.h\n+++ b/node_modules/@ubjs/react-native/cpp/callbacks.h\n@@ -22,6 +22,7 @@\n #include <condition_variable>\n #include <cstdint>\n #include <cstring>\n+#include <functional>\n #include <map>\n #include <memory>\n #include <mutex>\n@@ -57,21 +58,15 @@ struct AbortState {\n // runtime. A released waiter leaves its return bytes zeroed, which is what\n // core's unloading path produces anyway.\n //\n-// Call it only on the thread that drains this module's CallInvoker, and only\n-// with that runtime about to be destroyed. A released worker returns and pops\n-// its frame, while a task already posted for it would write the callback's\n-// result through out_return and RustCallStatus pointers into that same frame.\n-// The task checks `aborted` before calling into JS and returns without doing\n-// so, so a queued task that does run after an abort touches nothing; teardown\n-// discarding the queue is the usual case, not the only defence.\n+// Call it on the thread that drains this module's CallInvoker with the runtime\n+// about to be destroyed, or after the host has stopped and joined that queue.\n+// A released worker returns and pops its frame; a posted callback may still\n+// hold out-return and RustCallStatus pointers into that frame. The queued task\n+// checks `aborted` before invoking JS, so it cannot write into a released frame.\n //\n-// The sole caller is ~UniffiPlayerRoot, and JSI promises neither half of that:\n-// a host object's dtor runs on an unspecified thread and may be as late as\n-// runtime shutdown. What holds it up is reachability. The root is owned by the\n-// `uniffi` global and by every live module object, so nothing collects it while\n-// the runtime those belong to is still serving calls. The caller checks the\n-// thread half at runtime rather than trusting it: the shim builds with NDEBUG,\n-// so its assert is documentation only.\n+// The player root checks thread identity for destructor-triggered cleanup.\n+// Android supplies an explicit cleanup token after its JS thread terminates.\n+// Arbitrary off-thread garbage collection cannot safely abort a live queue.\n void abortModule(const ModuleCallbackInfo &info);\n \n // Mirror of core::RustCallStatusC (repr(C), natural alignment \u2014 do NOT pack).\n@@ -199,6 +194,15 @@ struct ModuleCallbackInfo {\n   // can disarm it at teardown. Borrowed: core owns it and it is never freed.\n   UbrnJsiModule *module = nullptr;\n \n+  // Rust futures polled by this runtime and not yet freed by generated JS.\n+  // The JS `finally` cannot run after runtime destruction. Only the JS thread\n+  // mutates this map; root teardown consumes it after stopping callbacks.\n+  std::map<uint64_t, std::string> pendingRustFutures;\n+\n+  // Native object guards share the player's queue-safe teardown boundary.\n+  // false closes their registry without calling Rust on an unproven queue.\n+  std::function<void(bool)> closeRustObjects;\n+\n   // Copied off the runtime-scoped root at registration and handed to every\n   // trampoline this module builds; see CbUserData for why they are not global.\n   std::shared_ptr<facebook::react::CallInvoker> callInvoker;\ndiff --git a/node_modules/@ubjs/react-native/cpp/shim.cpp b/node_modules/@ubjs/react-native/cpp/shim.cpp\nindex c9a7322..4cd4803 100644\n--- a/node_modules/@ubjs/react-native/cpp/shim.cpp\n+++ b/node_modules/@ubjs/react-native/cpp/shim.cpp\n@@ -12,6 +12,8 @@\n #include <cstring>\n #include <deque>\n #include <memory>\n+#include <mutex>\n+#include <stdexcept>\n #include <string>\n #include <thread>\n #include <vector>\n@@ -39,6 +41,195 @@ struct FnInfo {\n   // Core's slot width for retTag, resolved at registration (0 for void).\n   size_t retSize;\n   bool hasRcs;\n+  std::string futureFree;\n+  bool isFutureFree = false;\n+};\n+\n+// UniFFI supplies a poll/free pair for each async FFI result type. Resolve\n+// those stable ABI symbols once and verify their shapes, so ownership works\n+// for generated wrappers in both normal and verbose modes without JS hooks.\n+void identifyFutureFunctions(std::vector<FnInfo> &fns) {\n+  const std::string pollMarker = \"_rust_future_poll_\";\n+  for (auto &poll : fns) {\n+    const auto marker = poll.name.find(pollMarker);\n+    if (poll.name.rfind(\"ffi_\", 0) != 0 || marker == std::string::npos ||\n+        poll.args.size() != 3 || poll.args[0].tag != UBRN_TY_HANDLE ||\n+        poll.args[1].tag != UBRN_TY_CALLBACK ||\n+        poll.args[1].name != \"RustFutureContinuationCallback\" ||\n+        poll.args[2].tag != UBRN_TY_HANDLE || poll.retTag != UBRN_TY_VOID ||\n+        poll.hasRcs) {\n+      continue;\n+    }\n+    auto freeName = poll.name;\n+    freeName.replace(marker, pollMarker.size(), \"_rust_future_free_\");\n+    for (auto &free : fns) {\n+      if (free.name == freeName && free.args.size() == 1 &&\n+          free.args[0].tag == UBRN_TY_HANDLE && free.retTag == UBRN_TY_VOID &&\n+          !free.hasRcs) {\n+        poll.futureFree = free.name;\n+        free.isFutureFree = true;\n+        break;\n+      }\n+    }\n+  }\n+}\n+\n+void freePendingRustFutures(ubrn_cb::ModuleCallbackInfo &info) {\n+  for (const auto &[future, freeName] : info.pendingRustFutures) {\n+    const void *args[] = {&future};\n+    const size_t sizes[] = {sizeof(future)};\n+    // Still armed here: root teardown aborts every callback first, frees\n+    // futures second, and only then disarms the module's native call path.\n+    ubrn_jsi_call(info.module, freeName.c_str(), args, sizes, 1, nullptr, nullptr,\n+                  0);\n+  }\n+  info.pendingRustFutures.clear();\n+}\n+\n+// One registration is one owned Arc reference, even when several wrappers\n+// contain the same pointer. Entries, rather than JS finalizers, own cleanup.\n+class RustObjectRegistry : public std::enable_shared_from_this<RustObjectRegistry> {\n+  struct Entry {\n+    uint64_t pointer;\n+    std::string freeName;\n+  };\n+\n+public:\n+  RustObjectRegistry(UbrnJsiModule *module,\n+                     std::shared_ptr<facebook::react::CallInvoker> invoker,\n+                     std::weak_ptr<void> root)\n+      : module_(module), invoker_(std::move(invoker)), root_(std::move(root)) {}\n+\n+  uint64_t add(uint64_t pointer, std::string freeName) {\n+    std::lock_guard<std::mutex> lock(mutex_);\n+    if (closed_) {\n+      throw std::logic_error(\"uniffi jsi player: object registry is closed\");\n+    }\n+    const auto id = ++nextId_;\n+    entries_.emplace(id, Entry{pointer, std::move(freeName)});\n+    return id;\n+  }\n+\n+  // Called after generated JS explicitly consumed the Arc. The guard may be\n+  // finalized much later, including after the module was disarmed.\n+  void forget(uint64_t id) {\n+    std::lock_guard<std::mutex> lock(mutex_);\n+    entries_.erase(id);\n+  }\n+\n+  // A HostObject finalizer can run inside GC on any thread. It must not call\n+  // Rust (whose Drop could call JS) there. Queue ordinary collection instead;\n+  // root teardown drains anything whose queued callback is discarded.\n+  void abandon(uint64_t id) {\n+    {\n+      std::lock_guard<std::mutex> lock(mutex_);\n+      if (closed_ || entries_.find(id) == entries_.end()) {\n+        return;\n+      }\n+    }\n+    std::weak_ptr<RustObjectRegistry> weak = shared_from_this();\n+    invoker_->invokeAsync([weak, id]() {\n+      if (auto registry = weak.lock()) {\n+        registry->release(id);\n+      }\n+    });\n+  }\n+\n+  // Only the JS thread or a host with a stopped/joined JS queue may release\n+  // native ownership. The conservative off-thread path still closes the\n+  // registry so later finalizers cannot call a disarmed module.\n+  void close(bool releaseNative) {\n+    std::map<uint64_t, Entry> entries;\n+    {\n+      std::lock_guard<std::mutex> lock(mutex_);\n+      if (closed_) {\n+        return;\n+      }\n+      closed_ = true;\n+      entries.swap(entries_);\n+    }\n+    if (releaseNative) {\n+      for (const auto &[id, entry] : entries) {\n+        free(entry);\n+      }\n+    }\n+  }\n+\n+private:\n+  void release(uint64_t id) {\n+    // Pin the player only while this queued callback executes, never while it\n+    // sits in the invoker. Otherwise a dead queue could retain its own root.\n+    const auto root = root_.lock();\n+    if (!root) {\n+      return;\n+    }\n+    Entry entry;\n+    {\n+      std::lock_guard<std::mutex> lock(mutex_);\n+      const auto found = entries_.find(id);\n+      if (found == entries_.end()) {\n+        return;\n+      }\n+      entry = std::move(found->second);\n+      entries_.erase(found);\n+    }\n+    // Queue-safe close cannot race this JS-thread native call. Do not hold\n+    // the registry lock over Rust, whose destructor can call back into JS.\n+    free(entry);\n+  }\n+\n+  void free(const Entry &entry) {\n+    const void *args[] = {&entry.pointer};\n+    const size_t sizes[] = {sizeof(entry.pointer)};\n+    RustCallStatus status{};\n+    ubrn_jsi_call(module_, entry.freeName.c_str(), args, sizes, 1, &status,\n+                  nullptr, 0);\n+    // A native Drop panic has already consumed the Arc. Destructors cannot\n+    // throw into JS, but its panic buffer must still be released.\n+    if (status.error_buf.data != nullptr) {\n+      ubrn_jsi_rustbuffer_free(module_, status.error_buf);\n+    }\n+  }\n+\n+  UbrnJsiModule *module_;\n+  std::shared_ptr<facebook::react::CallInvoker> invoker_;\n+  std::weak_ptr<void> root_;\n+  std::mutex mutex_;\n+  uint64_t nextId_ = 0;\n+  bool closed_ = false;\n+  std::map<uint64_t, Entry> entries_;\n+};\n+\n+class RustObjectGuard : public jsi::HostObject {\n+public:\n+  RustObjectGuard(std::shared_ptr<RustObjectRegistry> registry, uint64_t id)\n+      : registry_(std::move(registry)), id_(id) {}\n+\n+  ~RustObjectGuard() override {\n+    try {\n+      registry_->abandon(id_);\n+    } catch (...) {\n+      // A stopped invoker can reject scheduling. The root still owns the\n+      // registration and releases it at its queue-safe teardown boundary.\n+    }\n+  }\n+\n+  jsi::Value get(jsi::Runtime &rt, const jsi::PropNameID &name) override {\n+    if (name.utf8(rt) != \"markDestroyed\") {\n+      return jsi::Value::undefined();\n+    }\n+    return jsi::Function::createFromHostFunction(\n+        rt, jsi::PropNameID::forAscii(rt, \"markDestroyed\"), 0,\n+        [registry = registry_, id = id_](jsi::Runtime &, const jsi::Value &,\n+                                        const jsi::Value *, size_t) {\n+          registry->forget(id);\n+          return jsi::Value::undefined();\n+        });\n+  }\n+\n+private:\n+  std::shared_ptr<RustObjectRegistry> registry_;\n+  uint64_t id_;\n };\n \n // A jsi buffer that owns the std::string holding its bytes.\n@@ -108,6 +299,40 @@ buildModuleObject(jsi::Runtime &rt, UbrnJsiModule *handle,\n                   std::shared_ptr<ubrn_cb::ModuleCallbackInfo> cbInfo,\n                   std::shared_ptr<UniffiPlayerRoot> root) {\n   jsi::Object mod(rt);\n+  identifyFutureFunctions(*fns);\n+  auto objects = std::make_shared<RustObjectRegistry>(handle, cbInfo->callInvoker, root);\n+  cbInfo->closeRustObjects = [objects](bool releaseNative) {\n+    objects->close(releaseNative);\n+  };\n+  mod.setProperty(\n+      rt, \"$uniffiBlessPointer\",\n+      jsi::Function::createFromHostFunction(\n+          rt, jsi::PropNameID::forAscii(rt, \"$uniffiBlessPointer\"), 2,\n+          [objects, fns, root](jsi::Runtime &rt, const jsi::Value &,\n+                               const jsi::Value *args, size_t count) -> jsi::Value {\n+            if (count < 2 || !args[1].isString()) {\n+              throw jsi::JSError(rt, \"uniffi jsi player: bless needs pointer and free symbol\");\n+            }\n+            const auto freeName = args[1].asString(rt).utf8(rt);\n+            bool valid = false;\n+            for (const auto &fn : *fns) {\n+              if (fn.name == freeName && fn.name.find(\"_fn_free_\") != std::string::npos &&\n+                  fn.args.size() == 1 && fn.args[0].tag == UBRN_TY_HANDLE &&\n+                  fn.retTag == UBRN_TY_VOID && fn.hasRcs) {\n+                valid = true;\n+                break;\n+              }\n+            }\n+            if (!valid) {\n+              throw jsi::JSError(rt, \"uniffi jsi player: invalid object free symbol\");\n+            }\n+            uint64_t pointer;\n+            scalarToBytes(rt, UBRN_TY_HANDLE, args[0],\n+                          reinterpret_cast<uint8_t *>(&pointer));\n+            const auto id = objects->add(pointer, freeName);\n+            return jsi::Object::createFromHostObject(\n+                rt, std::make_shared<RustObjectGuard>(objects, id));\n+          }));\n   for (const auto &fn : *fns) {\n     FnInfo info = fn; // copy into the closure\n     auto hostFn = jsi::Function::createFromHostFunction(\n@@ -198,6 +423,16 @@ buildModuleObject(jsi::Runtime &rt, UbrnJsiModule *handle,\n                         std::to_string(rc));\n           }\n \n+          if (!info.futureFree.empty() || info.isFutureFree) {\n+            uint64_t future;\n+            memcpy(&future, backing[0].data(), sizeof(future));\n+            if (info.isFutureFree) {\n+              cbInfo->pendingRustFutures.erase(future);\n+            } else {\n+              cbInfo->pendingRustFutures.emplace(future, info.futureFree);\n+            }\n+          }\n+\n           // Write the RustCallStatus code back into the JS status object so the\n           // generated uniffiCheckCallStatus can see it. On error (code != 0)\n           // with a populated error buffer, copy the error bytes into a fresh JS\n@@ -438,8 +673,9 @@ std::atomic<uint64_t> g_rootTeardowns{0};\n //\n // The destructor performs no VM operation \u2014 no jsi::Value, no property, no call\n // into the runtime. JSI runs host-object dtors from inside the GC with no\n-// usable Runtime& guaranteed, so it may only touch the shim's own mutexes and a\n-// C flag, and must stay cheap.\n+// usable Runtime& guaranteed. It stops callbacks and releases native future\n+// ownership without evaluating JS. Rust future destructors must not wait for\n+// frontend work; independently owned service tasks can continue running.\n class UniffiPlayerRoot : public jsi::HostObject,\n                          public std::enable_shared_from_this<UniffiPlayerRoot> {\n public:\n@@ -454,31 +690,62 @@ public:\n     // JSI reserves the right to finalize a host object on any thread, so the\n     // thread is checked and not merely asserted: the shim ships with NDEBUG.\n     const bool onJsThread = std::this_thread::get_id() == jsThreadId_;\n-    assert(onJsThread && \"uniffi player root finalized off the JS thread\");\n+    // JSI explicitly allows arbitrary-thread GC. Unless the host has already\n+    // proved its JS queue stopped, only the JS-thread destructor can release\n+    // workers/futures. Other finalizers remain conservatively disarm-only.\n+    if (!closed_) {\n+      close(onJsThread);\n+    }\n+    g_rootTeardowns.fetch_add(1, std::memory_order_relaxed);\n+  }\n+\n+  // The caller has joined the JS queue. No VM operations are allowed here.\n+  void closeAfterQueueStopped() { close(true); }\n+\n+private:\n+  void close(bool queueStoppedOrOnJsThread) {\n+    if (closed_) {\n+      return;\n+    }\n+    closed_ = true;\n+    // Stop callbacks in every module before freeing any future: its Drop can\n+    // reach another namespace in the same process-owned Rust library.\n+    if (queueStoppedOrOnJsThread) {\n+      for (const auto &info : modules_) {\n+        try {\n+          ubrn_cb::abortModule(*info);\n+        } catch (...) {\n+        }\n+      }\n+    }\n+    // Keep all namespaces armed while their native references are released:\n+    // a future or object destructor can reach another registered namespace.\n+    if (queueStoppedOrOnJsThread) {\n+      for (const auto &info : modules_) {\n+        try {\n+          freePendingRustFutures(*info);\n+        } catch (...) {\n+        }\n+      }\n+    }\n     for (const auto &info : modules_) {\n-      // Per module, because one that fails must not strand the rest still\n-      // armed \u2014 and because a destructor that throws terminates.\n       try {\n-        // abortModule releases workers whose posted tasks still hold pointers\n-        // into the frames those workers are about to pop, and only this thread\n-        // discards those tasks before they can run. Off it, leave the workers\n-        // parked: a stuck worker is a leak, a task writing a popped frame is\n-        // memory corruption. Disarm regardless \u2014 a flag and a hook, safe from\n-        // any thread, and the half that stops the next call reaching a dead\n-        // runtime. A worker released here loops straight back into another\n-        // call; what turns that call away is the aborted flag, which\n-        // cb_dispatch checks before posting, since the disarm below has not run\n-        // yet.\n-        if (onJsThread) {\n-          ubrn_cb::abortModule(*info);\n+        if (info->closeRustObjects) {\n+          info->closeRustObjects(queueStoppedOrOnJsThread);\n         }\n+      } catch (...) {\n+      }\n+    }\n+    for (const auto &info : modules_) {\n+      // One failed module must not strand the others armed.\n+      try {\n         ubrn_jsi_disarm(info->module);\n       } catch (...) {\n       }\n     }\n-    g_rootTeardowns.fetch_add(1, std::memory_order_relaxed);\n   }\n \n+public:\n   jsi::Value get(jsi::Runtime &rt, const jsi::PropNameID &name) override;\n \n   // The invoker and JS thread of the runtime this root belongs to.\n@@ -497,6 +764,7 @@ public:\n   }\n \n private:\n+  bool closed_ = false;\n   std::shared_ptr<facebook::react::CallInvoker> callInvoker_;\n   std::thread::id jsThreadId_;\n   ubrn::jsi_player::Resolver resolver_;\n@@ -860,25 +1128,50 @@ jsi::Value UniffiPlayerRoot::get(jsi::Runtime &rt,\n   return jsi::Value::undefined();\n }\n \n-void installUniffiHostObject(\n+ubrn::jsi_player::RuntimeCleanup installUniffiHostObject(\n     jsi::Runtime &rt, std::shared_ptr<facebook::react::CallInvoker> callInvoker,\n     ubrn::jsi_player::Resolver resolver) {\n   auto root = std::make_shared<UniffiPlayerRoot>(\n       std::move(callInvoker), std::this_thread::get_id(), std::move(resolver));\n+  std::weak_ptr<UniffiPlayerRoot> weakRoot = root;\n   rt.global().setProperty(\n       rt, \"uniffi\", jsi::Object::createFromHostObject(rt, std::move(root)));\n+  return [weakRoot]() {\n+    if (auto root = weakRoot.lock()) {\n+      root->closeAfterQueueStopped();\n+    }\n+  };\n }\n \n } // namespace\n \n namespace ubrn::jsi_player {\n-void install(jsi::Runtime &rt,\n+RuntimeCleanup install(jsi::Runtime &rt,\n              std::shared_ptr<facebook::react::CallInvoker> callInvoker,\n              Resolver resolver) {\n-  installUniffiHostObject(rt, std::move(callInvoker), std::move(resolver));\n+  return installUniffiHostObject(rt, std::move(callInvoker), std::move(resolver));\n }\n } // namespace ubrn::jsi_player\n \n+#ifdef UBRN_JSI_TEST_HARNESS\n+// The standalone host exercises Android's joined-queue teardown using the\n+// same native cleanup token that the Kotlin module retains. Not shipped.\n+extern \"C\" void *ubrnRegisterPlayerWithCleanup(\n+    jsi::Runtime &rt, std::shared_ptr<facebook::react::CallInvoker> invoker,\n+    ubrn::jsi_player::Resolver resolver) {\n+  return new ubrn::jsi_player::RuntimeCleanup(\n+      ubrn::jsi_player::install(rt, std::move(invoker), std::move(resolver)));\n+}\n+\n+extern \"C\" void ubrnReleasePlayerCleanup(void *token, bool queueStopped) {\n+  auto cleanup = std::unique_ptr<ubrn::jsi_player::RuntimeCleanup>(\n+      static_cast<ubrn::jsi_player::RuntimeCleanup *>(token));\n+  if (queueStopped) {\n+    (*cleanup)();\n+  }\n+}\n+#endif\n+\n // Two-argument entry kept for the Hermes test-runner, which dlsyms this symbol\n // from v1's generated Entrypoint too: names are taken as paths.\n extern \"C\" void\ndiff --git a/node_modules/@ubjs/react-native/cpp/ubrn_jsi_player.h b/node_modules/@ubjs/react-native/cpp/ubrn_jsi_player.h\nindex 309516d..9814107 100644\n--- a/node_modules/@ubjs/react-native/cpp/ubrn_jsi_player.h\n+++ b/node_modules/@ubjs/react-native/cpp/ubrn_jsi_player.h\n@@ -19,8 +19,15 @@ namespace ubrn::jsi_player {\n // soname on Android, an embedded framework on iOS, a directory on the host.\n using Resolver = std::function<std::string(const std::string &name)>;\n \n+// Host-only teardown, with no JSI access. May be called from another thread\n+// ONLY after the host has stopped and joined the JS queue: no callback can\n+// still execute, and none of its queued tasks can execute in the future.\n+// Idempotent; does not keep the JS runtime or its player root alive.\n+using RuntimeCleanup = std::function<void()>;\n+\n // Installs `globalThis.uniffi` on `rt`. Call once per JS runtime.\n-void install(facebook::jsi::Runtime &rt,\n+// Hosts that destroy on their JS thread can ignore the returned cleanup.\n+RuntimeCleanup install(facebook::jsi::Runtime &rt,\n              std::shared_ptr<facebook::react::CallInvoker> callInvoker,\n              Resolver resolver);\n \ndiff --git a/node_modules/@ubjs/react-native/prebuilt/ios/UniffiRuntimeJsi.xcframework/ios-arm64/UniffiRuntimeJsi.framework/Info.plist b/node_modules/@ubjs/react-native/prebuilt/ios/UniffiRuntimeJsi.xcframework/ios-arm64/UniffiRuntimeJsi.framework/Info.plist\nindex 2fddfff..323de77 100644\n--- a/node_modules/@ubjs/react-native/prebuilt/ios/UniffiRuntimeJsi.xcframework/ios-arm64/UniffiRuntimeJsi.framework/Info.plist\n+++ b/node_modules/@ubjs/react-native/prebuilt/ios/UniffiRuntimeJsi.xcframework/ios-arm64/UniffiRuntimeJsi.framework/Info.plist\n@@ -8,7 +8,7 @@\n \t<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>\n \t<key>CFBundleName</key><string>UniffiRuntimeJsi</string>\n \t<key>CFBundlePackageType</key><string>FMWK</string>\n-\t<key>CFBundleShortVersionString</key><string>0.31.0-6</string>\n+\t<key>CFBundleShortVersionString</key><string>0.31.0</string>\n \t<key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>\n \t<key>CFBundleVersion</key><string>1</string>\n \t<key>MinimumOSVersion</key><string>15.1</string>\ndiff --git a/node_modules/@ubjs/react-native/prebuilt/ios/UniffiRuntimeJsi.xcframework/ios-arm64_x86_64-simulator/UniffiRuntimeJsi.framework/Info.plist b/node_modules/@ubjs/react-native/prebuilt/ios/UniffiRuntimeJsi.xcframework/ios-arm64_x86_64-simulator/UniffiRuntimeJsi.framework/Info.plist\nindex b1971d5..3ae6002 100644\n--- a/node_modules/@ubjs/react-native/prebuilt/ios/UniffiRuntimeJsi.xcframework/ios-arm64_x86_64-simulator/UniffiRuntimeJsi.framework/Info.plist\n+++ b/node_modules/@ubjs/react-native/prebuilt/ios/UniffiRuntimeJsi.xcframework/ios-arm64_x86_64-simulator/UniffiRuntimeJsi.framework/Info.plist\n@@ -8,7 +8,7 @@\n \t<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>\n \t<key>CFBundleName</key><string>UniffiRuntimeJsi</string>\n \t<key>CFBundlePackageType</key><string>FMWK</string>\n-\t<key>CFBundleShortVersionString</key><string>0.31.0-6</string>\n+\t<key>CFBundleShortVersionString</key><string>0.31.0</string>\n \t<key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>\n \t<key>CFBundleVersion</key><string>1</string>\n \t<key>MinimumOSVersion</key><string>15.1</string>\n"
+      }
+    ],
+    "scope": "These exact published npm packages are required runtime peers. The SDK supplies a text patch for the React Native runtime; consumers apply it before native compilation. Prebuilt Rust binaries are unchanged.",
+    "approval": "Attribution evidence is not release-policy approval. Upstream license material is retained; package-specific Rust exceptions are not reused."
+  },
+  "scope": "Rust license material follows the selected image closure for the supported runtime targets. Runtime archives are required separately installed peers. Other declared peers are not asserted to be embedded. Native artifact hashes belong to the package qualification receipt.",
+  "notice_sha256": "ed37d4ca6d4aa99808eb5c316840f60f8cbd95b9fd3a4d450f901100b17c5790"
+}

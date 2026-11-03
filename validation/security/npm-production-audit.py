@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Audit every production npm graph shipped by a PRNS release."""
 
+import argparse
 import json
 from pathlib import Path
 import sys
 
 from npm_lockfile import verify_development_packages
 
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--scope', choices=('all', 'web'), default='all', help='web retains the website/WASM-only qualification; release audits use the default all')
+arguments = parser.parse_args()
 
 repo = Path(__file__).resolve().parents[2]
 root = repo / "prns-wasm"
@@ -121,3 +126,20 @@ print(
     "website npm graph is exact-pinned; browser/accessibility tools remain dev-only with "
     "reviewed licenses, registry sources, and lockfile integrity"
 )
+
+if arguments.scope == 'web':
+    raise SystemExit(0)
+
+# A Rust crate exception does not approve separately shipped npm runtime peers.
+sys.path.insert(0, str(repo / 'tools/uniffi'))
+import runtime_notices
+output = repo / 'validation-artifacts/dependency-audit'
+output.mkdir(parents=True, exist_ok=True)
+try:
+    report = runtime_notices.evidence()
+    (output / 'sdk-runtime-sources.json').write_text(json.dumps(report, indent=2) + '\n')
+    runtime_notices.verify_policy(report)
+except (OSError, ValueError) as error:
+    print(error, file=sys.stderr)
+    raise SystemExit(1) from error
+print('Selected SDK runtime archive policy checks passed')

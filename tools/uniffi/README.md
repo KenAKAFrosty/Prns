@@ -48,6 +48,40 @@ its own `uniffi.toml`; the selected library basename supplies Kotlin's image
 name. Applications import the SDK's generated converter namespace through a
 small generated re-export, instead of storing another converter implementation.
 
+## React Native dependencies
+
+`react-native.json` pins the upstream generator commit, its ordered TypeScript
+emitter patches, published npm packages, source license notice and selected SDK
+build tools. `react_native.py` fetches generator source into a disposable cache
+and checks the patched tree before reusing it. The cache identity includes only
+the upstream source and generator patches; changing npm attribution or the
+runtime patch does not create another generator checkout. Set `PRNS_UBRN_CACHE`
+to place the source and npm archive cache on another volume, and
+`PRNS_UBRN_TARGET_DIR` to choose the generator's Cargo output directory.
+
+The generator patches preserve explicit optional values, native object guards,
+error subclass overrides and escaped FFI argument names. They affect only the
+TypeScript emitter. `@ubjs/core` and `@ubjs/react-native` come from their exact npm
+registry versions; the React Native runtime requires the SDK's separate
+[patch-package patch](../../prns-react-native/README.md#required-runtime-patch)
+before native compilation. That text patch changes C++/Kotlin lifecycle handling
+and Apple framework version metadata while retaining the published Rust binaries.
+From the SDK directory, run `npm run patch:runtime` after installing dependencies,
+including when npm install scripts are disabled. This is an explicit preparation
+step; the generator does not patch installed packages.
+
+```sh
+python3 tools/uniffi/react_native.py check
+```
+
+This check verifies the configured patches, source license notice, archive
+integrity and package metadata. It does not verify an installed runtime is
+patched. `runtime_notices.py` supplies the same verified package identities and
+runtime patch to repository and SDK attribution. The official npm archives omit
+standalone license files, so the notice is retained from the pinned upstream
+source. Attribution records preserve unresolved license-policy findings; creating
+notices does not approve a release.
+
 ## Swift consumers
 
 `compile_swift_consumer(...)` compiles the selected generated sources and C module maps

@@ -1,0 +1,77 @@
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
+index 46a1a71..12b037c 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
+@@ -689,6 +689,7 @@ pub(super) fn build_object(
+         ffi_clone,
+         ffi_free,
+         supports_finalization_registry,
++        supports_player_object_guard: matches!(flavor, AbiFlavor::Jsi2),
+         has_callback_interface,
+         strict_object_types,
+         force_async,
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/nodes.rs b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/nodes.rs
+index 1ec9145..4d3210a 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/nodes.rs
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/nodes.rs
+@@ -238,6 +238,7 @@ pub(crate) struct TsObject {
+     pub ffi_clone: String,
+     pub ffi_free: String,
+     pub supports_finalization_registry: bool,
++    pub supports_player_object_guard: bool,
+     pub has_callback_interface: bool,
+     pub strict_object_types: bool,
+     /// `forceAsync` names this type. Kept so validation can reject a
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/ObjectTemplate.ts b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/ObjectTemplate.ts
+index fc2b7df..38eef2c 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/ObjectTemplate.ts
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/ObjectTemplate.ts
+@@ -81,9 +81,12 @@ export class {{ obj.impl_class_name }} extends UniffiAbstractObject
+         const ptr = (this as any)[destructorGuardSymbol];
+         if (ptr !== undefined) {
+             const pointer = {{ obj.obj_factory }}.pointer(this);
+-            {{ obj.obj_factory }}.freePointer(pointer);
+-            {{ obj.obj_factory }}.unbless(ptr);
+-            delete (this as any)[destructorGuardSymbol];
++            try {
++                {{ obj.obj_factory }}.freePointer(pointer);
++            } finally {
++                {{ obj.obj_factory }}.unbless(ptr);
++                delete (this as any)[destructorGuardSymbol];
++            }
+         }
+     }
+ 
+@@ -120,6 +123,11 @@ const {{ obj.obj_factory }}: UniffiObjectFactory<{{ obj.protocol_name }}> = (()
+ 
+     {% if obj.supports_finalization_registry %}
+     bless(p: UniffiHandle): UniffiGcObject {
++        {% if obj.supports_player_object_guard %}
++        // Native guards also release objects when the JS runtime is replaced.
++        const bless = nativeModule().$uniffiBlessPointer;
++        if (bless !== undefined) return bless(p, "{{ obj.ffi_free }}");
++        {% endif %}
+         const ptr = {
+             p, // make sure this object doesn't get optimized away.
+             markDestroyed: () => undefined,
+@@ -131,6 +139,7 @@ const {{ obj.obj_factory }}: UniffiObjectFactory<{{ obj.protocol_name }}> = (()
+     },
+ 
+     unbless(ptr_: UniffiGcObject) {
++        ptr_.markDestroyed();
+         if (registry) {
+             registry.unregister(ptr_);
+         }
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/wrapper-ffi-player.ts b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/wrapper-ffi-player.ts
+index 9f213ae..4ff995f 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/wrapper-ffi-player.ts
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/wrapper-ffi-player.ts
+@@ -82,6 +82,8 @@ interface NativeModuleInterface {
+     // module exposes them as method properties.
+     rustbuffer_alloc(n: number): Uint8Array;
+     rustbuffer_free(view: Uint8Array): void;
++    // The JSI player owns object guards even without FinalizationRegistry.
++    $uniffiBlessPointer?(pointer: bigint, freeSymbol: string): UniffiGcObject;
+ }
+ 
+ let _nativeModule: NativeModuleInterface | undefined;

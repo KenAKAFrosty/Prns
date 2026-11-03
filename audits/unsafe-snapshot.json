@@ -29204,6 +29204,22 @@
     },
     {
       "graphs": {
+        "expo-android": [],
+        "host-connections-android": []
+      },
+      "name": "prns-expo-android",
+      "source": "prns-react-native/platform/android",
+      "unsafe": {
+        "blocks": 11,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 11
+      },
+      "version": "0.3.8"
+    },
+    {
+      "graphs": {
         "android": [
           "log"
         ],
@@ -29723,12 +29739,15 @@
     {
       "graphs": {
         "expo-android": [
+          "android-platform",
           "default"
         ],
         "expo-host-linux": [
+          "android-platform",
           "default"
         ],
         "expo-ios": [
+          "android-platform",
           "default"
         ],
         "group-headless-peer": [
@@ -29750,18 +29769,22 @@
           "default"
         ],
         "host-connections-android": [
+          "android-platform",
           "connections",
           "default"
         ],
         "host-connections-ios": [
+          "android-platform",
           "connections",
           "default"
         ],
         "host-connections-linux": [
+          "android-platform",
           "connections",
           "default"
         ],
         "host-connections-macos": [
+          "android-platform",
           "connections",
           "default"
         ],
@@ -47623,6 +47646,7 @@
     "personal-hopspot-esp32",
     "personal-hopspot-ios",
     "prns-core",
+    "prns-expo-android",
     "prns-ffi",
     "prns-host-c",
     "prns-runtime",

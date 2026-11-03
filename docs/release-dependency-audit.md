@@ -77,6 +77,19 @@ Android's `releaseRuntimeClasspath` must exactly match
 remain empty for `prns-wasm`; the website graph must exactly match the explicit browser-flasher
 allowlist and cannot contain a runtime CDN or the legacy ESP Web Tools engine.
 
+The website CI job runs `validation/security/npm-production-audit.py --scope web`
+to check the website and WebAssembly graphs. The release dependency audit uses
+the default `all` scope, which also checks the selected mobile dependencies.
+Mobile policy findings therefore fail the release audit without failing the
+website job.
+
+When the npm audit produces reports, CI uploads
+`validation-artifacts/dependency-audit/*.json` as `dependency-audit-diagnostics`,
+including when the audit fails. These reports describe findings, not policy
+approval. The separate `release-dependency-audit` artifact, including the exact
+commit attestation, is produced only after the audit and generated-notice checks
+pass.
+
 ## Pinned tools and remaining physical checks
 
 - cargo-deny 0.19.8

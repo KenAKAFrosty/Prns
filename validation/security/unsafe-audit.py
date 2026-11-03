@@ -142,6 +142,7 @@ UNSAFE_EXCEPTIONS = {
     "prns-runtime",
     "prns-runtime-embassy",
     "prns-host-c",
+    "prns-expo-android",
     "personal-hopspot-android",
     "personal-hopspot-ios",
     "t-echo",

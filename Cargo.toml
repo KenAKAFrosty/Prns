@@ -45,6 +45,7 @@ exclude = [
     "prns-interfaces/impls/tokio",
     "prns-interfaces/impls/embassy",
     "validation/integration",
+    "prns-react-native/platform/android",
 ]
 resolver = "3"
 

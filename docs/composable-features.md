@@ -14,6 +14,7 @@ presentation and execution lifetime. No library requires a chat application.
 | Signed identity and service claims | [Contact cards](../prns-contact-card/README.md) | Trust, consent and address-book policy |
 | Encrypted records, enrollment and device receipts | [Groups](../prns-groups/usage.md) | Group profiles, local budgets and optional network scheduling |
 | Text within group records | [Text profile](../prns-groups/profiles/text/README.md) | Conversation presentation and history policy |
+| Expo and React Native host access | [Mobile SDK](../prns-react-native/README.md) | Selected native image, platform permissions and application lifecycle |
 
 Storage has no domain or host dependency. The Rust group owner can operate
 without a named-identity catalog or running host. Optional networking borrows a
@@ -73,3 +74,11 @@ The [host bindings](../prns-host/bindings/uniffi/README.md) expose owned session
 borrowed clients and optional saved connections. Each owning guide supplies its
 generation and qualification commands. Host tests do not establish radio,
 mobile-background or physical-device behavior.
+
+The [mobile SDK](../prns-react-native/README.md) selects the reusable host image
+by default. Product compositions can supply another image through its provider
+configuration while reusing the same mobile integration. JavaScript leases and
+platform callbacks remain SDK-owned; applications choose installation paths,
+permissions and startup policy. An owned host session can stop its host; a
+borrowed host client can only release its own resources. Domain APIs remain in
+their owning bindings, without adding product methods to the SDK wrapper.

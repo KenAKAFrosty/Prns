@@ -73,6 +73,7 @@ cargo_lock_workspaces = [
     "prns-host/bindings/uniffi",
     "prns-host/bindings/uniffi/image",
     "prns-host/impls/runtime",
+    "prns-react-native/platform/android",
 ]
 cargo_manifests = [
     "prns-groups/bindings/uniffi/Cargo.toml",
@@ -169,6 +170,7 @@ cargo_manifests = [
     "prns-host/bindings/uniffi/Cargo.toml",
     "prns-host/bindings/uniffi/image/Cargo.toml",
     "prns-host/impls/runtime/Cargo.toml",
+    "prns-react-native/platform/android/Cargo.toml",
 ]
 format_manifests = [
     "prns-identities/Cargo.toml",
@@ -197,6 +199,7 @@ format_manifests = [
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",
     "validation/simulation/Cargo.toml",
+    "prns-react-native/platform/android/Cargo.toml",
 ]
 
 [registry.format_package_overrides]
@@ -477,7 +480,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "validation/hygiene/application-boundary.py"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card", "prns-react-native"]
 artifacts = "validation-artifacts/results/application-boundary"
 
 [[suite]]
@@ -488,7 +491,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "-m", "unittest", "validation.tests.test_application_boundary"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card", "prns-react-native"]
 artifacts = "validation-artifacts/results/application-boundary-tests"
 
 [[suite]]
@@ -2877,3 +2880,75 @@ timeout_seconds = 1800
 command = ["__RUNNER_PYTHON__", "prns-groups/bindings/uniffi/tests/check_kotlin.py"]
 inputs = ["prns-groups", "prns-identities", "prns-storage", "prns-host/core", "prns-core", "prns-macros", "prns-runtime/core", "prns-ffi", "tools/uniffi"]
 artifacts = "validation-artifacts/results/group-native-bindings-kotlin"
+
+[[suite]]
+id = "react-native-sdk"
+domain = "platform"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "node"
+timeout_seconds = 300
+command = ["npm", "--prefix", "prns-react-native", "run", "verify"]
+inputs = ["prns-react-native", "prns-js/src", "prns-js/package.json", "prns-host/bindings/uniffi", "prns-host/schema", "tools/uniffi", "prns-host/platform/android/bluetooth"]
+artifacts = "validation-artifacts/results/react-native-sdk"
+
+[[suite]]
+id = "react-native-notices"
+domain = "security"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "node"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/package_notices.py"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-react-native", "prns-host", "prns-core", "prns-runtime", "personal-rns", "prns-interfaces", "prns-ffi", "tools/uniffi", "tools/repo/generate-third-party-notices.py", "about.toml", "deny.toml"]
+artifacts = "validation-artifacts/results/react-native-notices"
+
+[[suite]]
+id = "react-native-generated"
+domain = "platform"
+group = "deterministic"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 2400
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "generate", "--check"]
+inputs = ["prns-react-native", "prns-host", "tools/uniffi"]
+artifacts = "validation-artifacts/results/react-native-generated"
+
+[[suite]]
+id = "react-native-apple-platform"
+domain = "platform"
+group = "deterministic"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "swift"
+timeout_seconds = 300
+command = ["npm", "--prefix", "prns-react-native", "run", "test:apple"]
+inputs = ["prns-react-native/ios", "prns-react-native/scripts/test-apple.mjs", "prns-react-native/tests/apple", "prns-react-native/package.json"]
+artifacts = "validation-artifacts/results/react-native-apple-platform"
+
+[[suite]]
+id = "react-native-android-image"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "android", "--targets", "arm64-v8a"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi"]
+artifacts = "validation-artifacts/results/react-native-android-image"
+
+[[suite]]
+id = "react-native-apple-image"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "ios", "--sim-only", "--targets", "aarch64-apple-ios-sim"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi"]
+artifacts = "validation-artifacts/results/react-native-apple-image"

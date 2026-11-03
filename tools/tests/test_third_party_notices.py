@@ -73,6 +73,7 @@ class ThirdPartyNoticeTests(unittest.TestCase):
             )
             with (
                 mock.patch.object(notices, "ROOT", root),
+                mock.patch.object(notices.runtime_notices, "input_paths", return_value=()),
                 mock.patch.object(notices, "ABOUT", root / "about.toml"),
                 mock.patch.object(notices, "__file__", str(root / "generator.py")),
             ):
