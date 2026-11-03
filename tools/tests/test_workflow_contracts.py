@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -332,6 +333,76 @@ class SwiftSetupTests(unittest.TestCase):
 
 
 class WorkflowSchedulingTests(unittest.TestCase):
+    def workflow_jobs(self, name: str) -> dict[str, str]:
+        return dict(contracts.workflow_jobs(
+            (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        ))
+
+    def test_reusable_suites_have_executable_pr_schedules_on_their_platforms(self) -> None:
+        manifest = tomllib.loads((ROOT / "validation/manifest.toml").read_text())
+        groups = {"group-communication", "standalone-libraries", "native-storage", "native-bindings"}
+        expected = {
+            suite["id"]: suite for suite in manifest["suite"]
+            if (suite.get("group") in groups) and "pr" in suite["tiers"]
+        }
+        jobs = self.workflow_jobs("ci.yml")
+        scheduled: dict[str, set[str]] = {}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake_python = root / "python3"
+            fake_python.write_text(
+                "#!" + sys.executable + "\n"
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "Path(os.environ['CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n"
+            )
+            fake_python.chmod(0o755)
+            for name in ("standalone-libraries",):
+                job = jobs[name]
+                self.assertNotRegex(job, r"(?m)^    (?:needs|if):")
+                self.assertNotIn("continue-on-error", job)
+                self.assertIn('toolchain: "1.96.0"', job)
+                steps = re.split(r"(?m)(?=^      - )", job)
+                rows = re.findall(
+                    r"- platform: (\w+)\n            runner: ([^\n]+)(?:\n            native-suite: ([^\n]+))?",
+                    job,
+                ) or [("linux", "ubuntu-24.04", "")]
+                for platform, runner, native_suite in rows:
+                    self.assertTrue(runner.startswith("macos-") if platform == "macos" else runner.startswith("ubuntu-"))
+                    for step in steps:
+                        match = re.search(r"        run: >-\n((?:          [^\n]+\n)+)", step)
+                        if match is None:
+                            continue
+                        command = " ".join(line.strip() for line in match.group(1).splitlines())
+                        if not command.startswith("python3 validation/run.py run "):
+                            continue
+                        condition = re.search(r"(?m)^        if: (.+)$", step)
+                        if condition:
+                            os_name = "macOS" if platform == "macos" else "Linux"
+                            expression = condition.group(1).replace("runner.os", repr(os_name))
+                            if not eval(expression, {"__builtins__": {}}):
+                                continue
+                        expanded = command.replace("${{ matrix.native-suite }}", native_suite)
+                        capture = root / "arguments.json"
+                        result = subprocess.run(
+                            ["bash", "-e", "-o", "pipefail", "-c", expanded],
+                            env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                                 "CAPTURE": str(capture), "GITHUB_SHA": "a" * 40},
+                            capture_output=True, text=True,
+                        )
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        arguments = json.loads(capture.read_text())
+                        self.assertEqual(arguments[:2], ["validation/run.py", "run"])
+                        self.assertEqual(arguments[-2:], ["--expected-sha", "a" * 40])
+                        flags, suites = arguments[2:-2:2], arguments[3:-2:2]
+                        self.assertTrue(flags and set(flags) == {"--suite"})
+                        for suite_id in suites:
+                            self.assertIn(suite_id, expected)
+                            self.assertIn(expected[suite_id]["platform"], {"any", platform})
+                            scheduled.setdefault(suite_id, set()).add(platform)
+        self.assertEqual(set(scheduled), set(expected))
+
+
     def test_deployment_deferral_does_not_accept_fake_qualification_inputs(self) -> None:
         workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
         block = workflow.split(
@@ -368,11 +439,6 @@ class WorkflowSchedulingTests(unittest.TestCase):
                         capture_output=True, text=True,
                     )
                     self.assertEqual(result.returncode, expected, result.stderr)
-
-    def workflow_jobs(self, name: str) -> dict[str, str]:
-        return dict(contracts.workflow_jobs(
-            (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
-        ))
 
     def needs(self, block: str) -> set[str]:
         match = re.search(r"(?m)^    needs: (.+)$", block)

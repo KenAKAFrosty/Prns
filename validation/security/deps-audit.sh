@@ -15,6 +15,8 @@ fi
 python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
+    "contact-card|prns-contact-card/Cargo.toml|x86_64-unknown-linux-gnu"
+    "storage-redb|prns-storage/Cargo.toml|x86_64-unknown-linux-gnu|redb"
     "engine|Cargo.toml|x86_64-unknown-linux-gnu"
     "daemon-linux|prnsd/Cargo.toml|x86_64-unknown-linux-gnu"
     "daemon-macos|prnsd/Cargo.toml|aarch64-apple-darwin"
@@ -47,13 +49,21 @@ graphs=(
 )
 
 for graph in "${graphs[@]}"; do
-    IFS='|' read -r name manifest target <<<"$graph"
-    echo "[dependency-audit] $name ($target)"
+    IFS='|' read -r name manifest target features <<<"$graph"
+    deny_args=(
+        --manifest-path "$root/$manifest"
+        --target "$target"
+        --locked
+        --exclude-dev
+    )
+    if [[ -n "$features" ]]; then
+        deny_args+=(--features "$features")
+        echo "[dependency-audit] $name ($target, default features plus $features)"
+    else
+        echo "[dependency-audit] $name ($target)"
+    fi
     cargo deny \
-        --manifest-path "$root/$manifest" \
-        --target "$target" \
-        --locked \
-        --exclude-dev \
+        "${deny_args[@]}" \
         check \
         --config "$root/deny.toml" \
         advisories licenses sources bans

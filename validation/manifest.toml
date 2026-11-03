@@ -66,6 +66,8 @@ cargo_lock_workspaces = [
     "validation/oracles",
 ]
 cargo_manifests = [
+    "prns-contact-card/Cargo.toml",
+    "prns-storage/Cargo.toml",
     "Cargo.toml",
     "benchmarks/Cargo.toml",
     "docs/command/Cargo.toml",
@@ -467,7 +469,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "validation/hygiene/application-boundary.py"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-storage", "prns-contact-card"]
 artifacts = "validation-artifacts/results/application-boundary"
 
 [[suite]]
@@ -478,7 +480,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "-m", "unittest", "validation.tests.test_application_boundary"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-storage", "prns-contact-card"]
 artifacts = "validation-artifacts/results/application-boundary-tests"
 
 [[suite]]
@@ -2416,3 +2418,51 @@ name = "radio_status_prefix_preserves_capability_and_operating_state_tags"
 source = "prns-core/src/remote_control/radio.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
+
+[[suite]]
+id = "native-storage-tests"
+domain = "native"
+group = "native-storage"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "prns-storage", "--all-targets", "--all-features"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-storage"]
+artifacts = "validation-artifacts/results/native-storage-tests"
+
+[[suite]]
+id = "contact-card-tests"
+domain = "native"
+group = "standalone-libraries"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "test", "--locked", "-p", "prns-contact-card", "--all-targets", "--all-features"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-contact-card", "prns-core", "prns-macros"]
+artifacts = "validation-artifacts/results/contact-card-tests"
+
+[[suite]]
+id = "contact-card-clippy"
+domain = "native"
+group = "standalone-libraries"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "clippy", "--locked", "-p", "prns-contact-card", "--all-targets", "--all-features", "--", "-D", "warnings"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-contact-card", "prns-core", "prns-macros"]
+artifacts = "validation-artifacts/results/contact-card-clippy"
+
+[[suite]]
+id = "contact-card-example"
+domain = "native"
+group = "standalone-libraries"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 600
+command = ["cargo", "run", "--locked", "-p", "prns-contact-card", "--example", "telemetry_contact", "--no-default-features"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-contact-card"]
+artifacts = "validation-artifacts/results/contact-card-example"

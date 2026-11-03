@@ -24,6 +24,13 @@ class PrePushCiParityTests(unittest.TestCase):
     def gate_names(self, paths: set[str]) -> set[str]:
         return {gate.name for gate in parity.plan_for_paths(paths).gates}
 
+    def reusable_suites(self, paths: set[str], platform: str = "Linux") -> tuple[set[str], tuple]:
+        with mock.patch.object(parity.host_platform, "system", return_value=platform):
+            gates = parity.plan_for_paths(paths).gates
+        selected = next((gate for gate in gates if gate.name == "reusable library suites"), None)
+        suites = set(selected.command[4::2]) if selected else set()
+        return suites, gates
+
     def test_core_change_checks_root_feature_and_native_consumers(self) -> None:
         names = self.gate_names({"prns-core/src/engine.rs"})
 

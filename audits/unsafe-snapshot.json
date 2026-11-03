@@ -2,6 +2,19 @@
   "generator": "validation/security/unsafe-audit.py",
   "graphs": [
     {
+      "manifest": "prns-contact-card/Cargo.toml",
+      "name": "contact-card",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "features": [
+        "redb"
+      ],
+      "manifest": "prns-storage/Cargo.toml",
+      "name": "storage-redb",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
       "manifest": "Cargo.toml",
       "name": "engine",
       "target": "x86_64-unknown-linux-gnu"
@@ -748,6 +761,9 @@
         "android": [
           "alloc"
         ],
+        "contact-card": [
+          "alloc"
+        ],
         "daemon-linux": [
           "alloc"
         ],
@@ -1010,6 +1026,11 @@
     },
     {
       "graphs": {
+        "contact-card": [
+          "serde",
+          "serde_core",
+          "std"
+        ],
         "engine": [
           "serde",
           "serde_core",
@@ -1196,6 +1217,9 @@
     {
       "graphs": {
         "android": [
+          "zeroize"
+        ],
+        "contact-card": [
           "zeroize"
         ],
         "daemon-linux": [
@@ -1690,6 +1714,7 @@
           "default",
           "std"
         ],
+        "contact-card": [],
         "daemon-linux": [
           "default",
           "std"
@@ -2143,6 +2168,7 @@
     {
       "graphs": {
         "android": [],
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -2652,6 +2678,7 @@
     {
       "graphs": {
         "android": [],
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -2772,6 +2799,7 @@
     {
       "graphs": {
         "android": [],
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -3068,6 +3096,7 @@
     {
       "graphs": {
         "android": [],
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -3567,6 +3596,9 @@
         "android": [
           "rand_core"
         ],
+        "contact-card": [
+          "rand_core"
+        ],
         "daemon-linux": [
           "rand_core"
         ],
@@ -3649,6 +3681,7 @@
     {
       "graphs": {
         "android": [],
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -3711,6 +3744,13 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
+        "contact-card": [
           "alloc",
           "digest",
           "precomputed-tables",
@@ -3890,6 +3930,7 @@
     },
     {
       "graphs": {
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-windows": [],
         "desktop-linux": [],
@@ -4560,6 +4601,11 @@
           "oid",
           "zeroize"
         ],
+        "contact-card": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
         "daemon-linux": [
           "alloc",
           "oid",
@@ -4833,6 +4879,15 @@
           "block-api",
           "default",
           "mac",
+          "rand_core",
+          "zeroize"
+        ],
+        "contact-card": [
+          "alloc",
+          "block-api",
+          "default",
+          "mac",
+          "oid",
           "rand_core",
           "zeroize"
         ],
@@ -5359,6 +5414,9 @@
         "android": [
           "alloc"
         ],
+        "contact-card": [
+          "alloc"
+        ],
         "daemon-linux": [
           "alloc"
         ],
@@ -5441,6 +5499,15 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
+        "contact-card": [
           "alloc",
           "batch",
           "fast",
@@ -11393,6 +11460,11 @@
     },
     {
       "graphs": {
+        "contact-card": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "default",
@@ -11809,6 +11881,9 @@
     {
       "graphs": {
         "android": [
+          "zeroize"
+        ],
+        "contact-card": [
           "zeroize"
         ],
         "daemon-linux": [
@@ -12627,6 +12702,7 @@
     },
     {
       "graphs": {
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -12806,6 +12882,7 @@
     {
       "graphs": {
         "android": [],
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -13990,6 +14067,11 @@
     },
     {
       "graphs": {
+        "contact-card": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "engine": [
           "alloc",
           "default",
@@ -18212,6 +18294,9 @@
         "android": [
           "alloc"
         ],
+        "contact-card": [
+          "alloc"
+        ],
         "daemon-linux": [
           "alloc"
         ],
@@ -18717,6 +18802,23 @@
         "tokens": 0
       },
       "version": "0.3.8"
+    },
+    {
+      "graphs": {
+        "contact-card": [
+          "default"
+        ]
+      },
+      "name": "prns-contact-card",
+      "source": "prns-contact-card",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
     },
     {
       "graphs": {
@@ -20169,6 +20271,24 @@
     },
     {
       "graphs": {
+        "storage-redb": [
+          "default",
+          "redb"
+        ]
+      },
+      "name": "prns-storage",
+      "source": "prns-storage",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
         "wasm": [
           "default"
         ]
@@ -20339,6 +20459,10 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "proc-macro"
+        ],
+        "contact-card": [
           "default",
           "proc-macro"
         ],
@@ -20607,6 +20731,10 @@
     {
       "graphs": {
         "android": [
+          "default",
+          "proc-macro"
+        ],
+        "contact-card": [
           "default",
           "proc-macro"
         ],
@@ -20913,6 +21041,7 @@
     {
       "graphs": {
         "android": [],
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -21106,6 +21235,24 @@
         "tokens": 87
       },
       "version": "1.13.0"
+    },
+    {
+      "graphs": {
+        "storage-redb": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "redb",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 24,
+        "externs": 0,
+        "functions": 18,
+        "impls": 5,
+        "tokens": 47
+      },
+      "version": "4.2.0"
     },
     {
       "graphs": {
@@ -21620,6 +21767,7 @@
     {
       "graphs": {
         "android": [],
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -22238,6 +22386,10 @@
           "default",
           "std"
         ],
+        "contact-card": [
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "std"
@@ -22360,6 +22512,13 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "contact-card": [
           "alloc",
           "default",
           "derive",
@@ -22586,6 +22745,12 @@
           "result",
           "std"
         ],
+        "contact-card": [
+          "alloc",
+          "default",
+          "result",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "result",
@@ -22729,6 +22894,9 @@
         "android": [
           "default"
         ],
+        "contact-card": [
+          "default"
+        ],
         "daemon-linux": [
           "default"
         ],
@@ -22820,6 +22988,10 @@
     },
     {
       "graphs": {
+        "contact-card": [
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "std"
@@ -23088,6 +23260,12 @@
         "android": [
           "zeroize"
         ],
+        "contact-card": [
+          "alloc",
+          "default",
+          "oid",
+          "zeroize"
+        ],
         "daemon-linux": [
           "zeroize"
         ],
@@ -23308,6 +23486,10 @@
     {
       "graphs": {
         "android": [
+          "alloc",
+          "rand_core"
+        ],
+        "contact-card": [
           "alloc",
           "rand_core"
         ],
@@ -24111,6 +24293,9 @@
         "android": [
           "alloc"
         ],
+        "contact-card": [
+          "alloc"
+        ],
         "daemon-linux": [
           "alloc"
         ],
@@ -24363,6 +24548,9 @@
         "android": [
           "default"
         ],
+        "contact-card": [
+          "default"
+        ],
         "daemon-linux": [
           "default"
         ],
@@ -24611,6 +24799,9 @@
         "android": [
           "const-generics"
         ],
+        "contact-card": [
+          "const-generics"
+        ],
         "daemon-linux": [
           "const-generics"
         ],
@@ -24854,6 +25045,19 @@
     {
       "graphs": {
         "android": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "fold",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "contact-card": [
           "clone-impls",
           "default",
           "derive",
@@ -27426,6 +27630,9 @@
     },
     {
       "graphs": {
+        "contact-card": [
+          "const-generics"
+        ],
         "engine": [
           "const-generics"
         ],
@@ -27601,6 +27808,7 @@
     {
       "graphs": {
         "android": [],
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -29769,6 +29977,12 @@
           "derive",
           "zeroize_derive"
         ],
+        "contact-card": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
         "daemon-linux": [
           "alloc",
           "default",
@@ -29935,6 +30149,7 @@
     {
       "graphs": {
         "android": [],
+        "contact-card": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -30064,6 +30279,7 @@
     },
     {
       "graphs": {
+        "contact-card": [],
         "desktop-linux": [],
         "engine": [],
         "halow-appliance-manager": []

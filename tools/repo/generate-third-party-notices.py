@@ -19,7 +19,20 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "THIRD_PARTY_NOTICES.md"
 ABOUT = ROOT / "about.toml"
+GRAPH_FEATURES = {
+    "Storage redb": ("redb",),
+    "Identity key card Linux": ("contact-card",),
+    "Identity key card macOS": ("contact-card",),
+    "Identity catalog card Linux": ("catalog", "contact-card",),
+    "Identity catalog card macOS": ("catalog", "contact-card",),
+    "Identity catalog Linux": ("catalog",),
+    "Identity catalog macOS": ("catalog",),
+    "Identity storage": ("redb-store",),
+}
 GRAPHS = (
+    ("Contact cards", "prns-contact-card/Cargo.toml", "x86_64-unknown-linux-gnu"),
+
+    ("Storage redb", "prns-storage/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("engine", "Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("daemon Linux", "prnsd/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("daemon macOS", "prnsd/Cargo.toml", "aarch64-apple-darwin"),
@@ -310,6 +323,7 @@ def generate_graph(
     directory: Path,
     cargo_home: Path,
     binary: str,
+    features: tuple[str, ...] = (),
 ) -> dict:
     output = directory / f"about-{len(list(directory.iterdir()))}.json"
     command = [
@@ -329,6 +343,8 @@ def generate_graph(
         "--output-file",
         str(output),
     ]
+    if features:
+        command.extend(["--features", ",".join(features)])
     process = subprocess.run(
         command,
         cwd=ROOT,
@@ -358,7 +374,9 @@ def notice_bundle() -> str:
             if manifest not in fetched_manifests:
                 fetch_manifest(manifest, cargo_home)
                 fetched_manifests.add(manifest)
-            data = generate_graph(manifest, target, directory, cargo_home, binary)
+            data = generate_graph(
+                manifest, target, directory, cargo_home, binary, GRAPH_FEATURES.get(graph, ())
+            )
             for license_info in data["licenses"]:
                 text = normalized_notice_text(license_info["text"])
                 key = (license_info["id"], text)
