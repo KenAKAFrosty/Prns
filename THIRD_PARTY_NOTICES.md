@@ -2,13 +2,14 @@
 
 This checked bundle covers the shipped and qualification Rust, JavaScript, and Android product graphs.
 It was generated with `cargo-about 0.9.1` by `./tools/prns repo notices generate`.
-Notice input fingerprint: `sha256:69765a4f0875b4dc0ac6ac3c6a083be56205ab915e33eb9900a6c90cc78ff9a9`.
+Notice input fingerprint: `sha256:87a79f8d0c1a676994a38b3e10885788b33d8eb8f50b1f706891d35b345486a1`.
 Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before cargo-about reads its target-filtered packaged license material offline.
 Entries are deduplicated by SPDX identifier and canonical notice text; line endings, trailing space, and repeated blank lines are normalized without changing legal words.
 
 ## Release graphs
 
 - Contact cards: `prns-contact-card/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
+- Identity storage: `prns-identities/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
 - Storage redb: `prns-storage/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
 - engine: `Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
 - daemon Linux: `prnsd/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)

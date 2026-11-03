@@ -16,6 +16,7 @@ python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
     "contact-card|prns-contact-card/Cargo.toml|x86_64-unknown-linux-gnu"
+    "identity-storage|prns-identities/Cargo.toml|x86_64-unknown-linux-gnu|redb-store"
     "storage-redb|prns-storage/Cargo.toml|x86_64-unknown-linux-gnu|redb"
     "engine|Cargo.toml|x86_64-unknown-linux-gnu"
     "daemon-linux|prnsd/Cargo.toml|x86_64-unknown-linux-gnu"

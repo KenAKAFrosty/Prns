@@ -340,7 +340,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
 
     def test_reusable_suites_have_executable_pr_schedules_on_their_platforms(self) -> None:
         manifest = tomllib.loads((ROOT / "validation/manifest.toml").read_text())
-        groups = {"group-communication", "standalone-libraries", "native-storage", "native-bindings"}
+        groups = {"group-communication", "named-identities", "standalone-libraries", "native-storage", "native-bindings"}
         expected = {
             suite["id"]: suite for suite in manifest["suite"]
             if (suite.get("group") in groups) and "pr" in suite["tiers"]
@@ -357,7 +357,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
                 "Path(os.environ['CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n"
             )
             fake_python.chmod(0o755)
-            for name in ("standalone-libraries",):
+            for name in ("named-identities", "standalone-libraries"):
                 job = jobs[name]
                 self.assertNotRegex(job, r"(?m)^    (?:needs|if):")
                 self.assertNotIn("continue-on-error", job)
@@ -401,6 +401,8 @@ class WorkflowSchedulingTests(unittest.TestCase):
                             self.assertIn(expected[suite_id]["platform"], {"any", platform})
                             scheduled.setdefault(suite_id, set()).add(platform)
         self.assertEqual(set(scheduled), set(expected))
+        self.assertEqual(scheduled["identity-native-tests-linux"], {"linux"})
+        self.assertEqual(scheduled["identity-native-tests-macos"], {"macos"})
 
 
     def test_deployment_deferral_does_not_accept_fake_qualification_inputs(self) -> None:

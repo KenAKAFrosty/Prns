@@ -31,6 +31,7 @@ GRAPH_FEATURES = {
 }
 GRAPHS = (
     ("Contact cards", "prns-contact-card/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("Identity storage", "prns-identities/Cargo.toml", "x86_64-unknown-linux-gnu"),
 
     ("Storage redb", "prns-storage/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("engine", "Cargo.toml", "x86_64-unknown-linux-gnu"),

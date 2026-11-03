@@ -38,6 +38,7 @@ version = "1.5.4"
 
 [registry]
 cargo_lock_workspaces = [
+    "prns-identities",
     ".",
     "benchmarks",
     "docs/website",
@@ -67,6 +68,10 @@ cargo_lock_workspaces = [
 ]
 cargo_manifests = [
     "prns-contact-card/Cargo.toml",
+    "prns-identities/Cargo.toml",
+    "prns-identities/codec/Cargo.toml",
+    "prns-identities/core/Cargo.toml",
+    "prns-identities/runtime/Cargo.toml",
     "prns-storage/Cargo.toml",
     "Cargo.toml",
     "benchmarks/Cargo.toml",
@@ -142,6 +147,7 @@ cargo_manifests = [
     "validation/simulation/Cargo.toml",
 ]
 format_manifests = [
+    "prns-identities/Cargo.toml",
     "Cargo.toml",
     "benchmarks/Cargo.toml",
     "docs/website/Cargo.toml",
@@ -469,7 +475,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "validation/hygiene/application-boundary.py"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-storage", "prns-contact-card"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-storage", "prns-identities", "prns-contact-card"]
 artifacts = "validation-artifacts/results/application-boundary"
 
 [[suite]]
@@ -480,7 +486,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "-m", "unittest", "validation.tests.test_application_boundary"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-storage", "prns-contact-card"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-storage", "prns-identities", "prns-contact-card"]
 artifacts = "validation-artifacts/results/application-boundary-tests"
 
 [[suite]]
@@ -2430,6 +2436,54 @@ timeout_seconds = 600
 command = ["cargo", "test", "--locked", "-p", "prns-storage", "--all-targets", "--all-features"]
 inputs = ["Cargo.toml", "Cargo.lock", "prns-storage"]
 artifacts = "validation-artifacts/results/native-storage-tests"
+
+[[suite]]
+id = "identity-portable-tests"
+domain = "native"
+group = "named-identities"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 300
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-identities/Cargo.toml", "-p", "prns-identities-core", "-p", "prns-identities-codec", "-p", "prns-identities-runtime", "--all-targets", "--no-default-features"]
+inputs = ["prns-identities"]
+artifacts = "validation-artifacts/results/identity-portable-tests"
+
+[[suite]]
+id = "identity-native-tests-macos"
+domain = "native"
+group = "named-identities"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 300
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-identities/Cargo.toml", "-p", "prns-identities", "--all-targets", "--features", "owner,fault-injection,redb-store,contact-card"]
+inputs = ["prns-identities", "prns-core", "prns-macros", "prns-storage"]
+artifacts = "validation-artifacts/results/identity-native-tests-macos"
+
+[[suite]]
+id = "identity-native-tests-linux"
+domain = "native"
+group = "named-identities"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 300
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-identities/Cargo.toml", "-p", "prns-identities", "--all-targets", "--features", "owner,fault-injection,redb-store,contact-card"]
+inputs = ["prns-identities", "prns-core", "prns-macros", "prns-storage"]
+artifacts = "validation-artifacts/results/identity-native-tests-linux"
+
+[[suite]]
+id = "identity-key-owner-tests"
+domain = "native"
+group = "named-identities"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 300
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-identities/Cargo.toml", "-p", "prns-identities", "--test", "key_owner", "--no-default-features", "--features", "fault-injection"]
+inputs = ["prns-identities", "prns-core", "prns-macros", "prns-storage"]
+artifacts = "validation-artifacts/results/identity-key-owner-tests"
 
 [[suite]]
 id = "contact-card-tests"

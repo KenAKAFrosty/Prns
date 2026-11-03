@@ -454,6 +454,54 @@ jobs:
       - name: Release critical-path preflight
         run: python3 validation/run.py run --suite release-contracts --expected-sha "$GITHUB_SHA"
 
+  named-identities:
+    name: Identity libraries (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+            native-suite: identity-native-tests-linux
+          - platform: macos
+            runner: macos-latest
+            native-suite: identity-native-tests-macos
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: named-identities-v1
+          workspaces: |
+            .
+            prns-identities
+      - name: Run registered validation suites
+        run: >-
+          python3 validation/run.py run
+          --suite identity-portable-tests
+          --suite identity-key-owner-tests
+          --suite ${{ matrix.native-suite }}
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: named-identities-${{ matrix.platform }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
   standalone-libraries:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -524,6 +572,7 @@ jobs:
             --exclude personal-hopspot-resources --exclude personal-hopspot-assurance
           cargo check --locked -p prns-storage --all-targets --all-features
           cargo check --locked -p prns-contact-card --all-targets --all-features
+          cargo check --locked --manifest-path prns-identities/Cargo.toml --workspace --all-targets --all-features
       # The root-excluded workspaces declare the same 1.90 floor; hold them to it too.
       - run: cargo check --locked
         working-directory: prns-config
@@ -1079,6 +1128,7 @@ jobs:
       - integration-capstones
       - flasher-contracts
       - release-workflow-contracts
+      - named-identities
       - standalone-libraries
       - msrv
       - embedded-resource-selection
@@ -1104,6 +1154,7 @@ jobs:
       INTEGRATION_CAPSTONES_RESULT: ${{ needs.integration-capstones.result }}
       FLASHER_RESULT: ${{ needs.flasher-contracts.result }}
       WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
+      NAMED_IDENTITIES_RESULT: ${{ needs.named-identities.result }}
       STANDALONE_LIBRARIES_RESULT: ${{ needs.standalone-libraries.result }}
       MSRV_RESULT: ${{ needs.msrv.result }}
       EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}
@@ -1135,6 +1186,7 @@ jobs:
             "$INTEGRATION_CAPSTONES_RESULT" \
             "$FLASHER_RESULT" \
             "$WORKFLOWS_RESULT" \
+            "$NAMED_IDENTITIES_RESULT" \
             "$STANDALONE_LIBRARIES_RESULT" \
             "$MSRV_RESULT" \
             "$EMBEDDED_SELECTION_RESULT" \

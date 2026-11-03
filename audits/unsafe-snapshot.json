@@ -8,6 +8,14 @@
     },
     {
       "features": [
+        "redb-store"
+      ],
+      "manifest": "prns-identities/Cargo.toml",
+      "name": "identity-storage",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "features": [
         "redb"
       ],
       "manifest": "prns-storage/Cargo.toml",
@@ -198,6 +206,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -1282,6 +1291,9 @@
         "host-c-windows": [
           "zeroize"
         ],
+        "identity-storage": [
+          "zeroize"
+        ],
         "ios": [
           "zeroize"
         ],
@@ -1326,6 +1338,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -1753,6 +1766,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -2072,6 +2086,9 @@
         "host-c-windows": [
           "block-padding"
         ],
+        "identity-storage": [
+          "block-padding"
+        ],
         "ios": [
           "block-padding"
         ],
@@ -2206,7 +2223,8 @@
     },
     {
       "graphs": {
-        "halow-headless": []
+        "halow-headless": [],
+        "identity-storage": []
       },
       "name": "cfg-if",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2340,6 +2358,10 @@
           "rng",
           "zeroize"
         ],
+        "identity-storage": [
+          "rng",
+          "zeroize"
+        ],
         "ios": [
           "rng",
           "zeroize"
@@ -2427,6 +2449,9 @@
           "block-padding"
         ],
         "host-c-windows": [
+          "block-padding"
+        ],
+        "identity-storage": [
           "block-padding"
         ],
         "ios": [
@@ -2699,6 +2724,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -3080,6 +3106,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": []
       },
       "name": "cpufeatures",
@@ -3119,6 +3146,21 @@
         "tokens": 11
       },
       "version": "0.3.0"
+    },
+    {
+      "graphs": {
+        "identity-storage": []
+      },
+      "name": "cpufeatures",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 8,
+        "externs": 0,
+        "functions": 3,
+        "impls": 0,
+        "tokens": 11
+      },
+      "version": "0.3.1"
     },
     {
       "graphs": {
@@ -3576,6 +3618,7 @@
         "host-c-windows": [
           "std"
         ],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -3659,6 +3702,7 @@
         "host-c-windows": [
           "rand_core"
         ],
+        "identity-storage": [],
         "ios": [
           "rand_core"
         ],
@@ -3702,6 +3746,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -3897,6 +3942,11 @@
           "rand_core",
           "zeroize"
         ],
+        "identity-storage": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
         "ios": [
           "alloc",
           "digest",
@@ -3937,7 +3987,8 @@
         "desktop-windows": [],
         "engine": [],
         "host-c-linux": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "identity-storage": []
       },
       "name": "curve25519-dalek-derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -5035,6 +5086,12 @@
           "rand_core",
           "zeroize"
         ],
+        "identity-storage": [
+          "block-api",
+          "default",
+          "mac",
+          "zeroize"
+        ],
         "ios": [
           "block-api",
           "default",
@@ -5477,6 +5534,7 @@
         "host-c-windows": [
           "alloc"
         ],
+        "identity-storage": [],
         "ios": [
           "alloc"
         ],
@@ -5694,6 +5752,10 @@
           "rand_core",
           "signature",
           "strobe-rs",
+          "zeroize"
+        ],
+        "identity-storage": [
+          "fast",
           "zeroize"
         ],
         "ios": [
@@ -11031,6 +11093,9 @@
         "host-c-windows": [
           "more_lengths"
         ],
+        "identity-storage": [
+          "more_lengths"
+        ],
         "ios": [
           "more_lengths"
         ],
@@ -11130,7 +11195,8 @@
         ],
         "host-c-windows": [
           "std"
-        ]
+        ],
+        "identity-storage": []
       },
       "name": "getrandom",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -11238,6 +11304,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -11355,6 +11422,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -11525,6 +11593,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -11603,6 +11672,9 @@
           "zeroize"
         ],
         "host-c-windows": [
+          "zeroize"
+        ],
+        "identity-storage": [
           "zeroize"
         ],
         "ios": [
@@ -11981,6 +12053,9 @@
     {
       "graphs": {
         "halow-headless": [
+          "zeroize"
+        ],
+        "identity-storage": [
           "zeroize"
         ]
       },
@@ -12478,6 +12553,9 @@
           "block-padding"
         ],
         "host-c-windows": [
+          "block-padding"
+        ],
+        "identity-storage": [
           "block-padding"
         ],
         "ios": [
@@ -13207,6 +13285,24 @@
         "tokens": 667
       },
       "version": "0.2.189"
+    },
+    {
+      "graphs": {
+        "identity-storage": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "libc",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 160,
+        "externs": 210,
+        "functions": 412,
+        "impls": 10,
+        "tokens": 800
+      },
+      "version": "0.2.190"
     },
     {
       "graphs": {
@@ -19138,6 +19234,9 @@
           "std",
           "tokio-host"
         ],
+        "identity-storage": [
+          "crypto-precomputed"
+        ],
         "ios": [
           "alloc",
           "crypto-precomputed",
@@ -19333,6 +19432,73 @@
         "tokens": 0
       },
       "version": "0.3.8"
+    },
+    {
+      "graphs": {
+        "identity-storage": [
+          "default",
+          "redb-store"
+        ]
+      },
+      "name": "prns-identities",
+      "source": "prns-identities",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "identity-storage": []
+      },
+      "name": "prns-identities-codec",
+      "source": "prns-identities/codec",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "identity-storage": [
+          "default"
+        ]
+      },
+      "name": "prns-identities-core",
+      "source": "prns-identities/core",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "identity-storage": [
+          "default"
+        ]
+      },
+      "name": "prns-identities-runtime",
+      "source": "prns-identities/runtime",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
     },
     {
       "graphs": {
@@ -19853,6 +20019,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -20271,6 +20438,10 @@
     },
     {
       "graphs": {
+        "identity-storage": [
+          "default",
+          "redb"
+        ],
         "storage-redb": [
           "default",
           "redb"
@@ -20575,6 +20746,10 @@
         "host-c-windows": [
           "default",
           "proc-macro"
+        ],
+        "identity-storage": [
+          "default",
+          "proc-macro"
         ]
       },
       "name": "proc-macro2",
@@ -20861,6 +21036,10 @@
         "host-c-windows": [
           "default",
           "proc-macro"
+        ],
+        "identity-storage": [
+          "default",
+          "proc-macro"
         ]
       },
       "name": "quote",
@@ -21062,6 +21241,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -21238,6 +21418,10 @@
     },
     {
       "graphs": {
+        "identity-storage": [
+          "default",
+          "std"
+        ],
         "storage-redb": [
           "default",
           "std"
@@ -21788,6 +21972,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -22467,6 +22652,10 @@
           "std"
         ],
         "host-c-windows": [
+          "default",
+          "std"
+        ],
+        "identity-storage": [
           "default",
           "std"
         ],
@@ -23332,6 +23521,9 @@
         "host-c-windows": [
           "zeroize"
         ],
+        "identity-storage": [
+          "zeroize"
+        ],
         "ios": [
           "zeroize"
         ],
@@ -23573,6 +23765,7 @@
           "alloc",
           "rand_core"
         ],
+        "identity-storage": [],
         "ios": [
           "alloc",
           "rand_core"
@@ -24467,6 +24660,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -24860,6 +25054,9 @@
           "const-generics"
         ],
         "host-c-windows": [
+          "const-generics"
+        ],
+        "identity-storage": [
           "const-generics"
         ],
         "ios": [
@@ -25393,6 +25590,17 @@
           "proc-macro",
           "visit",
           "visit-mut"
+        ],
+        "identity-storage": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit"
         ]
       },
       "name": "syn",
@@ -27710,6 +27918,9 @@
         "host-c-windows": [
           "const-generics"
         ],
+        "identity-storage": [
+          "const-generics"
+        ],
         "ios": [
           "const-generics"
         ],
@@ -27846,7 +28057,8 @@
     },
     {
       "graphs": {
-        "halow-headless": []
+        "halow-headless": [],
+        "identity-storage": []
       },
       "name": "unicode-ident",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -28381,6 +28593,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "ios": [],
         "nrf52840": [],
         "wasm": []
@@ -29539,6 +29752,10 @@
           "precomputed-tables",
           "static_secrets"
         ],
+        "identity-storage": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
         "ios": [
           "precomputed-tables",
           "static_secrets"
@@ -30148,6 +30365,24 @@
     },
     {
       "graphs": {
+        "identity-storage": [
+          "derive",
+          "zeroize_derive"
+        ]
+      },
+      "name": "zeroize",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 33,
+        "externs": 0,
+        "functions": 4,
+        "impls": 1,
+        "tokens": 38
+      },
+      "version": "1.9.1"
+    },
+    {
+      "graphs": {
         "android": [],
         "contact-card": [],
         "daemon-linux": [],
@@ -30186,6 +30421,7 @@
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
+        "identity-storage": [],
         "wasm": []
       },
       "name": "zeroize_derive",
