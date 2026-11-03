@@ -691,6 +691,8 @@ jobs:
         include:
           - platform: linux
             runner: ubuntu-24.04
+          - platform: macos
+            runner: macos-15
     env:
       RUSTUP_TOOLCHAIN: "1.96.0"
     steps:
@@ -711,10 +713,11 @@ jobs:
           shared-key: service-runtime-${{ matrix.platform }}
           workspaces: |
             .
+            prns-service-runtime/bindings/uniffi
       - name: Install Linux native development packages
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Check service runtime
+      - name: Check service runtime and selected binding profiles
         if: runner.os == 'Linux'
         run: >-
           python3 validation/run.py run
@@ -723,7 +726,19 @@ jobs:
           --suite service-runtime-without-connections
           --suite service-runtime-tests
           --suite service-runtime-clippy
+          --suite native-service-bindings
+          --suite native-service-bindings-selected
+          --suite native-service-bindings-clippy
           --suite service-runtime-msrv
+          --suite native-service-bindings-msrv-default
+          --suite native-service-bindings-msrv-selected
+          --expected-sha "$GITHUB_SHA"
+      - name: Check both Swift consumers
+        if: runner.os == 'macOS'
+        run: >-
+          python3 validation/run.py run
+          --suite native-service-bindings-swift
+          --suite native-connections-bindings-swift
           --expected-sha "$GITHUB_SHA"
       - name: Retain validation evidence
         if: always()

@@ -416,6 +416,7 @@ class WorkflowSchedulingTests(unittest.TestCase):
         self.assertIn('"$SERVICE_RUNTIME_RESULT"', jobs["release-critical"])
         release = (ROOT / ".github/workflows/release-readiness.yml").read_text()
         self.assertIn("matrix.id == 'service-runtime-msrv'", release)
+        self.assertIn("startsWith(matrix.id, 'native-service-bindings-msrv-')", release)
 
     def test_deployment_deferral_does_not_accept_fake_qualification_inputs(self) -> None:
         workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()

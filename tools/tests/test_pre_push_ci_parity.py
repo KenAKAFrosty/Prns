@@ -81,10 +81,18 @@ class PrePushCiParityTests(unittest.TestCase):
         codec_suites = self.reusable_suites({"prns-contact-card/src/api.rs"}, "Linux")[0]
         self.assertFalse({"identity-key-bindings", "identity-catalog-bindings"} & codec_suites)
 
-    def test_service_runtime_selects_owned_profiles(self) -> None:
-        rust = {"service-runtime-minimal", "service-runtime-tests", "service-runtime-msrv"}
-        for system in ("Linux", "Darwin", "Windows"):
-            self.assertTrue(rust <= self.reusable_suites({"prns-service-runtime/src/groups/mod.rs"}, system)[0])
+    def test_service_runtime_selects_owned_profiles_and_only_local_swift(self) -> None:
+        rust = {"service-runtime-minimal", "service-runtime-tests", "service-runtime-msrv",
+                "native-service-bindings", "native-service-bindings-selected",
+                "native-service-bindings-msrv-default", "native-service-bindings-msrv-selected"}
+        swift = {"native-service-bindings-swift", "native-connections-bindings-swift"}
+        for path in ("prns-service-runtime/src/groups/mod.rs", "prns-service-runtime/bindings/uniffi/src/lib.rs"):
+            with self.subTest(path=path):
+                self.assertTrue(rust <= self.reusable_suites({path}, "Linux")[0])
+                self.assertTrue(rust | swift <= self.reusable_suites({path}, "Darwin")[0])
+                self.assertFalse(swift & self.reusable_suites({path}, "Linux")[0])
+                self.assertFalse(swift & self.reusable_suites({path}, "Windows")[0])
+        self.assertTrue(swift <= self.reusable_suites({"tools/uniffi/tooling.py"}, "Darwin")[0])
 
     def test_core_change_checks_root_feature_and_native_consumers(self) -> None:
         names = self.gate_names({"prns-core/src/engine.rs"})

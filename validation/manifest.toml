@@ -73,6 +73,7 @@ cargo_lock_workspaces = [
     "prns-host/bindings/uniffi",
     "prns-host/bindings/uniffi/image",
     "prns-host/impls/runtime",
+  "prns-service-runtime/bindings/uniffi",
 ]
 cargo_manifests = [
     "prns-groups/bindings/uniffi/Cargo.toml",
@@ -170,6 +171,8 @@ cargo_manifests = [
     "prns-host/bindings/uniffi/image/Cargo.toml",
     "prns-host/impls/runtime/Cargo.toml",
   "prns-service-runtime/Cargo.toml",
+  "prns-service-runtime/bindings/uniffi/Cargo.toml",
+  "prns-service-runtime/bindings/uniffi/image/Cargo.toml",
 ]
 format_manifests = [
     "prns-identities/Cargo.toml",
@@ -198,6 +201,7 @@ format_manifests = [
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",
     "validation/simulation/Cargo.toml",
+  "prns-service-runtime/bindings/uniffi/Cargo.toml",
 ]
 
 [registry.format_package_overrides]
@@ -2940,6 +2944,66 @@ inputs = ["Cargo.toml", "Cargo.lock", "prns-service-runtime", "prns-storage", "p
 artifacts = "validation-artifacts/results/service-runtime-clippy"
 
 [[suite]]
+id = "native-service-bindings"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-service-runtime/bindings/uniffi/Cargo.toml", "--workspace", "--all-targets"]
+inputs = ["prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-macros", "prns-runtime", "prns-interfaces", "prns-ffi", "prns-contact-card"]
+artifacts = "validation-artifacts/results/native-service-bindings"
+
+[[suite]]
+id = "native-service-bindings-selected"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-service-runtime/bindings/uniffi/Cargo.toml", "--workspace", "--all-targets", "--all-features"]
+inputs = ["prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-macros", "prns-runtime", "prns-interfaces", "prns-ffi", "prns-contact-card"]
+artifacts = "validation-artifacts/results/native-service-bindings-selected"
+
+[[suite]]
+id = "native-service-bindings-clippy"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["cargo", "clippy", "--locked", "--manifest-path", "prns-service-runtime/bindings/uniffi/Cargo.toml", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]
+inputs = ["prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-macros", "prns-runtime", "prns-interfaces", "prns-ffi", "prns-contact-card"]
+artifacts = "validation-artifacts/results/native-service-bindings-clippy"
+
+[[suite]]
+id = "native-service-bindings-swift"
+domain = "platform"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "prns-service-runtime/bindings/uniffi/tests/check_swift.py"]
+inputs = ["prns-service-runtime", "prns-storage", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-macros", "prns-runtime", "prns-interfaces", "prns-ffi", "prns-contact-card", "tools/uniffi"]
+artifacts = "validation-artifacts/results/native-service-bindings-swift"
+
+[[suite]]
+id = "native-connections-bindings-swift"
+domain = "platform"
+group = "native-bindings"
+tiers = ["pr", "release", "scheduled"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "prns-service-runtime/bindings/uniffi/tests/check_swift.py", "--connections"]
+inputs = ["prns-service-runtime", "prns-storage", "prns-host", "prns-identities", "prns-groups", "prns-core", "prns-macros", "prns-runtime", "prns-interfaces", "prns-ffi", "prns-contact-card", "tools/uniffi", "tools/repo/host_contract", "tools/repo/check-host-uniffi.py"]
+artifacts = "validation-artifacts/results/native-connections-bindings-swift"
+
+[[suite]]
 id = "service-runtime-msrv"
 domain = "native"
 group = "native-bindings"
@@ -2950,3 +3014,27 @@ timeout_seconds = 1800
 command = ["rustup", "run", "1.90.0", "cargo", "check", "--locked", "-p", "prns-service-runtime", "--all-features", "--all-targets"]
 inputs = ["Cargo.toml", "Cargo.lock", "prns-service-runtime", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-macros", "prns-runtime", "prns-interfaces", "prns-ffi", "prns-contact-card", "personal-rns"]
 artifacts = "validation-artifacts/results/service-runtime-msrv"
+
+[[suite]]
+id = "native-service-bindings-msrv-default"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["rustup", "run", "1.90.0", "cargo", "check", "--locked", "--manifest-path", "prns-service-runtime/bindings/uniffi/Cargo.toml", "--workspace", "--all-targets"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-service-runtime", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-macros", "prns-runtime", "prns-interfaces", "prns-ffi", "prns-contact-card", "personal-rns"]
+artifacts = "validation-artifacts/results/native-service-bindings-msrv-default"
+
+[[suite]]
+id = "native-service-bindings-msrv-selected"
+domain = "native"
+group = "native-bindings"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["rustup", "run", "1.90.0", "cargo", "check", "--locked", "--manifest-path", "prns-service-runtime/bindings/uniffi/Cargo.toml", "--workspace", "--all-targets", "--features", "archive,text,contact-card,connections"]
+inputs = ["Cargo.toml", "Cargo.lock", "prns-service-runtime", "prns-identities", "prns-groups", "prns-host", "prns-core", "prns-macros", "prns-runtime", "prns-interfaces", "prns-ffi", "prns-contact-card", "personal-rns"]
+artifacts = "validation-artifacts/results/native-service-bindings-msrv-selected"

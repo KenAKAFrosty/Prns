@@ -15,6 +15,12 @@ fi
 python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
+    "service-runtime-connections-linux|prns-service-runtime/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu|connections"
+    "service-runtime-connections-macos|prns-service-runtime/bindings/uniffi/image/Cargo.toml|aarch64-apple-darwin|connections"
+    "service-runtime-linux|prns-service-runtime/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu"
+    "service-runtime-selected-linux|prns-service-runtime/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu|archive text contact-card connections"
+    "service-runtime-macos|prns-service-runtime/bindings/uniffi/image/Cargo.toml|aarch64-apple-darwin"
+    "service-runtime-selected-macos|prns-service-runtime/bindings/uniffi/image/Cargo.toml|aarch64-apple-darwin|archive text contact-card connections"
     "service-runtime-groups-linux|prns-service-runtime/Cargo.toml|x86_64-unknown-linux-gnu|groups"
     "service-runtime-groups-network-linux|prns-service-runtime/Cargo.toml|x86_64-unknown-linux-gnu|groups-network archive"
     "service-runtime-groups-macos|prns-service-runtime/Cargo.toml|aarch64-apple-darwin|groups"

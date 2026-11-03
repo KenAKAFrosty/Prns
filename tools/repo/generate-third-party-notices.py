@@ -20,6 +20,10 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "THIRD_PARTY_NOTICES.md"
 ABOUT = ROOT / "about.toml"
 GRAPH_FEATURES = {'Group secure storage': ('prns-groups-store/secure',),
+    'Service runtime connections Linux': ('connections',),
+    'Service runtime connections macOS': ('connections',),
+    'Service runtime selected Linux': ('archive', 'text', 'contact-card', 'connections'),
+    'Service runtime selected macOS': ('archive', 'text', 'contact-card', 'connections'),
     'Service runtime groups Linux': ('groups',),
     'Service runtime groups network Linux': ('groups-network', 'archive'),
     'Service runtime groups macOS': ('groups',),
@@ -43,6 +47,12 @@ GRAPH_FEATURES = {'Group secure storage': ('prns-groups-store/secure',),
  'Host runtime connections': ('connections',),
  'Group headless peer': ('headless',)}
 GRAPHS = (('Group MLS adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+    ('Service runtime connections Linux', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+    ('Service runtime connections macOS', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-darwin'),
+    ('Service runtime Linux', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+    ('Service runtime selected Linux', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+    ('Service runtime macOS', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-darwin'),
+    ('Service runtime selected macOS', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-darwin'),
     ('Service runtime groups Linux', 'prns-service-runtime/Cargo.toml', 'x86_64-unknown-linux-gnu'),
     ('Service runtime groups network Linux', 'prns-service-runtime/Cargo.toml', 'x86_64-unknown-linux-gnu'),
     ('Service runtime groups macOS', 'prns-service-runtime/Cargo.toml', 'aarch64-apple-darwin'),

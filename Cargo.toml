@@ -32,6 +32,7 @@ default-members = [
     "personal-hopspot/core",
 ]
 exclude = [
+    "prns-service-runtime/bindings/uniffi",
     "prns-groups/security/mls-rs",
     "prns-host/impls/runtime",
     "prns-host/impls/snapshot",

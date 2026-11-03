@@ -31,6 +31,10 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "audits" / "unsafe-snapshot.json"
 GRAPH_FEATURES = {'group-secure-storage': ('prns-groups-store/secure',),
+    'service-runtime-connections-linux': ('connections',),
+    'service-runtime-connections-macos': ('connections',),
+    'service-runtime-selected-linux': ('archive', 'text', 'contact-card', 'connections'),
+    'service-runtime-selected-macos': ('archive', 'text', 'contact-card', 'connections'),
     'service-runtime-groups-linux': ('groups',),
     'service-runtime-groups-network-linux': ('groups-network', 'archive'),
     'service-runtime-groups-macos': ('groups',),
@@ -54,6 +58,12 @@ GRAPH_FEATURES = {'group-secure-storage': ('prns-groups-store/secure',),
  'host-runtime-connections-linux': ('connections',),
  'group-headless-peer': ('headless',)}
 GRAPHS = (('group-mls-adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+    ('service-runtime-connections-linux', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+    ('service-runtime-connections-macos', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-darwin'),
+    ('service-runtime-linux', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+    ('service-runtime-selected-linux', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+    ('service-runtime-macos', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-darwin'),
+    ('service-runtime-selected-macos', 'prns-service-runtime/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-darwin'),
     ('service-runtime-groups-linux', 'prns-service-runtime/Cargo.toml', 'x86_64-unknown-linux-gnu'),
     ('service-runtime-groups-network-linux', 'prns-service-runtime/Cargo.toml', 'x86_64-unknown-linux-gnu'),
     ('service-runtime-groups-macos', 'prns-service-runtime/Cargo.toml', 'aarch64-apple-darwin'),

@@ -16,6 +16,8 @@ Select `standalone` for an owner that creates and retains its service executor
 and host. It includes `groups-network`; `connections` additionally selects the
 host's saved-profile binding. The lower `groups-network` factory instead uses a
 supplied host and executor, whose lifetime remains the embedding's responsibility.
+The [binding adapter](bindings/uniffi/README.md) projects the standalone owner;
+its optional `text` feature belongs to the group library, not this runtime.
 
 ## Choose a construction path
 
@@ -42,6 +44,9 @@ For a standalone consumer:
    local clients and history.
 5. Retain and await the completion returned by `close()` to drain the entire
    owner. Dropping a client or a waiter does not establish cleanup.
+
+The [foreign binding guide](bindings/uniffi/README.md) describes the same flow
+through generated construction and cleanup wrappers.
 
 ## One owner and ordinary clients
 
@@ -295,7 +300,10 @@ python3 validation/run.py run --suite service-runtime-tests --suite service-runt
 
 The minimal checks cover empty and identity-only feature selections. The
 standalone check keeps saved connections disabled; the all-feature checks cover
-the selected group/network/archive and connection owners. Suite definitions own toolchain and platform selection; these commands do not establish phone, radio, or signed-package behavior.
+the selected group/network/archive and connection owners. See the
+[binding checks](bindings/uniffi/README.md#verification) for actual foreign
+construction. Suite definitions own toolchain and platform selection; these
+commands do not establish phone, radio, or signed-package behavior.
 
 `tests/local.rs` exercises real production construction, dynamic schemas,
 ordinary group clients, admission before retained acceptance, retained
