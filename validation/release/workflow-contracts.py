@@ -784,8 +784,9 @@ def validate() -> list[str]:
             errors.append(f"standalone SDK CI omits validation suite {suite}")
     for job, suites in (
         ("react-native-apple-platform", ("react-native-apple-platform",)),
-        ("react-native-android", ("react-native-android-image",)),
-        ("react-native-apple-image", ("react-native-apple-image",)),
+        ("react-native-android", ("react-native-android-image", "react-native-android-consumer")),
+        ("react-native-apple-image", ("react-native-apple-image", "react-native-mobile-archive",
+                                      "react-native-apple-consumer")),
     ):
         for suite in suites:
             if f"--suite {suite}" not in ci_jobs.get(job, ""):

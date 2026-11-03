@@ -2942,6 +2942,18 @@ inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi"]
 artifacts = "validation-artifacts/results/react-native-android-image"
 
 [[suite]]
+id = "react-native-android-consumer"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "node"
+timeout_seconds = 1800
+command = ["npm", "--prefix", "prns-react-native", "run", "test:consumer", "--", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi"]
+artifacts = "validation-artifacts/results/react-native-android-consumer"
+
+[[suite]]
 id = "react-native-apple-image"
 domain = "platform"
 group = "react-native-mobile"
@@ -2952,3 +2964,27 @@ timeout_seconds = 3600
 command = ["__RUNNER_PYTHON__", "prns-react-native/tools/generate.py", "ios", "--sim-only", "--targets", "aarch64-apple-ios-sim"]
 inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi"]
 artifacts = "validation-artifacts/results/react-native-apple-image"
+
+[[suite]]
+id = "react-native-mobile-archive"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "node"
+timeout_seconds = 300
+command = ["npm", "--prefix", "prns-react-native", "run", "pack:check", "--", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi"]
+artifacts = "validation-artifacts/results/react-native-mobile-archive"
+
+[[suite]]
+id = "react-native-apple-consumer"
+domain = "platform"
+group = "react-native-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "node"
+timeout_seconds = 1800
+command = ["node", "prns-react-native/tools/detached-consumer.mjs", "--ios", "--require-ios", "--keep"]
+inputs = ["prns-react-native", "prns-host", "prns-js", "tools/uniffi"]
+artifacts = "validation-artifacts/results/react-native-apple-consumer"

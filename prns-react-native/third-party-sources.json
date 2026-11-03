@@ -90,7 +90,7 @@
     },
     {
       "path": "prns-react-native/package.json",
-      "sha256": "36f01ad92cadfbebb9f96ecfba2cb64f18312dafe37cf9d7ed521612de717079"
+      "sha256": "bb53e247bc3cd8e3bcf5c8a65609a62bd267e938f7f788d89e1487b0084cbe02"
     },
     {
       "path": "prns-react-native/patches/@ubjs+react-native+0.31.0-6.patch",

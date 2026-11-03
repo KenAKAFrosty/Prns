@@ -20,7 +20,7 @@ is required; Expo Go cannot load the Rust image.
 | Selected native image | `providers/default.json`, `tools/generate.py`, and `outputs.json` |
 | Android lifecycle, Bluetooth and LAN | `android/src/main/` plus the JNI bridge in `platform/android/` |
 | iOS authorization, restoration and path changes | `ios/Prns*.swift`; native transport construction remains host-owned |
-| Package attribution and source checks | `tools/package_notices.py`, `tests/` and platform tests |
+| Package and consumer checks | `tools/detached-consumer.mjs`, `tools/package_notices.py`, `tests/` and platform tests |
 
 The default provider selects the reusable host image. Product compositions supply
 another provider and use the same SDK implementation; they do not add domain
@@ -28,7 +28,8 @@ methods to its JavaScript wrapper. Saved connection profiles and Remote Control
 are host capabilities, while the SDK supplies mobile callbacks and ownership
 mechanics. Notification copy, installation policy, startup settings and storage
 locations remain consumer choices. See the repository's
-[capability overview](../docs/composable-features.md).
+[capability overview](../docs/composable-features.md) and the
+[qualification guide](docs/qualification.md).
 
 ## Source quickstart
 
@@ -297,6 +298,9 @@ backend-selecting root entry point.
 
 ## Qualification
 
+See the [qualification guide](docs/qualification.md) for repeatable checks,
+phone acceptance and the remaining publication requirements.
+
 Strict TypeScript checking covers the generated binding/adapter, SDK native/web
 exports, and example. Iterator tests cover abort before readiness, abort after
 wake before drain, return during a pending wait, concurrent waits, and failure.
@@ -304,8 +308,41 @@ Session tests cover joined failure cleanup, shared stop outcomes and retry after
 unavailable ownership. Provider tests reject missing/duplicate image selections.
 `npm run verify` runs the TypeScript, JavaScript and provider checks.
 
-These source checks do not qualify native package distribution or installed
-phone behavior. Build and exercise the selected image on each target platform.
+After the source quickstart, dedicated SDK CI jobs verify the generated default
+provider, contract conformance, package checks, and native builds independently.
+The commands below run from `prns-react-native/`.
+
+`npm run test:consumer`
+installs the packed SDK and core package alongside the exact registry runtime
+versions outside this checkout. It verifies the runtime lockfile URLs and
+integrities, applies the SDK-shipped patch, then checks the example and compiles
+the packaged Android SDK. It
+requires a built default Android image. To check an already-built aggregate image,
+run `node tools/detached-consumer.mjs --sdk /path/to/app/target/host-sdk --aggregate --android --keep`
+from this source package. Add `--bindings /absolute/path/to/composition/bindings` to pack and
+TypeScript-check the composition's native export against the same SDK. The
+consumer uses npm overrides to resolve private workspace dependencies to those
+exact packed SDK/core and registry runtime inputs.
+Both modes reject missing, duplicate, or mismatched Android images. `--keep`
+retains the consumer, archive hashes, installed image hashes, and validation log.
+These checks compile packages; they do not build a new APK or replace device
+qualification.
+
+After building both native targets, `npm run pack:check` checks the actual npm
+archive for the selected Android image and iOS XCFramework, including each
+framework binary and its metadata. Use `npm run pack:check -- --sdk /path/to/app/target/host-sdk --aggregate --keep`
+for an aggregate provider and a retained archive/receipt. The check does not
+compile or install a mobile app, and a simulator-only framework only qualifies
+simulator packaging. The full consumer command also validates any included Apple
+framework; add `--require-ios` to reject an absent framework.
+
+On macOS, `node tools/detached-consumer.mjs --ios --keep` builds the packed SDK's
+complete Expo example for an Apple Silicon simulator, including the
+CocoaPod and generated Swift. It requires a matching simulator framework,
+Xcode and CocoaPods. Its receipt reports `iosSdkCompilation` separately from
+archive contents and device qualification. Temporary dependencies, caches and
+build outputs stay inside the detached consumer. Dedicated SDK CI runs both the
+Android consumer compile and this unsigned iOS consumer build.
 
 The Expo module checks the image and supplies a private storage path. Shared
 Android BLE/GATT pumps, bridge ownership, startup admission, radio recovery,

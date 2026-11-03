@@ -1402,6 +1402,8 @@ jobs:
           npm --prefix prns-react-native run patch:runtime
       - name: Build the standalone Android arm64 image
         run: python3 validation/run.py run --suite react-native-android-image --expected-sha "$GITHUB_SHA"
+      - name: Install and compile the packed detached Android consumer
+        run: python3 validation/run.py run --suite react-native-android-consumer --expected-sha "$GITHUB_SHA"
       - name: Upload the selected Android image for the combined archive gate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -1467,6 +1469,10 @@ jobs:
           path: prns-react-native/android/src/main/jniLibs
       - name: Build the standalone iOS simulator framework
         run: python3 validation/run.py run --suite react-native-apple-image --expected-sha "$GITHUB_SHA"
+      - name: Verify the npm archive contains both selected native images
+        run: python3 validation/run.py run --suite react-native-mobile-archive --expected-sha "$GITHUB_SHA"
+      - name: Compile the packaged Expo and Swift SDK in a detached iOS consumer
+        run: python3 validation/run.py run --suite react-native-apple-consumer --expected-sha "$GITHUB_SHA"
       - name: Upload Apple SDK validation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
