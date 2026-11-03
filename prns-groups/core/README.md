@@ -62,7 +62,7 @@ capacity. The native carrier and runners consume this policy; an embedded
 executor can reuse it with caller-owned timers and buffers. Policy decisions
 are estimates, not airtime reservations or delivery evidence.
 
-Read the architecture, behavioral contract,
-resource policies, and [embedded support guide](docs/embedded.md).
+Read the [architecture](../docs/design.md), [behavioral contract](../docs/behavior.md),
+[resource policies](../docs/policies.md), and [embedded support guide](docs/embedded.md).
 The [integration boundary](docs/embedded-participants.md) distinguishes reusable
 library seams from the complete board-member service that is not implemented.

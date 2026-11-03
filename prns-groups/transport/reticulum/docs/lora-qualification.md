@@ -97,4 +97,4 @@ logs, diagnostic caps and restoration results with each device trial.
 - [Bluetooth handshake](../../../../prns-core/src/interfaces/bluetooth_auto/handshake.rs): discovery-set matching.
 - [Tokio Bluetooth runtime](../../../../prns-interfaces/impls/tokio/src/bluetooth_auto/runtime.rs): replacement and peer teardown.
 - [Board management](../../../../personal-hopspot/embedded/esp32/src/s3/remote_control.rs): persistence, rollback and power operations.
-- [Scheduling policy](../../../core/src/sync.rs) and group runner: bounded network work.
+- [Scheduling policy](../../../core/src/sync.rs) and [group runner](../../../src/hub.rs): bounded network work.

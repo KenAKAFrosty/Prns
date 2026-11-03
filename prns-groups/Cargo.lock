@@ -2334,6 +2334,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-groups"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "futures-util",
+ "getrandom 0.2.17",
+ "log",
+ "personal-rns",
+ "prns-contact-card",
+ "prns-group-text",
+ "prns-groups-core",
+ "prns-groups-mls",
+ "prns-groups-reticulum",
+ "prns-groups-service",
+ "prns-groups-store",
+ "prns-groups-store-redb",
+ "prns-host",
+ "prns-host-runtime",
+ "prns-runtime",
+ "prns-storage",
+ "redb",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "uniffi",
+ "zeroize",
+]
+
+[[package]]
 name = "prns-groups-core"
 version = "0.1.0"
 dependencies = [
@@ -2527,6 +2558,13 @@ dependencies = [
  "prns-runtime",
  "rtrb",
  "tokio",
+]
+
+[[package]]
+name = "prns-storage"
+version = "0.1.0"
+dependencies = [
+ "redb",
 ]
 
 [[package]]

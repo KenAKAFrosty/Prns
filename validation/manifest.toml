@@ -691,7 +691,7 @@ platform = "linux"
 toolchain = "python"
 timeout_seconds = 600
 command = ["bash", "validation/release/contracts.sh"]
-inputs = ["tools/tasks.toml", "tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py", "validation/release/acceptance-doc-contracts.py", "release/acceptance/README.md", "release/acceptance/QUALIFICATION.md", "release/acceptance/rosters/README.md", "release/deployment", "release/flash/README.md", "release/flash/boards.json", "docs/release-dependency-audit.md"]
+inputs = ["tools/build/group-scale.py", "tools/tasks.toml", "tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py", "validation/release/acceptance-doc-contracts.py", "release/acceptance/README.md", "release/acceptance/QUALIFICATION.md", "release/acceptance/rosters/README.md", "release/deployment", "release/flash/README.md", "release/flash/boards.json", "docs/release-dependency-audit.md"]
 artifacts = "validation-artifacts/results/release-contracts"
 
 [[suite]]
@@ -2640,7 +2640,7 @@ tiers = ["pr"]
 platform = "any"
 toolchain = "stable"
 timeout_seconds = 1200
-command = ["cargo", "test", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "--workspace", "--features", "prns-groups-store/secure,prns-groups-reticulum/contact-card"]
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "--workspace", "--features", "prns-groups-store/secure,prns-groups-reticulum/contact-card,prns-groups/archive"]
 inputs = ["prns-groups/Cargo.toml", "prns-groups/Cargo.lock", "prns-groups/core", "prns-groups/store", "prns-groups/service", "prns-groups/transport/reticulum", "prns-groups/profiles/text", "prns-groups", "prns-groups/security/mls-rs", "prns-core", "prns-macros", "prns-host", "personal-rns", "prns-interfaces", "prns-runtime", "prns-storage", "prns-contact-card"]
 artifacts = "validation-artifacts/results/group-communication-tests"
 
@@ -2652,7 +2652,7 @@ tiers = ["pr"]
 platform = "any"
 toolchain = "stable"
 timeout_seconds = 1200
-command = ["cargo", "clippy", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "--workspace", "--all-targets", "--features", "prns-groups-store/secure,prns-groups-reticulum/contact-card", "--", "-D", "warnings"]
+command = ["cargo", "clippy", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "--workspace", "--all-targets", "--features", "prns-groups-store/secure,prns-groups/headless,prns-groups-reticulum/contact-card,prns-groups/archive", "--", "-D", "warnings"]
 inputs = ["prns-groups/Cargo.toml", "prns-groups/Cargo.lock", "prns-groups/core", "prns-groups/store", "prns-groups/service", "prns-groups/transport/reticulum", "prns-groups/profiles/text", "prns-groups", "prns-groups/security/mls-rs", "prns-core", "prns-macros", "prns-host", "personal-rns", "prns-interfaces", "prns-runtime", "prns-storage", "prns-contact-card"]
 artifacts = "validation-artifacts/results/group-communication-clippy"
 
@@ -2812,3 +2812,15 @@ timeout_seconds = 900
 command = ["rustup", "run", "1.90.0", "cargo", "check", "--locked", "--manifest-path", "prns-host/impls/runtime/Cargo.toml", "--all-targets", "--features", "connections"]
 inputs = ["prns-host/impls/runtime", "prns-host/core", "prns-storage", "personal-rns", "prns-core", "prns-runtime", "prns-interfaces", "prns-ffi"]
 artifacts = "validation-artifacts/results/host-runtime-msrv"
+
+[[suite]]
+id = "group-headless-process"
+domain = "native"
+group = "group-communication"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "-p", "prns-groups", "--features", "headless", "--test", "headless_process"]
+inputs = ["prns-groups", "prns-host", "personal-rns", "prns-interfaces", "prns-runtime", "prns-core", "prns-macros", "prns-storage"]
+artifacts = "validation-artifacts/results/group-headless-process"

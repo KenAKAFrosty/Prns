@@ -64,7 +64,7 @@ The lower MLS adapter exposes update/rekey operations and bounded prior epochs.
 The managed API does not schedule periodic member refresh, an inactive-member
 removal timer, a timed grace period or automatic compromise recovery. Owner-only
 updates would not by themselves refresh every compromised member's secrets.
-See retention policies.
+See [retention policies](../../docs/policies.md#delayed-delivery-across-routine-rekeys).
 
 ## Atomic processing and recovery
 
@@ -106,7 +106,7 @@ member. There is no silent downgrade to public content when private admission fa
 
 Review [credential and MLS policy](../mls-rs/src/policy.rs),
 [transaction composition](../mls-rs/tests/composition.rs),
-managed lifecycle and
+[managed lifecycle](../../enrollment.md) and
 [embedded boundaries](../../core/docs/embedded.md) together with the selected
 dependency graph. Host tests and strict lints exercise those contracts; they do not
 replace cryptographic review or platform-specific storage qualification.

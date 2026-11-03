@@ -158,7 +158,7 @@ and opens current state on subsequent starts instead of importing again.
 These plaintext snapshots contain initial MLS secrets and are not production
 backup/restore APIs. Installing the same endpoint snapshot twice forks its state;
 retaining it also retains initial ratchet secrets. See the
-development enrollment guide.
+[development enrollment guide](../../development.md).
 
 ## Limits and remaining work
 

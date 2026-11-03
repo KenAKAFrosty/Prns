@@ -30,7 +30,8 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "audits" / "unsafe-snapshot.json"
-GRAPH_FEATURES = {'storage-redb': ('redb',),
+GRAPH_FEATURES = {'group-secure-storage': ('prns-groups-store/secure',),
+ 'storage-redb': ('redb',),
  'identity-key-card-linux': ('contact-card',),
  'identity-key-card-macos': ('contact-card',),
  'identity-catalog-card-linux': ('catalog', 'contact-card'),
@@ -42,8 +43,11 @@ GRAPH_FEATURES = {'storage-redb': ('redb',),
  'host-connections-ios': ('connections',),
  'host-connections-linux': ('connections',),
  'host-connections-macos': ('connections',),
- 'host-runtime-connections-linux': ('connections',)}
+ 'host-runtime-connections-linux': ('connections',),
+ 'group-headless-peer': ('headless',)}
 GRAPHS = (('group-mls-adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('group-secure-storage', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('group-libraries', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('engine', 'Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('host-c-linux', 'prns-host/abi/c/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('host-c-macos', 'prns-host/abi/c/Cargo.toml', 'aarch64-apple-darwin'),
@@ -118,7 +122,8 @@ GRAPHS = (('group-mls-adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
  ('host-runtime-linux', 'prns-host/impls/runtime/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('expo-host-linux', 'prns-host/bindings/uniffi/image/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('expo-android', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-linux-android'),
- ('expo-ios', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-ios'))
+ ('expo-ios', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-ios'),
+ ('group-headless-peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'))
 UNSAFE_EXCEPTIONS = {
     "prns-core",
     "prns-ffi",

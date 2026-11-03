@@ -124,7 +124,7 @@ uses a fresh credential and store incarnation, not clearing this terminal marker
 `LocalIdentity::sign_enrollment` and `MemberBinding::verify_enrollment` sign and
 verify domain-separated public metadata without exporting private keys. Pin this
 key using an authenticated enrollment channel before trusting it. The native
-enrollment engine stages owner-signed
+[enrollment engine](../../src/enrollment/mod.rs) stages owner-signed
 manifests and exact Commit/Welcome bytes with MLS operations; its catalog owns
 local identity admission and durable retries. [Managed policy tests](tests/managed_policy.rs)
 exercise configuration stability, exact-roster rollback and signature rejection.

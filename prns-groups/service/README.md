@@ -135,7 +135,7 @@ deadline is not extended by retry. Deletion is not delivery: no missing receipt
 becomes a received receipt. `expiry_floor()` lets a caller apply the same persisted
 clock floor to its own request-retention policy; a clock rollback cannot resurrect
 expired content. This policy bounds the service's delivery and inventory cache.
-The managed group's optional archive
+The managed group's optional [archive](../usage.md#features-and-construction)
 retains local application history until explicit deletion, independently of
 delivery expiry. Neither policy establishes physical secret erasure.
 
@@ -215,7 +215,7 @@ cover canonical framing and malformed input. The MLS and redb adapters separatel
 own crypto rollback and backend crash-boundary tests.
 
 These are host library checks. The [Reticulum carrier](../transport/reticulum/README.md)
-owns network exchanges, and the group owner adds managed enrollment,
+owns network exchanges, and the [group owner](../usage.md) adds managed enrollment,
 scheduling and foreign consumers. Physical storage protection, mobile execution
 and firmware resources require evidence for their actual embeddings.
 
@@ -232,7 +232,7 @@ intents stop emitting; the next operation reconstructs logical reservations for
 the new era. `in_current_era` lets application projections label unfinished old
 messages as interrupted without manufacturing delivery evidence. This does not
 repair delivery across a membership change or remove historical bytes from physical storage.
-See managed enrollment for the owning lifecycle integration.
+See [managed enrollment](../enrollment.md) for the owning lifecycle integration.
 
 After local removal or closure, the last active descriptor can reopen the ledger
 for history queries. The MLS terminal marker prevents publication, incoming

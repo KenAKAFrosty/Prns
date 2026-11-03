@@ -7,6 +7,19 @@
       "target": "x86_64-unknown-linux-gnu"
     },
     {
+      "features": [
+        "prns-groups-store/secure"
+      ],
+      "manifest": "prns-groups/Cargo.toml",
+      "name": "group-secure-storage",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "manifest": "prns-groups/Cargo.toml",
+      "name": "group-libraries",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
       "manifest": "Cargo.toml",
       "name": "engine",
       "target": "x86_64-unknown-linux-gnu"
@@ -271,6 +284,14 @@
       "manifest": "prns-host/bindings/uniffi/image/Cargo.toml",
       "name": "expo-ios",
       "target": "aarch64-apple-ios"
+    },
+    {
+      "features": [
+        "headless"
+      ],
+      "manifest": "prns-groups/Cargo.toml",
+      "name": "group-headless-peer",
+      "target": "x86_64-unknown-linux-gnu"
     }
   ],
   "packages": [
@@ -312,6 +333,9 @@
       "graphs": {
         "group-mls-adapter": [
           "alloc"
+        ],
+        "group-secure-storage": [
+          "alloc"
         ]
       },
       "name": "aead",
@@ -327,7 +351,22 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc",
+          "getrandom",
+          "rand_core"
+        ],
+        "group-libraries": [
+          "alloc",
+          "getrandom",
+          "rand_core"
+        ],
         "group-mls-adapter": [
+          "alloc",
+          "getrandom",
+          "rand_core"
+        ],
+        "group-secure-storage": [
           "alloc",
           "getrandom",
           "rand_core"
@@ -365,6 +404,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -402,7 +444,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "zeroize"
+        ],
+        "group-libraries": [
+          "zeroize"
+        ],
         "group-mls-adapter": [
+          "zeroize"
+        ],
+        "group-secure-storage": [
           "zeroize"
         ]
       },
@@ -419,7 +470,28 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "aes",
+          "alloc",
+          "default",
+          "getrandom",
+          "zeroize"
+        ],
+        "group-libraries": [
+          "aes",
+          "alloc",
+          "default",
+          "getrandom",
+          "zeroize"
+        ],
         "group-mls-adapter": [
+          "aes",
+          "alloc",
+          "default",
+          "getrandom",
+          "zeroize"
+        ],
+        "group-secure-storage": [
           "aes",
           "alloc",
           "default",
@@ -875,6 +947,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -912,7 +987,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -993,7 +1071,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc"
+        ],
+        "group-libraries": [
+          "alloc"
+        ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-secure-storage": [
           "alloc"
         ]
       },
@@ -1097,6 +1184,21 @@
           "std"
         ],
         "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
           "alloc",
           "default",
           "std"
@@ -1220,7 +1322,16 @@
         "expo-ios": [
           "alloc"
         ],
+        "group-headless-peer": [
+          "alloc"
+        ],
+        "group-libraries": [
+          "alloc"
+        ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-secure-storage": [
           "alloc"
         ],
         "halow-appliance-manager": [
@@ -1442,6 +1553,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -1637,6 +1751,15 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "std"
+        ],
+        "group-libraries": [
+          "std"
+        ],
+        "group-secure-storage": [
+          "std"
+        ],
         "halow-headless": [
           "std"
         ],
@@ -1692,7 +1815,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -1778,7 +1904,16 @@
         "expo-ios": [
           "zeroize"
         ],
+        "group-headless-peer": [
+          "zeroize"
+        ],
+        "group-libraries": [
+          "zeroize"
+        ],
         "group-mls-adapter": [],
+        "group-secure-storage": [
+          "zeroize"
+        ],
         "halow-appliance-manager": [
           "zeroize"
         ],
@@ -1881,6 +2016,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -2041,6 +2179,45 @@
           "pin-project",
           "tokio-stream"
         ],
+        "group-headless-peer": [
+          "bluetoothd",
+          "custom_debug",
+          "dbus",
+          "dbus-crossroads",
+          "dbus-tokio",
+          "default",
+          "displaydoc",
+          "l2cap",
+          "lazy_static",
+          "pin-project",
+          "tokio-stream"
+        ],
+        "group-libraries": [
+          "bluetoothd",
+          "custom_debug",
+          "dbus",
+          "dbus-crossroads",
+          "dbus-tokio",
+          "default",
+          "displaydoc",
+          "l2cap",
+          "lazy_static",
+          "pin-project",
+          "tokio-stream"
+        ],
+        "group-secure-storage": [
+          "bluetoothd",
+          "custom_debug",
+          "dbus",
+          "dbus-crossroads",
+          "dbus-tokio",
+          "default",
+          "displaydoc",
+          "l2cap",
+          "lazy_static",
+          "pin-project",
+          "tokio-stream"
+        ],
         "host-c-linux": [
           "bluetoothd",
           "custom_debug",
@@ -2109,6 +2286,9 @@
       "graphs": {
         "daemon-linux": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -2129,6 +2309,9 @@
       "graphs": {
         "daemon-linux": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -2226,6 +2409,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -2422,6 +2608,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -2597,6 +2786,18 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "default",
           "std"
@@ -2740,6 +2941,15 @@
         "expo-ios": [
           "default"
         ],
+        "group-headless-peer": [
+          "default"
+        ],
+        "group-libraries": [
+          "default"
+        ],
+        "group-secure-storage": [
+          "default"
+        ],
         "halow-headless": [
           "default"
         ],
@@ -2877,6 +3087,15 @@
           "block-padding"
         ],
         "expo-ios": [
+          "block-padding"
+        ],
+        "group-headless-peer": [
+          "block-padding"
+        ],
+        "group-libraries": [
+          "block-padding"
+        ],
+        "group-secure-storage": [
           "block-padding"
         ],
         "halow-appliance-manager": [
@@ -3042,6 +3261,23 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": []
+      },
+      "name": "cc",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 13,
+        "externs": 0,
+        "functions": 2,
+        "impls": 2,
+        "tokens": 17
+      },
+      "version": "1.7.0"
+    },
+    {
+      "graphs": {
         "android": [],
         "expo-android": [],
         "host-connections-android": []
@@ -3107,7 +3343,10 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "identity-catalog-card-linux": [],
         "identity-catalog-card-macos": [],
@@ -3152,6 +3391,9 @@
     {
       "graphs": {
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-connections-linux": [],
@@ -3247,9 +3489,27 @@
           "rng",
           "zeroize"
         ],
+        "group-headless-peer": [
+          "cipher",
+          "rng",
+          "xchacha",
+          "zeroize"
+        ],
+        "group-libraries": [
+          "cipher",
+          "rng",
+          "xchacha",
+          "zeroize"
+        ],
         "group-mls-adapter": [
           "cipher",
           "xchacha"
+        ],
+        "group-secure-storage": [
+          "cipher",
+          "rng",
+          "xchacha",
+          "zeroize"
         ],
         "halow-appliance-manager": [
           "rng",
@@ -3359,6 +3619,9 @@
       "graphs": {
         "group-mls-adapter": [
           "zeroize"
+        ],
+        "group-secure-storage": [
+          "zeroize"
         ]
       },
       "name": "chacha20",
@@ -3376,6 +3639,9 @@
       "graphs": {
         "group-mls-adapter": [
           "alloc"
+        ],
+        "group-secure-storage": [
+          "alloc"
         ]
       },
       "name": "chacha20poly1305",
@@ -3391,7 +3657,19 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc",
+          "getrandom"
+        ],
+        "group-libraries": [
+          "alloc",
+          "getrandom"
+        ],
         "group-mls-adapter": [
+          "alloc",
+          "getrandom"
+        ],
+        "group-secure-storage": [
           "alloc",
           "getrandom"
         ]
@@ -3466,7 +3744,17 @@
         "expo-ios": [
           "block-padding"
         ],
+        "group-headless-peer": [
+          "block-padding"
+        ],
+        "group-libraries": [
+          "block-padding"
+        ],
         "group-mls-adapter": [
+          "zeroize"
+        ],
+        "group-secure-storage": [
+          "block-padding",
           "zeroize"
         ],
         "halow-appliance-manager": [
@@ -3552,7 +3840,19 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "block-buffer",
+          "stream-wrapper"
+        ],
+        "group-libraries": [
+          "block-buffer",
+          "stream-wrapper"
+        ],
         "group-mls-adapter": [
+          "block-buffer",
+          "stream-wrapper"
+        ],
+        "group-secure-storage": [
           "block-buffer",
           "stream-wrapper"
         ]
@@ -3815,7 +4115,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -3981,7 +4284,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -4250,7 +4556,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "cpubits",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -4276,7 +4585,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -4342,7 +4654,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -4526,6 +4841,18 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "default",
           "std"
@@ -4582,7 +4909,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -4749,6 +5079,32 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "crossbeam-deque",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 29,
+        "externs": 0,
+        "functions": 6,
+        "impls": 6,
+        "tokens": 41
+      },
+      "version": "0.8.8"
+    },
+    {
+      "graphs": {
         "android": [
           "alloc",
           "std"
@@ -4840,6 +5196,32 @@
         "tokens": 138
       },
       "version": "0.9.20"
+    },
+    {
+      "graphs": {
+        "group-headless-peer": [
+          "alloc",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "std"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "std"
+        ]
+      },
+      "name": "crossbeam-epoch",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 87,
+        "externs": 0,
+        "functions": 40,
+        "impls": 11,
+        "tokens": 138
+      },
+      "version": "0.9.21"
     },
     {
       "graphs": {
@@ -4951,7 +5333,51 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ]
+      },
+      "name": "crossbeam-utils",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 53,
+        "externs": 0,
+        "functions": 8,
+        "impls": 16,
+        "tokens": 77
+      },
+      "version": "0.8.23"
+    },
+    {
+      "graphs": {
+        "group-headless-peer": [
+          "hybrid-array",
+          "rand_core",
+          "subtle",
+          "zeroize"
+        ],
+        "group-libraries": [
+          "hybrid-array",
+          "rand_core",
+          "subtle",
+          "zeroize"
+        ],
         "group-mls-adapter": [
+          "hybrid-array",
+          "rand_core",
+          "subtle",
+          "zeroize"
+        ],
+        "group-secure-storage": [
           "hybrid-array",
           "rand_core",
           "subtle",
@@ -5006,7 +5432,16 @@
         "expo-ios": [
           "std"
         ],
+        "group-headless-peer": [
+          "std"
+        ],
+        "group-libraries": [
+          "std"
+        ],
         "group-mls-adapter": [],
+        "group-secure-storage": [
+          "std"
+        ],
         "halow-appliance-manager": [
           "std"
         ],
@@ -5126,7 +5561,19 @@
         "expo-ios": [
           "rand_core"
         ],
+        "group-headless-peer": [
+          "getrandom",
+          "rand_core"
+        ],
+        "group-libraries": [
+          "getrandom",
+          "rand_core"
+        ],
         "group-mls-adapter": [
+          "getrandom",
+          "rand_core"
+        ],
+        "group-secure-storage": [
           "getrandom",
           "rand_core"
         ],
@@ -5193,7 +5640,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "ctr",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -5265,7 +5715,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "subtle"
+        ],
+        "group-libraries": [
+          "subtle"
+        ],
         "group-mls-adapter": [
+          "subtle"
+        ],
+        "group-secure-storage": [
           "subtle"
         ]
       },
@@ -5446,10 +5905,31 @@
           "rand_core",
           "zeroize"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
+        "group-libraries": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
         "group-mls-adapter": [
           "alloc",
           "digest",
           "rand_core"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
         ],
         "halow-appliance-manager": [
           "alloc",
@@ -5613,7 +6093,10 @@
         "desktop-windows": [],
         "engine": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-windows": [],
         "host-connections-linux": [],
@@ -5641,6 +6124,9 @@
         "daemon-linux": [],
         "desktop-linux": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -5662,6 +6148,9 @@
         "daemon-linux": [],
         "desktop-linux": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -5762,7 +6251,19 @@
           "default",
           "suggestions"
         ],
+        "group-headless-peer": [
+          "default",
+          "suggestions"
+        ],
+        "group-libraries": [
+          "default",
+          "suggestions"
+        ],
         "group-mls-adapter": [
+          "default",
+          "suggestions"
+        ],
+        "group-secure-storage": [
           "default",
           "suggestions"
         ],
@@ -5950,7 +6451,19 @@
           "strsim",
           "suggestions"
         ],
+        "group-headless-peer": [
+          "strsim",
+          "suggestions"
+        ],
+        "group-libraries": [
+          "strsim",
+          "suggestions"
+        ],
         "group-mls-adapter": [
+          "strsim",
+          "suggestions"
+        ],
+        "group-secure-storage": [
           "strsim",
           "suggestions"
         ],
@@ -6087,7 +6600,10 @@
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -6157,6 +6673,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -6249,6 +6768,21 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "default",
@@ -6319,6 +6853,24 @@
           "futures-util",
           "vendored"
         ],
+        "group-headless-peer": [
+          "futures",
+          "futures-channel",
+          "futures-util",
+          "vendored"
+        ],
+        "group-libraries": [
+          "futures",
+          "futures-channel",
+          "futures-util",
+          "vendored"
+        ],
+        "group-secure-storage": [
+          "futures",
+          "futures-channel",
+          "futures-util",
+          "vendored"
+        ],
         "host-c-linux": [
           "futures",
           "futures-channel",
@@ -6360,6 +6912,9 @@
         "daemon-linux": [],
         "desktop-linux": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -6381,6 +6936,9 @@
         "daemon-linux": [],
         "desktop-linux": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -6575,6 +7133,24 @@
           "oid",
           "zeroize"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "oid",
+          "pem",
+          "zeroize"
+        ],
+        "group-libraries": [
+          "alloc",
+          "oid",
+          "pem",
+          "zeroize"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "oid",
+          "pem",
+          "zeroize"
+        ],
         "halow-headless": [
           "alloc",
           "oid",
@@ -6740,10 +7316,31 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
+        ],
         "group-mls-adapter": [
           "block-buffer",
           "core-api",
           "default"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "block-buffer",
+          "core-api",
+          "default",
+          "std"
         ],
         "halow-appliance-manager": [
           "alloc",
@@ -6980,12 +7577,36 @@
           "rand_core",
           "zeroize"
         ],
+        "group-headless-peer": [
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
+        ],
+        "group-libraries": [
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
+        ],
         "group-mls-adapter": [
           "block-api",
           "default",
           "mac",
           "oid",
           "rand_core"
+        ],
+        "group-secure-storage": [
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core",
+          "zeroize"
         ],
         "halow-appliance-manager": [
           "alloc",
@@ -7363,6 +7984,18 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "host-connections-linux": [
           "default",
           "std"
@@ -7499,6 +8132,15 @@
         "expo-ios": [
           "default"
         ],
+        "group-headless-peer": [
+          "default"
+        ],
+        "group-libraries": [
+          "default"
+        ],
+        "group-secure-storage": [
+          "default"
+        ],
         "halow-headless": [
           "default"
         ],
@@ -7579,7 +8221,34 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "algorithm",
+          "alloc",
+          "der",
+          "digest",
+          "pem",
+          "pkcs8",
+          "spki"
+        ],
+        "group-libraries": [
+          "algorithm",
+          "alloc",
+          "der",
+          "digest",
+          "pem",
+          "pkcs8",
+          "spki"
+        ],
         "group-mls-adapter": [
+          "algorithm",
+          "alloc",
+          "der",
+          "digest",
+          "pem",
+          "pkcs8",
+          "spki"
+        ],
+        "group-secure-storage": [
           "algorithm",
           "alloc",
           "der",
@@ -7662,7 +8331,16 @@
         "expo-ios": [
           "alloc"
         ],
+        "group-headless-peer": [
+          "alloc"
+        ],
+        "group-libraries": [
+          "alloc"
+        ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-secure-storage": [
           "alloc"
         ],
         "halow-appliance-manager": [
@@ -7908,10 +8586,37 @@
           "strobe-rs",
           "zeroize"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
+        "group-libraries": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
         "group-mls-adapter": [
           "alloc",
           "rand_core",
           "signature"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
         ],
         "halow-appliance-manager": [
           "alloc",
@@ -8191,7 +8896,19 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [
+          "std",
+          "use_std"
+        ],
+        "group-libraries": [
+          "std",
+          "use_std"
+        ],
+        "group-mls-adapter": [],
+        "group-secure-storage": [
+          "std",
+          "use_std"
+        ]
       },
       "name": "either",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -8206,7 +8923,40 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ff",
+          "group",
+          "pem",
+          "pkcs8",
+          "sec1"
+        ],
+        "group-libraries": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ff",
+          "group",
+          "pem",
+          "pkcs8",
+          "sec1"
+        ],
         "group-mls-adapter": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ff",
+          "group",
+          "pem",
+          "pkcs8",
+          "sec1"
+        ],
+        "group-secure-storage": [
           "alloc",
           "arithmetic",
           "digest",
@@ -8369,6 +9119,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -8604,6 +9357,30 @@
           "tcp",
           "udp"
         ],
+        "group-headless-peer": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "group-libraries": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
+        "group-secure-storage": [
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
         "halow-headless": [
           "medium-ethernet",
           "multicast",
@@ -8724,6 +9501,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -8768,6 +9548,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -8888,6 +9671,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -8936,6 +9722,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -8999,6 +9788,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -9072,6 +9864,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -9117,6 +9912,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -9386,6 +10184,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -9433,6 +10234,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -9478,6 +10282,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -9560,6 +10367,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -9603,6 +10413,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -9647,6 +10460,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -9690,6 +10506,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -9735,6 +10554,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -9779,6 +10601,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -9850,7 +10675,10 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-headless": []
       },
       "name": "embedded-storage",
@@ -9912,6 +10740,9 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": []
       },
       "name": "embedded-storage-async",
@@ -10155,6 +10986,18 @@
           "std"
         ],
         "expo-ios": [
+          "default",
+          "std"
+        ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
           "default",
           "std"
         ],
@@ -11808,6 +12651,21 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "default",
@@ -11935,7 +12793,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc"
+        ],
+        "group-libraries": [
+          "alloc"
+        ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-secure-storage": [
           "alloc"
         ]
       },
@@ -11970,6 +12837,23 @@
         "tokens": 55
       },
       "version": "0.1.11"
+    },
+    {
+      "graphs": {
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": []
+      },
+      "name": "find-msvc-tools",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 40,
+        "externs": 7,
+        "functions": 6,
+        "impls": 2,
+        "tokens": 55
+      },
+      "version": "0.1.14"
     },
     {
       "graphs": {
@@ -12243,7 +13127,19 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
         "group-mls-adapter": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
           "default",
           "std"
         ],
@@ -12652,6 +13548,30 @@
           "futures-executor",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
         "host-connections-android": [
           "alloc",
           "async-await",
@@ -12901,6 +13821,27 @@
           "sink",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
         "host-connections-android": [
           "alloc",
           "default",
@@ -13105,6 +14046,21 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "std"
@@ -13245,6 +14201,15 @@
           "std"
         ],
         "expo-ios": [
+          "std"
+        ],
+        "group-headless-peer": [
+          "std"
+        ],
+        "group-libraries": [
+          "std"
+        ],
+        "group-secure-storage": [
           "std"
         ],
         "host-connections-android": [
@@ -13415,6 +14380,15 @@
         "expo-ios": [
           "std"
         ],
+        "group-headless-peer": [
+          "std"
+        ],
+        "group-libraries": [
+          "std"
+        ],
+        "group-secure-storage": [
+          "std"
+        ],
         "host-connections-android": [
           "std"
         ],
@@ -13523,6 +14497,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -13678,6 +14655,21 @@
           "std"
         ],
         "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
           "alloc",
           "default",
           "std"
@@ -13850,6 +14842,18 @@
           "std"
         ],
         "expo-ios": [
+          "alloc",
+          "std"
+        ],
+        "group-headless-peer": [
+          "alloc",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "std"
+        ],
+        "group-secure-storage": [
           "alloc",
           "std"
         ],
@@ -14329,6 +15333,51 @@
           "slab",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "futures-sink",
@@ -14489,7 +15538,16 @@
         "expo-ios": [
           "more_lengths"
         ],
+        "group-headless-peer": [
+          "more_lengths"
+        ],
+        "group-libraries": [
+          "more_lengths"
+        ],
         "group-mls-adapter": [
+          "more_lengths"
+        ],
+        "group-secure-storage": [
           "more_lengths"
         ],
         "halow-appliance-manager": [
@@ -14608,6 +15666,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -14653,6 +15714,15 @@
           "std"
         ],
         "expo-ios": [
+          "std"
+        ],
+        "group-headless-peer": [
+          "std"
+        ],
+        "group-libraries": [
+          "std"
+        ],
+        "group-secure-storage": [
           "std"
         ],
         "halow-appliance-manager": [
@@ -14751,7 +15821,19 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [
+          "sys_rng",
+          "wasm_js"
+        ],
+        "group-libraries": [
+          "sys_rng",
+          "wasm_js"
+        ],
         "group-mls-adapter": [
+          "sys_rng",
+          "wasm_js"
+        ],
+        "group-secure-storage": [
           "sys_rng",
           "wasm_js"
         ],
@@ -14789,7 +15871,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "zeroize"
+        ],
+        "group-libraries": [
+          "zeroize"
+        ],
         "group-mls-adapter": [
+          "zeroize"
+        ],
+        "group-secure-storage": [
           "zeroize"
         ]
       },
@@ -14806,7 +15897,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc"
+        ],
+        "group-libraries": [
+          "alloc"
+        ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-secure-storage": [
           "alloc"
         ]
       },
@@ -14857,6 +15957,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -14929,6 +16032,15 @@
           "raw"
         ],
         "expo-ios": [
+          "raw"
+        ],
+        "group-headless-peer": [
+          "raw"
+        ],
+        "group-libraries": [
+          "raw"
+        ],
+        "group-secure-storage": [
           "raw"
         ],
         "host-c-linux": [
@@ -15034,6 +16146,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -15090,6 +16205,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -15154,6 +16272,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -15205,8 +16326,23 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "group-mls-adapter": [
           "alloc"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "default",
+          "std"
         ],
         "halow-appliance-manager": [
           "alloc",
@@ -15271,7 +16407,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -15366,7 +16505,16 @@
         "expo-ios": [
           "zeroize"
         ],
+        "group-headless-peer": [
+          "zeroize"
+        ],
+        "group-libraries": [
+          "zeroize"
+        ],
         "group-mls-adapter": [],
+        "group-secure-storage": [
+          "zeroize"
+        ],
         "halow-appliance-manager": [
           "zeroize"
         ],
@@ -15456,6 +16604,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -15651,6 +16802,18 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "default",
           "std"
@@ -15726,6 +16889,18 @@
           "std"
         ],
         "expo-ios": [
+          "default",
+          "std"
+        ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
           "default",
           "std"
         ],
@@ -15924,7 +17099,22 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc",
+          "subtle",
+          "zeroize"
+        ],
+        "group-libraries": [
+          "alloc",
+          "subtle",
+          "zeroize"
+        ],
         "group-mls-adapter": [
+          "alloc",
+          "subtle",
+          "zeroize"
+        ],
+        "group-secure-storage": [
           "alloc",
           "subtle",
           "zeroize"
@@ -16147,7 +17337,10 @@
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -16245,6 +17438,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -16538,7 +17734,16 @@
         "expo-ios": [
           "block-padding"
         ],
+        "group-headless-peer": [
+          "block-padding"
+        ],
+        "group-libraries": [
+          "block-padding"
+        ],
         "group-mls-adapter": [],
+        "group-secure-storage": [
+          "block-padding"
+        ],
         "halow-appliance-manager": [
           "block-padding"
         ],
@@ -16622,7 +17827,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "inout",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16745,6 +17953,18 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "default",
           "std"
@@ -16851,8 +18071,23 @@
           "use_alloc",
           "use_std"
         ],
+        "group-headless-peer": [
+          "default",
+          "use_alloc",
+          "use_std"
+        ],
+        "group-libraries": [
+          "default",
+          "use_alloc",
+          "use_std"
+        ],
         "group-mls-adapter": [
           "use_alloc"
+        ],
+        "group-secure-storage": [
+          "default",
+          "use_alloc",
+          "use_std"
         ],
         "host-c-linux": [
           "default",
@@ -16905,6 +18140,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -17132,6 +18370,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -17225,6 +18466,9 @@
         "desktop-macos": [],
         "desktop-windows": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -17298,6 +18542,15 @@
           "rust-allocator"
         ],
         "expo-ios": [
+          "rust-allocator"
+        ],
+        "group-headless-peer": [
+          "rust-allocator"
+        ],
+        "group-libraries": [
+          "rust-allocator"
+        ],
+        "group-secure-storage": [
           "rust-allocator"
         ],
         "halow-headless": [
@@ -17526,7 +18779,22 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
         "group-mls-adapter": [],
+        "group-secure-storage": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
         "identity-catalog-card-linux": [
           "std"
         ],
@@ -17580,6 +18848,24 @@
           "pkg-config"
         ],
         "expo-host-linux": [
+          "cc",
+          "default",
+          "pkg-config",
+          "vendored"
+        ],
+        "group-headless-peer": [
+          "cc",
+          "default",
+          "pkg-config",
+          "vendored"
+        ],
+        "group-libraries": [
+          "cc",
+          "default",
+          "pkg-config",
+          "vendored"
+        ],
+        "group-secure-storage": [
           "cc",
           "default",
           "pkg-config",
@@ -17735,6 +19021,48 @@
           "xdp"
         ],
         "expo-host-linux": [
+          "auxvec",
+          "default",
+          "elf",
+          "errno",
+          "general",
+          "if_ether",
+          "ioctl",
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
+        ],
+        "group-headless-peer": [
+          "auxvec",
+          "default",
+          "elf",
+          "errno",
+          "general",
+          "if_ether",
+          "ioctl",
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
+        ],
+        "group-libraries": [
+          "auxvec",
+          "default",
+          "elf",
+          "errno",
+          "general",
+          "if_ether",
+          "ioctl",
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
+        ],
+        "group-secure-storage": [
           "auxvec",
           "default",
           "elf",
@@ -17923,6 +19251,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -18018,6 +19349,18 @@
           "default"
         ],
         "expo-ios": [
+          "atomic_usize",
+          "default"
+        ],
+        "group-headless-peer": [
+          "atomic_usize",
+          "default"
+        ],
+        "group-libraries": [
+          "atomic_usize",
+          "default"
+        ],
+        "group-secure-storage": [
           "atomic_usize",
           "default"
         ],
@@ -18196,6 +19539,18 @@
           "alloc",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "std"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "std"
+        ],
         "halow-headless": [],
         "host-connections-android": [
           "alloc",
@@ -18295,6 +19650,18 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "default",
           "std"
@@ -18350,6 +19717,18 @@
           "std"
         ],
         "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
           "default",
           "std"
         ],
@@ -18464,6 +19843,15 @@
           "map"
         ],
         "expo-ios": [
+          "map"
+        ],
+        "group-headless-peer": [
+          "map"
+        ],
+        "group-libraries": [
+          "map"
+        ],
+        "group-secure-storage": [
           "map"
         ],
         "halow-headless": [
@@ -18617,7 +20005,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "default"
+        ],
+        "group-libraries": [
+          "default"
+        ],
         "group-mls-adapter": [
+          "default"
+        ],
+        "group-secure-storage": [
           "default"
         ]
       },
@@ -18889,6 +20286,21 @@
           "std"
         ],
         "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
           "alloc",
           "default",
           "std"
@@ -19211,6 +20623,21 @@
           "os-ext",
           "os-poll"
         ],
+        "group-headless-peer": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "group-libraries": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "group-secure-storage": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
         "halow-headless": [
           "net",
           "os-ext",
@@ -19250,7 +20677,28 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "by_ref_proposal",
+          "fast_serialize",
+          "out_of_order",
+          "prior_epoch",
+          "private_message"
+        ],
+        "group-libraries": [
+          "by_ref_proposal",
+          "fast_serialize",
+          "out_of_order",
+          "prior_epoch",
+          "private_message"
+        ],
         "group-mls-adapter": [
+          "by_ref_proposal",
+          "fast_serialize",
+          "out_of_order",
+          "prior_epoch",
+          "private_message"
+        ],
+        "group-secure-storage": [
           "by_ref_proposal",
           "fast_serialize",
           "out_of_order",
@@ -19271,7 +20719,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "preallocate"
+        ],
+        "group-libraries": [
+          "preallocate"
+        ],
         "group-mls-adapter": [
+          "preallocate"
+        ],
+        "group-secure-storage": [
           "preallocate"
         ]
       },
@@ -19288,7 +20745,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "mls-rs-codec-derive",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19303,7 +20763,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "fast_serialize"
+        ],
+        "group-libraries": [
+          "fast_serialize"
+        ],
         "group-mls-adapter": [
+          "fast_serialize"
+        ],
+        "group-secure-storage": [
           "fast_serialize"
         ]
       },
@@ -19320,7 +20789,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "mls-rs-crypto-hpke",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19335,7 +20807,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "mls-rs-crypto-rustcrypto",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19350,7 +20825,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "mls-rs-crypto-traits",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19480,6 +20958,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -19527,6 +21008,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -19672,6 +21156,24 @@
           "default",
           "gateway"
         ],
+        "group-headless-peer": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "group-libraries": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "group-secure-storage": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
         "host-c-linux": [
           "android-extra",
           "apple-system-configuration-extra",
@@ -19739,6 +21241,9 @@
         "desktop-linux": [],
         "expo-android": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-android": [],
         "host-connections-linux": [],
@@ -19763,6 +21268,9 @@
         "desktop-linux": [],
         "expo-android": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-android": [],
         "host-connections-linux": [],
@@ -19795,6 +21303,15 @@
           "default"
         ],
         "expo-host-linux": [
+          "default"
+        ],
+        "group-headless-peer": [
+          "default"
+        ],
+        "group-libraries": [
+          "default"
+        ],
+        "group-secure-storage": [
           "default"
         ],
         "host-c-linux": [
@@ -19833,6 +21350,15 @@
           "ioctl"
         ],
         "expo-host-linux": [
+          "ioctl"
+        ],
+        "group-headless-peer": [
+          "ioctl"
+        ],
+        "group-libraries": [
+          "ioctl"
+        ],
+        "group-secure-storage": [
           "ioctl"
         ],
         "host-c-linux": [
@@ -19883,6 +21409,18 @@
           "time"
         ],
         "expo-host-linux": [
+          "process",
+          "sched"
+        ],
+        "group-headless-peer": [
+          "process",
+          "sched"
+        ],
+        "group-libraries": [
+          "process",
+          "sched"
+        ],
+        "group-secure-storage": [
           "process",
           "sched"
         ],
@@ -20111,6 +21649,9 @@
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -20254,7 +21795,19 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
         "group-mls-adapter": [],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "halow-appliance-manager": [
           "default",
           "std"
@@ -20396,6 +21949,15 @@
           "tokio"
         ],
         "expo-host-linux": [
+          "tokio"
+        ],
+        "group-headless-peer": [
+          "tokio"
+        ],
+        "group-libraries": [
+          "tokio"
+        ],
+        "group-secure-storage": [
           "tokio"
         ],
         "host-c-linux": [
@@ -23246,6 +24808,24 @@
           "race",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "default",
@@ -23403,7 +24983,8 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "opaque-debug",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -23422,6 +25003,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-android": [],
         "host-connections-ios": [],
@@ -23507,7 +25091,43 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha256"
+        ],
+        "group-libraries": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha256"
+        ],
         "group-mls-adapter": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha256"
+        ],
+        "group-secure-storage": [
           "alloc",
           "arithmetic",
           "digest",
@@ -23533,7 +25153,43 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha384"
+        ],
+        "group-libraries": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha384"
+        ],
         "group-mls-adapter": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha384"
+        ],
+        "group-secure-storage": [
           "alloc",
           "arithmetic",
           "digest",
@@ -23596,6 +25252,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -23632,6 +25291,9 @@
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "expo-android": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-android": [],
         "host-connections-linux": [],
@@ -23667,7 +25329,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc"
+        ],
+        "group-libraries": [
+          "alloc"
+        ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-secure-storage": [
           "alloc"
         ]
       },
@@ -24411,6 +26082,78 @@
           "websocket-server",
           "wifi-auto"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
+        "group-libraries": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "pipe",
+          "rnode",
+          "serial",
+          "std",
+          "tcp",
+          "tokio-host",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
         "halow-headless": [
           "alloc",
           "flash",
@@ -24677,6 +26420,9 @@
         "desktop-linux": [],
         "engine": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -24699,6 +26445,9 @@
         "desktop-linux": [],
         "engine": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -24736,6 +26485,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -24827,7 +26579,19 @@
         "expo-ios": [
           "alloc"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "pem"
+        ],
+        "group-libraries": [
+          "alloc",
+          "pem"
+        ],
         "group-mls-adapter": [
+          "alloc",
+          "pem"
+        ],
+        "group-secure-storage": [
           "alloc",
           "pem"
         ],
@@ -24906,6 +26670,9 @@
     {
       "graphs": {
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-connections-linux": []
       },
       "name": "pkg-config",
@@ -24969,7 +26736,8 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "poly1305",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -24984,7 +26752,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "poly1305",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -24999,7 +26770,19 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "hazmat",
+          "zeroize"
+        ],
+        "group-libraries": [
+          "hazmat",
+          "zeroize"
+        ],
         "group-mls-adapter": [
+          "hazmat",
+          "zeroize"
+        ],
+        "group-secure-storage": [
           "hazmat",
           "zeroize"
         ]
@@ -25217,9 +27000,30 @@
           "fallback",
           "std"
         ],
+        "group-headless-peer": [
+          "critical-section",
+          "default",
+          "fallback",
+          "require-cas",
+          "std"
+        ],
+        "group-libraries": [
+          "critical-section",
+          "default",
+          "fallback",
+          "require-cas",
+          "std"
+        ],
         "group-mls-adapter": [
           "critical-section",
           "require-cas"
+        ],
+        "group-secure-storage": [
+          "critical-section",
+          "default",
+          "fallback",
+          "require-cas",
+          "std"
         ],
         "halow-headless": [
           "critical-section",
@@ -25399,6 +27203,18 @@
           "simd",
           "std"
         ],
+        "group-headless-peer": [
+          "simd",
+          "std"
+        ],
+        "group-libraries": [
+          "simd",
+          "std"
+        ],
+        "group-secure-storage": [
+          "simd",
+          "std"
+        ],
         "halow-appliance-manager": [
           "simd",
           "std"
@@ -25457,7 +27273,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "primefield",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -25472,7 +27291,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc"
+        ],
+        "group-libraries": [
+          "alloc"
+        ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-secure-storage": [
           "alloc"
         ]
       },
@@ -25495,6 +27323,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -25520,6 +27351,18 @@
       "graphs": {
         "contact-card": [
           "default"
+        ],
+        "group-headless-peer": [
+          "default",
+          "prns-identity"
+        ],
+        "group-libraries": [
+          "default",
+          "prns-identity"
+        ],
+        "group-secure-storage": [
+          "default",
+          "prns-identity"
         ],
         "identity-catalog-card-linux": [
           "alloc",
@@ -25850,6 +27693,54 @@
           "std",
           "tokio-host"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "crypto-precomputed",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "tokio-host"
+        ],
+        "group-libraries": [
+          "alloc",
+          "crypto-precomputed",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "tokio-host"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "crypto-precomputed",
+          "ed25519-batch",
+          "embassy-host",
+          "flash",
+          "i2p",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "parallel-persistence",
+          "parallel-resource-hash",
+          "resource-work-offload",
+          "rns-management-wire",
+          "std",
+          "tokio-host"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "crypto-precomputed",
@@ -26135,6 +28026,15 @@
         "expo-ios": [
           "owned-async-fd"
         ],
+        "group-headless-peer": [
+          "owned-async-fd"
+        ],
+        "group-libraries": [
+          "owned-async-fd"
+        ],
+        "group-secure-storage": [
+          "owned-async-fd"
+        ],
         "host-c-linux": [
           "owned-async-fd"
         ],
@@ -26194,7 +28094,63 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": []
+      },
+      "name": "prns-group-text",
+      "source": "prns-groups/profiles/text",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "group-headless-peer": [
+          "default",
+          "headless",
+          "network",
+          "text"
+        ],
+        "group-libraries": [
+          "default",
+          "network",
+          "text"
+        ],
+        "group-secure-storage": [
+          "default",
+          "network",
+          "text"
+        ]
+      },
+      "name": "prns-groups",
+      "source": "prns-groups",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "group-headless-peer": [
+          "serde"
+        ],
+        "group-libraries": [
+          "serde"
+        ],
+        "group-mls-adapter": [],
+        "group-secure-storage": [
+          "serde"
+        ]
       },
       "name": "prns-groups-core",
       "source": "prns-groups/core",
@@ -26209,7 +28165,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "prns-groups-mls",
       "source": "prns-groups/security/mls-rs",
@@ -26224,13 +28183,95 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "contact-card",
+          "default",
+          "network"
+        ],
+        "group-libraries": [
+          "contact-card",
+          "default",
+          "network"
+        ],
+        "group-secure-storage": [
+          "contact-card",
+          "default",
+          "network"
+        ]
+      },
+      "name": "prns-groups-reticulum",
+      "source": "prns-groups/transport/reticulum",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": []
+      },
+      "name": "prns-groups-service",
+      "source": "prns-groups/service",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "group-headless-peer": [
+          "default"
+        ],
+        "group-libraries": [
+          "default"
+        ],
         "group-mls-adapter": [
+          "default",
+          "secure"
+        ],
+        "group-secure-storage": [
           "default",
           "secure"
         ]
       },
       "name": "prns-groups-store",
       "source": "prns-groups/store",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "group-headless-peer": [
+          "default",
+          "serde"
+        ],
+        "group-libraries": [
+          "default",
+          "serde"
+        ],
+        "group-secure-storage": [
+          "default",
+          "serde"
+        ]
+      },
+      "name": "prns-groups-store-redb",
+      "source": "prns-groups/store/redb",
       "unsafe": {
         "blocks": 0,
         "externs": 0,
@@ -26249,6 +28290,15 @@
           "default"
         ],
         "expo-ios": [
+          "default"
+        ],
+        "group-headless-peer": [
+          "default"
+        ],
+        "group-libraries": [
+          "default"
+        ],
+        "group-secure-storage": [
           "default"
         ],
         "host-c-linux": [
@@ -26341,6 +28391,15 @@
         "expo-ios": [
           "default"
         ],
+        "group-headless-peer": [
+          "default"
+        ],
+        "group-libraries": [
+          "default"
+        ],
+        "group-secure-storage": [
+          "default"
+        ],
         "host-c-linux": [
           "default"
         ],
@@ -26390,6 +28449,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -26853,6 +28915,24 @@
           "usb",
           "wifi-auto"
         ],
+        "group-headless-peer": [
+          "bluetooth-auto",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "group-libraries": [
+          "bluetooth-auto",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "group-secure-storage": [
+          "bluetooth-auto",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
         "halow-headless": [
           "tcp"
         ],
@@ -27212,6 +29292,69 @@
           "websocket-server",
           "wifi-auto"
         ],
+        "group-headless-peer": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
+        "group-libraries": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
+        "group-secure-storage": [
+          "ax25",
+          "backbone",
+          "bluetooth-auto",
+          "bluetooth-auto-runtime",
+          "config",
+          "i2p",
+          "interface-discovery",
+          "kiss",
+          "network-device-selection",
+          "pipe",
+          "rnode",
+          "serial",
+          "tcp",
+          "udp",
+          "usb",
+          "weave",
+          "websocket",
+          "websocket-server",
+          "wifi-auto"
+        ],
         "halow-headless": [
           "tcp"
         ],
@@ -27452,6 +29595,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -27679,6 +29825,30 @@
           "resource-bzip2",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
+          "resource-bzip2",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
+          "resource-bzip2",
+          "std"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "interface-discovery",
+          "movable-frame-forwarding",
+          "remote-control-wifi-host",
+          "resource-bzip2",
+          "std"
+        ],
         "halow-headless": [
           "alloc",
           "movable-frame-forwarding",
@@ -27854,6 +30024,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -27951,6 +30124,21 @@
           "parallel-persistence",
           "parallel-resource-hash"
         ],
+        "group-headless-peer": [
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash"
+        ],
+        "group-libraries": [
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash"
+        ],
+        "group-secure-storage": [
+          "interface-discovery",
+          "parallel-persistence",
+          "parallel-resource-hash"
+        ],
         "halow-headless": [],
         "host-c-linux": [
           "interface-discovery",
@@ -28016,6 +30204,18 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "default",
+          "redb"
+        ],
+        "group-libraries": [
+          "default",
+          "redb"
+        ],
+        "group-secure-storage": [
+          "default",
+          "redb"
+        ],
         "host-connections-android": [
           "default",
           "redb"
@@ -28365,7 +30565,19 @@
           "default",
           "proc-macro"
         ],
+        "group-headless-peer": [
+          "default",
+          "proc-macro"
+        ],
+        "group-libraries": [
+          "default",
+          "proc-macro"
+        ],
         "group-mls-adapter": [
+          "default",
+          "proc-macro"
+        ],
+        "group-secure-storage": [
           "default",
           "proc-macro"
         ],
@@ -28730,7 +30942,19 @@
           "default",
           "proc-macro"
         ],
+        "group-headless-peer": [
+          "default",
+          "proc-macro"
+        ],
+        "group-libraries": [
+          "default",
+          "proc-macro"
+        ],
         "group-mls-adapter": [
+          "default",
+          "proc-macro"
+        ],
+        "group-secure-storage": [
           "default",
           "proc-macro"
         ],
@@ -28924,6 +31148,33 @@
           "std_rng",
           "thread_rng"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "default",
+          "os_rng",
+          "small_rng",
+          "std",
+          "std_rng",
+          "thread_rng"
+        ],
         "halow-headless": [
           "alloc",
           "default",
@@ -29049,6 +31300,15 @@
         "expo-ios": [
           "std"
         ],
+        "group-headless-peer": [
+          "std"
+        ],
+        "group-libraries": [
+          "std"
+        ],
+        "group-secure-storage": [
+          "std"
+        ],
         "halow-appliance-manager": [
           "std"
         ],
@@ -29116,7 +31376,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -29224,6 +31487,18 @@
           "os_rng",
           "std"
         ],
+        "group-headless-peer": [
+          "os_rng",
+          "std"
+        ],
+        "group-libraries": [
+          "os_rng",
+          "std"
+        ],
+        "group-secure-storage": [
+          "os_rng",
+          "std"
+        ],
         "halow-appliance-manager": [
           "os_rng",
           "std"
@@ -29309,6 +31584,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -29343,6 +31621,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -29367,6 +31648,18 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "host-connections-android": [
           "default",
           "std"
@@ -29597,7 +31890,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "rfc6979",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -29638,6 +31934,21 @@
           "dev_urandom_fallback"
         ],
         "expo-ios": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "dev_urandom_fallback"
+        ],
+        "group-secure-storage": [
           "alloc",
           "default",
           "dev_urandom_fallback"
@@ -29856,6 +32167,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [
           "default",
           "std"
@@ -29918,6 +32232,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -29965,6 +32282,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -30026,7 +32346,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -30249,6 +32572,36 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "default",
+          "event",
+          "fs",
+          "mm",
+          "net",
+          "std",
+          "time"
+        ],
         "halow-headless": [
           "alloc",
           "default",
@@ -30341,6 +32694,18 @@
           "ring",
           "std"
         ],
+        "group-headless-peer": [
+          "ring",
+          "std"
+        ],
+        "group-libraries": [
+          "ring",
+          "std"
+        ],
+        "group-secure-storage": [
+          "ring",
+          "std"
+        ],
         "host-c-linux": [
           "ring",
           "std"
@@ -30397,6 +32762,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -30460,6 +32828,21 @@
           "std"
         ],
         "expo-ios": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
           "alloc",
           "default",
           "std"
@@ -30549,6 +32932,21 @@
           "std"
         ],
         "expo-ios": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "group-headless-peer": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "ring",
+          "std"
+        ],
+        "group-secure-storage": [
           "alloc",
           "ring",
           "std"
@@ -30643,6 +33041,9 @@
     {
       "graphs": {
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-connections-linux": []
       },
       "name": "rustversion",
@@ -30753,6 +33154,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -30846,7 +33250,37 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc",
+          "ctutils",
+          "default",
+          "der",
+          "pem",
+          "point",
+          "subtle",
+          "zeroize"
+        ],
+        "group-libraries": [
+          "alloc",
+          "ctutils",
+          "default",
+          "der",
+          "pem",
+          "point",
+          "subtle",
+          "zeroize"
+        ],
         "group-mls-adapter": [
+          "alloc",
+          "ctutils",
+          "default",
+          "der",
+          "pem",
+          "point",
+          "subtle",
+          "zeroize"
+        ],
+        "group-secure-storage": [
           "alloc",
           "ctutils",
           "default",
@@ -31054,7 +33488,19 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
         "group-mls-adapter": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
           "default",
           "std"
         ],
@@ -31354,8 +33800,29 @@
           "serde_derive",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
         "group-mls-adapter": [
           "alloc"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
         ],
         "halow-headless": [
           "alloc"
@@ -31508,6 +33975,9 @@
       "graphs": {
         "daemon-linux": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -31658,9 +34128,24 @@
           "result",
           "std"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "group-libraries": [
+          "alloc",
+          "result",
+          "std"
+        ],
         "group-mls-adapter": [
           "alloc",
           "result"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "result",
+          "std"
         ],
         "halow-headless": [
           "alloc",
@@ -31849,6 +34334,15 @@
         "expo-ios": [
           "default"
         ],
+        "group-headless-peer": [
+          "default"
+        ],
+        "group-libraries": [
+          "default"
+        ],
+        "group-secure-storage": [
+          "default"
+        ],
         "host-c-linux": [
           "default"
         ],
@@ -31957,6 +34451,18 @@
     {
       "graphs": {
         "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
           "default",
           "std"
         ],
@@ -32148,7 +34654,16 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc"
+        ],
+        "group-libraries": [
+          "alloc"
+        ],
         "group-mls-adapter": [
+          "alloc"
+        ],
+        "group-secure-storage": [
           "alloc"
         ]
       },
@@ -32203,6 +34718,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -32259,6 +34777,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -32298,6 +34819,18 @@
           "std"
         ],
         "expo-ios": [
+          "default",
+          "std"
+        ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
           "default",
           "std"
         ],
@@ -32367,7 +34900,10 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [
           "default",
           "std"
@@ -32450,6 +34986,15 @@
           "zeroize"
         ],
         "expo-ios": [
+          "zeroize"
+        ],
+        "group-headless-peer": [
+          "zeroize"
+        ],
+        "group-libraries": [
+          "zeroize"
+        ],
+        "group-secure-storage": [
           "zeroize"
         ],
         "halow-appliance-manager": [
@@ -32597,6 +35142,18 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "default",
           "std"
@@ -32683,6 +35240,18 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "host-c-linux": [
           "default",
           "std"
@@ -32741,6 +35310,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -32844,7 +35416,22 @@
           "alloc",
           "rand_core"
         ],
+        "group-headless-peer": [
+          "alloc",
+          "digest",
+          "rand_core"
+        ],
+        "group-libraries": [
+          "alloc",
+          "digest",
+          "rand_core"
+        ],
         "group-mls-adapter": [
+          "alloc",
+          "digest",
+          "rand_core"
+        ],
+        "group-secure-storage": [
           "alloc",
           "digest",
           "rand_core"
@@ -33124,6 +35711,18 @@
           "default",
           "std"
         ],
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "halow-headless": [
           "std"
         ],
@@ -33271,6 +35870,23 @@
         "tokens": 72
       },
       "version": "1.16.0"
+    },
+    {
+      "graphs": {
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": []
+      },
+      "name": "smallvec",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 56,
+        "externs": 0,
+        "functions": 15,
+        "impls": 8,
+        "tokens": 80
+      },
+      "version": "1.16.3"
     },
     {
       "graphs": {
@@ -33517,6 +36133,36 @@
           "socket-tcp",
           "socket-udp"
         ],
+        "group-headless-peer": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "group-libraries": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
+        "group-secure-storage": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-tcp",
+          "socket-udp"
+        ],
         "halow-headless": [
           "async",
           "medium-ethernet",
@@ -33734,6 +36380,15 @@
         "expo-ios": [
           "all"
         ],
+        "group-headless-peer": [
+          "all"
+        ],
+        "group-libraries": [
+          "all"
+        ],
+        "group-secure-storage": [
+          "all"
+        ],
         "halow-headless": [
           "all"
         ],
@@ -33822,7 +36477,25 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "mutex",
+          "portable-atomic",
+          "portable_atomic",
+          "spin_mutex"
+        ],
+        "group-libraries": [
+          "mutex",
+          "portable-atomic",
+          "portable_atomic",
+          "spin_mutex"
+        ],
         "group-mls-adapter": [
+          "mutex",
+          "portable-atomic",
+          "portable_atomic",
+          "spin_mutex"
+        ],
+        "group-secure-storage": [
           "mutex",
           "portable-atomic",
           "portable_atomic",
@@ -33875,7 +36548,19 @@
           "rwlock",
           "spin_mutex"
         ],
+        "group-headless-peer": [
+          "mutex",
+          "spin_mutex"
+        ],
+        "group-libraries": [
+          "mutex",
+          "spin_mutex"
+        ],
         "group-mls-adapter": [
+          "mutex",
+          "spin_mutex"
+        ],
+        "group-secure-storage": [
           "mutex",
           "spin_mutex"
         ]
@@ -34006,7 +36691,19 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc",
+          "pem"
+        ],
+        "group-libraries": [
+          "alloc",
+          "pem"
+        ],
         "group-mls-adapter": [
+          "alloc",
+          "pem"
+        ],
+        "group-secure-storage": [
           "alloc",
           "pem"
         ]
@@ -34110,6 +36807,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [
           "alloc",
           "std"
@@ -34160,6 +36860,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -34211,6 +36914,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -34297,6 +37003,15 @@
         "expo-ios": [
           "default"
         ],
+        "group-headless-peer": [
+          "default"
+        ],
+        "group-libraries": [
+          "default"
+        ],
+        "group-secure-storage": [
+          "default"
+        ],
         "halow-appliance-manager": [
           "default"
         ],
@@ -34381,7 +37096,10 @@
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -34416,6 +37134,24 @@
           "strum_macros"
         ],
         "expo-host-linux": [
+          "default",
+          "derive",
+          "std",
+          "strum_macros"
+        ],
+        "group-headless-peer": [
+          "default",
+          "derive",
+          "std",
+          "strum_macros"
+        ],
+        "group-libraries": [
+          "default",
+          "derive",
+          "std",
+          "strum_macros"
+        ],
+        "group-secure-storage": [
           "default",
           "derive",
           "std",
@@ -34508,6 +37244,9 @@
         "daemon-linux": [],
         "desktop-linux": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -34608,7 +37347,19 @@
         "expo-ios": [
           "const-generics"
         ],
+        "group-headless-peer": [
+          "const-generics",
+          "i128"
+        ],
+        "group-libraries": [
+          "const-generics",
+          "i128"
+        ],
         "group-mls-adapter": [
+          "const-generics",
+          "i128"
+        ],
+        "group-secure-storage": [
           "const-generics",
           "i128"
         ],
@@ -35193,7 +37944,43 @@
           "visit",
           "visit-mut"
         ],
+        "group-headless-peer": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "group-libraries": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
         "group-mls-adapter": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "group-secure-storage": [
           "clone-impls",
           "default",
           "derive",
@@ -35658,6 +38445,50 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ],
+        "group-libraries": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ],
+        "group-secure-storage": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ]
+      },
+      "name": "syn",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 39,
+        "externs": 0,
+        "functions": 2,
+        "impls": 3,
+        "tokens": 78
+      },
+      "version": "3.0.7"
+    },
+    {
+      "graphs": {
         "identity-catalog-card-linux": [
           "clone-impls",
           "default",
@@ -35756,6 +38587,18 @@
           "default",
           "proc-macro"
         ],
+        "group-headless-peer": [
+          "default",
+          "proc-macro"
+        ],
+        "group-libraries": [
+          "default",
+          "proc-macro"
+        ],
+        "group-secure-storage": [
+          "default",
+          "proc-macro"
+        ],
         "halow-appliance-manager": [
           "default",
           "proc-macro"
@@ -35834,6 +38677,18 @@
           "getrandom"
         ],
         "expo-ios": [
+          "default",
+          "getrandom"
+        ],
+        "group-headless-peer": [
+          "default",
+          "getrandom"
+        ],
+        "group-libraries": [
+          "default",
+          "getrandom"
+        ],
+        "group-secure-storage": [
           "default",
           "getrandom"
         ],
@@ -36092,6 +38947,18 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "default",
+          "std"
+        ],
+        "group-libraries": [
+          "default",
+          "std"
+        ],
+        "group-secure-storage": [
+          "default",
+          "std"
+        ],
         "identity-catalog-card-linux": [
           "default",
           "std"
@@ -36217,6 +39084,9 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "identity-catalog-card-linux": [],
         "identity-catalog-card-macos": [],
         "identity-catalog-linux": [],
@@ -36806,6 +39676,66 @@
           "tokio-macros",
           "windows-sys"
         ],
+        "group-headless-peer": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "test-util",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
+        "group-libraries": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "test-util",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
+        "group-secure-storage": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "process",
+          "rt",
+          "rt-multi-thread",
+          "signal-hook-registry",
+          "socket2",
+          "sync",
+          "test-util",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
         "halow-headless": [
           "bytes",
           "default",
@@ -37109,6 +40039,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-connections-android": [],
         "host-connections-ios": [],
@@ -37134,6 +40067,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -37206,6 +40142,24 @@
           "tokio-util"
         ],
         "expo-ios": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "group-headless-peer": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "group-libraries": [
+          "default",
+          "sync",
+          "time",
+          "tokio-util"
+        ],
+        "group-secure-storage": [
           "default",
           "sync",
           "time",
@@ -37335,6 +40289,39 @@
           "tokio-rustls"
         ],
         "expo-ios": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
+        ],
+        "group-headless-peer": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
+        ],
+        "group-libraries": [
+          "__rustls-tls",
+          "connect",
+          "handshake",
+          "rustls",
+          "rustls-native-certs",
+          "rustls-pki-types",
+          "rustls-tls-native-roots",
+          "stream",
+          "tokio-rustls"
+        ],
+        "group-secure-storage": [
           "__rustls-tls",
           "connect",
           "handshake",
@@ -37508,6 +40495,15 @@
           "default"
         ],
         "expo-ios": [
+          "default"
+        ],
+        "group-headless-peer": [
+          "default"
+        ],
+        "group-libraries": [
+          "default"
+        ],
+        "group-secure-storage": [
           "default"
         ],
         "host-c-linux": [
@@ -38750,6 +41746,36 @@
           "rustls-pki-types",
           "sha1"
         ],
+        "group-headless-peer": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
+        ],
+        "group-libraries": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
+        ],
+        "group-secure-storage": [
+          "__rustls-tls",
+          "data-encoding",
+          "handshake",
+          "http",
+          "httparse",
+          "rustls",
+          "rustls-pki-types",
+          "sha1"
+        ],
         "halow-headless": [
           "data-encoding",
           "handshake",
@@ -38938,7 +41964,16 @@
         "expo-ios": [
           "const-generics"
         ],
+        "group-headless-peer": [
+          "const-generics"
+        ],
+        "group-libraries": [
+          "const-generics"
+        ],
         "group-mls-adapter": [
+          "const-generics"
+        ],
+        "group-secure-storage": [
           "const-generics"
         ],
         "halow-headless": [
@@ -39143,7 +42178,10 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "identity-storage": []
       },
@@ -39521,7 +42559,8 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "universal-hash",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -39536,7 +42575,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "universal-hash",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -39579,6 +42621,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -39706,6 +42751,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -39983,6 +43031,24 @@
           "std",
           "v4"
         ],
+        "group-headless-peer": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "group-libraries": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "group-secure-storage": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
         "host-connections-android": [
           "default",
           "rng",
@@ -40080,7 +43146,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -40137,6 +43206,9 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -41212,7 +44284,10 @@
     },
     {
       "graphs": {
-        "group-mls-adapter": []
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-mls-adapter": [],
+        "group-secure-storage": []
       },
       "name": "wnaf",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -41321,7 +44396,19 @@
           "precomputed-tables",
           "static_secrets"
         ],
+        "group-headless-peer": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
+        "group-libraries": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
         "group-mls-adapter": [
+          "static_secrets"
+        ],
+        "group-secure-storage": [
+          "precomputed-tables",
           "static_secrets"
         ],
         "halow-appliance-manager": [
@@ -41449,6 +44536,9 @@
     {
       "graphs": {
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "host-connections-linux": []
       },
       "name": "xml",
@@ -41836,6 +44926,29 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "simd"
+        ],
+        "group-libraries": [
+          "simd"
+        ],
+        "group-secure-storage": [
+          "simd"
+        ]
+      },
+      "name": "zerocopy",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 301,
+        "externs": 1,
+        "functions": 59,
+        "impls": 108,
+        "tokens": 601
+      },
+      "version": "0.8.62"
+    },
+    {
+      "graphs": {
         "nrf52840": []
       },
       "name": "zerocopy-derive",
@@ -42126,8 +45239,26 @@
     },
     {
       "graphs": {
+        "group-headless-peer": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
+        "group-libraries": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
         "group-mls-adapter": [
           "alloc",
+          "zeroize_derive"
+        ],
+        "group-secure-storage": [
+          "alloc",
+          "default",
+          "derive",
           "zeroize_derive"
         ],
         "identity-catalog-card-linux": [
@@ -42217,7 +45348,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
         "group-mls-adapter": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -42352,6 +45486,9 @@
         "daemon-macos": [],
         "daemon-windows": [],
         "expo-host-linux": [],
+        "group-headless-peer": [],
+        "group-libraries": [],
+        "group-secure-storage": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-connections-android": [],

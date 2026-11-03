@@ -30,7 +30,7 @@ Native enrollment and carrier execution are not usable merely by selecting a
 smaller profile. A complete board member additionally needs enrollment/control
 execution, authenticated carrier ingress, scheduling and lifecycle integration.
 See the
-owner contract for their semantics and the
+[owner contract](../../enrollment.md) for their semantics and the
 [transport contract](../../transport/reticulum/README.md) for Link ownership.
 
 ## Resource and security boundaries

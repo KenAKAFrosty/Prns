@@ -101,7 +101,7 @@ emission. Network callbacks do no storage work. `SyncStorage`, `serve_storage` a
 `reconcile_storage` split storage calls from network waits so a shared database
 lane can serve incoming work during an outgoing pull. The original direct
 `GroupService` helpers remain available for caller-driven tests.
-The native runner supplies scheduling and backoff
+The [native runner](../../usage.md) supplies scheduling and backoff
 without a shared service lock across reciprocal pulls.
 
 ## Prompt delivery and same-Link receipts

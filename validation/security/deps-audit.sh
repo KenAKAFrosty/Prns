@@ -15,8 +15,11 @@ fi
 python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
+    "group-headless-peer|prns-groups/Cargo.toml|x86_64-unknown-linux-gnu|headless"
 
     "group-mls-adapter|prns-groups/security/mls-rs/Cargo.toml|x86_64-unknown-linux-gnu"
+    "group-libraries|prns-groups/Cargo.toml|x86_64-unknown-linux-gnu"
+    "group-secure-storage|prns-groups/Cargo.toml|x86_64-unknown-linux-gnu|prns-groups-store/secure"
     "identity-keys-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu"
     "identity-keys-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin"
     "identity-catalog-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu|catalog"

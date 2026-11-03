@@ -660,6 +660,7 @@ jobs:
         run: >-
           python3 validation/run.py run
           --suite group-communication-tests
+          --suite group-headless-process
           --suite group-communication-clippy
           --suite group-mls-adapter-tests
           --suite group-mls-adapter-clippy

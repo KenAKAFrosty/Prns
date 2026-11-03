@@ -12,7 +12,7 @@ multiplex all its groups and use empty announce application data. Their public
 identity associates the services, but their payloads reveal no group list or
 inventory head.
 
-The group runner owns a process-local automatic timer
+The [group runner](../../../src/announces.rs) owns a process-local automatic timer
 and one-slot manual lane. The default `SyncPolicy` uses six hours; callers can
 select another supported interval or manual only. Positive jitter adds up to
 25 percent. A 60-second cooldown bounds admitted batches. `Requested` means the

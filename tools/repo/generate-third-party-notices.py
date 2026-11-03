@@ -19,7 +19,8 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "THIRD_PARTY_NOTICES.md"
 ABOUT = ROOT / "about.toml"
-GRAPH_FEATURES = {'Storage redb': ('redb',),
+GRAPH_FEATURES = {'Group secure storage': ('prns-groups-store/secure',),
+ 'Storage redb': ('redb',),
  'Identity key card Linux': ('contact-card',),
  'Identity key card macOS': ('contact-card',),
  'Identity catalog card Linux': ('catalog', 'contact-card'),
@@ -31,8 +32,11 @@ GRAPH_FEATURES = {'Storage redb': ('redb',),
  'Host connections Linux': ('connections',),
  'Host connections iOS': ('connections',),
  'Host connections macOS': ('connections',),
- 'Host runtime connections': ('connections',)}
+ 'Host runtime connections': ('connections',),
+ 'Group headless peer': ('headless',)}
 GRAPHS = (('Group MLS adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('Group secure storage', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
+ ('Group libraries', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('engine', 'Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('daemon Linux', 'prnsd/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('daemon macOS', 'prnsd/Cargo.toml', 'aarch64-apple-darwin'),
@@ -111,7 +115,8 @@ GRAPHS = (('Group MLS adapter', 'prns-groups/security/mls-rs/Cargo.toml', 'x86_6
  ('Host runtime', 'prns-host/impls/runtime/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('Expo host', 'prns-host/bindings/uniffi/image/Cargo.toml', 'x86_64-unknown-linux-gnu'),
  ('Expo Android', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-linux-android'),
- ('Expo iOS', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-ios'))
+ ('Expo iOS', 'prns-host/bindings/uniffi/image/Cargo.toml', 'aarch64-apple-ios'),
+ ('Group headless peer', 'prns-groups/Cargo.toml', 'x86_64-unknown-linux-gnu'))
 MAVEN = (
     ("androidx.annotation:annotation:1.5.0", "Apache-2.0"),
     ("com.github.mik3y:usb-serial-for-android:3.7.0", "MIT"),
