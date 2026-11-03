@@ -2,6 +2,11 @@
   "generator": "validation/security/unsafe-audit.py",
   "graphs": [
     {
+      "manifest": "prns-groups/security/mls-rs/Cargo.toml",
+      "name": "group-mls-adapter",
+      "target": "x86_64-unknown-linux-gnu"
+    },
+    {
       "manifest": "Cargo.toml",
       "name": "engine",
       "target": "x86_64-unknown-linux-gnu"
@@ -305,6 +310,42 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "alloc"
+        ]
+      },
+      "name": "aead",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.5.2"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "alloc",
+          "getrandom",
+          "rand_core"
+        ]
+      },
+      "name": "aead",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.6.1"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -358,6 +399,44 @@
         "tokens": 110
       },
       "version": "0.8.4"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "zeroize"
+        ]
+      },
+      "name": "aes",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 60,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 60
+      },
+      "version": "0.9.4"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "aes",
+          "alloc",
+          "default",
+          "getrandom",
+          "zeroize"
+        ]
+      },
+      "name": "aes-gcm",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.11.1"
     },
     {
       "graphs": {
@@ -833,6 +912,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -910,6 +990,23 @@
         "tokens": 6
       },
       "version": "0.2.5"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "alloc"
+        ]
+      },
+      "name": "base16ct",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 4,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 4
+      },
+      "version": "1.0.0"
     },
     {
       "graphs": {
@@ -1121,6 +1218,9 @@
           "alloc"
         ],
         "expo-ios": [
+          "alloc"
+        ],
+        "group-mls-adapter": [
           "alloc"
         ],
         "halow-appliance-manager": [
@@ -1592,6 +1692,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -1677,6 +1778,7 @@
         "expo-ios": [
           "zeroize"
         ],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [
           "zeroize"
         ],
@@ -3005,6 +3107,7 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [],
         "halow-headless": [],
         "identity-catalog-card-linux": [],
         "identity-catalog-card-macos": [],
@@ -3144,6 +3247,10 @@
           "rng",
           "zeroize"
         ],
+        "group-mls-adapter": [
+          "cipher",
+          "xchacha"
+        ],
         "halow-appliance-manager": [
           "rng",
           "zeroize"
@@ -3250,6 +3357,58 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "zeroize"
+        ]
+      },
+      "name": "chacha20",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 10,
+        "externs": 0,
+        "functions": 13,
+        "impls": 0,
+        "tokens": 23
+      },
+      "version": "0.9.1"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "alloc"
+        ]
+      },
+      "name": "chacha20poly1305",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.10.1"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "alloc",
+          "getrandom"
+        ]
+      },
+      "name": "chacha20poly1305",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.11.0"
+    },
+    {
+      "graphs": {
         "android": [
           "block-padding"
         ],
@@ -3306,6 +3465,9 @@
         ],
         "expo-ios": [
           "block-padding"
+        ],
+        "group-mls-adapter": [
+          "zeroize"
         ],
         "halow-appliance-manager": [
           "block-padding"
@@ -3387,6 +3549,24 @@
         "tokens": 2
       },
       "version": "0.4.4"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "block-buffer",
+          "stream-wrapper"
+        ]
+      },
+      "name": "cipher",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.5.2"
     },
     {
       "graphs": {
@@ -3635,6 +3815,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -3800,6 +3981,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -4068,6 +4250,21 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "cpubits",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.1"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -4079,6 +4276,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
@@ -4144,6 +4342,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "host-connections-android": [],
         "host-connections-ios": [],
         "host-connections-linux": [],
@@ -4383,6 +4582,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -4751,6 +4951,26 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "hybrid-array",
+          "rand_core",
+          "subtle",
+          "zeroize"
+        ]
+      },
+      "name": "crypto-bigint",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 14,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 14
+      },
+      "version": "0.7.10"
+    },
+    {
+      "graphs": {
         "android": [
           "std"
         ],
@@ -4786,6 +5006,7 @@
         "expo-ios": [
           "std"
         ],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [
           "std"
         ],
@@ -4905,6 +5126,10 @@
         "expo-ios": [
           "rand_core"
         ],
+        "group-mls-adapter": [
+          "getrandom",
+          "rand_core"
+        ],
         "halow-appliance-manager": [
           "rand_core"
         ],
@@ -4968,6 +5193,21 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "ctr",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.10.1"
+    },
+    {
+      "graphs": {
         "android": [],
         "contact-card": [],
         "daemon-linux": [],
@@ -5022,6 +5262,23 @@
         "tokens": 0
       },
       "version": "0.4.4"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "subtle"
+        ]
+      },
+      "name": "ctutils",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.4.7"
     },
     {
       "graphs": {
@@ -5189,6 +5446,11 @@
           "rand_core",
           "zeroize"
         ],
+        "group-mls-adapter": [
+          "alloc",
+          "digest",
+          "rand_core"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "digest",
@@ -5351,6 +5613,7 @@
         "desktop-windows": [],
         "engine": [],
         "expo-host-linux": [],
+        "group-mls-adapter": [],
         "host-c-linux": [],
         "host-c-windows": [],
         "host-connections-linux": [],
@@ -5499,6 +5762,10 @@
           "default",
           "suggestions"
         ],
+        "group-mls-adapter": [
+          "default",
+          "suggestions"
+        ],
         "host-c-linux": [
           "default",
           "suggestions"
@@ -5683,6 +5950,10 @@
           "strsim",
           "suggestions"
         ],
+        "group-mls-adapter": [
+          "strsim",
+          "suggestions"
+        ],
         "host-c-linux": [
           "strsim",
           "suggestions"
@@ -5816,6 +6087,7 @@
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "expo-host-linux": [],
+        "group-mls-adapter": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -6342,6 +6614,26 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "alloc",
+          "oid",
+          "pem",
+          "zeroize"
+        ]
+      },
+      "name": "der",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 4,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 4
+      },
+      "version": "0.8.3"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "default"
         ],
@@ -6447,6 +6739,11 @@
           "core-api",
           "default",
           "std"
+        ],
+        "group-mls-adapter": [
+          "block-buffer",
+          "core-api",
+          "default"
         ],
         "halow-appliance-manager": [
           "alloc",
@@ -6682,6 +6979,13 @@
           "mac",
           "rand_core",
           "zeroize"
+        ],
+        "group-mls-adapter": [
+          "block-api",
+          "default",
+          "mac",
+          "oid",
+          "rand_core"
         ],
         "halow-appliance-manager": [
           "alloc",
@@ -7275,6 +7579,29 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "algorithm",
+          "alloc",
+          "der",
+          "digest",
+          "pem",
+          "pkcs8",
+          "spki"
+        ]
+      },
+      "name": "ecdsa",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.17.0"
+    },
+    {
+      "graphs": {
         "android": [
           "alloc"
         ],
@@ -7333,6 +7660,9 @@
           "alloc"
         ],
         "expo-ios": [
+          "alloc"
+        ],
+        "group-mls-adapter": [
           "alloc"
         ],
         "halow-appliance-manager": [
@@ -7577,6 +7907,11 @@
           "signature",
           "strobe-rs",
           "zeroize"
+        ],
+        "group-mls-adapter": [
+          "alloc",
+          "rand_core",
+          "signature"
         ],
         "halow-appliance-manager": [
           "alloc",
@@ -7853,6 +8188,46 @@
         "tokens": 2
       },
       "version": "1.18.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "either",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 2,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 2
+      },
+      "version": "1.19.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ff",
+          "group",
+          "pem",
+          "pkcs8",
+          "sec1"
+        ]
+      },
+      "name": "elliptic-curve",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 4,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 4
+      },
+      "version": "0.14.3"
     },
     {
       "graphs": {
@@ -9475,6 +9850,7 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [],
         "halow-headless": []
       },
       "name": "embedded-storage",
@@ -11559,6 +11935,23 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "alloc"
+        ]
+      },
+      "name": "ff",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.14.0"
+    },
+    {
+      "graphs": {
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
@@ -11847,6 +12240,10 @@
           "std"
         ],
         "expo-host-linux": [
+          "default",
+          "std"
+        ],
+        "group-mls-adapter": [
           "default",
           "std"
         ],
@@ -14092,6 +14489,9 @@
         "expo-ios": [
           "more_lengths"
         ],
+        "group-mls-adapter": [
+          "more_lengths"
+        ],
         "halow-appliance-manager": [
           "more_lengths"
         ],
@@ -14351,6 +14751,10 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [
+          "sys_rng",
+          "wasm_js"
+        ],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],
@@ -14382,6 +14786,40 @@
         "tokens": 113
       },
       "version": "0.4.3"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "zeroize"
+        ]
+      },
+      "name": "ghash",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.6.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "alloc"
+        ]
+      },
+      "name": "group",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.14.0"
     },
     {
       "graphs": {
@@ -14767,6 +15205,9 @@
           "default",
           "std"
         ],
+        "group-mls-adapter": [
+          "alloc"
+        ],
         "halow-appliance-manager": [
           "alloc",
           "default",
@@ -14830,6 +15271,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -14924,6 +15366,7 @@
         "expo-ios": [
           "zeroize"
         ],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [
           "zeroize"
         ],
@@ -15481,6 +15924,11 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "alloc",
+          "subtle",
+          "zeroize"
+        ],
         "halow-headless": [
           "zeroize"
         ],
@@ -15699,6 +16147,7 @@
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "expo-host-linux": [],
+        "group-mls-adapter": [],
         "host-c-linux": [],
         "host-connections-linux": [],
         "host-runtime-connections-linux": [],
@@ -16089,6 +16538,7 @@
         "expo-ios": [
           "block-padding"
         ],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [
           "block-padding"
         ],
@@ -16169,6 +16619,21 @@
         "tokens": 22
       },
       "version": "0.1.4"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "inout",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 27,
+        "externs": 0,
+        "functions": 3,
+        "impls": 0,
+        "tokens": 30
+      },
+      "version": "0.2.5"
     },
     {
       "graphs": {
@@ -16385,6 +16850,9 @@
           "default",
           "use_alloc",
           "use_std"
+        ],
+        "group-mls-adapter": [
+          "use_alloc"
         ],
         "host-c-linux": [
           "default",
@@ -17058,6 +17526,7 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [],
         "identity-catalog-card-linux": [
           "std"
         ],
@@ -18148,6 +18617,23 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "default"
+        ]
+      },
+      "name": "maybe-async",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 3,
+        "impls": 0,
+        "tokens": 3
+      },
+      "version": "0.2.11"
+    },
+    {
+      "graphs": {
         "esp32-s3-heltec": [
           "default",
           "doctests",
@@ -18761,6 +19247,121 @@
         "tokens": 154
       },
       "version": "1.2.3"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "by_ref_proposal",
+          "fast_serialize",
+          "out_of_order",
+          "prior_epoch",
+          "private_message"
+        ]
+      },
+      "name": "mls-rs",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.57.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "preallocate"
+        ]
+      },
+      "name": "mls-rs-codec",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.7.1"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "mls-rs-codec-derive",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.2.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "fast_serialize"
+        ]
+      },
+      "name": "mls-rs-core",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 1,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 1
+      },
+      "version": "0.27.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "mls-rs-crypto-hpke",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.22.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "mls-rs-crypto-rustcrypto",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.23.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "mls-rs-crypto-traits",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.22.0"
     },
     {
       "graphs": {
@@ -19653,6 +20254,7 @@
           "default",
           "std"
         ],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [
           "default",
           "std"
@@ -22801,6 +23403,21 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "opaque-debug",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.1"
+    },
+    {
+      "graphs": {
         "daemon-linux": [],
         "expo-android": [],
         "expo-host-linux": [],
@@ -22887,6 +23504,58 @@
         "tokens": 15
       },
       "version": "0.18.5"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha256"
+        ]
+      },
+      "name": "p256",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.14.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "alloc",
+          "arithmetic",
+          "digest",
+          "ecdh",
+          "ecdsa",
+          "ecdsa-core",
+          "pem",
+          "pkcs8",
+          "sha2",
+          "sha384"
+        ]
+      },
+      "name": "p384",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.14.0"
     },
     {
       "graphs": {
@@ -22995,6 +23664,23 @@
         "tokens": 0
       },
       "version": "0.2.3"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "alloc"
+        ]
+      },
+      "name": "pem-rfc7468",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 1,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 1
+      },
+      "version": "1.0.0"
     },
     {
       "graphs": {
@@ -24141,6 +24827,10 @@
         "expo-ios": [
           "alloc"
         ],
+        "group-mls-adapter": [
+          "alloc",
+          "pem"
+        ],
         "halow-appliance-manager": [
           "alloc"
         ],
@@ -24276,6 +24966,54 @@
         "tokens": 0
       },
       "version": "0.18.1"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "poly1305",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 33,
+        "externs": 0,
+        "functions": 17,
+        "impls": 0,
+        "tokens": 50
+      },
+      "version": "0.8.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "poly1305",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 33,
+        "externs": 0,
+        "functions": 17,
+        "impls": 0,
+        "tokens": 50
+      },
+      "version": "0.9.1"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "hazmat",
+          "zeroize"
+        ]
+      },
+      "name": "polyval",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 4,
+        "externs": 0,
+        "functions": 20,
+        "impls": 0,
+        "tokens": 24
+      },
+      "version": "0.7.3"
     },
     {
       "graphs": {
@@ -24478,6 +25216,10 @@
           "default",
           "fallback",
           "std"
+        ],
+        "group-mls-adapter": [
+          "critical-section",
+          "require-cas"
         ],
         "halow-headless": [
           "critical-section",
@@ -24712,6 +25454,38 @@
         "tokens": 168
       },
       "version": "0.2.21"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "primefield",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.14.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "alloc"
+        ]
+      },
+      "name": "primeorder",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.14.0"
     },
     {
       "graphs": {
@@ -25409,6 +26183,54 @@
       },
       "name": "prns-flash-manifest",
       "source": "prns-flash-manifest",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "prns-groups-core",
+      "source": "prns-groups/core",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "prns-groups-mls",
+      "source": "prns-groups/security/mls-rs",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "default",
+          "secure"
+        ]
+      },
+      "name": "prns-groups-store",
+      "source": "prns-groups/store",
       "unsafe": {
         "blocks": 0,
         "externs": 0,
@@ -27543,6 +28365,10 @@
           "default",
           "proc-macro"
         ],
+        "group-mls-adapter": [
+          "default",
+          "proc-macro"
+        ],
         "halow-headless": [
           "default",
           "proc-macro"
@@ -27901,6 +28727,10 @@
           "proc-macro"
         ],
         "expo-ios": [
+          "default",
+          "proc-macro"
+        ],
+        "group-mls-adapter": [
           "default",
           "proc-macro"
         ],
@@ -28286,6 +29116,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -28766,6 +29597,21 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "rfc6979",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.6.0"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "alloc",
           "default",
@@ -29180,6 +30026,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -29999,6 +30846,30 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "alloc",
+          "ctutils",
+          "default",
+          "der",
+          "pem",
+          "point",
+          "subtle",
+          "zeroize"
+        ]
+      },
+      "name": "sec1",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.8.1"
+    },
+    {
+      "graphs": {
         "daemon-macos": [
           "OSX_10_14",
           "alpn",
@@ -30180,6 +31051,10 @@
           "std"
         ],
         "expo-ios": [
+          "default",
+          "std"
+        ],
+        "group-mls-adapter": [
           "default",
           "std"
         ],
@@ -30478,6 +31353,9 @@
           "derive",
           "serde_derive",
           "std"
+        ],
+        "group-mls-adapter": [
+          "alloc"
         ],
         "halow-headless": [
           "alloc"
@@ -30779,6 +31657,10 @@
           "alloc",
           "result",
           "std"
+        ],
+        "group-mls-adapter": [
+          "alloc",
+          "result"
         ],
         "halow-headless": [
           "alloc",
@@ -31266,6 +32148,23 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "alloc"
+        ]
+      },
+      "name": "serdect",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.4.3"
+    },
+    {
+      "graphs": {
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -31468,6 +32367,7 @@
           "default",
           "std"
         ],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [
           "default",
           "std"
@@ -31635,6 +32535,21 @@
         "tokens": 50
       },
       "version": "0.11.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "sha2",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 39,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 39
+      },
+      "version": "0.11.1"
     },
     {
       "graphs": {
@@ -31927,6 +32842,11 @@
         ],
         "expo-ios": [
           "alloc",
+          "rand_core"
+        ],
+        "group-mls-adapter": [
+          "alloc",
+          "digest",
           "rand_core"
         ],
         "halow-appliance-manager": [
@@ -32902,6 +33822,26 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "mutex",
+          "portable-atomic",
+          "portable_atomic",
+          "spin_mutex"
+        ]
+      },
+      "name": "spin",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 61,
+        "externs": 0,
+        "functions": 25,
+        "impls": 31,
+        "tokens": 117
+      },
+      "version": "0.10.1"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "barrier",
           "default",
@@ -32933,6 +33873,10 @@
           "mutex",
           "once",
           "rwlock",
+          "spin_mutex"
+        ],
+        "group-mls-adapter": [
+          "mutex",
           "spin_mutex"
         ]
       },
@@ -33059,6 +34003,24 @@
         "tokens": 0
       },
       "version": "0.8.0"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": [
+          "alloc",
+          "pem"
+        ]
+      },
+      "name": "spki",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.8.1"
     },
     {
       "graphs": {
@@ -33419,6 +34381,7 @@
         "esp32-s3-tbeam": [],
         "esp32-s3-xiao-esp32s3-wio-sx1262": [],
         "expo-host-linux": [],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -33644,6 +34607,10 @@
         ],
         "expo-ios": [
           "const-generics"
+        ],
+        "group-mls-adapter": [
+          "const-generics",
+          "i128"
         ],
         "halow-appliance-manager": [
           "const-generics"
@@ -34215,6 +35182,18 @@
           "visit-mut"
         ],
         "expo-ios": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "group-mls-adapter": [
           "clone-impls",
           "default",
           "derive",
@@ -37959,6 +38938,9 @@
         "expo-ios": [
           "const-generics"
         ],
+        "group-mls-adapter": [
+          "const-generics"
+        ],
         "halow-headless": [
           "const-generics"
         ],
@@ -38161,6 +39143,7 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [],
         "halow-headless": [],
         "identity-storage": []
       },
@@ -38535,6 +39518,36 @@
         "tokens": 0
       },
       "version": "0.31.2"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "universal-hash",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 1,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 1
+      },
+      "version": "0.5.1"
+    },
+    {
+      "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "universal-hash",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.6.1"
     },
     {
       "graphs": {
@@ -39067,6 +40080,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "halow-appliance-manager": [],
         "halow-headless": [],
         "host-c-linux": [],
@@ -40198,6 +41212,21 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": []
+      },
+      "name": "wnaf",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.14.1"
+    },
+    {
+      "graphs": {
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -40290,6 +41319,9 @@
         ],
         "expo-ios": [
           "precomputed-tables",
+          "static_secrets"
+        ],
+        "group-mls-adapter": [
           "static_secrets"
         ],
         "halow-appliance-manager": [
@@ -41094,6 +42126,10 @@
     },
     {
       "graphs": {
+        "group-mls-adapter": [
+          "alloc",
+          "zeroize_derive"
+        ],
         "identity-catalog-card-linux": [
           "derive",
           "zeroize_derive"
@@ -41181,6 +42217,7 @@
         "expo-android": [],
         "expo-host-linux": [],
         "expo-ios": [],
+        "group-mls-adapter": [],
         "halow-headless": [],
         "host-c-linux": [],
         "host-c-macos": [],

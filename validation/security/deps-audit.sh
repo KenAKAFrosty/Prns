@@ -16,6 +16,7 @@ python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
 
+    "group-mls-adapter|prns-groups/security/mls-rs/Cargo.toml|x86_64-unknown-linux-gnu"
     "identity-keys-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu"
     "identity-keys-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin"
     "identity-catalog-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu|catalog"

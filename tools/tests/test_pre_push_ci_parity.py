@@ -34,6 +34,12 @@ class PrePushCiParityTests(unittest.TestCase):
             self.assertEqual(parity.reusable_library_gates({"prns-groups/store-neighbor/src/lib.rs"}, {"suite": suites}), ())
             self.assertEqual(parity.reusable_library_gates({"validation/manifest.toml"}, {"suite": suites}), gates)
 
+    def test_group_source_selects_the_actual_registered_owning_suites(self) -> None:
+        gates = parity.plan_for_paths({"prns-groups/store/src/lib.rs"}).gates
+        selected = next(g for g in gates if g.name == "reusable library suites")
+        self.assertIn("group-communication-tests", selected.command)
+        self.assertIn("group-communication-clippy", selected.command)
+
     def gate_names(self, paths: set[str]) -> set[str]:
         return {gate.name for gate in parity.plan_for_paths(paths).gates}
 

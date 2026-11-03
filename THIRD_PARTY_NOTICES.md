@@ -2,12 +2,15 @@
 
 This checked bundle covers the shipped and qualification Rust, JavaScript, and Android product graphs.
 It was generated with `cargo-about 0.9.1` by `./tools/prns repo notices generate`.
-Notice input fingerprint: `sha256:b8b192e13abbefa25af47cac61e574b1004b7cf1db64c8659a1992e137cbde54`.
+Notice input fingerprint: `sha256:a255c83c93277c6b56ba84e6aa47c597e7045e83798e5f34238ffee202676843`.
 Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before cargo-about reads its target-filtered packaged license material offline.
 Entries are deduplicated by SPDX identifier and canonical notice text; line endings, trailing space, and repeated blank lines are normalized without changing legal words.
 
 ## Release graphs
 
+- Group MLS adapter: `prns-groups/security/mls-rs/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
+- Group secure storage: `prns-groups/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution, default features plus prns-groups-store/secure)
+- Group libraries: `prns-groups/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
 - engine: `Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
 - daemon Linux: `prnsd/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
 - daemon macOS: `prnsd/Cargo.toml` (`aarch64-apple-darwin`, locked resolution)
@@ -59,6 +62,7 @@ Entries are deduplicated by SPDX identifier and canonical notice text; line endi
 - Expo host: `prns-host/bindings/uniffi/image/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution)
 - Expo Android: `prns-host/bindings/uniffi/image/Cargo.toml` (`aarch64-linux-android`, locked resolution)
 - Expo iOS: `prns-host/bindings/uniffi/image/Cargo.toml` (`aarch64-apple-ios`, locked resolution)
+- Group headless peer: `prns-groups/Cargo.toml` (`x86_64-unknown-linux-gnu`, locked resolution, default features plus headless)
 
 ## Website JavaScript runtime
 

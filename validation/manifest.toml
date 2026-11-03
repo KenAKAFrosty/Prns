@@ -66,6 +66,8 @@ cargo_lock_workspaces = [
     "validation/fuzz",
     "validation/integration",
     "validation/oracles",
+    "prns-groups/security/mls-rs",
+    "prns-groups",
     "prns-host/bindings/uniffi",
     "prns-host/bindings/uniffi/image",
     "prns-host/impls/runtime",
@@ -151,6 +153,13 @@ cargo_manifests = [
     "validation/integration/Cargo.toml",
     "validation/oracles/Cargo.toml",
     "validation/simulation/Cargo.toml",
+    "prns-groups/profiles/text/Cargo.toml",
+    "prns-groups/security/mls-rs/Cargo.toml",
+    "prns-groups/service/Cargo.toml",
+    "prns-groups/Cargo.toml",
+    "prns-groups/core/Cargo.toml",
+    "prns-groups/store/Cargo.toml",
+    "prns-groups/store/redb/Cargo.toml",
     "prns-host/bindings/uniffi/Cargo.toml",
     "prns-host/bindings/uniffi/image/Cargo.toml",
     "prns-host/impls/runtime/Cargo.toml",
@@ -462,7 +471,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "validation/hygiene/application-boundary.py"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-storage", "prns-identities", "prns-contact-card"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card"]
 artifacts = "validation-artifacts/results/application-boundary"
 
 [[suite]]
@@ -473,7 +482,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "-m", "unittest", "validation.tests.test_application_boundary"]
-inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-storage", "prns-identities", "prns-contact-card"]
+inputs = ["validation/manifest.toml", "validation/hygiene/application-boundary.py", "validation/tests/test_application_boundary.py", "Cargo.toml", "prns-core", "prns-runtime", "prns-host", "prns-js", "prns-config", "prnsd", "prns-napi", "prns-wasm", "prns-nrf-dfu-wasm", "prns-ffi", "prns-macros", "prns-interfaces", "personal-rns", "personal-hopspot", "prns-groups", "prns-storage", "prns-identities", "prns-contact-card"]
 artifacts = "validation-artifacts/results/application-boundary-tests"
 
 [[suite]]
@@ -2621,6 +2630,80 @@ timeout_seconds = 120
 command = ["__RUNNER_PYTHON__", "-m", "unittest", "discover", "-s", "tools/uniffi", "-p", "test_*.py"]
 inputs = ["tools/uniffi"]
 artifacts = "validation-artifacts/results/uniffi-tooling-contracts"
+
+[[suite]]
+id = "group-communication-tests"
+domain = "native"
+group = "group-communication"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "--workspace", "--features", "prns-groups-store/secure"]
+inputs = ["prns-groups/Cargo.toml", "prns-groups/Cargo.lock", "prns-groups/core", "prns-groups/store", "prns-groups/service", "prns-groups/profiles/text", "prns-groups", "prns-groups/security/mls-rs", "prns-core", "prns-macros", "prns-host", "personal-rns", "prns-interfaces", "prns-runtime", "prns-storage", "prns-contact-card"]
+artifacts = "validation-artifacts/results/group-communication-tests"
+
+[[suite]]
+id = "group-communication-clippy"
+domain = "native"
+group = "group-communication"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+command = ["cargo", "clippy", "--locked", "--manifest-path", "prns-groups/Cargo.toml", "--workspace", "--all-targets", "--features", "prns-groups-store/secure", "--", "-D", "warnings"]
+inputs = ["prns-groups/Cargo.toml", "prns-groups/Cargo.lock", "prns-groups/core", "prns-groups/store", "prns-groups/service", "prns-groups/profiles/text", "prns-groups", "prns-groups/security/mls-rs", "prns-core", "prns-macros", "prns-host", "personal-rns", "prns-interfaces", "prns-runtime", "prns-storage", "prns-contact-card"]
+artifacts = "validation-artifacts/results/group-communication-clippy"
+
+[[suite]]
+id = "group-mls-adapter-tests"
+domain = "native"
+group = "group-communication"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-groups/security/mls-rs/Cargo.toml"]
+inputs = ["prns-groups/security/mls-rs", "prns-groups/core", "prns-groups/store"]
+artifacts = "validation-artifacts/results/group-mls-adapter-tests"
+
+[[suite]]
+id = "group-mls-adapter-clippy"
+domain = "native"
+group = "group-communication"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+command = ["cargo", "clippy", "--locked", "--manifest-path", "prns-groups/security/mls-rs/Cargo.toml", "--all-targets", "--no-deps", "--", "-D", "warnings"]
+inputs = ["prns-groups/security/mls-rs", "prns-groups/core", "prns-groups/store"]
+artifacts = "validation-artifacts/results/group-mls-adapter-clippy"
+
+[[suite]]
+id = "group-mls-adapter-portable-thumb"
+domain = "native"
+group = "group-communication"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+# Compile-only portability check; the unsupported entropy backend cannot run MLS.
+command = ["env", "-u", "CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS=--cfg getrandom_backend=\"unsupported\"", "cargo", "build", "--locked", "--manifest-path", "prns-groups/security/mls-rs/Cargo.toml", "--lib", "--target", "thumbv7em-none-eabihf"]
+inputs = ["prns-groups/security/mls-rs", "prns-groups/core", "prns-groups/store"]
+artifacts = "validation-artifacts/results/group-mls-adapter-portable-thumb"
+
+[[suite]]
+id = "group-mls-adapter-portable-riscv"
+domain = "native"
+group = "group-communication"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+# Compile-only portability check; the unsupported entropy backend cannot run MLS.
+command = ["env", "-u", "CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS=--cfg getrandom_backend=\"unsupported\"", "cargo", "build", "--locked", "--manifest-path", "prns-groups/security/mls-rs/Cargo.toml", "--lib", "--target", "riscv32imac-unknown-none-elf"]
+inputs = ["prns-groups/security/mls-rs", "prns-groups/core", "prns-groups/store"]
+artifacts = "validation-artifacts/results/group-mls-adapter-portable-riscv"
 
 [[suite]]
 id = "host-contract-generator-tests"

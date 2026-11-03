@@ -633,6 +633,48 @@ jobs:
           if-no-files-found: warn
           path: validation-artifacts/results/
 
+  group-libraries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+          targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: group-libraries-v1
+          workspaces: |
+            prns-groups
+            prns-groups/security/mls-rs
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Run registered validation suites
+        run: >-
+          python3 validation/run.py run
+          --suite group-communication-tests
+          --suite group-communication-clippy
+          --suite group-mls-adapter-tests
+          --suite group-mls-adapter-clippy
+          --suite group-mls-adapter-portable-thumb
+          --suite group-mls-adapter-portable-riscv
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: group-libraries
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
     # core workspace floor (1.90), with firmware host tools checked at their
@@ -664,6 +706,8 @@ jobs:
           cargo check --workspace --locked \
             --exclude personal-hopspot-builder --exclude hopspot-flash \
             --exclude personal-hopspot-resources --exclude personal-hopspot-assurance
+          cargo check --locked --manifest-path prns-groups/Cargo.toml --workspace --all-targets --all-features
+          cargo check --locked --manifest-path prns-groups/security/mls-rs/Cargo.toml --all-targets
           cargo check --locked -p prns-storage --all-targets --all-features
           cargo check --locked -p prns-contact-card --all-targets --all-features
           cargo check --locked --manifest-path prns-identities/Cargo.toml --workspace --all-targets --all-features
@@ -1227,6 +1271,7 @@ jobs:
       - named-identities
       - standalone-libraries
       - msrv
+      - group-libraries
       - embedded-resource-selection
       - no-std-embedded
       - esp32-firmware
@@ -1253,6 +1298,7 @@ jobs:
       WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
       NAMED_IDENTITIES_RESULT: ${{ needs.named-identities.result }}
       STANDALONE_LIBRARIES_RESULT: ${{ needs.standalone-libraries.result }}
+      GROUP_LIBRARIES_RESULT: ${{ needs.group-libraries.result }}
       MSRV_RESULT: ${{ needs.msrv.result }}
       EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}
       EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}
@@ -1287,6 +1333,7 @@ jobs:
             "$NAMED_IDENTITIES_RESULT" \
             "$STANDALONE_LIBRARIES_RESULT" \
             "$MSRV_RESULT" \
+            "$GROUP_LIBRARIES_RESULT" \
             "$EMBEDDED_SELECTION_RESULT" \
             "$ANDROID_RESULT" \
             "$APPLE_RESULT" \
