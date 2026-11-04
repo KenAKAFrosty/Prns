@@ -120,7 +120,7 @@ const fn esp32s3_spaces(
     ]
 }
 
-const ESP32C6_SPACES: [AddressSpace; 3] = [
+const ESP32C6_SPACES: [AddressSpace; 4] = [
     AddressSpace {
         id: FLASH,
         kind: AddressSpaceKind::InternalFlash,
@@ -140,6 +140,14 @@ const ESP32C6_SPACES: [AddressSpace; 3] = [
         kind: AddressSpaceKind::DataRam,
         geometry: AddressSpaceGeometry::LinkerDefined,
         backing_store: INTERNAL_RAM_BACKING,
+        backing_offset: 0,
+    },
+    AddressSpace {
+        id: RECLAIMED_RAM,
+        kind: AddressSpaceKind::ReclaimedRam,
+        // esp-hal's ESP32-C6 dram2_seg is available after the ESP-IDF bootloader.
+        geometry: AddressSpaceGeometry::Fixed(AddressRange::new(0x4086_E610, 0x4087_E610)),
+        backing_store: RECLAIMED_RAM_BACKING,
         backing_offset: 0,
     },
 ];
@@ -411,15 +419,47 @@ const S3_RUNTIME_RESERVATIONS: [RuntimeReservation; 4] = [
     },
 ];
 
-const C6_RUNTIME_RESERVATIONS: [RuntimeReservation; 1] = [RuntimeReservation {
-    id: ReservationId("radio-runtime-heap"),
-    address_space: DRAM,
-    bytes: 88 * KIB,
-    accounting: ReservationAccounting::SharedPool {
-        pool: ReservationPoolId("radio-runtime-heap"),
-        charge: ReservationCharge::IncludedInStaticImage,
+const C6_RUNTIME_RESERVATIONS: [RuntimeReservation; 4] = [
+    RuntimeReservation {
+        id: ReservationId("radio-reclaimed-heap"),
+        address_space: RECLAIMED_RAM,
+        bytes: 64 * KIB,
+        accounting: ReservationAccounting::SharedPool {
+            pool: ReservationPoolId("radio-reclaimed-heap"),
+            charge: ReservationCharge::IncludedInStaticImage,
+        },
     },
-}];
+    RuntimeReservation {
+        id: ReservationId("radio-internal-heap"),
+        address_space: DRAM,
+        bytes: 24 * KIB,
+        accounting: ReservationAccounting::SharedPool {
+            pool: ReservationPoolId("radio-internal-heap"),
+            charge: ReservationCharge::IncludedInStaticImage,
+        },
+    },
+    // Reserve the configured 4096-byte CPU0 guard offset separately from usable
+    // stack, plus 16 bytes for the guard word and RISC-V stack alignment. The
+    // pinned HAL watches four bytes at _stack_end + 4096.
+    RuntimeReservation {
+        id: ReservationId("runtime-stack-guard"),
+        address_space: DRAM,
+        bytes: 4 * KIB + 16,
+        accounting: ReservationAccounting::Dedicated {
+            charge: ReservationCharge::AdditionalToStatic,
+        },
+    },
+    // A usable-stack minimum, not a proof of maximum runtime stack use. Foreign
+    // frames, indirect calls and interrupt nesting remain explicit evidence gaps.
+    RuntimeReservation {
+        id: ReservationId("minimum-runtime-stack"),
+        address_space: DRAM,
+        bytes: 48 * KIB,
+        accounting: ReservationAccounting::Dedicated {
+            charge: ReservationCharge::AdditionalToStatic,
+        },
+    },
+];
 
 const S3FN8_RUNTIME_RESERVATIONS: [RuntimeReservation; 1] = [RuntimeReservation {
     id: ReservationId("internal-heap"),

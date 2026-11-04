@@ -34,9 +34,10 @@ mod owed_work;
 #[cfg(feature = "runtime-metrics")]
 mod scheduling_metrics;
 mod scheduling_policy;
+mod service_lifecycle;
 
 pub use super::grant_lane::{
-    tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
+    tokio_grant_lane, FrameDrainFence, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
 };
 pub(crate) use crate::runtime::TokioEntropy;
 #[cfg(feature = "simulation-control")]
@@ -46,7 +47,10 @@ pub use crypto_pool::{
     CryptoWorkBoundary,
 };
 pub use crypto_pool::{CryptoPoolConfig, CryptoWorkerPlacement, PoolWorkers};
-pub use egress::Egress;
+pub use egress::{
+    Egress, EgressHandshakeEvent, EgressHandshakeObserver, EgressHandshakePacket,
+    EgressHandshakePhase, EgressHandshakeSnapshot, EGRESS_HANDSHAKE_EVENT_LIMIT,
+};
 pub use host::{TokioClock, TokioHost};
 pub use host_protocol::{
     AddInterfaceCommand, HostCommand, HostResourceMetadata, HostResourcePayload,

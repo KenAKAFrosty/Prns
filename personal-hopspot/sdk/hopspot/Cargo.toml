@@ -20,6 +20,7 @@ path = "src/lib.rs"
 [features]
 default = ["std", "std-sync-host", "resource-work-offload"]
 alloc = ["personal-rns/alloc"]
+crypto-precomputed = ["personal-rns/crypto-precomputed"]
 rnx = ["personal-rns/rnx"]
 signed-artifact = ["personal-rns/signed-artifact"]
 interface-discovery = ["personal-rns/interface-discovery"]

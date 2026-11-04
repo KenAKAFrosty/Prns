@@ -71,6 +71,58 @@ pub enum WebUsbControllerEnrollment {
     },
 }
 
+/// The serial and WebUSB transports share the same durable enrollment owner.
+/// Owners must deduplicate the complete transaction and controller grant, reject
+/// transaction collisions, and publish Saved only after durable storage commits.
+pub type UsbAutoControllerEnrollment = WebUsbControllerEnrollment;
+
+pub(super) struct SerialEnrollmentReply {
+    pub nonce: u32,
+    pub status: [u8; CONTROLLER_ENROLL_STATUS_BYTES],
+}
+
+impl WebUsbControllerEnrollment {
+    pub(super) const fn is_supported(self) -> bool {
+        matches!(self, Self::Supported { .. })
+    }
+
+    /// Called only after a local serial handshake. No branch forwards a request
+    /// to the network. A query never invokes the authorization callback.
+    pub(super) fn serial_reply(
+        self,
+        message: prns_core::interfaces::usb_auto::Message<'_>,
+    ) -> Option<SerialEnrollmentReply> {
+        use prns_core::interfaces::usb_auto::Message;
+        let Self::Supported {
+            request,
+            status,
+            target_public_key,
+        } = self
+        else {
+            return None;
+        };
+        let (nonce, state) = match message {
+            Message::ControllerEnrollmentStatusQuery { nonce } if nonce != 0 => (nonce, status()),
+            Message::ControllerEnroll(bytes) => {
+                let transaction = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                let state = match UsbControllerEnrollment::decode_serial(bytes, &target_public_key)
+                {
+                    Some(enrollment) if request(enrollment).is_ok() => status(),
+                    // A rejection is specific to this submission, not a mutation
+                    // of the durable owner's active or historical transaction.
+                    _ => UsbControllerEnrollmentStatus::Failed { transaction },
+                };
+                (0, state)
+            }
+            _ => return None,
+        };
+        Some(SerialEnrollmentReply {
+            nonce,
+            status: state.encode(&target_public_key),
+        })
+    }
+}
+
 /// The bootloader transport requested by a validated USB control transfer.
 #[derive(Debug, PartialEq, Eq)]
 pub enum WebUsbBootloaderMode {
@@ -297,6 +349,132 @@ impl<'d, D: UsbDriver<'d>> embedded_io_async::Write for WebUsbAutoTx<'d, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn serial_request(transaction: u32, target: [u8; 64]) -> [u8; 132] {
+        use prns_core::identity::{in_memory::InMemoryNodeIdentity, IdentitySigner};
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&[42; 64]);
+        let mut request = [0; 132];
+        request[..4].copy_from_slice(&transaction.to_le_bytes());
+        request[4..36].copy_from_slice(identity.encryption_public_key().as_bytes());
+        request[36..68].copy_from_slice(identity.signing_public_key().as_bytes());
+        request[68..].copy_from_slice(&target);
+        request
+    }
+
+    #[test]
+    fn serial_queries_are_correlated_and_never_submit_authorization() {
+        use prns_core::interfaces::usb_auto::Message;
+        let enrollment = UsbAutoControllerEnrollment::Supported {
+            request: |_| panic!("a query cannot submit authorization"),
+            status: || UsbControllerEnrollmentStatus::Saved { transaction: 42 },
+            target_public_key: [7; 64],
+        };
+        let reply = enrollment
+            .serial_reply(Message::ControllerEnrollmentStatusQuery { nonce: 123 })
+            .unwrap();
+        assert_eq!(reply.nonce, 123);
+        assert_eq!(
+            UsbControllerEnrollmentStatus::decode(&reply.status),
+            Some((
+                UsbControllerEnrollmentStatus::Saved { transaction: 42 },
+                [7; 64]
+            ))
+        );
+        assert!(enrollment
+            .serial_reply(Message::ControllerEnrollmentStatusQuery { nonce: 0 })
+            .is_none());
+        assert!(UsbAutoControllerEnrollment::Unsupported
+            .serial_reply(Message::ControllerEnrollmentStatusQuery { nonce: 123 })
+            .is_none());
+    }
+
+    #[test]
+    fn serial_target_mismatch_and_invalid_keys_reject_before_owner_callback() {
+        use prns_core::interfaces::usb_auto::Message;
+        let enrollment = UsbAutoControllerEnrollment::Supported {
+            request: |_| panic!("invalid enrollment cannot reach the owner"),
+            status: || UsbControllerEnrollmentStatus::Saved { transaction: 42 },
+            target_public_key: [7; 64],
+        };
+        let mismatched = serial_request(51, [8; 64]);
+        let mut invalid = serial_request(51, [7; 64]);
+        invalid[4..36].fill(0);
+        for bytes in [mismatched, invalid] {
+            let reply = enrollment
+                .serial_reply(Message::ControllerEnroll(&bytes))
+                .unwrap();
+            assert_eq!(reply.nonce, 0);
+            assert_eq!(
+                UsbControllerEnrollmentStatus::decode(&reply.status),
+                Some((
+                    UsbControllerEnrollmentStatus::Failed { transaction: 51 },
+                    [7; 64]
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn serial_rejection_cannot_alias_a_saved_transaction_and_does_not_replace_it() {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        use prns_core::interfaces::usb_auto::Message;
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        let enrollment = UsbAutoControllerEnrollment::Supported {
+            request: |_| {
+                CALLS.fetch_add(1, Ordering::SeqCst);
+                Err(UsbControllerEnrollmentBusy)
+            },
+            status: || UsbControllerEnrollmentStatus::Saved { transaction: 42 },
+            target_public_key: [7; 64],
+        };
+        let bytes = serial_request(42, [7; 64]);
+        let reply = enrollment
+            .serial_reply(Message::ControllerEnroll(&bytes))
+            .unwrap();
+        assert_eq!(reply.nonce, 0);
+        assert_eq!(
+            UsbControllerEnrollmentStatus::decode(&reply.status)
+                .unwrap()
+                .0,
+            UsbControllerEnrollmentStatus::Failed { transaction: 42 }
+        );
+        assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+        let historical = enrollment
+            .serial_reply(Message::ControllerEnrollmentStatusQuery { nonce: 7 })
+            .unwrap();
+        assert_eq!(historical.nonce, 7);
+        assert_eq!(
+            UsbControllerEnrollmentStatus::decode(&historical.status)
+                .unwrap()
+                .0,
+            UsbControllerEnrollmentStatus::Saved { transaction: 42 }
+        );
+        assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn serial_accepted_request_reports_owner_pending_not_transport_success_as_saved() {
+        use prns_core::interfaces::usb_auto::Message;
+        let enrollment = UsbAutoControllerEnrollment::Supported {
+            request: |enrollment| {
+                assert_eq!(enrollment.transaction, 42);
+                Ok(())
+            },
+            status: || UsbControllerEnrollmentStatus::Pending { transaction: 42 },
+            target_public_key: [7; 64],
+        };
+        let bytes = serial_request(42, [7; 64]);
+        let reply = enrollment
+            .serial_reply(Message::ControllerEnroll(&bytes))
+            .unwrap();
+        assert_eq!(reply.nonce, 0);
+        assert_eq!(
+            UsbControllerEnrollmentStatus::decode(&reply.status)
+                .unwrap()
+                .0,
+            UsbControllerEnrollmentStatus::Pending { transaction: 42 }
+        );
+    }
 
     fn bootloader_entry_request() -> Request {
         Request {

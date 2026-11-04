@@ -1,16 +1,17 @@
 #![allow(clippy::unwrap_used)]
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::future::{poll_fn, Future};
 use core::pin::pin;
 use core::task::{Context, Poll, Waker};
-use std::{boxed::Box, rc::Rc, vec, vec::Vec};
+use std::{boxed::Box, collections::VecDeque, rc::Rc, vec, vec::Vec};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use prns_core::interfaces::bluetooth_auto::{
-    BleAddress, BleIdentity, BleSource, Control, L2capPlan,
+    BleAddress, BleControl, BleIdentity, BleLinkParts, BleSource, CloseReason, Control,
+    DiscoveryGroupSet, Endpoint, L2capPlan, LinkCapabilities, Nrf52Host, PeerDiscoveryGroups,
 };
 use prns_core::interfaces::InterfaceStatus;
 use prns_runtime::manifold::driver::InterfaceLifecycle;
@@ -95,10 +96,38 @@ impl BleSink for Sink {
 
 enum Link {}
 
+#[derive(Default)]
+struct ControlChannel {
+    incoming: Rc<RefCell<VecDeque<Result<Control, Closed>>>>,
+    received: Rc<Cell<usize>>,
+    sent: Rc<Cell<usize>>,
+}
+
+impl BleControl for ControlChannel {
+    type Error = Closed;
+
+    async fn send(&mut self, _: &Control) -> Result<(), Closed> {
+        self.sent.set(self.sent.get() + 1);
+        Ok(())
+    }
+
+    async fn recv(&mut self) -> Result<Control, Closed> {
+        poll_fn(|_| match self.incoming.borrow_mut().pop_front() {
+            Some(control) => {
+                self.received.set(self.received.get() + 1);
+                Poll::Ready(control)
+            }
+            None => Poll::Pending,
+        })
+        .await
+    }
+}
+
 impl BleLink for Link {
     type Error = Closed;
     type Source = Source;
     type Sink = Sink;
+    type Control = ControlChannel;
 
     fn peer_protocol(&self) -> prns_core::interfaces::bluetooth_auto::PeerProtocol {
         match *self {}
@@ -116,7 +145,7 @@ impl BleLink for Link {
     async fn upgrade(&mut self, _: &L2capPlan) -> Result<(), Closed> {
         match *self {}
     }
-    fn into_data(self) -> (Source, Sink) {
+    fn into_parts(self) -> BleLinkParts<Source, Sink, ControlChannel> {
         match self {}
     }
 }
@@ -137,7 +166,176 @@ fn member(slot: usize, next: Incoming, mode: Sending) -> Active<Link> {
             received,
             starts: Rc::new(Cell::new(0)),
         },
+        control: None,
     }
+}
+
+fn greeting(welcome: bool) -> Control {
+    let identity = BleIdentity::new([7; 16]);
+    let endpoint = Endpoint::Nrf52(Nrf52Host::Nrf52);
+    let capabilities = LinkCapabilities {
+        l2cap: None,
+        link_mtu: 244,
+    };
+    let discovery_groups = PeerDiscoveryGroups::Explicit(DiscoveryGroupSet::reticulum().hashes());
+    if welcome {
+        Control::Welcome {
+            identity,
+            endpoint,
+            capabilities,
+            peer_rssi: None,
+            discovery_groups,
+        }
+    } else {
+        Control::Hello {
+            identity,
+            endpoint,
+            capabilities,
+            peer_rssi: None,
+            discovery_groups,
+        }
+    }
+}
+
+#[test]
+fn greetings_are_bounded_and_do_not_restart_an_inflight_send() {
+    let (mut fleet, status, _) = fixture();
+    let ready = Rc::new(Cell::new(false));
+    let mut first = member(
+        0,
+        Incoming::Frame(vec![1, 2]),
+        Sending::Gated(ready.clone()),
+    );
+    let control = ControlChannel::default();
+    control
+        .incoming
+        .borrow_mut()
+        .extend([Ok(greeting(false)), Ok(greeting(true))]);
+    let received_controls = control.received.clone();
+    let sent_controls = control.sent.clone();
+    let send_starts = first.sink.starts.clone();
+    first.control = Some(control);
+    let mut members = [Some(first), None, None];
+    let states = [
+        MemberSelection::Send,
+        MemberSelection::ReceiveOnly,
+        MemberSelection::ReceiveOnly,
+    ]
+    .map(MemberTransferState::new);
+    let mut bufs = [[0; BLE_HW_MTU]; PEERS];
+    {
+        let mut send = pin!(send_members(
+            &mut members,
+            &states,
+            b"send",
+            &mut bufs,
+            &mut fleet,
+            &status
+        ));
+        assert!(send
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending());
+        assert_eq!(received_controls.get(), 1);
+        assert_eq!(send_starts.get(), 1);
+        assert!(send
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending());
+        assert_eq!(received_controls.get(), 2);
+        assert_eq!(send_starts.get(), 1);
+        ready.set(true);
+        assert!(send
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_ready());
+    }
+    assert_eq!(sent_controls.get(), 0);
+    assert_eq!(status.member(0).rx_bytes(), 2);
+    assert_eq!(status.member(0).tx_bytes(), 4);
+    assert!(!states[0].needs_retirement());
+}
+
+#[test]
+fn terminal_control_retires_only_its_member_during_a_blocked_send() {
+    for terminal in [
+        Ok(Control::Close {
+            reason: CloseReason::DuplicateLink,
+        }),
+        Err(Closed),
+    ] {
+        let (mut fleet, status, _) = fixture();
+        let mut first = member(0, Incoming::Pending, Sending::Blocked);
+        let control = ControlChannel::default();
+        let incoming = control.incoming.clone();
+        let sent_controls = control.sent.clone();
+        let send_starts = first.sink.starts.clone();
+        first.control = Some(control);
+        let mut members = [
+            Some(first),
+            Some(member(1, Incoming::Pending, Sending::Ready)),
+            None,
+        ];
+        let states = [
+            MemberSelection::Send,
+            MemberSelection::Send,
+            MemberSelection::ReceiveOnly,
+        ]
+        .map(MemberTransferState::new);
+        let mut bufs = [[0; BLE_HW_MTU]; PEERS];
+        {
+            let mut send = pin!(send_members(
+                &mut members,
+                &states,
+                b"send",
+                &mut bufs,
+                &mut fleet,
+                &status
+            ));
+            assert!(send
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending());
+            incoming.borrow_mut().push_back(terminal);
+            assert!(send
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_ready());
+        }
+        assert_eq!(send_starts.get(), 1);
+        assert_eq!(sent_controls.get(), 0);
+        assert!(states[0].needs_retirement());
+        assert!(!states[1].needs_retirement());
+        assert_eq!(status.member(0).tx_bytes(), 0);
+        assert_eq!(status.member(1).tx_bytes(), 4);
+    }
+}
+
+#[test]
+fn idle_control_receive_is_cancellation_safe_and_reports_close() {
+    let mut first = member(0, Incoming::Pending, Sending::Ready);
+    let control = ControlChannel::default();
+    let incoming = control.incoming.clone();
+    first.control = Some(control);
+    let mut member = Some(first);
+    let mut buf = [0; BLE_HW_MTU];
+    {
+        let mut receive = pin!(super::super::recv_or_pending(&mut member, &mut buf));
+        assert!(receive
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending());
+    }
+    incoming.borrow_mut().push_back(Ok(Control::Close {
+        reason: CloseReason::DuplicateLink,
+    }));
+    let mut receive = pin!(super::super::recv_or_pending(&mut member, &mut buf));
+    assert_eq!(
+        receive
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Ready(Err(super::super::MemberReceiveError::ControlClosed))
+    );
 }
 
 fn fixture() -> (

@@ -317,3 +317,21 @@ async fn identity_blackhole_capabilities_report_a_stopped_manifold() {
         Err(IdentityBlackholeControlError::NodeStopped)
     );
 }
+
+#[tokio::test]
+async fn pairing_inspection_does_not_replace_a_stopped_node_with_idle() {
+    use crate::runtime::{
+        RemoteControlPairingInspection, RemoteControlPairingInspectionError,
+        RemoteControlPairingStatusInspection,
+    };
+    let (handle, command_rx) = handle();
+    drop(command_rx);
+    assert_eq!(
+        handle.remote_control_controller_pairing_snapshot().await,
+        Err(RemoteControlPairingInspectionError::NodeStopped)
+    );
+    assert_eq!(
+        handle.remote_control_controller_pairing_status().await,
+        Err(RemoteControlPairingInspectionError::NodeStopped)
+    );
+}

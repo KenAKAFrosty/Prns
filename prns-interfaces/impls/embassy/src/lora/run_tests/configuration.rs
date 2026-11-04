@@ -35,8 +35,8 @@ fn reconfigure_busy_radio(new: RadioProfile, channel_changed: bool) {
         while status.frame_accounting().unwrap().frames_in == 0 {
             yield_now().await;
         }
-        lab.outbound.send(std::vec![0x71; 300]).await;
-        lab.outbound.send(std::vec![0x72; 10]).await;
+        lab.send_outbound(std::vec![0x71; 300]).await;
+        lab.send_outbound(std::vec![0x72; 10]).await;
         lab.tx_started.wait().await;
         assert_eq!(lab.accepted.get(), 2);
         {
@@ -89,7 +89,7 @@ fn reconfigure_busy_radio(new: RadioProfile, channel_changed: bool) {
             lab.delivered.borrow().is_empty(),
             "the old partial frame cannot join a new-band fragment"
         );
-        lab.outbound.send(std::vec![0x73; 10]).await;
+        lab.send_outbound(std::vec![0x73; 10]).await;
         while lab.transmissions.borrow().len() < if channel_changed { 3 } else { 4 } {
             yield_now().await;
         }
@@ -230,7 +230,7 @@ fn transactions_run_from_unconfigured_idle_and_disabled_states_and_clear_back_to
                     }
                 }
                 assert_eq!(status.id(), unconfigured_interface_id());
-                lab.outbound.send(vec![1, 2, 3]).await;
+                lab.send_outbound(vec![1, 2, 3]).await;
                 while lab.dispositions.borrow().is_empty() {
                     yield_now().await;
                 }
@@ -323,7 +323,7 @@ fn legacy_commands_restore_the_old_channel_on_hardware_or_publication_failure() 
                         yield_now().await;
                     }
                     if configured {
-                        lab.outbound.send(vec![0x42; 10]).await;
+                        lab.send_outbound(vec![0x42; 10]).await;
                         while lab.accepted.get() < 1 {
                             yield_now().await;
                         }
@@ -535,7 +535,7 @@ fn legacy_changes_publish_before_releasing_active_or_disabled_traffic() {
                     // A same-profile request is idempotent and sends no publication.
                     assert_eq!(controller.apply(profile).await, LoRaApplyOutcome::Applied);
                     if pending && !disabled {
-                        lab.outbound.send(vec![0x42; 10]).await;
+                        lab.send_outbound(vec![0x42; 10]).await;
                         while lab.accepted.get() < 1 {
                             yield_now().await;
                         }
@@ -631,7 +631,7 @@ fn legacy_changes_publish_before_releasing_active_or_disabled_traffic() {
 }
 
 #[test]
-fn disabling_retries_idle_and_enabling_resumes_the_retained_queue() {
+fn disabling_retries_idle_discards_backlog_and_enabling_accepts_fresh_frames() {
     exercise_disabled_backlog(false);
     exercise_disabled_backlog(true);
 }
@@ -665,8 +665,8 @@ fn exercise_disabled_backlog(change_channel: bool) {
     };
     let phase = Cell::new("accepting");
     let scenario = async {
-        lab.outbound.send(vec![0x42; 10]).await;
-        lab.outbound.send(vec![0x43; 10]).await;
+        lab.send_outbound(vec![0x42; 10]).await;
+        lab.send_outbound(vec![0x43; 10]).await;
         while lab.accepted.get() < 2 {
             yield_now().await;
         }
@@ -687,7 +687,10 @@ fn exercise_disabled_backlog(change_channel: bool) {
         }
         assert_eq!(
             &*lab.dispositions.borrow(),
-            &[OutboundDisposition::Dropped(OutboundDropReason::Disabled)]
+            &[
+                OutboundDisposition::Dropped(OutboundDropReason::Disabled),
+                OutboundDisposition::Dropped(OutboundDropReason::Disabled)
+            ]
         );
         assert_eq!(spectrum.snapshot().channel_change_drops, 3);
         assert!(!lab.receiving.get());
@@ -705,30 +708,30 @@ fn exercise_disabled_backlog(change_channel: bool) {
             )
         };
         assert_eq!(controller.apply(changed).await, LoRaApplyOutcome::Applied);
-        assert_eq!(
-            lab.dispositions.borrow().len(),
-            if change_channel { 2 } else { 1 }
-        );
-        if change_channel {
-            assert_eq!(
-                lab.dispositions.borrow()[1],
-                OutboundDisposition::Dropped(OutboundDropReason::ChannelChanged)
-            );
-            lab.outbound.send(vec![0x44; 10]).await;
+        assert_eq!(lab.dispositions.borrow().len(), 2);
+        lab.send_outbound(vec![0x44; 10]).await;
+        while lab.dispositions.borrow().len() < 3 {
+            yield_now().await;
         }
-        phase.set("enabling retained queue");
+        assert_eq!(
+            lab.dispositions.borrow()[2],
+            OutboundDisposition::Dropped(OutboundDropReason::Disabled)
+        );
+        phase.set("enabling fresh traffic");
         status.enable();
-        while lab.dispositions.borrow().len() < if change_channel { 3 } else { 2 } {
+        while status.observed_connection() != ConnectionState::Connected {
+            yield_now().await;
+        }
+        embassy_time::Timer::after(Duration::from_millis(2)).await;
+        lab.send_outbound(vec![0x45; 10]).await;
+        while lab.dispositions.borrow().len() < 4 {
             yield_now().await;
         }
         assert_eq!(
             *lab.dispositions.borrow().last().unwrap(),
             OutboundDisposition::Sent
         );
-        assert_eq!(
-            &lab.transmissions.borrow()[0].1[1..],
-            &[if change_channel { 0x44 } else { 0x43 }; 10]
-        );
+        assert_eq!(&lab.transmissions.borrow()[0].1[1..], &[0x45; 10]);
         assert!(lab.receiving.get());
         phase.set("rejecting clear publication");
         assert_eq!(controller.clear().await, LoRaApplyOutcome::Rejected);
@@ -843,7 +846,7 @@ fn incompatible_profile_requests_leave_the_operating_configuration_untouched() {
                 );
                 assert!(lifecycle.try_receive().is_err());
                 if configured && !disabled {
-                    lab.outbound.send(vec![0x42; 10]).await;
+                    lab.send_outbound(vec![0x42; 10]).await;
                     while lab.accepted.get() < 1 {
                         yield_now().await;
                     }

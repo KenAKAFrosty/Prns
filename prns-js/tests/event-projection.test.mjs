@@ -10,18 +10,18 @@ import {
 } from "../dist/event_projection.js";
 
 const linkEstablishedVector = Uint8Array.from([
-  80, 82, 78, 69, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 26, 0, 0, 0, 201,
+  80, 82, 78, 69, 1, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 26, 0, 0, 0, 201,
   0, 2, 0, 4, 0, 1, 0, 2, 0, 0, 0, 1, 2, 8, 0, 3, 0, 8, 0, 0, 0, 9, 0,
   0, 0, 0, 0, 0, 0,
 ]);
 
 const commandCorrelationVector = Uint8Array.from([
-  80, 82, 78, 69, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 16, 0, 0, 0, 102,
+  80, 82, 78, 69, 1, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 16, 0, 0, 0, 102,
   0, 1, 0, 0, 128, 3, 0, 8, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0,
 ]);
 
 const singleDeliveryPayloadVector = Uint8Array.from([
-  80, 82, 78, 69, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 12, 0, 0, 0, 100,
+  80, 82, 78, 69, 1, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 12, 0, 0, 0, 100,
   0, 1, 0, 3, 0, 1, 0, 4, 0, 0, 0, 1, 2, 3, 4,
 ]);
 
@@ -50,6 +50,16 @@ test("rejects truncated event batches with a typed error", () => {
     () => decodeEventBatchProjection(linkEstablishedVector.subarray(0, 47)),
     (error) =>
       error instanceof EventBatchProjectionError && error.code === "Truncated",
+  );
+});
+
+test("rejects a previous host schema without decoding its event records", () => {
+  const previousSchema = Uint8Array.from(linkEstablishedVector);
+  new DataView(previousSchema.buffer).setUint32(8, 1, true);
+  assert.throws(
+    () => decodeEventBatchProjection(previousSchema),
+    (error) =>
+      error instanceof EventBatchProjectionError && error.code === "SchemaMismatch",
   );
 });
 

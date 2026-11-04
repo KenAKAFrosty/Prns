@@ -16,6 +16,8 @@ pub const COLUMBA_TX_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe4));
 pub const COLUMBA_IDENTITY_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe6));
 pub const NATIVE_CONTROL_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe7));
 pub const NATIVE_DATA_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe8));
+/// Optional, read-only native liveness capability; never required for discovery.
+pub const NATIVE_LIVENESS_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe9));
 
 const AD_FLAGS: u8 = 0x01;
 const AD_INCOMPLETE_SERVICE_UUID128: u8 = 0x06;

@@ -5,7 +5,7 @@ import { Tag } from "../dist/casework.js";
 import { BoundedWorkerEventSender } from "../dist/browser/worker_event_sender.js";
 
 const singleDeliveryPayloadVector = Uint8Array.from([
-  80, 82, 78, 69, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 12, 0, 0, 0, 100,
+  80, 82, 78, 69, 1, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 12, 0, 0, 0, 100,
   0, 1, 0, 3, 0, 1, 0, 4, 0, 0, 0, 1, 2, 3, 4,
 ]);
 
@@ -16,8 +16,8 @@ const limits = {
   diagnostics: 1,
 };
 
-test("holds later event batches until the page acknowledges the in-flight batch", async () => {
-  const channel = new MessageChannel();
+test("holds later event batches until the page acknowledges the in-flight batch", { timeout: 5000 }, async (t) => {
+  const channel = testChannel(t);
   const failures = [];
   const sender = new BoundedWorkerEventSender(channel.port1, limits, {
     protocol: (detail) => failures.push({ type: "protocol", detail }),
@@ -36,12 +36,10 @@ test("holds later event batches until the page acknowledges the in-flight batch"
   assert.equal(second.tag, "Batch");
   channel.port2.postMessage(Tag("Acknowledge", { id: second.data.id }));
   assert.deepEqual(failures, []);
-  channel.port1.close();
-  channel.port2.close();
 });
 
-test("coalesces diagnostics dropped behind a full event channel", async () => {
-  const channel = new MessageChannel();
+test("coalesces diagnostics dropped behind a full event channel", { timeout: 5000 }, async (t) => {
+  const channel = testChannel(t);
   const failures = [];
   const sender = new BoundedWorkerEventSender(channel.port1, limits, {
     protocol: (detail) => failures.push({ type: "protocol", detail }),
@@ -60,12 +58,10 @@ test("coalesces diagnostics dropped behind a full event channel", async () => {
   assert.deepEqual(gap.data.event, Tag("DiagnosticsDropped", { count: 1n }));
   channel.port2.postMessage(Tag("Acknowledge", { id: gap.data.id }));
   assert.deepEqual(failures, []);
-  channel.port1.close();
-  channel.port2.close();
 });
 
-test("retains diagnostics in the Worker until their public lane is claimed", async () => {
-  const channel = new MessageChannel();
+test("retains diagnostics in the Worker until their public lane is claimed", { timeout: 5000 }, async (t) => {
+  const channel = testChannel(t);
   const failures = [];
   const sender = new BoundedWorkerEventSender(channel.port1, limits, {
     protocol: (detail) => failures.push({ type: "protocol", detail }),
@@ -80,9 +76,16 @@ test("retains diagnostics in the Worker until their public lane is claimed", asy
   assert.deepEqual(message.data.event, Tag("Delivered", { detail: "retained" }));
   channel.port2.postMessage(Tag("Acknowledge", { id: message.data.id }));
   assert.deepEqual(failures, []);
-  channel.port1.close();
-  channel.port2.close();
 });
+
+function testChannel(t) {
+  const channel = new MessageChannel();
+  t.after(() => {
+    channel.port1.close();
+    channel.port2.close();
+  });
+  return channel;
+}
 
 function nextMessage(port) {
   port.start();

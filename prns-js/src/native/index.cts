@@ -198,7 +198,8 @@ type RawMultiRNodeMember = {
 };
 
 type RawInterfaceConfig = {
-  kind: InterfaceKind;
+  kind: InterfaceConfig["tag"];
+  discoveryGroups?: string[];
   groupId?: string | undefined;
   discoveryScope?: string | undefined;
   discoveryPort?: number | undefined;
@@ -1419,17 +1420,19 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
           plaintext: bytes("plaintext", data.plaintext).slice(),
         }),
       ),
-    linkDelivery: (data) =>
-      casework.Tag(
+    linkDelivery: (data) => {
+      const localDestination = optionalBytes(data.localDestination);
+      return casework.Tag(
         "Application",
         casework.Tag("LinkDelivery", {
           linkId: contract.linkId(bytes("linkId", data.linkId)),
-          sourceInterface: contract.interfaceId(
-            bytes("sourceInterface", data.sourceInterface),
-          ),
+          sourceInterface: contract.interfaceId(bytes("sourceInterface", data.sourceInterface)),
           plaintext: bytes("plaintext", data.plaintext).slice(),
+          ...(localDestination === undefined ? {} : { localDestination: contract.destinationHash(localDestination) }),
+          arrivedAtMillis: rawSafeUint("arrivedAtMillis", data.arrivedAtMillis),
         }),
-      ),
+      );
+    },
     request: (rawRequest) => {
       const request = {
         destination: contract.destinationHash(
@@ -2304,6 +2307,7 @@ function rawInterfaceConfig(config: InterfaceConfig): RawInterfaceConfig {
     Weave: ({ port }) => ({ kind: "Weave", port }),
     AutomaticUsb: () => ({ kind: "AutomaticUsb" }),
     AutomaticBluetoothLe: () => ({ kind: "AutomaticBluetoothLe" }),
+    ConfiguredBluetoothLe: ({ discoveryGroups }) => ({ kind: "ConfiguredBluetoothLe", discoveryGroups: Array.from(discoveryGroups) }),
     WebSocketClient: ({ target, framing }) => ({
       kind: "WebSocketClient",
       target,
@@ -2507,6 +2511,7 @@ function validateInterfaceConfig(config: InterfaceConfig): void {
     },
     AutomaticUsb: () => undefined,
     AutomaticBluetoothLe: () => undefined,
+    ConfiguredBluetoothLe: ({ discoveryGroups }) => stringArray("discoveryGroups", discoveryGroups),
     WebSocketClient: ({ target, framing }) => {
       validateWebSocket("target", target);
       validateWebSocketFramingSelection(framing);

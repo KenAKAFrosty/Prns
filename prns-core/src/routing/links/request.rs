@@ -626,9 +626,9 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(crate::engine::EngineReaction<'_, Work>),
     ) -> crate::engine::WakeSchedules {
         let crate::routing::links::resources::ResourceCorrelation::Request {
+            id: advertised_request_id,
             response_timeout,
             maximum_response_bytes,
-            ..
         } = correlation
         else {
             return crate::engine::WakeSchedules::UNCHANGED;
@@ -641,8 +641,10 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let peer_signing = *peer_signing;
         let timeout_ms = requested_response_timeout_ms(*rtt, response_timeout);
+        let packet_hash = PacketHash::new(sha256(packed_request));
+        let request_id = RequestId::of_packet(&packet_hash);
         let culled = self.receipts.track(OutstandingReceipt {
-            packet_hash: PacketHash::new(sha256(packed_request)),
+            packet_hash,
             command_id: id,
             kind: ReceiptKind::request(
                 *link_id,
@@ -656,6 +658,24 @@ impl<S: StorageLayout> EngineState<S> {
         if let Some(culled) = culled {
             let settlement = self.culled_settlement(culled);
             crate::engine::settle(sink, culled.command_id, settlement);
+        }
+        if response_timeout == RequestResponseTimeout::LinkDefault
+            && advertised_request_id == request_id
+        {
+            // Python RequestReceipt starts its response wait only after the
+            // outgoing Resource completes. Until then the upload watchdog owns
+            // failure; keep the receipt present to accept an early response.
+            // A malformed low-level ResourceSend must retain its finite timeout:
+            // its advertised ID cannot re-arm the receipt keyed by the body hash.
+            self.receipts.transition_request_deadline_for_command(
+                link_id,
+                id,
+                request_id,
+                crate::routing::delivery::receipts::ReceiptDeadline::Due(InstantMillis(
+                    now.0.saturating_add(timeout_ms),
+                )),
+                crate::routing::delivery::receipts::ReceiptDeadline::AwaitingRequestUpload,
+            );
         }
         crate::engine::WakeSchedules {
             receipt_timeouts: self.receipt_timeouts_wake(),
@@ -858,6 +878,7 @@ mod tests {
         engine
             .links
             .track_initiated(InitiatedLink {
+                attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
                 link_id,
                 destination: DestinationHash::new([0x11; 16]),
                 route_evidence: crate::routing::routes::RouteEvidenceHandle::new(
@@ -946,6 +967,7 @@ mod tests {
         engine
             .links
             .track_responding(RespondingLink {
+                attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
                 link_id: link_id(),
                 key: link_key(),
                 requested_at: InstantMillis(500),
@@ -1279,6 +1301,7 @@ mod tests {
         engine
             .links
             .track_responding(RespondingLink {
+                attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
                 link_id: handshake,
                 key: link_key(),
                 requested_at: InstantMillis(500),

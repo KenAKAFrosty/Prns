@@ -1,6 +1,6 @@
 use personal_rns::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleAddress, BleBackend, BleEvent, BleIdentity, BleLink, BleSink, Control,
-    DialOutcome, L2capPlan, LinkCapabilities, PeerProtocol, RadioMode, ScanningMode,
+    AdvertisingMode, BleAddress, BleBackend, BleEvent, BleIdentity, BleLink, BleLinkParts, BleSink,
+    Control, DialOutcome, L2capPlan, LinkCapabilities, PeerProtocol, RadioMode, ScanningMode,
 };
 use prns_simulation::ble::{
     VirtualBleBackend, VirtualBleError, VirtualBleLink, VirtualBleSink, VirtualBleSource,
@@ -85,6 +85,7 @@ impl BleLink for GatedLink {
     type Error = VirtualBleError;
     type Source = VirtualBleSource;
     type Sink = GatedSink;
+    type Control = <VirtualBleLink as BleLink>::Control;
 
     fn peer_protocol(&self) -> PeerProtocol {
         self.inner.peer_protocol()
@@ -114,15 +115,20 @@ impl BleLink for GatedLink {
         self.inner.upgrade(plan).await
     }
 
-    fn into_data(self) -> (Self::Source, Self::Sink) {
-        let (source, inner) = self.inner.into_data();
-        (
+    fn into_parts(self) -> BleLinkParts<Self::Source, Self::Sink, Self::Control> {
+        let BleLinkParts {
             source,
-            GatedSink {
+            sink: inner,
+            control,
+        } = self.inner.into_parts();
+        BleLinkParts {
+            source,
+            sink: GatedSink {
                 inner,
                 gate: self.gate,
             },
-        )
+            control,
+        }
     }
 }
 

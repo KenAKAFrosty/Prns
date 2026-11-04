@@ -10,6 +10,10 @@ mod remote_control;
 mod request_response;
 mod resource_admission;
 mod resource_transfer;
+pub(crate) mod service_lifecycle;
+pub use service_lifecycle::{
+    ServiceEndpoint, ServiceLifecycleError, ServicePause, ServiceRegistration,
+};
 
 use portable_atomic::AtomicU64;
 use std::cell::{Cell, RefCell};
@@ -62,7 +66,8 @@ pub use byte_stream::{
 };
 pub use interface_lifecycle::{
     AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, DetachedFleet, Fleet,
-    InterfaceArbitration, InterfaceAttachmentMetadata, InterfaceEventSource, InterfaceSupervisor,
+    InterfaceArbitration, InterfaceAttachmentMetadata, InterfaceDetachError, InterfaceEventSource,
+    InterfaceSupervisor,
 };
 use interface_lifecycle::{DriverMsg, RegisteredInterface};
 pub use node_lifecycle::{
@@ -81,8 +86,8 @@ pub use persistence::{
 };
 pub(crate) use persistence::{AuthorizationOwnerError, AuthorizationTransaction};
 pub use remote_control::{
-    RemoteControlHandle, RemoteControlInterfaceWatch, RemoteControlTargetHandle,
-    RemoteControlWatchOpenError, RemoteControlWatchReadError,
+    RemoteControlExchange, RemoteControlHandle, RemoteControlInterfaceWatch,
+    RemoteControlTargetHandle, RemoteControlWatchOpenError, RemoteControlWatchReadError,
 };
 pub use request_response::{RequestOptions, ResponseSendError};
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};

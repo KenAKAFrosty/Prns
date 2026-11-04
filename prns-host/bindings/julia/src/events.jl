@@ -246,14 +246,14 @@ function optional_identity_hash(event::Ptr{Cvoid})
     value === nothing ? nothing : IdentityHash(value)
 end
 
-mutable struct NativeResourceStream <: ResourceStream
+mutable struct HostRuntimeResourceStream <: ResourceStream
     pointer::Ptr{Cvoid}
     total_bytes::UInt64
     guard::ReentrantLock
 end
 
-function NativeResourceStream(pointer::Ptr{Cvoid}, total_bytes::UInt64)
-    stream = NativeResourceStream(pointer, total_bytes, ReentrantLock())
+function HostRuntimeResourceStream(pointer::Ptr{Cvoid}, total_bytes::UInt64)
+    stream = HostRuntimeResourceStream(pointer, total_bytes, ReentrantLock())
     finalizer(close, stream)
     stream
 end
@@ -270,14 +270,14 @@ function event_resource_stream(event::Ptr{Cvoid})
             output,
         ),
     )
-    NativeResourceStream(
+    HostRuntimeResourceStream(
         output[],
         event_u64(event, EventFieldTotalBytes),
     )
 end
 
 function next!(
-    stream::NativeResourceStream;
+    stream::HostRuntimeResourceStream;
     maximum_bytes::Integer=64 * 1024,
 )
     maximum_bytes > 0 || throw(ArgumentError("maximum_bytes must be positive"))
@@ -301,7 +301,7 @@ function next!(
     end
 end
 
-function Base.close(stream::NativeResourceStream)
+function Base.close(stream::HostRuntimeResourceStream)
     lock(stream.guard) do
         stream.pointer == C_NULL && return nothing
         ccall(
@@ -324,12 +324,16 @@ function decode_application_event(event::Ptr{Cvoid})
             event_bytes(event, EventFieldPlaintext),
         )
     end
-    kind == ApplicationEventKindLinkDelivery &&
+    if kind == ApplicationEventKindLinkDelivery
+        local_destination = optional_event_bytes(event, EventFieldLocalDestination)
         return ApplicationEventLinkDelivery(
             LinkId(event_bytes(event, EventFieldLinkId)),
             InterfaceId(event_bytes(event, EventFieldSourceInterface)),
             event_bytes(event, EventFieldPlaintext),
+            local_destination === nothing ? nothing : DestinationHash(local_destination),
+            event_u64(event, EventFieldArrivedAtMillis),
         )
+    end
     kind == ApplicationEventKindRequest && return ApplicationEventRequest(
         DestinationHash(event_bytes(event, EventFieldDestination)),
         LinkId(event_bytes(event, EventFieldLinkId)),

@@ -1,0 +1,7 @@
+module prns_host_mobileFFI {
+    header "prns_host_mobileFFI.h"
+    export *
+    use "Darwin"
+    use "_Builtin_stdbool"
+    use "_Builtin_stdint"
+}

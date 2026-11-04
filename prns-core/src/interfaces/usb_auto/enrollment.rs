@@ -1,13 +1,19 @@
 use crate::remote_control::{
-    parse_controller_public_keys, RemoteControlControllerAuthority, RemoteControlControllerGrant,
-    RemoteControlRequestSet,
+    parse_controller_public_keys, RemoteControlControllerAuthority, RemoteControlControllerCard,
+    RemoteControlControllerGrant, RemoteControlRequestSet,
 };
 
 pub const CONTROLLER_ENROLL_CONTROL_REQUEST: u8 = 0x56;
 pub const CONTROLLER_ENROLL_STATUS_REQUEST: u8 = 0x57;
 pub const CONTROLLER_ENROLL_REQUEST_BYTES: usize = 68;
 pub const CONTROLLER_ENROLL_STATUS_BYTES: usize = 5 + crate::identity::IDENTITY_PUBLIC_KEY_LEN;
+/// Serial authorization appends the full expected target identity to the USB request.
+pub const SERIAL_CONTROLLER_ENROLL_REQUEST_BYTES: usize =
+    CONTROLLER_ENROLL_REQUEST_BYTES + crate::identity::IDENTITY_PUBLIC_KEY_LEN;
+/// A serial reply prefixes the existing status receipt with its query nonce.
+pub const SERIAL_CONTROLLER_ENROLL_STATUS_BYTES: usize = 4 + CONTROLLER_ENROLL_STATUS_BYTES;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UsbControllerEnrollment {
     pub transaction: u32,
     pub grant: RemoteControlControllerGrant,
@@ -28,6 +34,22 @@ impl UsbControllerEnrollment {
         .ok()?;
         Some(Self { transaction, grant })
     }
+
+    /// Decode a serial request only when it pins this exact target and carries
+    /// usable public controller keys. Authorization is always Administrator/all.
+    pub fn decode_serial(
+        bytes: &[u8],
+        target_public_key: &[u8; crate::identity::IDENTITY_PUBLIC_KEY_LEN],
+    ) -> Option<Self> {
+        if bytes.len() != SERIAL_CONTROLLER_ENROLL_REQUEST_BYTES
+            || bytes[CONTROLLER_ENROLL_REQUEST_BYTES..] != *target_public_key
+        {
+            return None;
+        }
+        let enrollment = Self::decode(&bytes[..CONTROLLER_ENROLL_REQUEST_BYTES])?;
+        RemoteControlControllerCard::new(*enrollment.grant.controller()).ok()?;
+        Some(enrollment)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +61,23 @@ pub enum UsbControllerEnrollmentStatus {
 }
 
 impl UsbControllerEnrollmentStatus {
+    /// Parse the fixed status receipt without claiming that a historical Saved
+    /// transaction is still an active grant. The target identity remains public data.
+    pub fn decode(bytes: &[u8]) -> Option<(Self, [u8; crate::identity::IDENTITY_PUBLIC_KEY_LEN])> {
+        if bytes.len() != CONTROLLER_ENROLL_STATUS_BYTES {
+            return None;
+        }
+        let transaction = u32::from_le_bytes(bytes[1..5].try_into().ok()?);
+        let status = match bytes[0] {
+            0 if transaction == 0 => Self::Idle,
+            1 => Self::Pending { transaction },
+            2 => Self::Saved { transaction },
+            3 => Self::Failed { transaction },
+            _ => return None,
+        };
+        Some((status, bytes[5..].try_into().ok()?))
+    }
+
     pub fn encode(
         self,
         target_public_key: &[u8; crate::identity::IDENTITY_PUBLIC_KEY_LEN],

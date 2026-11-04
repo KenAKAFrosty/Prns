@@ -430,6 +430,21 @@ where
         self.node.engine.set_protocol_policy(policy);
     }
 
+    /// Install an optional nonblocking, payload-free handshake observer.
+    pub fn set_link_handshake_observer(
+        &mut self,
+        observer: Option<fn(crate::engine::LinkHandshakeEvent) -> bool>,
+    ) {
+        self.node.engine.set_link_handshake_observer(observer);
+    }
+
+    /// Current logical time from the active host, including persistence resume.
+    /// Sample this after restoration instead of retaining a pre-restore timebase.
+    #[must_use]
+    pub fn current_time(&self) -> crate::engine::InstantMillis {
+        self.host.now()
+    }
+
     #[must_use]
     pub fn handle(
         &self,

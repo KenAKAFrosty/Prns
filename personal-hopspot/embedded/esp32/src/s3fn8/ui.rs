@@ -207,6 +207,43 @@ mod tests {
         assert!(!confirmation_matches_press(1u8, Some(2), Some(1)));
         assert!(confirmation_matches_press(1u8, Some(1), Some(1)));
     }
+    #[cfg(feature = "remote-control-pairing")]
+    #[test]
+    fn confirmation_arriving_during_a_held_press_requires_a_new_press() {
+        let mut button = Button::new(false);
+        let confirmation_at_press = None;
+        assert_eq!(button.poll(true, 0, false), None);
+        // The code is presented while the button is already down. The firmware
+        // carries the falling-edge snapshot alongside the completed gesture.
+        let rendered = Some(7u8);
+        assert_eq!(
+            button.poll(false, 500, false),
+            Some(hopspot::InputEvent::LongPress)
+        );
+        assert!(!confirmation_matches_press(
+            7,
+            rendered,
+            confirmation_at_press
+        ));
+
+        let confirmation_at_new_press = rendered;
+        assert_eq!(button.poll(true, 600, false), None);
+        assert_eq!(
+            button.poll(false, 1100, false),
+            Some(hopspot::InputEvent::LongPress)
+        );
+        assert!(confirmation_matches_press(
+            7,
+            rendered,
+            confirmation_at_new_press
+        ));
+        // A replacement confirmation invalidates even a properly started press.
+        assert!(!confirmation_matches_press(
+            8,
+            Some(8),
+            confirmation_at_new_press
+        ));
+    }
     #[test]
     fn global_menu_keeps_local_announce_and_pairing_as_distinct_actions() {
         let mut state = state(

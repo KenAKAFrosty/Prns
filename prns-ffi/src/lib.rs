@@ -24,6 +24,9 @@ pub(crate) mod diagnostic_log {
 
 pub mod bluetooth_auto;
 pub mod mdns;
+
+#[cfg(all(unix, feature = "owned-async-fd"))]
+pub mod owned_async_fd;
 pub mod wifi_aware;
 pub mod wifi_direct;
 

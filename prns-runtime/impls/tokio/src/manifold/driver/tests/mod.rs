@@ -81,6 +81,7 @@ mod interfaces;
 mod links;
 mod remote_control_pairing;
 mod routes;
+mod service_lifecycle;
 mod transport;
 
 #[test]

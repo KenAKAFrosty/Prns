@@ -627,6 +627,8 @@ fn parked_worker_arm_is_cleared_by_submission_without_losing_the_job() {
     }
 
     pool.submit(CryptoJob::SignProof(ProofSignOwed {
+        destination: crate::wire::DestinationHash::new([0; 16]),
+        destination_generation: 1,
         target: InterfaceId::new([0x21; 8]),
         packet_hash: PacketHash::new([0x32; 32]),
         signing_secret: Ed25519SecretKey::new([0x43; 32]),

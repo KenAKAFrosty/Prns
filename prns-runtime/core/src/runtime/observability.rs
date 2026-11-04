@@ -287,6 +287,7 @@ impl ReliabilityMetricsSnapshot {
             Journaled::AnnounceHeard { .. }
             | Journaled::SelfRatchetRotated { .. }
             | Journaled::AnnounceHeldDropped { .. }
+            | Journaled::PathDiscovery(_)
             | Journaled::RemoteControlPairingAvailabilityObserved(_)
             | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
             | Journaled::RemoteControlTargetPairingControllerCommitted { .. }

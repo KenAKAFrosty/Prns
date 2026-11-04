@@ -122,6 +122,8 @@ pub mod bluetooth_auto;
     not(feature = "wifi-auto")
 ))]
 pub mod c6;
+#[cfg(any(test, target_arch = "riscv32", target_arch = "xtensa"))]
+mod controller_enrollment;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod flash;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
@@ -141,3 +143,7 @@ mod station_security;
 mod storage;
 #[cfg(any(test, all(target_arch = "xtensa", not(feature = "esp32s3fn8"))))]
 mod wifi_data_path_recovery;
+
+#[cfg(all(test, feature = "heltec-v3"))]
+#[path = "s3fn8/ui.rs"]
+mod heltec_v3_ui;

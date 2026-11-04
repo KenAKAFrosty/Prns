@@ -827,3 +827,155 @@ fn real_wire_messages_drive_both_reducers_to_the_same_durable_pairing() {
             if attempt.attempt_id() == target_attempt_id
     ));
 }
+
+#[test]
+fn terminal_pairing_success_requires_exact_persistence_and_survives_late_callbacks() {
+    let fixture = PairingFixture::new();
+    let other = PairingFixture::with_route(0x74, 0x85);
+    let mut state = RemoteControlControllerPairingState::default();
+    let RemoteControlControllerPairingActivity::Persisting { attempt_id } =
+        controller_persisting(&mut state, &fixture)
+    else {
+        panic!("persisting")
+    };
+    let mut other_state = RemoteControlControllerPairingState::default();
+    let RemoteControlControllerPairingActivity::Persisting { attempt_id: stale } =
+        controller_persisting(&mut other_state, &other)
+    else {
+        panic!("persisting")
+    };
+    assert_eq!(state.terminal(), None);
+    assert!(matches!(
+        state.persistence_succeeded(stale),
+        PersistRemoteControlControllerPairingOutcome::AttemptMismatch { .. }
+    ));
+    assert_eq!(state.terminal(), None);
+    let PersistRemoteControlControllerPairingOutcome::Completed { access, .. } =
+        state.persistence_succeeded(attempt_id)
+    else {
+        panic!("persisted")
+    };
+    let expected = Some(RemoteControlControllerPairingTerminal {
+        subject: RemoteControlControllerPairingSubject::Attempt {
+            attempt_id,
+            context: fixture.context(),
+        },
+        outcome: RemoteControlControllerPairingTerminalOutcome::Paired {
+            target: access.target().identity_hash(),
+        },
+    });
+    assert_eq!(state.terminal(), expected);
+    state.persistence_failed(stale);
+    state.request_failed(fixture.link_id);
+    state.close_link(fixture.link_id);
+    state.expire(InstantMillis(u64::MAX));
+    assert_eq!(state.terminal(), expected);
+    begin_controller(&mut state, &other);
+    assert_eq!(state.terminal(), None);
+    state.persistence_succeeded(attempt_id);
+    state.close_link(fixture.link_id);
+    assert_eq!(state.terminal(), None);
+    assert!(matches!(
+        state.view(),
+        RemoteControlControllerPairingView::AwaitingOffer(_)
+    ));
+}
+
+#[test]
+fn terminal_pairing_rejection_expiry_and_failures_are_distinct_facts() {
+    let fixture = PairingFixture::new();
+    let mut state = RemoteControlControllerPairingState::default();
+    let begin = begin_controller(&mut state, &fixture);
+    let (attempt_id, _) = receive_valid_offer(&mut state, &fixture, &begin);
+    state.reject(attempt_id, OFFER_RECEIVED_AT);
+    assert_eq!(
+        state.terminal(),
+        Some(RemoteControlControllerPairingTerminal {
+            subject: RemoteControlControllerPairingSubject::Attempt {
+                attempt_id,
+                context: fixture.context()
+            },
+            outcome: RemoteControlControllerPairingTerminalOutcome::Rejected,
+        })
+    );
+    begin_controller(&mut state, &fixture);
+    state.expire(PAIRING_EXPIRES_AT);
+    assert_eq!(
+        state.terminal(),
+        Some(RemoteControlControllerPairingTerminal {
+            subject: RemoteControlControllerPairingSubject::AwaitingOffer {
+                context: fixture.context()
+            },
+            outcome: RemoteControlControllerPairingTerminalOutcome::Expired,
+        })
+    );
+    begin_controller(&mut state, &fixture);
+    state.close_link(fixture.link_id);
+    assert_eq!(
+        state.terminal().unwrap().outcome,
+        RemoteControlControllerPairingTerminalOutcome::Failed {
+            reason: RemoteControlControllerPairingFailureReason::LinkClosed
+        }
+    );
+    begin_controller(&mut state, &fixture);
+    state.request_failed(fixture.link_id);
+    assert_eq!(
+        state.terminal().unwrap().outcome,
+        RemoteControlControllerPairingTerminalOutcome::Failed {
+            reason: RemoteControlControllerPairingFailureReason::RequestFailed
+        }
+    );
+    let RemoteControlControllerPairingActivity::Persisting { attempt_id } =
+        controller_persisting(&mut state, &fixture)
+    else {
+        panic!("persisting")
+    };
+    state.persistence_failed(attempt_id);
+    assert_eq!(
+        state.terminal().unwrap().outcome,
+        RemoteControlControllerPairingTerminalOutcome::Failed {
+            reason: RemoteControlControllerPairingFailureReason::PersistenceFailed
+        }
+    );
+}
+
+#[test]
+fn terminal_pairing_cancellation_checks_subject_and_cannot_undo_approval() {
+    let fixture = PairingFixture::new();
+    let other = PairingFixture::with_route(0x74, 0x85);
+    let mut state = RemoteControlControllerPairingState::default();
+    begin_controller(&mut state, &fixture);
+    let subject = RemoteControlControllerPairingSubject::AwaitingOffer {
+        context: fixture.context(),
+    };
+    let stale = RemoteControlControllerPairingSubject::AwaitingOffer {
+        context: other.context(),
+    };
+    assert_eq!(
+        state.cancel(stale, InstantMillis(u64::MAX)),
+        Err(CancelRemoteControlControllerPairingError::StaleSubject)
+    );
+    assert_eq!(state.terminal(), None);
+    assert!(state.cancel(subject, OFFER_RECEIVED_AT).is_ok());
+    assert_eq!(
+        state.terminal(),
+        Some(RemoteControlControllerPairingTerminal {
+            subject,
+            outcome: RemoteControlControllerPairingTerminalOutcome::Cancelled
+        })
+    );
+    let (attempt_id, _) = prepare_completion(&mut state, &fixture);
+    let subject = RemoteControlControllerPairingSubject::Attempt {
+        attempt_id,
+        context: fixture.context(),
+    };
+    assert_eq!(
+        state.cancel(subject, OFFER_RECEIVED_AT),
+        Err(CancelRemoteControlControllerPairingError::AlreadyApproved)
+    );
+    assert_eq!(state.terminal(), None);
+    assert!(matches!(
+        state.view(),
+        RemoteControlControllerPairingView::AwaitingCompletion(_)
+    ));
+}

@@ -1,0 +1,25 @@
+[package]
+name = "prns-groups-store"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Bounded transactional coordinator for group crypto and application state"
+publish = false
+
+[features]
+default = []
+secure = ["dep:chacha20poly1305", "dep:sha2"]
+
+[dependencies]
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"], optional = true }
+sha2 = { version = "0.10", default-features = false, optional = true }
+embedded-storage = { version = "0.3.1", default-features = false }
+prns-groups-core = { path = "../core" }
+spin = { version = "0.9.8", default-features = false, features = ["mutex", "spin_mutex"] }
+zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
+
+[lints]
+workspace = true

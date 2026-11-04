@@ -206,6 +206,10 @@ impl<S: StorageLayout> EngineState<S> {
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         let mut effects = IngestEffects::default();
         let outcome = self.ingest_classified_with_effects(ingress, interfaces, &mut effects);
+        #[cfg(feature = "path-diagnostics")]
+        if let Some(event) = effects.path_discovery.take() {
+            sink(EngineReaction::Journaled(Journaled::PathDiscovery(event)));
+        }
         let mut request = match &outcome {
             IngestPacketOutcome::Ignored(reason) if is_request => {
                 Some(RequestIngressDiagnostic::Ignored(*reason))
@@ -268,6 +272,22 @@ impl<S: StorageLayout> EngineState<S> {
                 )));
             }
             IngestPacketOutcome::OwesAnnounceVerify(owed) => {
+                #[cfg(feature = "path-diagnostics")]
+                if owed.is_path_response {
+                    sink(EngineReaction::Journaled(Journaled::PathDiscovery(
+                        crate::engine::PathDiscoveryEvent::new(
+                            Some(owed.arrived_at),
+                            Some(crate::wire::DestinationHash::from_address(
+                                owed.header.address,
+                            )),
+                            Some(source),
+                            crate::engine::PathDiscoveryPhase::ResponseIngress(
+                                crate::engine::PathResponseDisposition::VerificationPending,
+                            ),
+                        ),
+                    )));
+                }
+
                 sink(EngineReaction::Directive(Directive::Fulfill(
                     OwedWork::Crypto(CryptoOwed::AnnounceVerify(owed)),
                 )));
@@ -792,10 +812,12 @@ impl<S: StorageLayout> EngineState<S> {
                         sink,
                     ));
                 } else {
+                    self.complete_request_resource_upload(id, &link_id, correlation, now);
                     self.settle_advertised_resource(id, &link_id, correlation, Ok(()), sink);
                     self.promote_staged_resource(&link_id, now, fill_random, sink);
                 }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
             IngestPacketOutcome::LinkActivated {
                 link_id,
@@ -809,6 +831,9 @@ impl<S: StorageLayout> EngineState<S> {
                 )));
             }
             IngestPacketOutcome::OwesLinkProof(accepted) => {
+                // Sample before eligibility: a concurrent disable after the check must leave
+                // old-generation work that completion rejects, never adopt its new epoch.
+                let source_generation = interfaces.generation_for(source);
                 if interfaces.is_egress_eligible(source, Egress::Transmit) {
                     let mut secret_bytes = [0u8; X25519SecretKey::LEN];
                     fill_random(&mut secret_bytes);
@@ -817,6 +842,11 @@ impl<S: StorageLayout> EngineState<S> {
                         let responder_signing = held.signing_public_key();
                         sink(EngineReaction::Directive(Directive::Fulfill(
                             OwedWork::Crypto(CryptoOwed::LinkProofSign(LinkProofSignOwed {
+                                destination_generation: self
+                                    .upstream_app_destinations
+                                    .lookup_single(&accepted.request.destination)
+                                    .map_or(0, |row| row.registration_generation),
+                                source_generation,
                                 request: accepted.request,
                                 identity: accepted.identity,
                                 proof_strategy: accepted.proof_strategy,

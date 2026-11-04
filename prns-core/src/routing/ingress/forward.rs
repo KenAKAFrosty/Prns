@@ -66,6 +66,9 @@ impl<S: StorageLayout> EngineState<S> {
         let route = self
             .routing_table
             .forwarding_route_for(&DestinationHash::from_address(header.address))?;
+        if !interfaces.availability_allows(route.receiving_interface) {
+            return None;
+        }
 
         let remaining_hops = route.hops.0;
         let forwarded_hops = self.hops_across_local_boundary(
@@ -135,6 +138,54 @@ mod tests {
     use crate::routing::ingress::testkit::iface;
     use crate::routing::ingress::{IgnoreReason, IngestPacketOutcome};
     use crate::wire::{TransportId, WireContext, BROADCAST_MTU};
+
+    #[test]
+    fn administrative_unavailability_blocks_forwarding_before_route_cleanup() {
+        let mut relay = transporting_node();
+        let mut announce = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
+        let interfaces = transporting_interfaces();
+        let _ = relay.ingest_for_test(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: iface(0xB2),
+                bytes: &mut announce,
+            },
+            AttachedInterfaces::new(&interfaces),
+        );
+        let available = |id| id != iface(0xB2);
+        let mut packet = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let outcome = relay.ingest_for_test(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: iface(0xA1),
+                bytes: &mut packet,
+            },
+            AttachedInterfaces::new(&interfaces).with_availability(&available),
+        );
+        assert!(!matches!(outcome, IngestPacketOutcome::Forward(_)));
+        assert!(relay.reverse_routes.is_empty());
+    }
+
+    #[test]
+    fn an_unavailable_source_cannot_relearn_a_route() {
+        let mut relay = transporting_node();
+        let mut announce = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
+        let interfaces = transporting_interfaces();
+        let unavailable = |_| false;
+        let outcome = relay.ingest_for_test(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: iface(0xB2),
+                bytes: &mut announce,
+            },
+            AttachedInterfaces::new(&interfaces).with_availability(&unavailable),
+        );
+        assert_eq!(
+            outcome,
+            IngestPacketOutcome::Ignored(IgnoreReason::PermissionDenied)
+        );
+        assert_eq!(relay.routing_table.route_count(), 0);
+    }
 
     #[test]
     fn a_final_hop_forward_strips_the_transport_header_back_to_the_direct_wire() {

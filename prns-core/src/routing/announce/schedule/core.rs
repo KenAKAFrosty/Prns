@@ -92,6 +92,9 @@ pub trait ScheduledAnnounceQueue {
 
     fn cancel(&mut self, destination: &DestinationHash) -> ScheduleCancellation;
 
+    /// Retires active and parked work learned from or directed onto an unavailable interface.
+    fn cancel_interface(&mut self, interface: InterfaceId) -> usize;
+
     fn drain_due(&mut self, now: InstantMillis) -> usize;
 
     fn advance_due_retransmits(

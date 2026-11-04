@@ -1,3 +1,5 @@
+mod interface_availability;
+
 use core::num::NonZeroUsize;
 
 use crate::interfaces::AttachedInterfaces;

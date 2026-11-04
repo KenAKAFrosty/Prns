@@ -24,6 +24,7 @@ use prns_core::interfaces::{
     InterfaceKind, InterfaceStatus, MacAddress, MAX_DISCOVERY_GROUPS,
 };
 use prns_runtime::atomic::AtomicU64;
+use prns_runtime::manifold::driver::EmbassyInterfaceStatus;
 use prns_runtime::runtime::{EmbassyFleet as Fleet, OutboundFrame};
 
 use fanout::{dispatch_fanout, send_beacon, target_includes, FanoutPlan, UdpFanoutSender};
@@ -390,8 +391,8 @@ impl InterfaceStatus for WifiMemberStatus {
 
 pub struct AutoWifiShared<const MEMBERS: usize> {
     id: InterfaceId,
-    enabled: AtomicBool,
-    enabled_changed: Signal<CriticalSectionRawMutex, bool>,
+    routing_status: EmbassyInterfaceStatus,
+    routing_transition: CriticalSectionMutex<()>,
     discovery_groups: CriticalSectionMutex<RefCell<Option<DiscoveryGroupSet>>>,
     discovery_groups_revision: AtomicU32,
     discovery_groups_changed: Signal<CriticalSectionRawMutex, u32>,
@@ -418,8 +419,11 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
     pub const fn new(id: InterfaceId) -> Self {
         Self {
             id,
-            enabled: AtomicBool::new(true),
-            enabled_changed: Signal::new(),
+            routing_status: EmbassyInterfaceStatus::new_unaccounted(
+                id,
+                ConnectionState::Initializing,
+            ),
+            routing_transition: CriticalSectionMutex::new(()),
             discovery_groups: CriticalSectionMutex::new(RefCell::new(None)),
             discovery_groups_revision: AtomicU32::new(0),
             discovery_groups_changed: Signal::new(),
@@ -459,8 +463,15 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
     }
 
     pub fn toggle_enabled(&self) {
-        let enabled = !self.shared.enabled.fetch_xor(true, Ordering::Relaxed);
-        self.publish_enabled_change(enabled);
+        self.shared.routing_transition.lock(|_| {
+            self.shared.routing_status.toggle_enabled();
+            self.publish_enabled_change(self.is_enabled());
+        });
+    }
+
+    /// Bind the supervisor lane to the same administrative state used by its driver.
+    pub fn routing_status(&self) -> &'static EmbassyInterfaceStatus {
+        &self.shared.routing_status
     }
 
     #[must_use]
@@ -584,13 +595,22 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
     }
 
     fn update_enabled(&self, enabled: bool) {
-        if self.shared.enabled.swap(enabled, Ordering::Relaxed) != enabled {
-            self.publish_enabled_change(enabled);
-        }
+        // Keep the desired-state transition and its discovery publication ordered across
+        // cores. A stale pre-read must not hide a real transition or publish it out of order.
+        self.shared.routing_transition.lock(|_| {
+            let changed = self.is_enabled() != enabled;
+            if enabled {
+                self.shared.routing_status.enable();
+            } else {
+                self.shared.routing_status.disable();
+            }
+            if changed {
+                self.publish_enabled_change(enabled);
+            }
+        });
     }
 
     fn publish_enabled_change(&self, enabled: bool) {
-        self.shared.enabled_changed.signal(enabled);
         self.shared
             .discovery_participation
             .sender()
@@ -626,15 +646,15 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
 
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        self.shared.enabled.load(Ordering::Relaxed)
+        self.shared.routing_status.is_enabled()
     }
 
     pub async fn wait_until_enabled(&self) {
-        Self::wait_for_state(true, &self.shared.enabled, &self.shared.enabled_changed).await;
+        self.shared.routing_status.wait_until_enabled().await;
     }
 
     pub async fn wait_until_disabled(&self) {
-        Self::wait_for_state(false, &self.shared.enabled, &self.shared.enabled_changed).await;
+        self.shared.routing_status.wait_until_disabled().await;
     }
 
     pub fn enable_station_uplink(&self) {
@@ -2128,6 +2148,25 @@ mod tests {
     static LIFECYCLE_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5C; 8]));
     static ACCOUNTING_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5D; 8]));
     static DISCOVERY_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5F; 8]));
+
+    #[test]
+    fn supervisor_enablement_shares_the_routing_epoch() {
+        static SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x79; 8]));
+        let status = AutoWifiStatus::new(&SHARED);
+        let routing = status.routing_status();
+        assert!(routing.is_available());
+        status.disable();
+        assert!(!routing.is_enabled());
+        assert_eq!(routing.disable_generation(), 1);
+        status.toggle_enabled();
+        assert!(status.is_enabled());
+        assert!(
+            !routing.is_available(),
+            "On waits for the manifold to retire old routes"
+        );
+        status.disable();
+        assert_eq!(routing.disable_generation(), 2);
+    }
 
     #[test]
     fn discovery_group_replacement_waits_for_the_socket_rebuild_acknowledgement() {

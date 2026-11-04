@@ -73,6 +73,7 @@ class ThirdPartyNoticeTests(unittest.TestCase):
             )
             with (
                 mock.patch.object(notices, "ROOT", root),
+                mock.patch.object(notices.runtime_notices, "input_paths", return_value=()),
                 mock.patch.object(notices, "ABOUT", root / "about.toml"),
                 mock.patch.object(notices, "__file__", str(root / "generator.py")),
             ):
@@ -81,7 +82,9 @@ class ThirdPartyNoticeTests(unittest.TestCase):
                     for path in notices.notice_input_paths()
                     if path.name in {"Cargo.toml", "Cargo.lock"}
                 }
-            self.assertEqual(actual, {"Cargo.toml", "Cargo.lock", "member/Cargo.toml"})
+            self.assertEqual(actual, {
+                "Cargo.toml", "Cargo.lock", "member/Cargo.toml",
+            })
 
     def test_unavailable_tracked_inventory_fails_closed(self) -> None:
         with mock.patch.object(notices.subprocess, "run") as run:

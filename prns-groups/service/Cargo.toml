@@ -1,0 +1,29 @@
+[package]
+name = "prns-groups-service"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Recoverable generic records and delivery evidence over a pre-enrolled MLS group"
+publish = false
+
+[features]
+uniffi-bindings = ["dep:uniffi", "prns-groups-core/uniffi-bindings"]
+
+[dependencies]
+uniffi = { version = "=0.31.2", default-features = false, optional = true }
+prns-groups-core = { path = "../core" }
+prns-groups-store = { path = "../store" }
+prns-groups-mls = { path = "../security/mls-rs" }
+sha2 = { version = "0.10", default-features = false }
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+prns-groups-store-redb = { path = "../store/redb" }
+redb = "=4.2.0"
+tempfile = "3"
+
+[lints]
+workspace = true

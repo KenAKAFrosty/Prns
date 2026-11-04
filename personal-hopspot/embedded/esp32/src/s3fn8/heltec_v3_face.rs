@@ -92,23 +92,41 @@ impl ImmediateDisplayDevice for Display {
 
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
-pub(super) static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, hopspot::InputEvent, 4> =
-    Channel::new();
+pub(super) struct ButtonEvent {
+    input: hopspot::InputEvent,
+    #[cfg(feature = "remote-control-pairing")]
+    confirmation: Option<personal_rns::remote_control::RemoteControlPairingAttemptId>,
+}
+
+pub(super) static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, ButtonEvent, 4> = Channel::new();
 
 /// Wait on the user pin, the same gesture the V4 display task and the nRF boards use.
 #[embassy_executor::task]
 pub(super) async fn button_task(mut button: Input<'static>) -> ! {
     loop {
         button.wait_for_falling_edge().await;
+        #[cfg(feature = "remote-control-pairing")]
+        let confirmation = super::heltec_v3_pairing::rendered_confirmation();
+        let event = |input| ButtonEvent {
+            input,
+            #[cfg(feature = "remote-control-pairing")]
+            confirmation,
+        };
         match select(
             button.wait_for_rising_edge(),
             Timer::after(BUTTON_LONG_PRESS),
         )
         .await
         {
-            Either::First(()) => BUTTON_EVENTS.send(hopspot::InputEvent::ShortPress).await,
+            Either::First(()) => {
+                BUTTON_EVENTS
+                    .send(event(hopspot::InputEvent::ShortPress))
+                    .await
+            }
             Either::Second(()) => {
-                BUTTON_EVENTS.send(hopspot::InputEvent::LongPress).await;
+                BUTTON_EVENTS
+                    .send(event(hopspot::InputEvent::LongPress))
+                    .await;
                 button.wait_for_rising_edge().await;
             }
         }
@@ -226,6 +244,12 @@ impl Face {
             pressed_confirmation: None,
         }
     }
+    #[cfg(feature = "remote-control-pairing")]
+    pub(super) fn pairing_close_failed(&mut self) {
+        self.state.remote_control_pairing_close_failed();
+        self.next_render = 0;
+    }
+
     pub(super) fn notice(&mut self, notice: hopspot::UiNotice) {
         self.state.show_notice(notice);
         self.notice_until = Instant::now().as_millis() + NOTICE_MILLIS;
@@ -237,7 +261,7 @@ impl Face {
         configuration: SubGConfigurationState,
         system_awake: bool,
         spectrum: &personal_rns::lora::LoRaSpectrumStatus,
-        input: Option<hopspot::InputEvent>,
+        input: Option<ButtonEvent>,
     ) -> hopspot::UiAction {
         let millis = Instant::now().as_millis();
         if millis >= self.next_sample {
@@ -277,10 +301,10 @@ impl Face {
             };
             #[cfg(feature = "remote-control-pairing")]
             {
-                self.pressed_confirmation = self.rendered_confirmation;
+                self.pressed_confirmation = event.confirmation;
             }
             if forward_to_ui {
-                action = self.state.handle_input(event, content);
+                action = self.state.handle_input(event.input, content);
                 if !system_awake {
                     action = hopspot::UiAction::Wake;
                 }
@@ -326,6 +350,7 @@ impl Face {
             #[cfg(feature = "remote-control-pairing")]
             if display.visibility() != DisplayVisibility::Visible {
                 self.rendered_confirmation = None;
+                super::heltec_v3_pairing::set_rendered_confirmation(None);
             }
             if millis >= self.next_render {
                 let selected = self.state.selected_card(&cards);
@@ -373,6 +398,9 @@ impl Face {
                         } else {
                             None
                         };
+                        super::heltec_v3_pairing::set_rendered_confirmation(
+                            self.rendered_confirmation,
+                        );
                     }
                     Ok(ImmediatePresentation::Failed) | Err(_) => {
                         self.rendered_confirmation = None;

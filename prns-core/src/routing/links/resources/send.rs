@@ -2367,6 +2367,7 @@ mod tests {
         engine
             .links
             .track_initiated(InitiatedLink {
+                attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
                 link_id: link_id(),
                 destination: DestinationHash::new([0x77; 16]),
                 route_evidence: crate::routing::routes::RouteEvidenceHandle::new(
@@ -3399,6 +3400,7 @@ mod tests {
         engine
             .links
             .track_initiated(InitiatedLink {
+                attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
                 link_id: link_id(),
                 destination: DestinationHash::new([0x77; 16]),
                 route_evidence: crate::routing::routes::RouteEvidenceHandle::new(

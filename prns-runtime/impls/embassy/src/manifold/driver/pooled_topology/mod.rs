@@ -30,6 +30,7 @@ use crate::runtime::{
 };
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 
+use super::availability::Availability;
 use super::egress::{
     flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, InterfacePacer,
     ManifoldEgress, PooledEgress,
@@ -173,17 +174,17 @@ impl<const N: usize> MaterializedResourceResponse<N> {
 #[inline(never)]
 fn resource_response_data<S: StorageLayout, const N: usize>(
     engine: &EngineState<S>,
-    descriptors: &[InterfaceDescriptor],
+    interfaces: AttachedInterfaces<'_>,
     request_id: crate::routing::links::request::RequestId,
     payload: ResourceResponsePayload<N>,
 ) -> Option<MaterializedResourceResponse<N>> {
     match payload {
         ResourceResponsePayload::Ready(data) => Some(MaterializedResourceResponse::Ready(data)),
         ResourceResponsePayload::RnsPathTable(selection) => {
-            let entries = engine.bounded_route_snapshots::<RNS_PATH_TABLE_MAX_ENTRIES>(
-                AttachedInterfaces::new(descriptors),
-                |entry| selection.includes(entry.destination, entry.hops),
-            );
+            let entries = engine
+                .bounded_route_snapshots::<RNS_PATH_TABLE_MAX_ENTRIES>(interfaces, |entry| {
+                    selection.includes(entry.destination, entry.hops)
+                });
             let mut data = HeaplessVec::new();
             data.resize(RNS_PATH_TABLE_RESPONSE_BYTES, 0).ok()?;
             data.get_mut(..RESPONSE_WIRE_OVERHEAD)?
@@ -197,6 +198,21 @@ fn resource_response_data<S: StorageLayout, const N: usize>(
             Some(MaterializedResourceResponse::RnsPathTable(data))
         }
     }
+}
+
+fn available_wake_schedules<S: StorageLayout, const LANES: usize>(
+    engine: &EngineState<S>,
+    descriptors: &[InterfaceDescriptor],
+    egress: &PooledEgress<LANES>,
+) -> crate::engine::WakeSchedules {
+    let availability = Availability::bound(&egress.statuses);
+    let allows = |id| availability.allows(id);
+    let generation = |id| availability.generation(id);
+    engine.wake_schedules(
+        AttachedInterfaces::new(descriptors)
+            .with_availability(&allows)
+            .with_generations(&generation),
+    )
 }
 
 /// Borrowed lanes and channels for one pooled-topology manifold run.
@@ -285,26 +301,70 @@ pub(crate) async fn run_pooled<
             }
         }
     }
-    let mut wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
+    let mut wake_schedules = available_wake_schedules(engine, descriptors, egress);
     loop {
+        // The small ID/reference snapshot avoids borrowing mutable egress through
+        // a core view; status values themselves remain live atomic observations.
+        let bindings = egress.statuses.clone();
+        let availability = Availability::bound(&bindings);
+        let allows = |id| availability.allows(id);
+        let generation = |id| availability.generation(id);
+        if availability.reconcile(
+            engine,
+            AttachedInterfaces::new(&*descriptors),
+            egress,
+            ifacs,
+            &mut pacers,
+            host.now(),
+            &mut persist_and_notify(persistence, &mut on_journaled, host.now()),
+        ) {
+            wake_schedules = available_wake_schedules(engine, descriptors, egress);
+        }
         let wake = wake_schedules.soonest(host.now());
         let pacer_wake = soonest_pacer_release(&pacers);
 
         let persistence_deadline = persistence.deadline(host.now());
-        match select6(
-            notify.receive(),
+        let input = select6(
+            select(availability.changed(), notify.receive()),
             select(commands.receive(), resource_responses.receive()),
             wait_for_due_reason(&*host, wake),
             wait_for_pacer(&*host, pacer_wake),
             lifecycle.receive(),
             wait_for_persistence_or_work(&*host, persistence_deadline, &*persistence),
         )
-        .await
-        {
+        .await;
+        if availability.reconcile(
+            engine,
+            AttachedInterfaces::new(&*descriptors),
+            egress,
+            ifacs,
+            &mut pacers,
+            host.now(),
+            &mut persist_and_notify(persistence, &mut on_journaled, host.now()),
+        ) {
+            wake_schedules = available_wake_schedules(engine, descriptors, egress);
+        }
+        match input {
             Either6::First(_) => {
                 while notify.try_receive().is_ok() {}
                 for (lane_id, lane) in inbound.iter_mut() {
-                    while let Some((target, packet_phy, frame)) = lane.try_read() {
+                    loop {
+                        let admitted_generation = availability.generation(*lane_id);
+                        let Some((target, packet_phy, frame)) = lane.try_read() else {
+                            break;
+                        };
+                        if availability.reconcile(
+                            engine,
+                            AttachedInterfaces::new(&*descriptors),
+                            egress,
+                            ifacs,
+                            &mut pacers,
+                            host.now(),
+                            &mut persist_and_notify(persistence, &mut on_journaled, host.now()),
+                        ) {
+                            wake_schedules = available_wake_schedules(engine, descriptors, egress);
+                        }
+
                         let FrameTarget::Direct(stamped_source) = target else {
                             lane.release();
                             continue;
@@ -315,6 +375,13 @@ pub(crate) async fn run_pooled<
                         // Fleet lanes have no descriptor of their own, so their per-member stamp
                         // remains authoritative instead.
                         let source = inbound_source(*lane_id, stamped_source, descriptors);
+                        if admitted_generation != availability.generation(*lane_id)
+                            || !availability.allows(*lane_id)
+                            || !availability.allows(source)
+                        {
+                            lane.release();
+                            continue;
+                        }
                         let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
                         let bytes = match ifac_for(ifacs, *lane_id) {
                             Some(entry) => {
@@ -356,7 +423,7 @@ pub(crate) async fn run_pooled<
                         >(
                             packet,
                             IngestIo {
-                                interfaces: AttachedInterfaces::new(&*descriptors),
+                                interfaces: AttachedInterfaces::new(&*descriptors).with_availability(&allows).with_generations(&generation),
                                 now,
                                 fill_random: &mut |entropy| host.fill_random(entropy),
                                 should_prove: &mut should_prove,
@@ -378,7 +445,9 @@ pub(crate) async fn run_pooled<
                             owed_work,
                             &mut *engine,
                             &mut *host,
-                            AttachedInterfaces::new(&*descriptors),
+                            AttachedInterfaces::new(&*descriptors)
+                                .with_availability(&allows)
+                                .with_generations(&generation),
                             &mut *egress,
                             ifacs,
                             &mut pacers,
@@ -403,7 +472,9 @@ pub(crate) async fn run_pooled<
                             &mut wake_schedules,
                             step_delta,
                             &*engine,
-                            AttachedInterfaces::new(&*descriptors),
+                            AttachedInterfaces::new(&*descriptors)
+                                .with_availability(&allows)
+                                .with_generations(&generation),
                         );
                     }
                 }
@@ -414,7 +485,9 @@ pub(crate) async fn run_pooled<
                 let mut delta = match input {
                     Either::First(issued) => engine.ingest_command_into_with_work(
                         issued,
-                        AttachedInterfaces::new(&*descriptors),
+                        AttachedInterfaces::new(&*descriptors)
+                            .with_availability(&allows)
+                            .with_generations(&generation),
                         now,
                         &mut |entropy| host.fill_random(entropy),
                         &mut |reaction| {
@@ -432,7 +505,9 @@ pub(crate) async fn run_pooled<
                     Either::Second(response) => {
                         let Some(data) = resource_response_data(
                             engine,
-                            descriptors,
+                            AttachedInterfaces::new(&*descriptors)
+                                .with_availability(&allows)
+                                .with_generations(&generation),
                             response.request_id,
                             response.payload,
                         ) else {
@@ -468,7 +543,9 @@ pub(crate) async fn run_pooled<
                     owed_work,
                     &mut *engine,
                     &mut *host,
-                    AttachedInterfaces::new(&*descriptors),
+                    AttachedInterfaces::new(&*descriptors)
+                        .with_availability(&allows)
+                        .with_generations(&generation),
                     &mut *egress,
                     ifacs,
                     &mut pacers,
@@ -481,7 +558,9 @@ pub(crate) async fn run_pooled<
                     &mut wake_schedules,
                     delta,
                     &*engine,
-                    AttachedInterfaces::new(&*descriptors),
+                    AttachedInterfaces::new(&*descriptors)
+                        .with_availability(&allows)
+                        .with_generations(&generation),
                 );
             }
             Either6::Third(reason) => {
@@ -490,7 +569,9 @@ pub(crate) async fn run_pooled<
                     &mut *engine,
                     reason,
                     now,
-                    AttachedInterfaces::new(&*descriptors),
+                    AttachedInterfaces::new(&*descriptors)
+                        .with_availability(&allows)
+                        .with_generations(&generation),
                     &mut |bytes| host.fill_random(bytes),
                     &mut |reaction| {
                         route_reaction(
@@ -507,7 +588,9 @@ pub(crate) async fn run_pooled<
                     &mut wake_schedules,
                     delta,
                     &*engine,
-                    AttachedInterfaces::new(&*descriptors),
+                    AttachedInterfaces::new(&*descriptors)
+                        .with_availability(&allows)
+                        .with_generations(&generation),
                 );
             }
             Either6::Fourth(()) => {
@@ -530,8 +613,7 @@ pub(crate) async fn run_pooled<
                         &mut pacers,
                     );
                     if outcome == InterfacePublicationOutcome::Published {
-                        wake_schedules =
-                            engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
+                        wake_schedules = available_wake_schedules(engine, descriptors, egress);
                     }
                     completion.signal(outcome);
                 }
@@ -548,8 +630,7 @@ pub(crate) async fn run_pooled<
                                     pacers.push(InterfacePacer::from_descriptor(lane, &descriptor));
                             }
                         }
-                        wake_schedules =
-                            engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
+                        wake_schedules = available_wake_schedules(engine, descriptors, egress);
                     }
                     #[cfg(feature = "log")]
                     log::info!(
@@ -589,7 +670,9 @@ pub(crate) async fn run_pooled<
                     }
                     engine.cull_expired_routes(
                         now,
-                        AttachedInterfaces::new(&*descriptors),
+                        AttachedInterfaces::new(&*descriptors)
+                            .with_availability(&allows)
+                            .with_generations(&generation),
                         &mut |reaction| {
                             route_reaction(
                                 reaction,
@@ -601,7 +684,7 @@ pub(crate) async fn run_pooled<
                             )
                         },
                     );
-                    wake_schedules = engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
+                    wake_schedules = available_wake_schedules(engine, descriptors, egress);
                 }
                 InterfaceLifecycle::Update { descriptor } => {
                     let descriptor = clamp_to_embedded_ceiling(descriptor);
@@ -615,8 +698,7 @@ pub(crate) async fn run_pooled<
                                 pacers[pos] = InterfacePacer::from_descriptor(lane, &descriptor);
                             }
                         }
-                        wake_schedules =
-                            engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
+                        wake_schedules = available_wake_schedules(engine, descriptors, egress);
                     }
                 }
                 InterfaceLifecycle::Retag {
@@ -635,8 +717,7 @@ pub(crate) async fn run_pooled<
                             &mut pacers,
                         ) == InterfacePublicationOutcome::Published
                     {
-                        wake_schedules =
-                            engine.wake_schedules(AttachedInterfaces::new(&*descriptors));
+                        wake_schedules = available_wake_schedules(engine, descriptors, egress);
                     }
                 }
             },

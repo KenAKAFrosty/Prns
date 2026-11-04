@@ -1,8 +1,8 @@
 mod device;
 
 pub use device::{
-    WebUsbAutoClass, WebUsbAutoError, WebUsbAutoRx, WebUsbAutoState, WebUsbAutoTx,
-    WebUsbBootloaderEntry, WebUsbBootloaderMode, WebUsbControllerEnrollment,
+    UsbAutoControllerEnrollment, WebUsbAutoClass, WebUsbAutoError, WebUsbAutoRx, WebUsbAutoState,
+    WebUsbAutoTx, WebUsbBootloaderEntry, WebUsbBootloaderMode, WebUsbControllerEnrollment,
     WEBUSB_AUTO_CONTROL_BUFFER_BYTES, WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
 };
 
@@ -240,6 +240,7 @@ pub struct UsbAutoDevice<'a, R, W, H> {
     status: &'a EmbassyInterfaceStatus,
     bitrate: BitrateBps,
     host_presence: H,
+    controller_enrollment: UsbAutoControllerEnrollment,
 }
 
 impl<'a, R, W, H> UsbAutoDevice<'a, R, W, H> {
@@ -261,7 +262,16 @@ impl<'a, R, W, H> UsbAutoDevice<'a, R, W, H> {
             status,
             bitrate,
             host_presence,
+            controller_enrollment: UsbAutoControllerEnrollment::Unsupported,
         }
+    }
+
+    /// Opt in to explicit local serial authorization. The callbacks own durable
+    /// storage and transaction deduplication; ordinary devices remain unchanged.
+    #[must_use]
+    pub fn with_controller_enrollment(mut self, enrollment: UsbAutoControllerEnrollment) -> Self {
+        self.controller_enrollment = enrollment;
+        self
     }
 }
 
@@ -291,6 +301,7 @@ where
             status,
             bitrate: _,
             mut host_presence,
+            controller_enrollment,
         } = self;
         let mut decoder = contract::Decoder::new();
         let mut read_buf = [0u8; contract::READ_CHUNK_BYTES];
@@ -363,12 +374,44 @@ where
                                         continue;
                                     }
                                 };
+                                if lifecycle.is_linked() {
+                                    if let Some(reply) = controller_enrollment.serial_reply(message)
+                                    {
+                                        let reply = Message::ControllerEnrollmentStatus {
+                                            nonce: reply.nonce,
+                                            status: &reply.status,
+                                        };
+                                        match write_message(&mut tx, &reply, &mut frame_buf, status)
+                                            .await
+                                        {
+                                            WriteOutcome::Sent(n) => status.add_tx(n as u64),
+                                            WriteOutcome::TimedOut
+                                            | WriteOutcome::TransientFailure => {
+                                                lifecycle.degrade(status)
+                                            }
+                                            WriteOutcome::Disconnected => {
+                                                decoder = contract::Decoder::new();
+                                                lifecycle.disconnect(status);
+                                            }
+                                            WriteOutcome::Failed | WriteOutcome::Rejected => {
+                                                decoder = contract::Decoder::new();
+                                                lifecycle.fail(status);
+                                            }
+                                            WriteOutcome::Disabled => {}
+                                        }
+                                        continue;
+                                    }
+                                }
                                 match contract::react_to(Ok(message)) {
                                     InboundReaction::AnswerHandshake => {
                                         host_presence.observe_host_hello(Instant::now());
                                         let ack = Message::HelloAck {
                                             tag: node_tag,
-                                            capabilities: Capabilities::none(),
+                                            capabilities: if controller_enrollment.is_supported() {
+                                                Capabilities::none().with_controller_enrollment()
+                                            } else {
+                                                Capabilities::none()
+                                            },
                                         };
                                         match write_message(&mut tx, &ack, &mut frame_buf, status)
                                             .await
@@ -604,6 +647,132 @@ mod tests {
     const WATCHDOG: Duration = Duration::from_secs(5);
 
     const DEVICE_SLOT: usize = prns_core::interfaces::usb_auto::DEVICE_USB_HW_MTU + IFAC_MAX_SIZE;
+
+    #[test]
+    fn serial_enrollment_requires_opt_in_and_handshake_and_never_enters_the_network() {
+        use contract::UsbControllerEnrollmentStatus;
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        use prns_core::identity::{in_memory::InMemoryNodeIdentity, IdentitySigner};
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&[42; 64]);
+        let mut request = [0; contract::SERIAL_CONTROLLER_ENROLL_REQUEST_BYTES];
+        request[..4].copy_from_slice(&42u32.to_le_bytes());
+        request[4..36].copy_from_slice(identity.encryption_public_key().as_bytes());
+        request[36..68].copy_from_slice(identity.signing_public_key().as_bytes());
+        request[68..].copy_from_slice(&[7; 64]);
+
+        for supported in [false, true] {
+            let host_to_device = RefCell::new(VecDeque::new());
+            let device_to_host = RefCell::new(VecDeque::new());
+            let status =
+                EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Initializing);
+            let notify: Channel<CriticalSectionRawMutex, InterfaceId, 2> = Channel::new();
+            let (in_tx, mut in_rx) = leaked_grant_lane::<DEVICE_SLOT>(2);
+            let (_out_tx, out_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
+            let adapter = if supported {
+                UsbAutoControllerEnrollment::Supported {
+                    request: |request| {
+                        assert_eq!(request.transaction, 42);
+                        CALLS.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    },
+                    status: || UsbControllerEnrollmentStatus::Pending { transaction: 42 },
+                    target_public_key: [7; 64],
+                }
+            } else {
+                UsbAutoControllerEnrollment::Unsupported
+            };
+            block_on(async {
+                let device = UsbAutoDevice::new(UsbAutoDeviceInput {
+                    rx: MockStream {
+                        buf: &host_to_device,
+                    },
+                    tx: MockStream {
+                        buf: &device_to_host,
+                    },
+                    status: &status,
+                    bitrate: contract::DEVICE_USB_BITRATE_BPS,
+                    host_presence: ProtocolHostPresence::new(),
+                })
+                .with_controller_enrollment(adapter);
+                let seam = EmbassyInterfaceSeam::new(
+                    device_id(),
+                    in_tx,
+                    notify.sender(),
+                    out_rx,
+                    entropy_handle(),
+                );
+                let driver = async {
+                    let mut decoder = contract::Decoder::new();
+                    let send = |message: Message<'_>| {
+                        let mut frame = [0; contract::MAX_FRAMED_BYTES];
+                        let len = message.write_framed(&mut frame).unwrap();
+                        host_to_device
+                            .borrow_mut()
+                            .extend(frame[..len].iter().copied());
+                    };
+                    send(Message::ControllerEnroll(&request));
+                    send(Message::ControllerEnrollmentStatusQuery { nonce: 7 });
+                    send(Message::Hello(Capabilities::none()));
+                    let advertised =
+                        read_until(&device_to_host, &mut decoder, |message| match message {
+                            Message::HelloAck { capabilities, .. } => Some(capabilities),
+                            _ => None,
+                        })
+                        .await;
+                    assert_eq!(advertised.supports_controller_enrollment(), supported);
+                    assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+                    send(Message::ControllerEnroll(&request));
+                    send(Message::ControllerEnrollmentStatusQuery { nonce: 9 });
+                    if supported {
+                        for expected_nonce in [0, 9] {
+                            let (nonce, receipt) = read_until(
+                                &device_to_host,
+                                &mut decoder,
+                                |message| match message {
+                                    Message::ControllerEnrollmentStatus { nonce, status } => {
+                                        Some((nonce, *status))
+                                    }
+                                    _ => None,
+                                },
+                            )
+                            .await;
+                            assert_eq!(nonce, expected_nonce);
+                            assert_eq!(
+                                UsbControllerEnrollmentStatus::decode(&receipt),
+                                Some((
+                                    UsbControllerEnrollmentStatus::Pending { transaction: 42 },
+                                    [7; 64]
+                                ))
+                            );
+                        }
+                        assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+                    }
+                    // Also inject a reply and a malformed control request: neither
+                    // can be interpreted as a network packet by either profile.
+                    let receipt =
+                        UsbControllerEnrollmentStatus::Saved { transaction: 42 }.encode(&[7; 64]);
+                    send(Message::ControllerEnrollmentStatus {
+                        nonce: 9,
+                        status: &receipt,
+                    });
+                    host_to_device.borrow_mut().extend([0x7e, 0x04, 0, 0x7e]);
+                    send(Message::Data(&[0xaa, 0xbb]));
+                    assert_eq!(notify.receive().await, device_id());
+                    assert_eq!(in_rx.peek().await.frame(), &[0xaa, 0xbb]);
+                    in_rx.release();
+                    assert_eq!(status.frame_accounting().unwrap().delivered, 1);
+                    assert_eq!(status.frame_accounting().unwrap().malformed, 1);
+                    assert_eq!(CALLS.load(Ordering::SeqCst), usize::from(supported));
+                };
+                match select(device.run(seam), with_timeout(WATCHDOG, driver)).await {
+                    Either::Second(result) => result.unwrap(),
+                    Either::First(()) => unreachable!("device loop does not return"),
+                }
+            });
+        }
+    }
 
     struct TestEntropySource;
 

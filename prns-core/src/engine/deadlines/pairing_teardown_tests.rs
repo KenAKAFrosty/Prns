@@ -47,6 +47,7 @@ fn stale_link_teardown_refreshes_only_its_controller_pairing_attempt() {
         engine
             .links
             .track_responding(RespondingLink {
+                attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
                 link_id: fresh_link,
                 key: link_key(),
                 requested_at: fresh_at,

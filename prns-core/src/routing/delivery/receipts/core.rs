@@ -109,6 +109,10 @@ pub struct ProvenRequestReceipt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptDeadline {
     Due(InstantMillis),
+    /// A LinkDefault request Resource is still uploading. Its watchdog owns
+    /// failure until upload proof arms the response wait. An early response can
+    /// still claim this receipt, including through bounded capacity admission.
+    AwaitingRequestUpload,
     /// RNS 1.4.2 `RequestReceipt.RECEIVING`: an accepted response resource owns failure for its request, so the row stops expiring.
     /// Every exit of that transfer settles the row — delivery, the resource watchdog, or the re-armed between-segments deadline.
     ClaimedByTransfer,
@@ -376,11 +380,7 @@ impl<C: ReceiptTable> Receipts<C> {
         command: CommandId,
         request: RequestId,
     ) -> Option<ProvenRequestReceipt> {
-        let index = (0..self.table.len()).find(|index| {
-            self.table.command_ids()[*index] == command
-                && matches!(self.table.kinds()[*index], ReceiptKind::SendRequest { link_id, .. } if link_id == *link)
-                && &self.table.packet_hashes()[*index].as_bytes()[..16] == request.as_bytes()
-        })?;
+        let index = self.request_row_for_command(link, command, request)?;
         let ReceiptKind::SendRequest { response, .. } = self.table.kinds()[index] else {
             return None;
         };
@@ -392,6 +392,37 @@ impl<C: ReceiptTable> Receipts<C> {
         self.table.remove(index);
         self.refresh_earliest_timeout();
         Some(receipt)
+    }
+
+    /// Change only the expected state of this upload's receipt, even if request
+    /// IDs collide or a response has already taken ownership of its watchdog.
+    pub(crate) fn transition_request_deadline_for_command(
+        &mut self,
+        link: &LinkId,
+        command: CommandId,
+        request: RequestId,
+        expected: ReceiptDeadline,
+        deadline: ReceiptDeadline,
+    ) {
+        if let Some(index) = self.request_row_for_command(link, command, request) {
+            if self.table.deadlines()[index] == expected {
+                self.table.set_deadline(index, deadline);
+                self.refresh_earliest_timeout();
+            }
+        }
+    }
+
+    fn request_row_for_command(
+        &self,
+        link: &LinkId,
+        command: CommandId,
+        request: RequestId,
+    ) -> Option<usize> {
+        (0..self.table.len()).find(|index| {
+            self.table.command_ids()[*index] == command
+                && matches!(self.table.kinds()[*index], ReceiptKind::SendRequest { link_id, .. } if link_id == *link)
+                && &self.table.packet_hashes()[*index].as_bytes()[..16] == request.as_bytes()
+        })
     }
 
     /// Non-removing peek for the resource accept gate: RNS 1.4.2 `Link.receive` accepts a response resource only when it names a request we actually sent.
@@ -433,9 +464,9 @@ impl<C: ReceiptTable> Receipts<C> {
         }
     }
 
-    /// The request's still-live response deadline before a Resource claims it.
-    /// Pending Resource offers use this as a hard ceiling on their shorter
-    /// admission wait.
+    /// The request's armed response deadline. None while a default request
+    /// upload or an accepted response owns the watchdog; pending response offers
+    /// must use `pending_response_admission_deadline` to distinguish those states.
     pub fn pending_request_deadline(
         &self,
         link_id: &LinkId,
@@ -444,6 +475,23 @@ impl<C: ReceiptTable> Receipts<C> {
         let index = self.request_row_index(link_id, request_id)?;
         match self.table.deadlines().get(index)? {
             ReceiptDeadline::Due(at) => Some(*at),
+            ReceiptDeadline::AwaitingRequestUpload | ReceiptDeadline::ClaimedByTransfer => None,
+        }
+    }
+
+    /// Bound a queued response offer without confusing an upload-owned request
+    /// with one already claimed by an incoming response. Uploads have no response
+    /// deadline yet, but capacity admission always retains its own finite bound.
+    pub(crate) fn pending_response_admission_deadline(
+        &self,
+        link_id: &LinkId,
+        request_id: RequestId,
+        wait_deadline: InstantMillis,
+    ) -> Option<InstantMillis> {
+        let index = self.request_row_index(link_id, request_id)?;
+        match self.table.deadlines().get(index)? {
+            ReceiptDeadline::Due(at) => Some(wait_deadline.min(*at)),
+            ReceiptDeadline::AwaitingRequestUpload => Some(wait_deadline),
             ReceiptDeadline::ClaimedByTransfer => None,
         }
     }
@@ -502,7 +550,7 @@ fn due_minimum(deadlines: &[ReceiptDeadline]) -> Option<InstantMillis> {
         .iter()
         .filter_map(|deadline| match deadline {
             ReceiptDeadline::Due(at) => Some(*at),
-            ReceiptDeadline::ClaimedByTransfer => None,
+            ReceiptDeadline::AwaitingRequestUpload | ReceiptDeadline::ClaimedByTransfer => None,
         })
         .min()
 }

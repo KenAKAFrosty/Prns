@@ -1,4 +1,4 @@
-use embassy_futures::select::{select4, Either4};
+use embassy_futures::select::{select5, Either5};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
 use heapless::Vec as HeaplessVec;
@@ -17,6 +17,7 @@ use crate::routing::links::resources::ResourceOffer;
 use crate::runtime::{EmbassyInterfaceStore, InterfaceInspectionStore, NoInterfaceInspectionStore};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 
+use super::availability::Availability;
 use super::egress::{
     flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, EmbassyEgress,
     InterfacePacer, MAX_PACED_INTERFACES,
@@ -35,6 +36,9 @@ pub struct ManifoldWiring<'run, 'lane, M: RawMutex, const NOTIFY: usize, const C
     /// A doorbell rather than a frame count: one receive drains every lane, a full channel means a sweep is pending, and a frame committed during a sweep either joins it or rings again.
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub inbound_lanes: &'run mut [(InterfaceId, &'lane mut dyn ManifoldLaneReader)],
+    /// Also supplies administrative power gates for dedicated or supervisor IDs.
+    /// Use `embassy_grant_lane_with_status` for both lane directions to fence stored
+    /// frames across Off→On; erased, unbound custom lanes only receive admission guards.
     pub frame_accounting_statuses: &'run [&'lane EmbassyInterfaceStatus],
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
     pub egress: EmbassyEgress<'run>,
@@ -141,7 +145,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
         mut should_accept_resource,
     } = deciders;
     let ManifoldWiring {
-        interfaces,
+        interfaces: attached,
         ifacs,
         notify,
         inbound_lanes,
@@ -149,31 +153,84 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
         commands,
         mut egress,
     } = wiring;
+    egress.set_statuses(frame_accounting_statuses);
+    let availability = Availability::fixed(frame_accounting_statuses);
+    let allows = |id| availability.allows(id);
+    let generation = |id| availability.generation(id);
+    let interfaces = attached
+        .with_availability(&allows)
+        .with_generations(&generation);
     let mut wake_schedules = engine.wake_schedules(interfaces);
     let mut pacers: HeaplessVec<InterfacePacer, MAX_PACED_INTERFACES> = HeaplessVec::new();
-    for descriptor in interfaces {
+    for descriptor in attached {
         let _ = pacers.push(InterfacePacer::from_descriptor(descriptor.id, descriptor));
     }
     loop {
+        if availability.reconcile(
+            &mut engine,
+            attached,
+            &mut egress,
+            ifacs,
+            &mut pacers,
+            host.now(),
+            &mut on_journaled,
+        ) {
+            wake_schedules = engine.wake_schedules(interfaces);
+        }
         let wake = wake_schedules.soonest(host.now());
         let pacer_wake = soonest_pacer_release(&pacers);
 
-        match select4(
+        let input = select5(
             notify.receive(),
             commands.receive(),
             wait_for_due_reason(&host, wake),
             wait_for_pacer(&host, pacer_wake),
+            availability.changed(),
         )
-        .await
-        {
-            Either4::First(_) => {
+        .await;
+        if availability.reconcile(
+            &mut engine,
+            attached,
+            &mut egress,
+            ifacs,
+            &mut pacers,
+            host.now(),
+            &mut on_journaled,
+        ) {
+            wake_schedules = engine.wake_schedules(interfaces);
+        }
+        match input {
+            Either5::First(_) => {
                 while notify.try_receive().is_ok() {}
                 for (lane_id, lane) in inbound_lanes.iter_mut() {
-                    while let Some((target, packet_phy, frame)) = lane.try_read() {
+                    loop {
+                        let admitted_generation = availability.generation(*lane_id);
+                        let Some((target, packet_phy, frame)) = lane.try_read() else {
+                            break;
+                        };
+                        if availability.reconcile(
+                            &mut engine,
+                            attached,
+                            &mut egress,
+                            ifacs,
+                            &mut pacers,
+                            host.now(),
+                            &mut on_journaled,
+                        ) {
+                            wake_schedules = engine.wake_schedules(interfaces);
+                        }
+
                         let FrameTarget::Direct(source) = target else {
                             lane.release();
                             continue;
                         };
+                        if admitted_generation != availability.generation(*lane_id)
+                            || !availability.allows(*lane_id)
+                            || !availability.allows(source)
+                        {
+                            lane.release();
+                            continue;
+                        }
                         let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
                         let bytes = match ifac_for(ifacs, *lane_id) {
                             Some(entry) => {
@@ -267,7 +324,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                     }
                 }
             }
-            Either4::Second(issued) => {
+            Either5::Second(issued) => {
                 let now = host.now();
                 let mut owed_work = InlineOwedWorkQueue::new();
                 let mut delta = engine.ingest_command_into_with_work(
@@ -302,7 +359,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                 ));
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
-            Either4::Third(reason) => {
+            Either5::Third(reason) => {
                 let now = host.now();
                 let delta = fire_due_reason(
                     &mut engine,
@@ -323,7 +380,8 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
-            Either4::Fourth(()) => {
+            Either5::Fifth(()) => continue,
+            Either5::Fourth(()) => {
                 let now = host.now();
                 flush_due_pacers(&mut pacers, now, &mut egress, ifacs);
             }
@@ -332,10 +390,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
             let mut dirty = engine.take_dirty_interfaces();
             let mut changed = false;
             dirty.drain(|interface| {
-                if interfaces
-                    .iter()
-                    .any(|descriptor| descriptor.id == interface)
-                {
+                if attached.iter().any(|descriptor| descriptor.id == interface) {
                     store.set_interface_counts(interface, engine.interface_counts(interface));
                 } else {
                     store.forget_interface(interface);

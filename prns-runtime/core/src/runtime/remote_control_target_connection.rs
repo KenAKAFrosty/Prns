@@ -70,7 +70,7 @@ pub enum CloseRemoteControlTargetOutcome {
     NotQueued,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteControlTargetOperationError {
     NotPermitted(RemoteControlRequestKind),
     Exchange(RemoteControlError),

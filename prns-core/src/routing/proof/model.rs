@@ -57,6 +57,8 @@ pub enum ReceiptProofVerification {
 /// An implicit or explicit delivery proof whose signature the engine asks its runtime to produce.
 #[repr(C)]
 pub struct ProofSignOwed {
+    pub destination: DestinationHash,
+    pub destination_generation: u64,
     pub target: InterfaceId,
     pub packet_hash: PacketHash,
     pub signing_secret: Ed25519SecretKey,
@@ -83,6 +85,8 @@ pub struct ChannelAckSignOwed {
 /// A runtime-produced delivery-proof signature submitted for engine serialization and routing.
 #[repr(C)]
 pub struct ProofSignCompleted {
+    pub destination: DestinationHash,
+    pub destination_generation: u64,
     pub target: InterfaceId,
     pub packet_hash: PacketHash,
     pub signature: Ed25519Signature,

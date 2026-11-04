@@ -39,7 +39,7 @@ fn receive_faults_preserve_or_discard_partial_frames_according_to_radio_recovery
                     yield_now().await;
                 }
                 if pending_tx {
-                    lab.outbound.send(vec![0x42; 10]).await;
+                    lab.send_outbound(vec![0x42; 10]).await;
                     while lab.accepted.get() < 1 {
                         yield_now().await;
                     }
@@ -119,6 +119,8 @@ fn receive_events_preserve_channel_evidence_frame_accounting_and_signal_quality(
                 event,
                 InstantMillis(0),
                 ReceivePath {
+                    trace: None,
+                    trace_at_ms: 0,
                     profile: &profile,
                     activity: &mut activity,
                     spectrum: &spectrum,
@@ -158,6 +160,8 @@ fn receive_events_preserve_channel_evidence_frame_accounting_and_signal_quality(
                 event,
                 InstantMillis(1),
                 ReceivePath {
+                    trace: None,
+                    trace_at_ms: 0,
                     profile: &profile,
                     activity: &mut activity,
                     spectrum: &spectrum,
@@ -300,7 +304,7 @@ fn sensing_and_transmit_faults_recover_without_losing_packet_dispositions() {
                     // The next failure occurs during active contention.
                     lab.fault.set(Some((operation, fault)));
                 }
-                lab.outbound.send(vec![0x42; 10]).await;
+                lab.send_outbound(vec![0x42; 10]).await;
                 while lab.dispositions.borrow().is_empty() {
                     yield_now().await;
                 }
@@ -328,7 +332,7 @@ fn sensing_and_transmit_faults_recover_without_losing_packet_dispositions() {
                     1 + recoveries as usize + receive_retry
                 );
                 assert!(lab.receiving.get());
-                lab.outbound.send(vec![0x43; 10]).await;
+                lab.send_outbound(vec![0x43; 10]).await;
                 while lab.dispositions.borrow().len() < 2 {
                     yield_now().await;
                 }
@@ -390,7 +394,7 @@ fn final_channel_check_observes_latched_frames_and_fails_closed_on_rssi_errors()
             sink: Vec::new(),
         };
         let scenario = async {
-            lab.outbound.send(vec![0x42; 10]).await;
+            lab.send_outbound(vec![0x42; 10]).await;
             while lab.dispositions.borrow().is_empty() {
                 yield_now().await;
             }
@@ -449,7 +453,8 @@ fn framing_and_radio_failures_advance_sequence_without_claiming_transmitted_byte
                 &profile,
                 &started,
                 &EmbassyClock,
-                &mut frame
+                &mut frame,
+                None,
             )
             .await,
             Err(LoRaTransmitError::Framing(AirFrameError::PayloadExceedsMax))
@@ -469,7 +474,8 @@ fn framing_and_radio_failures_advance_sequence_without_claiming_transmitted_byte
                 &profile,
                 &started,
                 &EmbassyClock,
-                &mut frame
+                &mut frame,
+                None,
             )
             .await,
             Err(LoRaTransmitError::Radio(Fault::Recoverable))
@@ -548,6 +554,8 @@ fn over_capacity_received_packet_is_accounted_without_delivery() {
         &mut throughput,
         &mut reassembler,
         &mut seam,
+        None,
+        0,
     ));
     assert_eq!(status.frame_accounting().unwrap().undecodable, 1);
     assert!(lab.delivered.borrow().is_empty());

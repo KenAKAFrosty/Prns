@@ -65,6 +65,84 @@ fn show_notice(
     timer.stage(notice, duration);
 }
 
+pub(super) struct WifiBootConfiguration {
+    flash: crate::persistence::S3SharedFlash,
+    store: screen::WifiConfigurationStore<crate::persistence::S3SharedFlash>,
+    key: personal_rns::remote_control::RemoteControlTargetSealingKey,
+    loaded: Result<
+        screen::LoadedWifiConfiguration,
+        screen::WifiConfigurationStoreError<crate::flash::EspRomFlashError>,
+    >,
+}
+
+async fn load_boot_wifi_configuration<B: Esp32S3Board>(
+    bootstrap: &mut S3RuntimeBootstrap,
+) -> WifiBootConfiguration {
+    let memory = EspFirmwareMemory::new(B::MEMORY_PROFILE);
+    static FLASH: StaticCell<Mutex<CriticalSectionRawMutex, crate::flash::EspRomFlash>> =
+        StaticCell::new();
+    let flash = FLASH.init(Mutex::new(crate::flash::EspRomFlash::new(
+        memory.flash_capacity(),
+    )));
+    let flash = SharedNorFlash::new(flash, memory.flash_capacity());
+    let key = bootstrap
+        .identities
+        .remote_control
+        .as_ref()
+        .expect("RemoteControl identity bootstrap failed")
+        .secrets()
+        .target_sealing_key(screen::WIFI_CONFIGURATION_SEALING_DOMAIN);
+    let mut store = screen::WifiConfigurationStore::new(flash, memory.wifi_configuration_pages());
+    let loaded = store.load(&key, &mut bootstrap.entropy).await;
+    WifiBootConfiguration {
+        flash,
+        store,
+        key,
+        loaded,
+    }
+}
+
+#[inline(never)]
+fn prepare_boot_wifi_configuration<
+    'a,
+    B: Esp32S3Board + 'a,
+    A: allocator_api2::alloc::Allocator + 'static,
+>(
+    bootstrap: &'a mut S3RuntimeBootstrap,
+    allocator: A,
+) -> core::pin::Pin<
+    allocator_api2::boxed::Box<impl core::future::Future<Output = WifiBootConfiguration> + 'a, A>,
+> {
+    allocator_api2::boxed::Box::pin_in(load_boot_wifi_configuration::<B>(bootstrap), allocator)
+}
+
+// The startup crypto/recovery frame must end before run_core is polled. Keeping its poll
+// out of line also prevents that frame from being merged into the caller across phases.
+#[inline(never)]
+fn poll_boot_wifi_configuration(
+    future: core::pin::Pin<&mut impl core::future::Future<Output = WifiBootConfiguration>>,
+    context: &mut core::task::Context<'_>,
+) -> core::task::Poll<WifiBootConfiguration> {
+    future.poll(context)
+}
+
+// Materialize the large future in a short-lived frame, not the frame that polls it.
+#[inline(never)]
+fn prepare_core<B: Esp32S3Board, A: allocator_api2::alloc::Allocator + 'static>(
+    spawner: Spawner,
+    hardware: S3BoardHardware<B::Display, B::Battery, B::Gnss>,
+    wifi_boot: WifiBootConfiguration,
+    allocator: A,
+) -> core::pin::Pin<allocator_api2::boxed::Box<impl core::future::Future<Output = ()>, A>>
+where
+    B::Display: 'static,
+    <B::Display as S3BoardDisplay>::Runtime: 'static,
+    B::Battery: 'static,
+    B::Gnss: 'static,
+{
+    allocator_api2::boxed::Box::pin_in(run_core::<B>(spawner, hardware, wifi_boot), allocator)
+}
+
 pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner)
 where
     B::Display: 'static,
@@ -79,23 +157,37 @@ where
     if B::INTERNAL_SRAM_ONLY {
         crate::storage::use_internal_sram_allocations();
     }
-    let bringup = B::bringup(p).await;
+    let mut bringup = B::bringup(p).await;
+    // Opening an existing sealed record uses synchronous authentication/decryption stack.
+    // Finish it before polling run_core: its large initialization frame otherwise remains live
+    // beneath the crypto calls even though the suspended future itself is allocated in PSRAM.
+    // Keep the bounded load/recovery state out of the static main task, whose size reduces
+    // available CPU stack. Drop this temporary allocation before constructing the core future.
+    let wifi_boot = if B::INTERNAL_SRAM_ONLY {
+        let mut load = prepare_boot_wifi_configuration::<B, _>(
+            &mut bringup.runtime_bootstrap,
+            esp_alloc::InternalMemory,
+        );
+        core::future::poll_fn(|context| poll_boot_wifi_configuration(load.as_mut(), context)).await
+    } else {
+        let mut load = prepare_boot_wifi_configuration::<B, _>(
+            &mut bringup.runtime_bootstrap,
+            esp_alloc::ExternalMemory,
+        );
+        core::future::poll_fn(|context| poll_boot_wifi_configuration(load.as_mut(), context)).await
+    };
     // Pin into the board-selected heap, not `PsramAlloc`. On Heltec V4-R8, `PsramAlloc` is
     // the private bump that `reinit_private_psram_heap` resets inside `run_core` before the LoRa
     // queue lands — pinning here would place the live future (OLED/I2C state) in that window and
     // get overwritten, which zeroed I2C Config.frequency after radio bring-up.
     if B::INTERNAL_SRAM_ONLY {
         allocator_api2::boxed::Box::pin_in(
-            run_core::<B>(spawner, bringup),
+            run_core::<B>(spawner, bringup, wifi_boot),
             esp_alloc::InternalMemory,
         )
         .await;
     } else {
-        allocator_api2::boxed::Box::pin_in(
-            run_core::<B>(spawner, bringup),
-            esp_alloc::ExternalMemory,
-        )
-        .await;
+        prepare_core::<B, _>(spawner, bringup, wifi_boot, esp_alloc::ExternalMemory).await;
     }
 }
 
@@ -103,6 +195,7 @@ where
 pub(super) async fn run_core<B: Esp32S3Board>(
     spawner: Spawner,
     hardware: S3BoardHardware<B::Display, B::Battery, B::Gnss>,
+    wifi_boot: WifiBootConfiguration,
 ) where
     B::Display: 'static,
     <B::Display as S3BoardDisplay>::Runtime: 'static,
@@ -123,7 +216,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 ble: ble_bootstrap,
                 destination_hashes,
             },
-        entropy: mut boot_entropy,
+        entropy: boot_entropy,
     } = hardware.runtime_bootstrap;
     let mut battery_source = battery;
     let gnss = hardware.gnss;
@@ -154,25 +247,20 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     let mut manifold_lanes = ManifoldLanes::new();
 
-    static FLASH: StaticCell<Mutex<CriticalSectionRawMutex, crate::flash::EspRomFlash>> =
-        StaticCell::new();
-    let flash = FLASH.init(Mutex::new(crate::flash::EspRomFlash::new(
-        memory.flash_capacity(),
-    )));
-    let shared_flash = SharedNorFlash::new(flash, memory.flash_capacity());
+    let WifiBootConfiguration {
+        flash: shared_flash,
+        store: mut wifi_configuration_store,
+        key: wifi_configuration_key,
+        loaded: loaded_wifi_configuration,
+    } = wifi_boot;
     let remote_control_bootstrap =
         remote_control_bootstrap.expect("RemoteControl identity bootstrap failed");
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
         remote_control_bootstrap.into_parts();
-    let wifi_configuration_key = remote_control_identity_secrets
-        .target_sealing_key(screen::WIFI_CONFIGURATION_SEALING_DOMAIN);
-    let mut wifi_configuration_store =
-        screen::WifiConfigurationStore::new(shared_flash, memory.wifi_configuration_pages());
+    let enrollment =
+        crate::controller_enrollment::serial_enrollment(&remote_control_identity_secrets);
     let mut runtime_wifi_station = None;
-    match wifi_configuration_store
-        .load(&wifi_configuration_key, &mut boot_entropy)
-        .await
-    {
+    match loaded_wifi_configuration {
         Ok(loaded) => {
             if let Some(station) = loaded.active {
                 wifi_config.ssid = station.ssid().to_string();
@@ -365,27 +453,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_id = tcp_built.as_ref().map(|(_, _, id)| *id);
 
     let remote_control_handle = REMOTE_CONTROL_COMMANDS.handle();
-    let recipe = PrnsNodeRecipe {
-        transport_identity: Some(transport_secret),
-        remote_control: personal_rns::runtime::RemoteControlNodeSetup::new(remote_control)
-            .with_controls(personal_rns::runtime::RemoteControlSupportedHost::new(
-                remote_control_handle,
-                remote_control::capabilities::<B>().requests(),
-            )),
-        pre_configured_destinations: destinations.into_preconfigured_destinations(),
-        app_state: remote_control_handle,
-        storage: EngineStorageType::default(),
-        request_endpoints: screen::node_pages::NodePageRoutes,
-        interfaces: personal_rns::runtime::ManuallyAttached,
-        persistence: crate::persistence::s3(shared_flash, &memory),
-        on_event: firmware_on_event as for<'a> fn(PrnsEvent<'a>, &RemoteControlHandle),
-    };
 
     #[cfg(feature = "lora")]
     let lora_cfg = lora.descriptor();
     let espnow_cfg = espnow.as_ref().map(|e| e.descriptor());
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
-    let has_wifi = wifi.is_some();
+    let wifi_routing_status = wifi
+        .as_ref()
+        .map(|interface| interface.status().routing_status());
 
     let usb_outbound = crate::storage::allocate_manifold_outbound::<
         { personal_rns::interfaces::usb_auto::MAX_DATA_BYTES },
@@ -414,16 +489,17 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             )
             .expect("TCP lane is available")
     });
-    let wifi_supervisor_lane = has_wifi.then(|| {
+    let wifi_supervisor_lane = wifi_routing_status.map(|status| {
         let outbound = crate::storage::allocate_manifold_outbound::<
             { wifi_auto_contract::HARDWARE_MTU },
         >(OUTBOUND_BURST_DEPTH);
         manifold_lanes
-            .claim_supervisor_with_outbound_buffer(
+            .claim_accounted_supervisor_with_outbound_buffer(
                 &WIFI_MANIFOLD_LANE,
                 WIFI_SUPERVISOR_ID,
                 &OUTBOUND_WAKE,
                 outbound,
+                status,
             )
             .expect("Wi-Fi supervisor lane is available")
     });
@@ -443,11 +519,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let outbound =
             crate::storage::allocate_manifold_outbound::<BLE_HW_MTU>(OUTBOUND_BURST_DEPTH);
         manifold_lanes
-            .claim_supervisor_with_outbound_buffer(
+            .claim_accounted_supervisor_with_outbound_buffer(
                 &BLE_MANIFOLD_LANE,
                 BLE_SUPERVISOR_ID,
                 &BLE_OUTBOUND_WAKE,
                 outbound,
+                personal_rns::bluetooth_auto::BluetoothAutoStatus::new(&BLE_SHARED)
+                    .routing_status(),
             )
             .expect("Bluetooth supervisor lane is available")
     });
@@ -479,6 +557,23 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     boot_stage(BootPhase::CoreOneStartBegin);
     esp_rtos::start_second_core(cpu_control, software_interrupt, core1_stack, move || {
+        // Build persistence buffers on the engine core. Capturing a completed recipe
+        // copies those buffers through CPU0's startup stack and the core-launch wrapper.
+        let recipe = PrnsNodeRecipe {
+            transport_identity: Some(transport_secret),
+            remote_control: personal_rns::runtime::RemoteControlNodeSetup::new(remote_control)
+                .with_controls(personal_rns::runtime::RemoteControlSupportedHost::new(
+                    remote_control_handle,
+                    remote_control::capabilities::<B>().requests(),
+                )),
+            pre_configured_destinations: destinations.into_preconfigured_destinations(),
+            app_state: remote_control_handle,
+            storage: EngineStorageType::default(),
+            request_endpoints: screen::node_pages::NodePageRoutes,
+            interfaces: personal_rns::runtime::ManuallyAttached,
+            persistence: crate::persistence::s3(shared_flash, &memory),
+            on_event: firmware_on_event as for<'a> fn(PrnsEvent<'a>, &RemoteControlHandle),
+        };
         let node_slot = crate::storage::allocate_psram_uninit::<S3Node>();
         let (node, persistence) =
             PrnsNode::init_in_place_with_persistence(node_slot, recipe, manifold_wiring, host);
@@ -507,17 +602,20 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     });
     boot_stage(BootPhase::CoreOneStartReady);
 
+    spawner.spawn(controller_enrollment_task().expect("controller enrollment task fits"));
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), entropy);
     match usb {
         S3UsbHardware::SerialJtag(usb_device) => {
             let (usb_rx, usb_tx) = UsbSerialJtag::new(usb_device).into_async().split();
             spawner.spawn(
-                usb_device_task(usb_rx, usb_tx, usb_seam, usb_status).expect("usb task fits"),
+                usb_device_task(usb_rx, usb_tx, usb_seam, usb_status, enrollment)
+                    .expect("usb task fits"),
             );
         }
         S3UsbHardware::Uart { rx, tx } => {
             spawner.spawn(
-                usb_uart_device_task(rx, tx, usb_seam, usb_status).expect("USB UART task fits"),
+                usb_uart_device_task(rx, tx, usb_seam, usb_status, enrollment)
+                    .expect("USB UART task fits"),
             );
         }
     }
@@ -1414,7 +1512,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     }
 
     #[cfg(feature = "lora")]
-    spawner.spawn(lora_task(lora, lora_seam).expect("LoRa task fits"));
+    spawner.spawn(lora_task(prepare_lora_run(lora, lora_seam)).expect("LoRa task fits"));
     if let Some((interface, seam)) = espnow {
         spawner.spawn(espnow_task(interface, seam).expect("ESP-NOW task fits"));
     }
@@ -1464,10 +1562,23 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     spawner.spawn(display_task(render).expect("display task fits"));
 }
 
+// Store the suspended radio state in the board allocator, like Wi-Fi and BLE,
+// instead of reserving its large task pool in internal SRAM below the CPU stack.
+#[cfg(feature = "lora")]
+#[inline(never)]
+fn prepare_lora_run(
+    interface: S3LoraInterface,
+    seam: S3LoraSeam,
+) -> core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>> {
+    let run = crate::storage::allocate_psram(interface.run(seam));
+    // SAFETY: `allocate_psram` leaks this allocation, so it cannot move or be freed.
+    unsafe { core::pin::Pin::new_unchecked(run) }
+}
+
 #[cfg(feature = "lora")]
 #[embassy_executor::task]
-async fn lora_task(interface: S3LoraInterface, seam: S3LoraSeam) {
-    interface.run(seam).await
+async fn lora_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
+    run.await
 }
 
 #[embassy_executor::task]

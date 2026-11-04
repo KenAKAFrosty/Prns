@@ -106,7 +106,7 @@ jobs:
           cp -R target/doc/. target/site-preview/website/api/
           cp release/website/api-index.html target/site-preview/website/api/index.html
       - name: Audit production npm dependencies
-        run: python3 validation/security/npm-production-audit.py
+        run: python3 validation/security/npm-production-audit.py --scope web
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: site-preview-${{ github.sha }}-${{ github.run_id }}

@@ -8,6 +8,7 @@ use super::super::{
     RemoteControlPairingTranscript,
 };
 use super::model::*;
+use super::terminal::*;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 enum RemoteControlControllerPairingPhase {
@@ -36,9 +37,73 @@ enum RemoteControlControllerPairingPhase {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct RemoteControlControllerPairingState {
     phase: RemoteControlControllerPairingPhase,
+    terminal: Option<RemoteControlControllerPairingTerminal>,
 }
 
 impl RemoteControlControllerPairingState {
+    #[must_use]
+    pub fn terminal(&self) -> Option<RemoteControlControllerPairingTerminal> {
+        self.terminal
+    }
+
+    pub fn cancel(
+        &mut self,
+        subject: RemoteControlControllerPairingSubject,
+        now: InstantMillis,
+    ) -> Result<RemoteControlControllerPairingAborted, CancelRemoteControlControllerPairingError>
+    {
+        let context = match (&self.phase, subject) {
+            (
+                RemoteControlControllerPairingPhase::AwaitingOffer { context, .. },
+                RemoteControlControllerPairingSubject::AwaitingOffer { context: requested },
+            ) if *context == requested => *context,
+            (
+                RemoteControlControllerPairingPhase::AwaitingApproval { transcript, .. },
+                RemoteControlControllerPairingSubject::Attempt {
+                    attempt_id,
+                    context,
+                },
+            ) if attempt_id == transcript.into() && context == transcript.context() => context,
+            (
+                RemoteControlControllerPairingPhase::AwaitingCompletion { transcript, .. },
+                RemoteControlControllerPairingSubject::Attempt {
+                    attempt_id,
+                    context,
+                },
+            ) if attempt_id == transcript.into() && context == transcript.context() => {
+                return Err(CancelRemoteControlControllerPairingError::AlreadyApproved)
+            }
+            (
+                RemoteControlControllerPairingPhase::Persisting {
+                    attempt_id,
+                    context,
+                    ..
+                },
+                RemoteControlControllerPairingSubject::Attempt {
+                    attempt_id: requested,
+                    context: requested_context,
+                },
+            ) if *attempt_id == requested && *context == requested_context => {
+                return Err(CancelRemoteControlControllerPairingError::PersistenceInProgress)
+            }
+            _ => return Err(CancelRemoteControlControllerPairingError::StaleSubject),
+        };
+        if self.take_expired_exchange(now).is_some() {
+            return Err(CancelRemoteControlControllerPairingError::Expired);
+        }
+        match self.abort_for_link(
+            context.link_id(),
+            RemoteControlControllerPairingTerminalOutcome::Cancelled,
+        ) {
+            RemoteControlControllerPairingLinkAbort::Aborted(aborted) => Ok(aborted),
+            RemoteControlControllerPairingLinkAbort::UnrelatedLink
+            | RemoteControlControllerPairingLinkAbort::NoActiveAttempt
+            | RemoteControlControllerPairingLinkAbort::PersistenceInProgress { .. } => {
+                Err(CancelRemoteControlControllerPairingError::StaleSubject)
+            }
+        }
+    }
+
     #[must_use]
     pub fn view(&self) -> RemoteControlControllerPairingView<'_> {
         match &self.phase {
@@ -103,6 +168,7 @@ impl RemoteControlControllerPairingState {
             }
         };
         let begin = RemoteControlPairingBegin::new(controller, context.endpoint(), invitation_code);
+        self.terminal = None;
         self.phase = RemoteControlControllerPairingPhase::AwaitingOffer {
             context,
             controller,
@@ -150,9 +216,15 @@ impl RemoteControlControllerPairingState {
                 ) {
                     Ok(window) => window,
                     Err(reason) => {
+                        self.terminal = Some(RemoteControlControllerPairingTerminal {
+                            subject: RemoteControlControllerPairingSubject::AwaitingOffer {
+                                context,
+                            },
+                            outcome: RemoteControlControllerPairingTerminalOutcome::Expired,
+                        });
                         return ReceiveRemoteControlControllerPairingOfferOutcome::PairingUnavailable {
                             reason,
-                        }
+                        };
                     }
                 };
                 let attempt_id = (&transcript).into();
@@ -285,6 +357,13 @@ impl RemoteControlControllerPairingState {
                         active,
                     };
                 }
+                self.terminal = Some(RemoteControlControllerPairingTerminal {
+                    subject: RemoteControlControllerPairingSubject::Attempt {
+                        attempt_id: active,
+                        context: transcript.context(),
+                    },
+                    outcome: RemoteControlControllerPairingTerminalOutcome::Rejected,
+                });
                 RejectRemoteControlControllerPairingOutcome::Rejected {
                     aborted: RemoteControlControllerPairingAborted::AwaitingApproval {
                         attempt_id: active,
@@ -411,6 +490,15 @@ impl RemoteControlControllerPairingState {
                         active: attempt_id,
                     };
                 }
+                self.terminal = Some(RemoteControlControllerPairingTerminal {
+                    subject: RemoteControlControllerPairingSubject::Attempt {
+                        attempt_id,
+                        context,
+                    },
+                    outcome: RemoteControlControllerPairingTerminalOutcome::Paired {
+                        target: access.target().identity_hash(),
+                    },
+                });
                 PersistRemoteControlControllerPairingOutcome::Completed {
                     attempt_id,
                     context,
@@ -449,6 +537,15 @@ impl RemoteControlControllerPairingState {
                         active: attempt_id,
                     };
                 }
+                self.terminal = Some(RemoteControlControllerPairingTerminal {
+                    subject: RemoteControlControllerPairingSubject::Attempt {
+                        attempt_id,
+                        context,
+                    },
+                    outcome: RemoteControlControllerPairingTerminalOutcome::Failed {
+                        reason: RemoteControlControllerPairingFailureReason::PersistenceFailed,
+                    },
+                });
                 FailRemoteControlControllerPairingPersistenceOutcome::Failed {
                     attempt_id,
                     context,
@@ -496,7 +593,12 @@ impl RemoteControlControllerPairingState {
         &mut self,
         link_id: LinkId,
     ) -> CloseRemoteControlControllerPairingLinkOutcome {
-        match self.abort_for_link(link_id) {
+        match self.abort_for_link(
+            link_id,
+            RemoteControlControllerPairingTerminalOutcome::Failed {
+                reason: RemoteControlControllerPairingFailureReason::LinkClosed,
+            },
+        ) {
             RemoteControlControllerPairingLinkAbort::Aborted(aborted) => {
                 CloseRemoteControlControllerPairingLinkOutcome::Aborted { aborted }
             }
@@ -516,7 +618,12 @@ impl RemoteControlControllerPairingState {
         &mut self,
         link_id: LinkId,
     ) -> FailRemoteControlControllerPairingRequestOutcome {
-        match self.abort_for_link(link_id) {
+        match self.abort_for_link(
+            link_id,
+            RemoteControlControllerPairingTerminalOutcome::Failed {
+                reason: RemoteControlControllerPairingFailureReason::RequestFailed,
+            },
+        ) {
             RemoteControlControllerPairingLinkAbort::Aborted(aborted) => {
                 FailRemoteControlControllerPairingRequestOutcome::Aborted { aborted }
             }
@@ -543,7 +650,7 @@ impl RemoteControlControllerPairingState {
         now: InstantMillis,
     ) -> Option<RemoteControlControllerPairingAborted> {
         let phase = core::mem::take(&mut self.phase);
-        match phase {
+        let aborted = match phase {
             RemoteControlControllerPairingPhase::AwaitingOffer {
                 context, window, ..
             } if now >= window.expires_at() => {
@@ -575,12 +682,23 @@ impl RemoteControlControllerPairingState {
                 self.phase = phase;
                 None
             }
+        };
+        if let Some(aborted) = aborted {
+            self.terminal = Some(RemoteControlControllerPairingTerminal {
+                subject: aborted.into(),
+                outcome: RemoteControlControllerPairingTerminalOutcome::Expired,
+            });
         }
+        aborted
     }
 
-    fn abort_for_link(&mut self, link_id: LinkId) -> RemoteControlControllerPairingLinkAbort {
+    fn abort_for_link(
+        &mut self,
+        link_id: LinkId,
+        outcome: RemoteControlControllerPairingTerminalOutcome,
+    ) -> RemoteControlControllerPairingLinkAbort {
         let phase = core::mem::take(&mut self.phase);
-        match phase {
+        let result = match phase {
             RemoteControlControllerPairingPhase::Idle => {
                 RemoteControlControllerPairingLinkAbort::NoActiveAttempt
             }
@@ -626,7 +744,14 @@ impl RemoteControlControllerPairingState {
                 self.phase = phase;
                 RemoteControlControllerPairingLinkAbort::UnrelatedLink
             }
+        };
+        if let RemoteControlControllerPairingLinkAbort::Aborted(aborted) = &result {
+            self.terminal = Some(RemoteControlControllerPairingTerminal {
+                subject: (*aborted).into(),
+                outcome,
+            });
         }
+        result
     }
 }
 

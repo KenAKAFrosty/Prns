@@ -1,0 +1,8 @@
+/ios/*.xcframework/
+/android/src/main/jniLibs/
+/.ubrn-*.yaml
+/example/ios/
+/example/android/
+/example/.expo/
+
+example/public/prns/
