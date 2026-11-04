@@ -7,15 +7,15 @@ pub use prns_ffi::ethernet::EtherType;
 use prns_ffi::ethernet::{
     LinkChange, LinkChanges, LinkMonitor, NetworkDeviceName, PacketSocket, Reception,
 };
-use tokio::io::unix::AsyncFd;
+use prns_ffi::owned_async_fd::OwnedAsyncFd;
 
 const DISCARD_BURST_LIMIT: usize = 32;
 
 /// One shared normal-data socket on an already configured Linux mesh device.
 /// This does not configure the radio or inject 802.11 management frames.
 pub struct HaLowSocket {
-    packet: AsyncFd<PacketSocket>,
-    monitor: AsyncFd<LinkMonitor>,
+    packet: OwnedAsyncFd<PacketSocket>,
+    monitor: OwnedAsyncFd<LinkMonitor>,
     device: NetworkDeviceName,
 }
 
@@ -23,8 +23,8 @@ impl HaLowSocket {
     pub fn bind(interface: &str, protocol: EtherType) -> io::Result<Self> {
         let device = NetworkDeviceName::new(interface)?;
         // Subscribe before binding so deletion/recreation during setup remains observable.
-        let monitor = AsyncFd::new(LinkMonitor::new()?)?;
-        let packet = AsyncFd::new(PacketSocket::bind(interface, protocol)?)?;
+        let monitor = OwnedAsyncFd::new(LinkMonitor::new()?)?;
+        let packet = OwnedAsyncFd::new(PacketSocket::bind(interface, protocol)?)?;
         Ok(Self {
             packet,
             monitor,

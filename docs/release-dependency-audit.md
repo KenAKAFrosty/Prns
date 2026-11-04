@@ -6,57 +6,47 @@ commit and hashes of the checked baselines.
 
 ## Reproducible graph matrix
 
-| Graph | Manifest | Shipped target |
-|---|---|---|
-| Engine | `Cargo.toml` | `x86_64-unknown-linux-gnu` |
-| Daemon | `prnsd/Cargo.toml` | Linux, macOS, Windows |
-| Desktop | `personal-hopspot/desktop/Cargo.toml` | Linux, macOS, Windows |
-| Android | `personal-hopspot/mobile/android/rust/Cargo.toml` | `aarch64-linux-android` |
-| iOS | `personal-hopspot/mobile/ios/rust/Cargo.toml` | `aarch64-apple-ios` |
-| nRF52840 | `personal-hopspot/embedded/nrf52840/Cargo.toml` | `thumbv7em-none-eabihf` |
-| ESP32-C6 | XIAO board manifest | `riscv32imac-unknown-none-elf` |
-| ESP32-S3 | Heltec V4 and T-Beam board manifests | `xtensa-esp32s3-none-elf` |
-| WebAssembly/npm | `prns-wasm/Cargo.toml` / `package-lock.json` | `wasm32-unknown-unknown` |
-| Hosted website | `docs/website/Cargo.toml` / `package-lock.json` | Rust/WebAssembly plus bundled browser JavaScript |
-| Standalone flasher | `personal-hopspot/flasher/Cargo.toml` | macOS arm64/x86_64, Linux arm64/x86_64, Windows x86_64 |
+The [dependency audit](../validation/security/deps-audit.sh) owns the exact
+manifest, target and feature matrix. It covers shipped engine, service, app,
+SDK, firmware, browser and tool graphs. Use that list rather than a copied table
+when adding a target or changing features. The registered `dependency-audit`
+suite runs it with `--locked` and `--exclude-dev`, checking advisories, licenses,
+sources and bans; its entry in the [validation registry](../validation/manifest.toml)
+defines the platform and artifact location.
 
-`validation/security/deps-audit.sh` runs this matrix with `--locked`, excludes non-shipped development
-dependencies, and checks advisories, licenses, sources, and bans with cargo-deny 0.19.8.
+## Dependency and license policy
 
-## Resolved release blockers
+Historical advisory fixes belong in commit history. Run the audit against the
+candidate's locked graphs and current advisory data to establish its result.
+Pinned audit-tool versions are enforced by the audit entrypoint.
 
-- RUSTSEC-2026-0204 is resolved by `crossbeam-epoch 0.9.20`.
-- RUSTSEC-2026-0194 and RUSTSEC-2026-0195 are resolved by `plist 1.10.0` and `quick-xml 0.41.0`.
-- `dirs`/`option-ext`, `serialport`, and `tokio-serial` were removed from the engine/application
-  graphs. The standalone hardware flasher intentionally carries exact-scoped `directories` and
-  `serialport` dependencies for its user cache and direct USB operation; that separate graph is
-  audited on every published operating system target.
-- Linux does not instantiate tray-icon's GTK3/GLib path for either `prnsd` or the Hopspot desktop
-  face. Both use the blocking StatusNotifier backend in `ksni 0.3.6`; tray-icon remains
-  target-scoped to macOS and Windows.
+The audit enforces `ctutils 0.4.4` or later for
+[RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385.html) and
+Tokio `1.53.3` or later for
+[RUSTSEC-2026-0386](https://rustsec.org/advisories/RUSTSEC-2026-0386.html).
+These minimums do not replace checking current advisory data. Unix supplied
+pipes and Linux HaLow sockets use a sealed owned-descriptor wrapper in the FFI
+boundary to satisfy Tokio's registration safety contract; consuming crates
+retain their unsafe-code forbids.
 
-The allowlist in `deny.toml` is a permissive-by-default policy: every unlisted expression fails.
-GPL, LGPL, AGPL, and unknown licenses are not accepted. Package-scoped additions are `ksni 0.3.6`
-under Unlicense, `nrf-softdevice-s140 0.1.2` under the hash-pinned Nordic terms, and the exact
-`serialport 4.9.0` transport required by the mandated `espflash 4.5.0` library under file-level
-MPL-2.0. That narrow hardware boundary is shipped with its source/license notice; MPL is not
-accepted generally. The SoftDevice source remains restricted to revision
-`47d6121c6e823120e8b883a7ac75f44ce7daa3aa`.
+[`deny.toml`](../deny.toml) owns the reviewed license allowlist, exact package
+exceptions and permitted sources. Unlisted license expressions fail unless the
+selected package and version have an explicit exception. GPL, LGPL, AGPL and
+unknown licenses are not accepted. MPL is not allowed generally; its exceptions
+apply only to the listed Rust packages and versions, whose source and notices
+remain part of distribution review. They do not approve separately distributed
+npm packages. Keep exception versions and source restrictions in that
+configuration rather than maintaining a second list here.
 
 ## Unsafe enforcement
 
-Every shipped first-party Rust target must declare `#![forbid(unsafe_code)]` unless its package is
-one of these reviewed boundaries:
+The [unsafe audit](../validation/security/unsafe-audit.py) owns the reviewed
+package exceptions and lint requirements. Other shipped first-party targets
+must declare `#![forbid(unsafe_code)]`. Exceptions cover narrow native, FFI and
+embedded boundaries; they do not grant downstream packages permission to add
+unsafe code. Review the exception sets in that file when changing ownership.
 
-- `prns-core`, `prns-runtime`, and `prns-runtime-embassy`: documented field-by-field in-place
-  initialization that keeps the large engine and node values off constrained embedded stacks.
-- `prns-ffi`: Objective-C, IOKit, WinRT, SetupAPI, and Windows COM handles.
-- `personal-hopspot-android`: JNI pointers and Java-owned buffers.
-- `personal-hopspot-ios`: the exported C ABI and caller-owned framebuffer.
-- `t-echo`: SoftDevice SVCs and the fixed L2CAP packet pool.
-- `personal-hopspot-esp32`: ROM calls, reserved-memory registration, and persistent RTC state.
-
-Each exception denies `unsafe_op_in_unsafe_fn` and undocumented unsafe blocks. The deterministic
+The deterministic
 `validation/security/unsafe-audit.py` combines locked Cargo metadata with a nested-comment/string/raw-string-
 aware Rust token scan. `audits/unsafe-snapshot.json` records package version, source, enabled
 features, graph membership, and unsafe token classes; unexplained drift fails CI.

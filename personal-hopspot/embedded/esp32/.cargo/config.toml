@@ -6,8 +6,10 @@
 #   cargo c6               / -flash   the headless XIAO ESP32-C6
 
 [target.xtensa-esp32s3-none-elf]
+# ESP Rust 1.95 emits misaligned outgoing call frames with forced frame pointers.
+# Xtensa windowed-ABI backtraces do not require them; keep the builder policy aligned.
 runner = "espflash flash --monitor --after watchdog-reset"
-rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
+rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers=no"]
 
 [target.riscv32imac-unknown-none-elf]
 runner = "espflash flash --monitor"

@@ -57,10 +57,10 @@ identity/bootstrap work; consumers cannot substitute an arbitrary callback.
 
 ## Flash only when you mean to
 
-Building does not require a board. Flashing does, and writes the selected device. Install the pinned flasher, connect a XIAO ESP32-C6, verify the target, then opt into the flash command:
+The firmware host tools and the pinned flasher require Rust 1.95 or later. Building does not require a board. Flashing does, and writes the selected device. Install the pinned flasher, connect a XIAO ESP32-C6, verify the target, then opt into the flash command:
 
 ```console
-cargo install espflash --version 4.5.0 --locked
+cargo install espflash --version 4.7.0 --locked
 cargo run --locked -p hopspot-flash -- doctor xiao-esp32-c6
 cd personal-hopspot/embedded/esp32
 cargo c6-flash --locked

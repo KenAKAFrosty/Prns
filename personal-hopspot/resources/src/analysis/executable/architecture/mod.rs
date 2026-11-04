@@ -380,7 +380,7 @@ fn section_range(section: &str, start: u64, bytes: u64) -> Result<AddressRange, 
 fn is_allocated(flags: SectionFlags) -> bool {
     matches!(
         flags,
-        SectionFlags::Elf { sh_flags } if sh_flags & u64::from(object::elf::SHF_ALLOC) != 0
+        SectionFlags::Elf { sh_flags, .. } if sh_flags.contains(object::elf::SHF_ALLOC)
     )
 }
 

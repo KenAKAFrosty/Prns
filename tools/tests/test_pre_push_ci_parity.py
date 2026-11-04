@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -155,6 +156,35 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertEqual(
             policy.command[-4:],
             ("advisories", "licenses", "sources", "bans"),
+        )
+
+    def test_archival_root_vendor_lock_is_not_a_dependency_policy_workspace(self) -> None:
+        names = self.gate_names({"Cargo.lock", "vendor/example/Cargo.lock"})
+        self.assertIn("dependency policy (Cargo.lock)", names)
+        self.assertNotIn("dependency policy (vendor/example/Cargo.lock)", names)
+        self.assertIn("third-party notice inputs", names)
+
+    def test_registered_first_party_vendor_workspace_keeps_dependency_policy(self) -> None:
+        workspace = "vendor/example/validation"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "validation").mkdir()
+            (root / "validation/manifest.toml").write_text(
+                f'[registry]\ncargo_lock_workspaces = ["{workspace}"]\n',
+                encoding="utf-8",
+            )
+            (root / workspace).mkdir(parents=True)
+            (root / workspace / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+            with mock.patch.object(parity, "ROOT", root):
+                gates = parity.plan_for_paths({f"{workspace}/Cargo.lock"}).gates
+        policies = [gate for gate in gates if gate.name.startswith("dependency policy (")]
+        self.assertEqual(
+            [gate.name for gate in policies],
+            [f"dependency policy ({workspace}/Cargo.lock)"],
+        )
+        self.assertIn("--locked", policies[0].command)
+        self.assertEqual(
+            policies[0].command[-4:], ("advisories", "licenses", "sources", "bans")
         )
 
     def test_embassy_change_links_the_exact_resource_matrix(self) -> None:
