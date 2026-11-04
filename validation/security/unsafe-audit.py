@@ -30,7 +30,29 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "audits" / "unsafe-snapshot.json"
+GRAPH_FEATURES = {
+    "storage-redb": ("redb",),
+    "identity-key-card-linux": ("contact-card",),
+    "identity-key-card-macos": ("contact-card",),
+    "identity-catalog-card-linux": ("catalog", "contact-card",),
+    "identity-catalog-card-macos": ("catalog", "contact-card",),
+    "identity-catalog-linux": ("catalog",),
+    "identity-catalog-macos": ("catalog",),
+    "identity-storage": ("redb-store",),
+}
 GRAPHS = (
+    ("identity-keys-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("identity-keys-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
+    ("identity-catalog-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("identity-catalog-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
+    ("identity-key-card-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("identity-key-card-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
+    ("identity-catalog-card-linux", "prns-identities/bindings/uniffi/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("identity-catalog-card-macos", "prns-identities/bindings/uniffi/Cargo.toml", "aarch64-apple-darwin"),
+    ("contact-card", "prns-contact-card/Cargo.toml", "x86_64-unknown-linux-gnu"),
+    ("identity-storage", "prns-identities/Cargo.toml", "x86_64-unknown-linux-gnu"),
+
+    ("storage-redb", "prns-storage/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("engine", "Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("host-c-linux", "prns-host/abi/c/Cargo.toml", "x86_64-unknown-linux-gnu"),
     ("host-c-macos", "prns-host/abi/c/Cargo.toml", "aarch64-apple-darwin"),
@@ -112,7 +134,7 @@ UNDOCUMENTED_UNSAFE_POLICY_EXCEPTIONS = {"prns-host-c"}
 VENDOR_DIR_NAME = "vendor"
 
 
-def run_metadata(manifest: str, target: str) -> dict:
+def run_metadata(manifest: str, target: str, features: tuple[str, ...] = ()) -> dict:
     command = [
         "cargo",
         "metadata",
@@ -124,6 +146,8 @@ def run_metadata(manifest: str, target: str) -> dict:
         "--manifest-path",
         str(ROOT / manifest),
     ]
+    if features:
+        command.extend(["--features", ",".join(features)])
     process = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
     if process.returncode:
         sys.stderr.write(process.stderr)
@@ -298,7 +322,7 @@ def lint_policy_declared(manifest_path: Path, group: str, lint: str) -> bool:
 def build_snapshot() -> dict:
     packages: dict[str, dict] = {}
     for graph, manifest, target in GRAPHS:
-        metadata = run_metadata(manifest, target)
+        metadata = run_metadata(manifest, target, GRAPH_FEATURES.get(graph, ()))
         by_id = {package["id"]: package for package in metadata["packages"]}
         nodes = metadata.get("resolve", {}).get("nodes", [])
         node_by_id = {node["id"]: node for node in nodes}
@@ -336,7 +360,10 @@ def build_snapshot() -> dict:
         "schema": 1,
         "generator": "validation/security/unsafe-audit.py",
         "graphs": [
-            {"name": name, "manifest": manifest, "target": target}
+            {
+                "name": name, "manifest": manifest, "target": target,
+                **({"features": list(GRAPH_FEATURES[name])} if name in GRAPH_FEATURES else {}),
+            }
             for name, manifest, target in GRAPHS
         ],
         "unsafe_exceptions": sorted(UNSAFE_EXCEPTIONS),

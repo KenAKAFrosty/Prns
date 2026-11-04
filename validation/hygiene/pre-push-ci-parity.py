@@ -11,12 +11,25 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform as host_platform
 import subprocess
 import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Iterable, Sequence
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - repository Python includes tomllib
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        print(
+            "PRE_PUSH_CI_ERROR: Python 3.11+ (or the tomli package) is required",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 from embedded_assurance_selection import Lane, Selection, selection_for_paths
 
@@ -56,8 +69,46 @@ def validation_command(suites: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(command)
 
 
+# Ownership and commands stay in the validation registry. CI contract tests bind
+# these groups to required jobs, so a new suite cannot silently remain local-only.
+REUSABLE_SUITE_GROUPS = frozenset({
+    "named-identities", "standalone-libraries", "native-storage",
+    "native-bindings",
+})
+
+
+def reusable_library_gates(paths: set[str], manifest: dict) -> tuple[Gate, ...]:
+    platform = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(
+        host_platform.system(), "unknown"
+    )
+    orchestration_changed = bool(paths & {
+        "Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
+        ".github/workflows/ci.yml", ".github/workflows/release-readiness.yml",
+        "validation/manifest.toml", "validation/hygiene/pre-push-ci-parity.py",
+    })
+    selected: list[str] = []
+    for suite in manifest.get("suite", []):
+        reusable = suite.get("group") in REUSABLE_SUITE_GROUPS
+        if not reusable or "pr" not in suite["tiers"]:
+            continue
+        affected = orchestration_changed or any(
+            path == source or path.startswith(source.rstrip("/") + "/")
+            for path in paths for source in suite["inputs"]
+        )
+        if not affected:
+            continue
+        if suite["platform"] in {"any", platform}:
+            selected.append(suite["id"])
+    registered = (
+        (Gate("reusable library suites", validation_command(tuple(selected))),)
+        if selected else ()
+    )
+    return registered
+
+
 def plan_for_paths(paths: set[str]) -> PrePushPlan:
     gates: list[Gate] = []
+    validation_manifest = tomllib.loads((ROOT / "validation/manifest.toml").read_text())
 
     notice_surface = any(
         path.endswith("Cargo.toml") or path.endswith("Cargo.lock") for path in paths
@@ -110,6 +161,8 @@ def plan_for_paths(paths: set[str]) -> PrePushPlan:
             (
                 "personal-rns/",
                 "prns-core/",
+                "prns-contact-card/",
+                "prns-storage/",
                 "prns-macros/",
                 "prns-host/core/",
                 "prns-runtime/core/",
@@ -521,11 +574,16 @@ def plan_for_paths(paths: set[str]) -> PrePushPlan:
             )
         )
 
-    lock_paths = sorted(
-        path
-        for path in paths
-        if path.endswith("Cargo.lock") and "/vendor/" not in path
-    )
+    # Audit the first-party workspace registry, not archived upstream lockfiles.
+    # Registered test workspaces can live inside an otherwise vendored subtree.
+    registry = tomllib.loads(
+        (ROOT / "validation/manifest.toml").read_text(encoding="utf-8")
+    )["registry"]
+    registered_locks = {
+        (Path(workspace) / "Cargo.lock").as_posix()
+        for workspace in registry["cargo_lock_workspaces"]
+    }
+    lock_paths = sorted(paths & registered_locks)
     dependency_policy_surface = bool(lock_paths) or bool(
         paths
         & {
@@ -588,6 +646,7 @@ def plan_for_paths(paths: set[str]) -> PrePushPlan:
             )
         )
 
+    gates.extend(reusable_library_gates(paths, validation_manifest))
     return PrePushPlan(tuple(gates), embedded)
 
 

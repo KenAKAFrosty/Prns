@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-rust-version.workspace = true
+rust-version = "1.95"
 publish = false
 description = "Interactive flashing helper for Personal Hopspot boards."
 
@@ -13,7 +13,7 @@ description = "Interactive flashing helper for Personal Hopspot boards."
 clap = { version = "4.5", features = ["derive"] }
 ctrlc = "3.5"
 dialoguer = "0.11"
-espflash = { version = "=4.5.0", default-features = false, features = ["serialport"] }
+espflash = { version = "=4.7.0", default-features = false, features = ["serialport"] }
 nusb = "=0.2.4"
 personal-hopspot-builder = { path = "../builder" }
 prns-flash-manifest = { path = "../../prns-flash-manifest" }

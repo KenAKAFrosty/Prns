@@ -44,6 +44,9 @@ tokio = { version = "1", default-features = false, features = [
     "net",
 ] }
 
+[target.'cfg(unix)'.dependencies]
+prns-ffi = { version = "=0.3.8", path = "../../../prns-ffi", default-features = false, features = ["owned-async-fd"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = { version = "0.9", features = ["vendored"] }
 

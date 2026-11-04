@@ -127,6 +127,20 @@ public script surface. Enable the repository Git hook once per clone with
 `git config core.hooksPath .githooks`.
 
 
+## Documentation and artifacts
+
+Keep current usage, contracts, design decisions and reproducible procedures next
+to their owner. Consolidate obsolete plans into that guidance instead of adding
+successive work logs or copying test counts into several documents.
+
+Write run-specific logs, device captures, build reports and generated analyses
+to ignored `target/` or `validation-artifacts/` directories. Publish release and
+CI evidence as artifacts tied to the source revision and tested bytes. Keep
+required fixtures, golden files, reviewed resource baselines, source provenance,
+license inventories and generated binding products in Git when their consumers
+require them; size or generated origin alone is not a reason to delete them.
+
+
 ## License of contributions
 
 By contributing, you agree that your contributions will be dual licensed under the MIT and Apache-2.0 licenses, matching the project's [license](README.md#license).
