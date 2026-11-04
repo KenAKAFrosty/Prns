@@ -1,13 +1,33 @@
+# Repository metadata and local tooling.
 .git
 .github
 .agents
 .codex
 .DS_Store
 **/.DS_Store
+
+# Dependency caches and generated output at any depth.
 **/node_modules
 **/target
 **/.venv
+**/__pycache__
+**/*.pyc
+**/.gradle
+**/.cxx
+**/.expo
+
+# The root Dockerfile builds prnsd, not the mobile apps or benchmark tools.
+/applications/
+/prns-react-native/
+/benchmarks/
+
+# Local experiments and validation evidence.
+/scratch/
 scratchpad
 validation-artifacts
 target
 *.log
+
+# Keep the remaining Rust trees and workspace manifests, including optional and
+# target-specific path dependencies. Also keep assets/, .cargo/, release keys,
+# and release/source-bundle/ (the Dockerfile's optional source archive).

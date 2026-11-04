@@ -1,6 +1,6 @@
 # Deploy prnsd
 
-`prnsd` can run as a native systemd service or in the official container. Each path runs the same foreground daemon with persistent configuration, transport identity, routing state, ratchets, and pages.
+`prnsd` can run as a native systemd service or in the official container, including on [Fly.io](#flyio) and [Railway](#railway). Each path runs the same foreground daemon with persistent configuration, transport identity, routing state, ratchets, and pages.
 
 ## systemd
 
@@ -85,7 +85,7 @@ docker run -d \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \
-  ghcr.io/kenakafrosty/prnsd:0.3.7
+  ghcr.io/kenakafrosty/prnsd:0.3.8
 ```
 
 The `unless-stopped` policy restarts the node with Docker after a host reboot, and still honors a manual `docker stop`.
@@ -108,7 +108,7 @@ docker run -d \
   --env PRNSD_BACKBONE_DISCOVERABLE=Yes \
   --env PRNSD_REACHABLE_HOST=backbone.example.com \
   --env PRNSD_REACHABLE_PORT=4242 \
-  ghcr.io/kenakafrosty/prnsd:0.3.7
+  ghcr.io/kenakafrosty/prnsd:0.3.8
 ```
 
 `PRNSD_REACHABLE_PORT` is the external port that other nodes use; it may differ from the container's internal listener port. Discovery remains disabled when no complete public endpoint is available. Partial or malformed endpoint settings fail startup instead of creating an invalid advertisement.
@@ -189,7 +189,7 @@ Keep the backup private because it contains the node identity and ratchets. Rest
 Back up the volume, pull the desired release, and recreate the container while retaining the volume:
 
 ```sh
-export PRNSD_IMAGE='ghcr.io/kenakafrosty/prnsd:0.3.7'
+export PRNSD_IMAGE='ghcr.io/kenakafrosty/prnsd:0.3.8'
 docker pull "$PRNSD_IMAGE"
 docker stop --time 30 prnsd
 docker rm prnsd
@@ -204,13 +204,92 @@ docker run -d \
 
 Rollback is the same operation with the previous release and its compatible state backup. Version tags are convenient for ordinary use; production operators who need an immutable deployment can replace the tag with the exact multi-platform digest published by the matching GitHub release.
 
+## Fly.io
+
+The repository's [`fly.toml`](../fly.toml) uses the existing Dockerfile to run one always-on node with persistent storage, public Reticulum TCP on port `4242`, and HTTPS for the `/prns` WebSocket endpoint. It defaults to one shared CPU, 1 GB RAM, and the `iad` region. If you change the region, keep the node and its volume in the same region.
+
+### First-time setup
+
+Install the [Fly CLI](https://docs.fly.io/flyctl/install/), then run these commands from the repository root. Choose a globally unique app name and an organization in the account you want to use (`fly orgs list` shows your organizations):
+
+```sh
+fly auth login
+export PRNS_FLY_APP='your-unique-prns-node'
+export PRNS_FLY_ORG='personal'
+fly apps create "$PRNS_FLY_APP" --org "$PRNS_FLY_ORG"
+fly ips allocate-v4 --app "$PRNS_FLY_APP"
+```
+
+The app and dedicated IPv4 are one-time setup. Plain Reticulum TCP needs a [dedicated IPv4](https://docs.fly.io/networking/services#dedicated-ipv4); the shared HTTP/TLS address cannot route it. The app name is supplied with `--app`, so the checked-in configuration can be reused across accounts. An optional `fly ips allocate-v6 --app "$PRNS_FLY_APP"` also enables public IPv6.
+
+The `mounts.initial_size` setting creates the first `prnsd_data` volume automatically during deployment. Keep this volume through updates: it holds the node identity, configuration, routing state, ratchets, and hosted pages.
+
+### Build and deploy
+
+Run this command for the first deployment and each source update, using a clean checkout of the revision you intend to deploy:
+
+```sh
+fly deploy --app "$PRNS_FLY_APP" --ha=false \
+  --env "PRNSD_REACHABLE_HOST=${PRNS_FLY_APP}.fly.dev" \
+  --build-arg "VERSION=$(cat VERSION)" \
+  --build-arg "VCS_REF=$(git rev-parse HEAD)" \
+  --build-arg "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" \
+  --build-arg "BUILD_DATE=$(git show -s --format=%cI HEAD)"
+```
+
+The four build arguments are required by the existing Dockerfile; the source revision supplies the version and timestamps so an unchanged checkout keeps the same build metadata. Fly builds remotely by default. To deploy a previously built release instead, replace the four `--build-arg` options with `--image ghcr.io/kenakafrosty/prnsd@sha256:REPLACE_WITH_RELEASE_DIGEST`; keep the app, hostname, and `--ha=false` options. [Verify the release image](#verify-an-exact-image) before using its digest.
+
+`PRNSD_REACHABLE_HOST` is calculated by the shell because `fly.toml` does not expand environment variables. Together with the configured port, it seeds a new node's public Backbone advertisement. Existing persistent configuration is not rewritten on deployment; use `prnsd interfaces` to change it later.
+
+The configuration disables automatic sleep, restarts the Machine after process exit, and gives the daemon a 30-second graceful shutdown allowance. Proxy autostart is disabled so an intentional maintenance stop stays stopped. A singleton rolling deployment interrupts connections briefly; clients must reconnect. `--ha=false` prevents adding default redundancy. Keep exactly one Machine for this node identity; it does not reduce an app that was already scaled out.
+
+### Connect and inspect
+
+In the phone app, save a TCP peer with host `YOUR_APP.fly.dev` and port `4242`. WebSocket clients use `wss://YOUR_APP.fly.dev/prns`.
+
+```sh
+fly status --app "$PRNS_FLY_APP"
+fly ssh console --app "$PRNS_FLY_APP" --command '/usr/local/bin/prnsd status --config /var/lib/prnsd --json'
+fly logs --app "$PRNS_FLY_APP"
+```
+
+The configured TCP check verifies the listener. Use the daemon status and actual client connections to verify routing. Before sharing an alpha endpoint, test messaging between phones on separate networks, restart the Machine, and confirm that the same transport identity returns and both clients reconnect.
+
+### Storage and recovery
+
+The container requires writable persistent storage and runs as UID/GID `65532`. If a first deployment reports a volume permission error, stop its failed Machine before attaching the volume to a temporary helper. For a fresh node that has never started successfully:
+
+```sh
+fly scale count 0 --app "$PRNS_FLY_APP"
+fly machine run \
+  debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 \
+  --app "$PRNS_FLY_APP" --region iad \
+  --volume prnsd_data:/var/lib/prnsd \
+  --shell --user root --command /bin/sh
+```
+
+Inside the helper shell, run:
+
+```sh
+chown 65532:65532 /var/lib/prnsd
+chmod 0700 /var/lib/prnsd
+stat -c '%u:%g %a' /var/lib/prnsd
+exit
+```
+
+This helper uses the Dockerfile's root-default Debian base, never starts PRNS, and removes itself after the shell exits. Confirm `stat` prints `65532:65532 700` and the volume is unattached (`fly volumes list --app "$PRNS_FLY_APP"`), then rerun the deploy command. Use the configured region instead of `iad` if you changed it. Do not run this first-start procedure against an existing active node.
+
+Fly takes daily volume snapshots; the configuration retains them for 14 days. Fly volumes are local to a host and are not automatically replicated. Keep a separate private backup and test restoration; snapshots alone are not the primary backup plan. For an application-consistent backup, stop the daemon gracefully and confirm a successful final flush before copying or snapshotting its state. See [Fly volume management](https://docs.fly.io/volumes/volume-manage/) for snapshot restoration and volume attachment.
+
+Restore into a stopped replacement and preserve UID/GID `65532`. Never start the original and restored node together. If the replacement has a different app name or public endpoint, update the persisted interface configuration before making it public; changing bootstrap environment variables does not update an existing config. Back up state before an image upgrade and retain the prior image digest plus its compatible backup for rollback.
+
 ## Railway
 
-The public Prns Railway template is the shortest path to a hosted backbone when you do not want to manage Docker or a server. It creates one `prnsd` service, one persistent `/var/lib/prnsd` volume, a public Reticulum TCP proxy, and a certificate-backed public WebSocket domain.
+The repository includes Railway integration and a release-generated deployment contract for one `prnsd` service, one persistent `/var/lib/prnsd` volume, a public Reticulum TCP proxy, and a certificate-backed public WebSocket domain. The [0.3.8 deployment record](../release/deployment/0.3.8.json) records that no project or published template was available and hosted qualification was deferred. Do not assume a public template exists from this guide alone.
 
 ### Deploy and connect
 
-Deploy the template into your Railway account and wait for the service to become healthy. Then open the service's **Networking** panel:
+Create a project from the exact release image and configuration described in the [Railway deployment instructions](release.md#publish-the-railway-template), or use a published template once its release revision is available. Wait for the service to become healthy, then open its **Networking** panel:
 
 - Copy the **TCP Proxy** host and port into an ordinary Reticulum Backbone or TCP client.
 
