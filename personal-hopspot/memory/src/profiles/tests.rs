@@ -1,4 +1,5 @@
 use super::*;
+use crate::{AddressSpaceGeometry, AddressSpaceKind};
 
 #[test]
 fn every_canonical_profile_is_unique_and_valid() {
@@ -64,4 +65,48 @@ fn persistent_regions_are_disjoint_from_current_firmware() {
             }
         }
     }
+}
+
+#[test]
+fn c6_preserves_radio_heap_total_and_reserves_cpu_stack_separately() {
+    let heap_bytes: u64 = XIAO_ESP32_C6
+        .runtime_reservations
+        .iter()
+        .filter(|reservation| {
+            matches!(
+                reservation.accounting,
+                crate::ReservationAccounting::SharedPool { .. }
+            )
+        })
+        .map(|reservation| reservation.bytes)
+        .sum();
+    assert_eq!(heap_bytes, 88 * 1024);
+    let stack = XIAO_ESP32_C6
+        .runtime_reservations
+        .iter()
+        .find(|reservation| reservation.id.0 == "minimum-runtime-stack")
+        .unwrap();
+    assert_eq!(stack.bytes, 48 * 1024);
+    assert_eq!(
+        stack.accounting,
+        crate::ReservationAccounting::Dedicated {
+            charge: crate::ReservationCharge::AdditionalToStatic
+        }
+    );
+    let guard = XIAO_ESP32_C6
+        .runtime_reservations
+        .iter()
+        .find(|reservation| reservation.id.0 == "runtime-stack-guard")
+        .unwrap();
+    assert_eq!(guard.bytes, 4 * 1024 + 16);
+    assert_eq!(guard.accounting, stack.accounting);
+    let reclaimed = XIAO_ESP32_C6
+        .address_spaces
+        .iter()
+        .find(|space| space.kind == AddressSpaceKind::ReclaimedRam)
+        .unwrap();
+    assert_eq!(
+        reclaimed.geometry,
+        AddressSpaceGeometry::Fixed(AddressRange::new(0x4086_E610, 0x4087_E610))
+    );
 }

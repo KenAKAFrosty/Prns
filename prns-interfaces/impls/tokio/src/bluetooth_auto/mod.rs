@@ -6,6 +6,8 @@ mod linux;
 mod runtime;
 pub use event_selection::{BleEventSelector, BleEventSources, TokioFairBleEvents};
 
+pub use prns_core::interfaces::bluetooth_auto::BluetoothRadioState;
+
 #[cfg(feature = "bluetooth-auto")]
 pub use host::{
     AttachedBle, AttachedBluetoothLe, AutoBle, AutoBluetoothLe, ConfiguredAutoBle,

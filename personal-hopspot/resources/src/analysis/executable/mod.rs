@@ -409,13 +409,13 @@ fn load_segments(path: &Path, bytes: &[u8]) -> Result<Vec<LoadSegment>, Executab
             )?;
             let flags = segment.p_flags(endian);
             let mut permissions = Vec::new();
-            if flags & object::elf::PF_R != 0 {
+            if flags.contains(object::elf::PF_R) {
                 permissions.push(LoadPermission::Read);
             }
-            if flags & object::elf::PF_W != 0 {
+            if flags.contains(object::elf::PF_W) {
                 permissions.push(LoadPermission::Write);
             }
-            if flags & object::elf::PF_X != 0 {
+            if flags.contains(object::elf::PF_X) {
                 permissions.push(LoadPermission::Execute);
             }
             Ok(LoadSegment {
@@ -485,6 +485,6 @@ fn range(kind: &'static str, start: u64, bytes: u64) -> Result<AddressRange, Exe
 fn is_executable(flags: SectionFlags) -> bool {
     matches!(
         flags,
-        SectionFlags::Elf { sh_flags } if sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0
+        SectionFlags::Elf { sh_flags, .. } if sh_flags.contains(object::elf::SHF_EXECINSTR)
     )
 }

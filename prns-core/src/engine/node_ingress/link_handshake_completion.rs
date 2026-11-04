@@ -1,8 +1,8 @@
 use crate::crypto::{Ed25519Signature, X25519PublicKey, X25519SharedSecret};
 use crate::engine::settlement::settle;
 use crate::engine::{
-    CommandId, Directive, EngineReaction, EngineState, InstantMillis, LinkEstablished, LinkRttOwed,
-    Settlement, WakeSchedule, WakeSchedules,
+    CommandId, Directive, EngineReaction, EngineState, InstantMillis, LinkEstablished,
+    LinkHandshakePhase, LinkProofCompletion, LinkRttOwed, Settlement, WakeSchedule, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{AttachedInterfaces, Egress, InterfaceId};
@@ -43,7 +43,7 @@ impl<S: StorageLayout> EngineState<S> {
         owed: LinkRttOwed,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
-        _now: InstantMillis,
+        now: InstantMillis,
         fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> WakeSchedule
@@ -51,12 +51,19 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         if !interfaces.is_egress_eligible(source, Egress::Transmit) {
+            self.link_handshake_diagnostics.observe(
+                Some(now),
+                Some(owed.link_id),
+                Some(owed.command_id),
+                Some(source),
+                LinkHandshakePhase::ProofCompletion(LinkProofCompletion::EgressDisabled),
+            );
             return WakeSchedule::Unchanged;
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
         fill_random(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
-        if let Ok(written) = self.write_owed_link_rtt(
+        let result = self.write_owed_link_rtt(
             &owed.link_id,
             &owed.responder_encryption,
             &LinkActivation {
@@ -69,7 +76,18 @@ impl<S: StorageLayout> EngineState<S> {
             owed.arrived_at,
             &iv,
             &mut buf,
-        ) {
+        );
+        self.link_handshake_diagnostics.observe(
+            Some(now),
+            Some(owed.link_id),
+            Some(owed.command_id),
+            Some(source),
+            LinkHandshakePhase::ProofCompletion(match result {
+                Ok(_) => LinkProofCompletion::Activated,
+                Err(error) => LinkProofCompletion::WriteRejected(error),
+            }),
+        );
+        if let Ok(written) = result {
             Self::emit_link_established(
                 owed.command_id,
                 owed.link_id,
@@ -96,12 +114,19 @@ impl<S: StorageLayout> EngineState<S> {
     {
         let source = owed.source_interface;
         if !interfaces.is_egress_eligible(source, Egress::Transmit) {
+            self.link_handshake_diagnostics.observe(
+                Some(now),
+                Some(owed.link_id),
+                Some(owed.command_id),
+                Some(source),
+                LinkHandshakePhase::ProofCompletion(LinkProofCompletion::EgressDisabled),
+            );
             return WakeSchedule::Unchanged;
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
         fill_random(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
-        if let Ok(written) = self.write_owed_link_rtt_with_shared_observed(
+        let result = self.write_owed_link_rtt_with_shared_observed(
             &owed.link_id,
             &shared,
             &LinkActivation {
@@ -117,7 +142,18 @@ impl<S: StorageLayout> EngineState<S> {
             },
             &iv,
             &mut buf,
-        ) {
+        );
+        self.link_handshake_diagnostics.observe(
+            Some(now),
+            Some(owed.link_id),
+            Some(owed.command_id),
+            Some(source),
+            LinkHandshakePhase::ProofCompletion(match result {
+                Ok(_) => LinkProofCompletion::Activated,
+                Err(error) => LinkProofCompletion::WriteRejected(error),
+            }),
+        );
+        if let Ok(written) = result {
             Self::emit_link_established(
                 owed.command_id,
                 owed.link_id,
@@ -164,7 +200,9 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let mut wake = WakeSchedules::UNCHANGED;
-        if !interfaces.is_egress_eligible(owed.source_interface, Egress::Transmit) {
+        if !interfaces.is_egress_eligible(owed.source_interface, Egress::Transmit)
+            || interfaces.generation_for(owed.source_interface) != owed.source_generation
+        {
             return wake;
         }
         let mut buf = [0u8; BROADCAST_MTU];
@@ -173,6 +211,7 @@ impl<S: StorageLayout> EngineState<S> {
             &responder_encryption,
             &shared,
             &signature,
+            interfaces,
             &mut buf,
         ) {
             sink(EngineReaction::Directive(Directive::Send {

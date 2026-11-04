@@ -2,13 +2,14 @@
 
 `prns-host` is the language-neutral center of every hosted Personal RNS SDK. The canonical schema in `schema/host-contract-v1.json` owns stable discriminants, fixed byte widths, semantic configuration, commands, outcomes, application events, diagnostics, and resource streams. Deterministic generation projects that vocabulary into Rust, TypeScript, C, C#, Python, Go, Swift, Kotlin, and Julia.
 
-The schema flowers into three runtime paths:
+The schema feeds these runtime adapters:
 
 ```text
 host-contract-v1.json
     -> generated Rust vocabulary -> native Rust host -> direct N-API adapter -> Node/Bun SDK
                               |            |
                               |            -> C capsule -> Python/.NET/Go/Swift/Kotlin/Julia/C/C++
+                              |            -> UniFFI -> native Swift/Kotlin consumers
                               |
                               -> cooperative Rust host -> WebAssembly adapter -> browser SDK
 ```
@@ -22,11 +23,17 @@ The C capsule is the native-language boundary. Rust enums, allocators, futures, 
 | Layer | Owns |
 | --- | --- |
 | `core` | Stable vocabulary, limits, lifecycle, admission policy, and backend-independent event semantics |
-| `impls/native` | The real threaded/Tokio host, semantic configuration, bounded command submission, and interruptible waits |
+| `impls/runtime` | The real threaded/Tokio host, semantic configuration, bounded command submission, and interruptible waits |
 | `impls/cooperative` | Explicit time and entropy for browsers, embedded executors, and caller-driven hosts |
-| `impls/tokio` | Blocking and asynchronous native-host scheduling |
+| `impls/tokio` | Tokio-backed bounded queue handles and driver notifications; no protocol engine or runtime thread |
 | `abi/c` | Stable opaque handles, pull-based events/resources, panic containment, and ABI/version gates |
 | `bindings/*` | Idiomatic types, cancellation, deterministic ownership, package metadata, and no new protocol semantics |
+
+The default-off `serde` feature serializes canonical interface configuration,
+routing policy and their value enums without requiring `std`. A consumer owns its
+storage version, validation and resource bounds; this optional representation is
+not the host wire contract. Structural configuration decoding rejects unknown
+fields, and ordinary `InterfaceConfig::validate` still applies after decoding.
 
 ## Ecosystem shape
 
@@ -59,10 +66,10 @@ inflation. Whole metadata-bearing responses count literal file bytes, excluding
 metadata and its framing; file content is never parsed as a response envelope.
 Independent transfer/storage ceilings still apply. Segmented Resource responses
 retain a stricter admission bound on the complete advertised uncompressed stream,
-including envelope and metadata. The shared-core
-[response-size accounting follow-up](../prns-core/plans/response-size-accounting.md)
-owns removing that transport discrepancy. Native adapters still return decoded
-binary data where they already did; the limit is not a decoded-data budget.
+including envelope and metadata. These are transport-specific accounting rules;
+the host adapters do not normalize them into a decoded-data budget. Native
+adapters return decoded binary data, so consumers must distinguish their returned
+value from the encoded input to these limits.
 
 ## Contract workflow
 
@@ -71,7 +78,7 @@ Change the schema first. Generated files are never edited directly.
 ```sh
 ./tools/prns run repo.host-contract.generate
 ./tools/prns run repo.host-contract.check
-python3 tools/release/check-host-sdk-versions.py
+./tools/prns run release.host-sdk.versions
 python3 validation/run.py verify
 ```
 
@@ -81,11 +88,17 @@ Generated raw protocols and operation inventories give hand-written adapters a s
 
 Registered Linux native smokes exercise real creation, ABI/schema/product mismatch gates, stream single-ownership, wait interruption, and command settlement across C, C++, .NET, Python, Go, Swift, Kotlin/JVM, and Julia. The shared persistent journey additionally covers a real loopback interface, announce discovery, link establishment, request and response, bounded resource transfer, restart, and persistence restoration.
 
-Product `0.3.1`, schema 1, and C ABI 1 are the first real baseline. There is no schema-2 compatibility layer or legacy host-options layout. Browser persisted state has its own version, currently 1, and its JavaScript/WASM boundary checks that value independently of the host schema.
+The current contract is schema 2 with C ABI 1. Schema 2 adds the optional local
+responder destination and arrival timestamp to link-delivery events. Rebuild
+adapters and native images together; schema-1 clients are rejected at creation
+rather than given a partial projection. There is one host-options layout; callers
+must use matching generated adapters and native libraries. Browser persisted
+state has its own version, currently 1, and its JavaScript/WASM boundary checks
+that value independently of the host schema.
 
 ## Release assets
 
-`tools/release/package-host-native.py` creates a relocatable target artifact containing the generated header, dynamic and static libraries, pkg-config metadata, both project licenses, an exact commit, and SHA-256/size records for every shipped file. The host SDK workflow is prepared to build GNU and musl Linux, macOS, Windows, and Android targets. Staged Python wheels and the NuGet package consume those same outputs; the Maven staging repository and source-first Go, Swift, and Julia packages remain anchored to the identical contract version.
+`./tools/prns run release.host-sdk.native.package` creates a relocatable target artifact containing the generated header, dynamic and static libraries, pkg-config metadata, both project licenses, an exact commit, and SHA-256/size records for every shipped file. The host SDK workflow is prepared to build GNU and musl Linux, macOS, Windows, and Android targets. Staged Python wheels and the NuGet package consume those same outputs; the Maven staging repository and source-first Go, Swift, and Julia packages remain anchored to the identical contract version.
 
 Publication is an explicit, SHA-gated workflow-dispatch action. Building and testing never implicitly publish.
 

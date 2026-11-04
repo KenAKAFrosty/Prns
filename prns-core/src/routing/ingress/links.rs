@@ -6,7 +6,8 @@ use super::outcome::LinkRttOwed;
 use super::outcome::{IgnoreReason, IngestPacketOutcome};
 use crate::crypto::X25519PublicKey;
 use crate::engine::{
-    DeliveryEvidence, EngineState, InstantMillis, LinkClosedReason, PacketReceiptDelivered,
+    DeliveryEvidence, EngineState, InstantMillis, LinkClosedReason, LinkHandshakeIngress,
+    LinkHandshakePhase, PacketReceiptDelivered,
 };
 use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceKind};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
@@ -374,6 +375,9 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::NoRoute);
         };
         let fire_on = route.receiving_interface;
+        if !arrival.interfaces.availability_allows(fire_on) {
+            return IngestPacketOutcome::Ignored(IgnoreReason::NoRoute);
+        }
         let remaining_hops = route.hops.0;
         let forwarded_hops = self.hops_across_local_boundary(
             arrival.received_hops,
@@ -469,6 +473,22 @@ impl<S: StorageLayout> EngineState<S> {
                 return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted)
             }
         }
+        self.link_handshake_diagnostics.observe(
+            Some(arrival.arrived_at),
+            Some(request.link_id),
+            None,
+            Some(fire_on),
+            LinkHandshakePhase::RelayPending {
+                timeout_at: proof_timeout,
+                remaining_hops,
+                taken_hops: arrival.received_hops,
+                bitrate: arrival
+                    .interfaces
+                    .descriptor_for(fire_on)
+                    .map(|descriptor| descriptor.bitrate),
+                route_generation: route_evidence.id.get(),
+            },
+        );
         IngestPacketOutcome::TransportedLinkRequest {
             header: forwarded_header,
             body,
@@ -477,6 +497,47 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub(super) fn ingest_link_proof<'p>(
+        &mut self,
+        link_id: LinkId,
+        payload: &'p [u8],
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+        crypto: IngressCryptoMode,
+    ) -> IngestPacketOutcome<'p> {
+        let command = match self.links.phase_for(&link_id) {
+            Some(LinkPhase::Pending { command_id, .. }) => Some(*command_id),
+            _ => None,
+        };
+        let outcome = self.ingest_link_proof_inner(
+            link_id,
+            payload,
+            received_hops,
+            source_interface,
+            arrived_at,
+            crypto,
+        );
+        let disposition = match &outcome {
+            IngestPacketOutcome::OwesLinkProofVerify(_) => {
+                LinkHandshakeIngress::VerificationPending
+            }
+            #[cfg(test)]
+            IngestPacketOutcome::OwesLinkRtt(_) => LinkHandshakeIngress::Accepted,
+            IngestPacketOutcome::Forward(_) => LinkHandshakeIngress::Forwarded,
+            IngestPacketOutcome::Ignored(reason) => LinkHandshakeIngress::Ignored(*reason),
+            _ => return outcome,
+        };
+        self.link_handshake_diagnostics.observe(
+            Some(arrived_at),
+            Some(link_id),
+            command,
+            Some(source_interface),
+            LinkHandshakePhase::ProofIngress(disposition),
+        );
+        outcome
+    }
+
+    fn ingest_link_proof_inner<'p>(
         &mut self,
         link_id: LinkId,
         payload: &'p [u8],
@@ -636,6 +697,10 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(LinkPhase::Active { key, role, .. }) = self.links.phase_for(&link_id) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
+        let local_destination = match role {
+            LinkRole::Initiator { .. } => None,
+            LinkRole::Responder { destination, .. } => Some(*destination),
+        };
         let owed = match role {
             LinkRole::Initiator { .. } => None,
             LinkRole::Responder {
@@ -659,6 +724,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::Delivery {
             delivery: Delivery::Link(LinkDelivery {
                 link_id,
+                local_destination,
                 plaintext,
                 arrived_at,
                 source_interface,
@@ -900,17 +966,62 @@ impl<S: StorageLayout> EngineState<S> {
         arrival: LinkRequestArrival<'_>,
     ) -> IngestPacketOutcome<'static> {
         if header.destination_type != DestinationType::Single {
+            self.link_handshake_diagnostics.observe(
+                Some(arrival.arrived_at),
+                None,
+                None,
+                Some(arrival.source_interface),
+                LinkHandshakePhase::RequestIngress(LinkHandshakeIngress::Ignored(
+                    IgnoreReason::Malformed,
+                )),
+            );
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         }
         let Ok(request) = link_request_from(header, payload) else {
+            self.link_handshake_diagnostics.observe(
+                Some(arrival.arrived_at),
+                None,
+                None,
+                Some(arrival.source_interface),
+                LinkHandshakePhase::RequestIngress(LinkHandshakeIngress::Ignored(
+                    IgnoreReason::Malformed,
+                )),
+            );
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
+        let link_id = request.link_id;
+        let outcome = self.ingest_parsed_link_request(header, request, arrival);
+        let disposition = match &outcome {
+            IngestPacketOutcome::OwesLinkProof(_) => LinkHandshakeIngress::Accepted,
+            IngestPacketOutcome::TransportedLinkRequest { .. } => LinkHandshakeIngress::Forwarded,
+            IngestPacketOutcome::Ignored(reason) => LinkHandshakeIngress::Ignored(*reason),
+            _ => return outcome,
+        };
+        self.link_handshake_diagnostics.observe(
+            Some(arrival.arrived_at),
+            Some(link_id),
+            None,
+            Some(arrival.source_interface),
+            LinkHandshakePhase::RequestIngress(disposition),
+        );
+        outcome
+    }
+
+    fn ingest_parsed_link_request(
+        &mut self,
+        header: &WirePacketHeader,
+        request: LinkRequest,
+        arrival: LinkRequestArrival<'_>,
+    ) -> IngestPacketOutcome<'static> {
         let Some(registered) = self
             .upstream_app_destinations
             .lookup_single(&request.destination)
         else {
             return self.ingest_transported_link_request(header, &request, arrival);
         };
+        if !registered.ingress_enabled {
+            return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused);
+        }
         match registered.link_request_policy {
             LinkRequestPolicy::AcceptNone => {
                 return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)

@@ -12,9 +12,9 @@ pub use prns_interfaces_tokio::usb_auto::{
 
 #[cfg(feature = "embassy-host")]
 pub use prns_interfaces_embassy::usb_auto::{
-    HostPresenceVerdict, PhysicalHostPresence, ProtocolHostPresence, UsbAutoDevice,
-    UsbAutoDeviceInput, UsbAutoHostPresence, WebUsbAutoClass, WebUsbAutoError, WebUsbAutoRx,
-    WebUsbAutoState, WebUsbAutoTx, WebUsbBootloaderEntry, WebUsbBootloaderMode,
+    HostPresenceVerdict, PhysicalHostPresence, ProtocolHostPresence, UsbAutoControllerEnrollment,
+    UsbAutoDevice, UsbAutoDeviceInput, UsbAutoHostPresence, WebUsbAutoClass, WebUsbAutoError,
+    WebUsbAutoRx, WebUsbAutoState, WebUsbAutoTx, WebUsbBootloaderEntry, WebUsbBootloaderMode,
     WebUsbControllerEnrollment, WEBUSB_AUTO_CONTROL_BUFFER_BYTES,
     WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
 };

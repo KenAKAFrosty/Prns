@@ -162,7 +162,14 @@ async fn serve_stream<Seam: InterfaceSeam>(
                         Ok(Message::Data(packet)) if !packet.is_empty() => {
                             seam.next_inbound(packet).await;
                         }
-                        Ok(Message::Data(_)) | Ok(Message::HelloAck { .. }) | Err(_) => {}
+                        // This transport does not advertise local enrollment. Never
+                        // forward enrollment control messages into the network seam.
+                        Ok(Message::Data(_))
+                        | Ok(Message::HelloAck { .. })
+                        | Ok(Message::ControllerEnroll(_))
+                        | Ok(Message::ControllerEnrollmentStatusQuery { .. })
+                        | Ok(Message::ControllerEnrollmentStatus { .. })
+                        | Err(_) => {}
                     }
                 }
             }

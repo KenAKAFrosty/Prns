@@ -236,7 +236,6 @@ pub async fn run(spawner: Spawner) -> ! {
         RemoteControlSelfAnnouncement::Destination(node_page_destination),
         super::remote_control::capabilities(),
     );
-    let mut manifold_lanes = ManifoldLanes::new();
     let subg_configuration = loaded_subg_configuration.state;
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus =
@@ -279,25 +278,30 @@ pub async fn run(spawner: Spawner) -> ! {
         host_presence: ProtocolHostPresence::new(),
     });
 
-    let lora_lane = manifold_lanes
-        .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora.descriptor(), lora_status)
-        .expect("LoRa lane is available");
-    let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
-        manifold_lanes
-            .claim_supervisor(&BLE_MANIFOLD_LANE, BLE_SUPERVISOR_ID, &OUTBOUND_WAKE)
-            .expect("Bluetooth supervisor lane is available")
-    });
-    let usb_lane = manifold_lanes
-        .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_dev.descriptor(), usb_status)
-        .expect("USB lane is available");
+    // End lane setup before awaiting so consumed bounded tables do not remain in task state.
+    let (lora_lane, ble_supervisor_lane, usb_lane, manifold_wiring) = {
+        let mut manifold_lanes = ManifoldLanes::new();
+        let lora_lane = manifold_lanes
+            .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora.descriptor(), lora_status)
+            .expect("LoRa lane is available");
+        let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
+            manifold_lanes
+                .claim_supervisor(&BLE_MANIFOLD_LANE, BLE_SUPERVISOR_ID, &OUTBOUND_WAKE)
+                .expect("Bluetooth supervisor lane is available")
+        });
+        let usb_lane = manifold_lanes
+            .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_dev.descriptor(), usb_status)
+            .expect("USB lane is available");
 
-    let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let manifold_wiring = manifold_lanes.into_manifold_wiring(
-        NOTIFY.receiver(),
-        COMMANDS.receiver(),
-        LIFECYCLE.receiver(),
-        handle,
-    );
+        let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
+        let manifold_wiring = manifold_lanes.into_manifold_wiring(
+            NOTIFY.receiver(),
+            COMMANDS.receiver(),
+            LIFECYCLE.receiver(),
+            handle,
+        );
+        (lora_lane, ble_supervisor_lane, usb_lane, manifold_wiring)
+    };
     let entropy = runtime_entropy();
     let host = EmbassyHost::new(entropy);
     static NODE: StaticCell<Node> = StaticCell::new();

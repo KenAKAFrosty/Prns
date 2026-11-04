@@ -2,12 +2,57 @@ use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 #[cfg(feature = "alloc")]
 use crate::lemire_index::HeapLemireIndex;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct AttachedInterfaces<'a> {
     descriptors: &'a [InterfaceDescriptor],
+    available: Option<&'a (dyn Fn(InterfaceId) -> bool + Sync)>,
+    generations: Option<&'a (dyn Fn(InterfaceId) -> u32 + Sync)>,
     #[cfg(feature = "alloc")]
     index: Option<InterfaceIndex<'a>>,
 }
+
+impl core::fmt::Debug for AttachedInterfaces<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+/// A borrowed, allocation-free view of the interfaces currently available to the engine.
+#[derive(Clone)]
+pub struct AttachedInterfaceIter<'a> {
+    descriptors: core::slice::Iter<'a, InterfaceDescriptor>,
+    available: Option<&'a (dyn Fn(InterfaceId) -> bool + Sync)>,
+}
+
+impl<'a> Iterator for AttachedInterfaceIter<'a> {
+    type Item = &'a InterfaceDescriptor;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.descriptors.find(|descriptor| {
+            self.available
+                .is_none_or(|available| available(descriptor.id))
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let upper = self.descriptors.len();
+        (
+            if self.available.is_none() { upper } else { 0 },
+            Some(upper),
+        )
+    }
+}
+
+impl DoubleEndedIterator for AttachedInterfaceIter<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.descriptors.rfind(|descriptor| {
+            self.available
+                .is_none_or(|available| available(descriptor.id))
+        })
+    }
+}
+
+impl core::iter::FusedIterator for AttachedInterfaceIter<'_> {}
 
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone, Copy)]
@@ -26,12 +71,48 @@ impl<'a> AttachedInterfaces<'a> {
     pub const fn new(descriptors: &'a [InterfaceDescriptor]) -> Self {
         Self {
             descriptors,
+            available: None,
+            generations: None,
             #[cfg(feature = "alloc")]
             index: None,
         }
     }
 
+    /// Apply administrative availability independently of configured interface policy.
+    /// The predicate is borrowed and evaluated at lookup/iteration time; runtimes must also
+    /// fence their egress queues against availability changes after the engine dispatches.
+    pub fn with_availability(
+        mut self,
+        available: &'a (dyn Fn(InterfaceId) -> bool + Sync),
+    ) -> Self {
+        self.available = Some(available);
+        self
+    }
+
+    /// Whether the optional runtime availability gate permits this ID. This deliberately
+    /// does not require a descriptor: legacy callers may omit timing descriptors entirely.
+    pub fn availability_allows(self, id: InterfaceId) -> bool {
+        self.available.is_none_or(|available| available(id))
+    }
+
+    /// Attach local administrative epochs, incremented whenever an interface is disabled.
+    /// Deferred work can compare its captured epoch before acquiring new queue space.
+    pub fn with_generations(
+        mut self,
+        generations: &'a (dyn Fn(InterfaceId) -> u32 + Sync),
+    ) -> Self {
+        self.generations = Some(generations);
+        self
+    }
+
+    pub fn generation_for(self, id: InterfaceId) -> u32 {
+        self.generations.map_or(0, |generation| generation(id))
+    }
+
     pub fn descriptor_for(self, id: InterfaceId) -> Option<&'a InterfaceDescriptor> {
+        if !self.availability_allows(id) {
+            return None;
+        }
         #[cfg(feature = "alloc")]
         if let Some(indexed) = self.index {
             return indexed
@@ -52,25 +133,32 @@ impl<'a> AttachedInterfaces<'a> {
             })
     }
 
-    pub const fn len(self) -> usize {
-        self.descriptors.len()
+    pub fn len(self) -> usize {
+        if self.available.is_none() {
+            self.descriptors.len()
+        } else {
+            self.iter().count()
+        }
     }
 
-    pub const fn is_empty(self) -> bool {
-        self.descriptors.is_empty()
+    pub fn is_empty(self) -> bool {
+        self.iter().next().is_none()
     }
 
-    pub fn iter(self) -> core::slice::Iter<'a, InterfaceDescriptor> {
-        self.descriptors.iter()
+    pub fn iter(self) -> AttachedInterfaceIter<'a> {
+        AttachedInterfaceIter {
+            descriptors: self.descriptors.iter(),
+            available: self.available,
+        }
     }
 }
 
 impl<'a> IntoIterator for AttachedInterfaces<'a> {
     type Item = &'a InterfaceDescriptor;
-    type IntoIter = core::slice::Iter<'a, InterfaceDescriptor>;
+    type IntoIter = AttachedInterfaceIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.descriptors.iter()
+        self.iter()
     }
 }
 
@@ -87,6 +175,8 @@ impl IndexedAttachedInterfaces {
     pub fn view(&self) -> AttachedInterfaces<'_> {
         AttachedInterfaces {
             descriptors: &self.descriptors,
+            available: None,
+            generations: None,
             index: Some(InterfaceIndex {
                 ids: &self.ids,
                 index: &self.index,
@@ -204,5 +294,55 @@ mod tests {
         assert!(roster
             .view()
             .is_egress_eligible(descriptor(2).id, Egress::Transport));
+    }
+
+    #[test]
+    fn administrative_availability_filters_linear_and_indexed_views_consistently() {
+        let descriptors = [descriptor(1), descriptor(2), descriptor(3)];
+        let indexed = IndexedAttachedInterfaces::from(descriptors.to_vec());
+        let available = |id| id != descriptor(2).id;
+        for view in [AttachedInterfaces::new(&descriptors), indexed.view()] {
+            let view = view.with_availability(&available);
+            assert_eq!(view.len(), 2);
+            assert!(!view.is_empty());
+            assert!(view.descriptor_for(descriptor(2).id).is_none());
+            assert!(!view.is_egress_eligible(descriptor(2).id, Egress::Transmit));
+            assert!(!view.is_egress_eligible(descriptor(2).id, Egress::Transport));
+            assert_eq!(
+                view.iter().map(|d| d.id).collect::<std::vec::Vec<_>>(),
+                [descriptor(1).id, descriptor(3).id]
+            );
+            assert_eq!(
+                view.into_iter()
+                    .rev()
+                    .map(|d| d.id)
+                    .collect::<std::vec::Vec<_>>(),
+                [descriptor(3).id, descriptor(1).id]
+            );
+            assert!(view.with_availability(&|_| false).is_empty());
+        }
+    }
+
+    #[test]
+    fn availability_is_live_and_separate_from_transmit_policy_and_epoch() {
+        let mut disabled_policy = descriptor(1);
+        disabled_policy.capabilities.egress = EgressCapability::Disabled;
+        let descriptors = [disabled_policy];
+        let enabled = core::sync::atomic::AtomicBool::new(true);
+        let generation = core::sync::atomic::AtomicU32::new(0);
+        let available = |_| enabled.load(core::sync::atomic::Ordering::Relaxed);
+        let epoch = |_| generation.load(core::sync::atomic::Ordering::Relaxed);
+        let view = AttachedInterfaces::new(&descriptors)
+            .with_availability(&available)
+            .with_generations(&epoch);
+        assert!(view.descriptor_for(disabled_policy.id).is_some());
+        assert!(!view.is_egress_eligible(disabled_policy.id, Egress::Transmit));
+        enabled.store(false, core::sync::atomic::Ordering::Relaxed);
+        generation.store(1, core::sync::atomic::Ordering::Relaxed);
+        assert!(view.is_empty());
+        assert_eq!(view.generation_for(disabled_policy.id), 1);
+        enabled.store(true, core::sync::atomic::Ordering::Relaxed);
+        assert_eq!(view.len(), 1);
+        assert_eq!(view.generation_for(disabled_policy.id), 1);
     }
 }

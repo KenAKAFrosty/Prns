@@ -5,9 +5,10 @@ use prns_core::interfaces::wifi_auto::{
 };
 use prns_ffi::mdns::macos::{AppleServiceDiscoveryBackend, MdnsError, DISCOVERY_CAPACITY};
 
+use super::discovery::DiscoveryDiagnostic;
 use super::{
     DiscoveryLifecycleError, DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher,
-    SnapshotPublication,
+    ServiceDiscoveryTask, SnapshotPublication,
 };
 
 const RETRY_INTERVAL: Duration = Duration::from_secs(2);
@@ -19,14 +20,29 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(2);
 pub fn apple_service_discovery() -> ServiceDiscovery {
     let (service_discovery, service_discovery_publisher) =
         ServiceDiscovery::channel(DISCOVERY_CAPACITY);
-    tokio::spawn(run_service_discovery(service_discovery_publisher));
+    tokio::spawn(run_service_discovery(
+        service_discovery_publisher,
+        DiscoveryDiagnostic::default(),
+    ));
     service_discovery
+}
+
+/// The same Apple provider with a joinable owner for replaceable host interfaces.
+pub fn apple_service_discovery_managed() -> (ServiceDiscovery, ServiceDiscoveryTask) {
+    let (service_discovery, publisher) = ServiceDiscovery::channel(DISCOVERY_CAPACITY);
+    let task = ServiceDiscoveryTask::spawn_reporting(move |diagnostic| async move {
+        let _ = run_service_discovery(publisher, diagnostic).await;
+    });
+    (service_discovery, task)
 }
 
 async fn run_service_discovery(
     mut service_discovery_publisher: ServiceDiscoveryPublisher,
+    diagnostic: DiscoveryDiagnostic,
 ) -> AppleDiscoveryExit {
+    let mut network_changes = service_discovery_publisher.subscribe_network_changes();
     loop {
+        diagnostic.set_active(false);
         if service_discovery_publisher.participation() != DiscoveryParticipation::Central {
             service_discovery_publisher.clear_snapshot();
             match service_discovery_publisher
@@ -40,10 +56,14 @@ async fn run_service_discovery(
             }
         }
 
-        match run_central_session(&mut service_discovery_publisher).await {
+        let session_result =
+            run_central_session(&mut service_discovery_publisher, &diagnostic).await;
+        diagnostic.set_active(false);
+        match session_result {
             Ok(
                 CentralDiscoverySessionEnd::BecameInactive
-                | CentralDiscoverySessionEnd::BecameSatellite,
+                | CentralDiscoverySessionEnd::BecameSatellite
+                | CentralDiscoverySessionEnd::NetworkChanged,
             ) => {
                 service_discovery_publisher.clear_snapshot();
                 continue;
@@ -52,8 +72,13 @@ async fn run_service_discovery(
                 service_discovery_publisher.clear_snapshot();
                 return AppleDiscoveryExit::RuntimeDropped;
             }
-            Ok(CentralDiscoverySessionEnd::CapacityMismatch) => {}
+            Ok(CentralDiscoverySessionEnd::CapacityMismatch) => {
+                diagnostic.set(Some(
+                    "Bonjour discovery returned an incompatible advertisement capacity.".into(),
+                ));
+            }
             Err(apple_discovery_error) => {
+                diagnostic.set(Some(format!("Bonjour discovery is unavailable: {apple_discovery_error}. Discovery will retry.")));
                 crate::diagnostic_log::debug!(
                     "wifi-auto: Apple service discovery unavailable: {apple_discovery_error}"
                 );
@@ -79,6 +104,7 @@ async fn run_service_discovery(
                     }
                 }
             }
+            _ = network_changes.changed() => DiscoveryRestartTrigger::ParticipationChanged,
         };
         match restart_trigger {
             DiscoveryRestartTrigger::RetryElapsed
@@ -92,11 +118,14 @@ async fn run_service_discovery(
 
 async fn run_central_session(
     service_discovery_publisher: &mut ServiceDiscoveryPublisher,
+    diagnostic: &DiscoveryDiagnostic,
 ) -> Result<CentralDiscoverySessionEnd, AppleDiscoveryError> {
+    let mut network_changes = service_discovery_publisher.subscribe_network_changes();
     let tcp_instance_name = fresh_instance_name()?;
     let udp_instance_name = fresh_instance_name()?;
     let mut apple_discovery = loop {
         tokio::select! {
+            _ = network_changes.changed() => { return Ok(CentralDiscoverySessionEnd::NetworkChanged); }
             apple_discovery = AppleServiceDiscoveryBackend::new(
                 tcp_instance_name.clone(),
                 udp_instance_name.clone(),
@@ -119,10 +148,15 @@ async fn run_central_session(
             }
         }
     };
+    diagnostic.set(None);
+    diagnostic.set_active(true);
     crate::diagnostic_log::debug!("wifi-auto: Apple service discovery advertising and browsing");
 
     loop {
         tokio::select! {
+            _ = network_changes.changed() => {
+                return Ok(CentralDiscoverySessionEnd::NetworkChanged);
+            }
             next_snapshot = apple_discovery.next_snapshot() => {
                 let discovery_snapshot = next_snapshot.map_err(AppleDiscoveryError::Native)?;
                 match service_discovery_publisher.replace_snapshot(discovery_snapshot) {
@@ -199,6 +233,7 @@ enum CentralDiscoverySessionEnd {
     BecameSatellite,
     RuntimeDropped,
     CapacityMismatch,
+    NetworkChanged,
 }
 
 enum DiscoveryRestartTrigger {

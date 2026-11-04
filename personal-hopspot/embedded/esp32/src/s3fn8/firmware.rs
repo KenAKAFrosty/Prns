@@ -124,6 +124,14 @@ pub async fn run(spawner: Spawner) {
         .node_page;
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
         remote_control_bootstrap.into_parts();
+    let enrollment =
+        crate::controller_enrollment::serial_enrollment(&remote_control_identity_secrets);
+    #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+    let stable_target_destination = remote_control_identity_secrets
+        .identities()
+        .target()
+        .endpoint()
+        .destination_hash();
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
@@ -160,6 +168,8 @@ pub async fn run(spawner: Spawner) {
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), runtime_entropy);
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), runtime_entropy);
     let ble_fleet: BleFleet = ble_lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
+    #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+    super::heltec_v3_pairing::set_clock(timebase.now());
     let host = EmbassyHost::new_with_timebase(timebase, runtime_entropy);
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
@@ -185,12 +195,26 @@ pub async fn run(spawner: Spawner) {
     let persistence = PERSISTENCE.init(persistence);
 
     spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
+    spawner.spawn(controller_enrollment_task().expect("controller enrollment task fits"));
+    #[cfg(all(feature = "heltec-v3", feature = "remote-control-pairing"))]
+    {
+        spawner.spawn(
+            super::heltec_v3_pairing::announcer_task(
+                handle,
+                node_page_destination,
+                stable_target_destination,
+            )
+            .expect("pairing announcer task fits"),
+        );
+        spawner
+            .spawn(super::heltec_v3_pairing::close_task(handle).expect("pairing close task fits"));
+    }
     if let Some(groups) = personal_rns::runtime::restored_discovery_groups(BLE_SUPERVISOR_ID).await
     {
         let _ = personal_rns::bluetooth_auto::BluetoothAutoStatus::new(&BLE_SHARED)
             .restore_discovery_groups_before_start(groups);
     }
-    spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("USB task fits"));
+    spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam, enrollment).expect("USB task fits"));
     spawner.spawn(
         ble_task(spawner, bluetooth, mac, ble_identity, ble_fleet).expect("Bluetooth task fits"),
     );

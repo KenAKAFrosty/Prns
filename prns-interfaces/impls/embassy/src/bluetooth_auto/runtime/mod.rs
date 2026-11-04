@@ -17,14 +17,15 @@ use prns_core::interfaces::bluetooth_auto::{
     role_for, ConnectionPolicy, PolicyAction, PolicyInput,
 };
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSource, DialOutcome, Origin, RadioMode,
-    ScanningMode,
+    AdvertisingMode, BleBackend, BleControl, BleEvent, BleLink, BleLinkParts, BleSource,
+    DialOutcome, Origin, RadioMode, ScanningMode,
 };
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, DiscoveryGroupApplyOutcome, InterfaceId, InterfaceKind,
     InterfaceStatus, DEFAULT_DISCOVERY_GROUP_HASH,
 };
 use prns_runtime::atomic::AtomicU64;
+use prns_runtime::manifold::driver::EmbassyInterfaceStatus;
 use prns_runtime::manifold::grant::FrameTarget;
 use prns_runtime::runtime::{EmbassyFleet as Fleet, OutboundFrame};
 
@@ -158,8 +159,7 @@ impl InterfaceStatus for BluetoothMemberStatus {
 
 pub struct BluetoothAutoShared<const MEMBERS: usize> {
     id: InterfaceId,
-    enabled: AtomicBool,
-    enabled_changed: Signal<CriticalSectionRawMutex, bool>,
+    routing_status: EmbassyInterfaceStatus,
     discovery_groups: CriticalSectionMutex<RefCell<Option<DiscoveryGroupSet>>>,
     discovery_groups_revision: AtomicU32,
     discovery_groups_changed: Signal<CriticalSectionRawMutex, u32>,
@@ -180,8 +180,10 @@ impl<const MEMBERS: usize> BluetoothAutoShared<MEMBERS> {
     pub const fn new(id: InterfaceId) -> Self {
         Self {
             id,
-            enabled: AtomicBool::new(true),
-            enabled_changed: Signal::new(),
+            routing_status: EmbassyInterfaceStatus::new_unaccounted(
+                id,
+                ConnectionState::Initializing,
+            ),
             discovery_groups: CriticalSectionMutex::new(RefCell::new(None)),
             discovery_groups_revision: AtomicU32::new(0),
             discovery_groups_changed: Signal::new(),
@@ -308,16 +310,20 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
     }
 
     pub fn enable(&self) {
-        self.update_enabled(true);
+        self.shared.routing_status.enable();
     }
 
     pub fn disable(&self) {
-        self.update_enabled(false);
+        self.shared.routing_status.disable();
     }
 
     pub fn toggle_enabled(&self) {
-        let enabled = !self.shared.enabled.fetch_xor(true, Ordering::Relaxed);
-        self.shared.enabled_changed.signal(enabled);
+        self.shared.routing_status.toggle_enabled();
+    }
+
+    /// Bind the supervisor lane to the same administrative state used by its driver.
+    pub fn routing_status(&self) -> &'static EmbassyInterfaceStatus {
+        &self.shared.routing_status
     }
 
     #[must_use]
@@ -331,6 +337,12 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
     fn configure_initial_discovery_groups(&self, groups: DiscoveryGroupSet) {
         self.shared.discovery_groups.lock(|configured| {
             *configured.borrow_mut() = Some(groups);
+        });
+    }
+
+    fn initialize_discovery_groups(&self, groups: DiscoveryGroupSet) {
+        self.shared.discovery_groups.lock(|configured| {
+            configured.borrow_mut().get_or_insert(groups);
         });
     }
 
@@ -421,34 +433,17 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
         self.shared.discovery_groups_settled.signal(revision);
     }
 
-    fn update_enabled(&self, enabled: bool) {
-        if self.shared.enabled.swap(enabled, Ordering::Relaxed) != enabled {
-            self.shared.enabled_changed.signal(enabled);
-        }
-    }
-
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        self.shared.enabled.load(Ordering::Relaxed)
+        self.shared.routing_status.is_enabled()
     }
 
     async fn wait_until_enabled(&self) {
-        self.wait_for_enabled_state(true).await;
+        self.shared.routing_status.wait_until_enabled().await;
     }
 
     async fn wait_until_disabled(&self) {
-        self.wait_for_enabled_state(false).await;
-    }
-
-    async fn wait_for_enabled_state(&self, enabled: bool) {
-        loop {
-            if self.is_enabled() == enabled {
-                return;
-            }
-            if self.shared.enabled_changed.wait().await == enabled {
-                return;
-            }
-        }
+        self.shared.routing_status.wait_until_disabled().await;
     }
 
     fn member(&self, slot: usize) -> &'static BluetoothMemberStatus {
@@ -535,6 +530,30 @@ struct Active<L: BleLink> {
     address: BleAddress,
     source: L::Source,
     sink: L::Sink,
+    control: Option<L::Control>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum MemberReceiveError<E> {
+    Data(contract::BleFrameReceiveError<E>),
+    ControlClosed,
+}
+
+/// Receive-only lifecycle observation: greetings do not replace an admitted member.
+/// Yield after each greeting so a ready control queue cannot monopolize the supervisor.
+async fn settled_control_closed<C: BleControl>(control: &mut Option<C>) {
+    let Some(control) = control else {
+        return ::core::future::pending().await;
+    };
+    loop {
+        // Drop the decoded greeting before yielding; retaining it would enlarge every
+        // settled-member future by a full control message on memory-constrained boards.
+        let closed = matches!(control.recv().await, Ok(Control::Close { .. }) | Err(_));
+        if closed {
+            return;
+        }
+        embassy_futures::yield_now().await;
+    }
 }
 
 struct PendingActions<const CAP: usize> {
@@ -599,6 +618,11 @@ impl PendingNativeControl {
             Control::Hello { .. } => Self::Hello,
             Control::Welcome { .. } => Self::Welcome,
             Control::Close { reason } => Self::Close(reason),
+            // Settled-session probes are not valid handshake outputs. Embedded
+            // runtimes do not opt in to liveness until they can drive its loop.
+            Control::Probe { .. } | Control::ProbeReply { .. } => {
+                Self::Close(CloseReason::Incompatible)
+            }
         }
     }
 
@@ -691,11 +715,18 @@ enum SupervisorStep<L: BleLink> {
     Backend(BleEvent<L>),
     Inbound(
         usize,
-        Result<usize, contract::BleFrameReceiveError<<L::Source as BleSource>::Error>>,
+        Result<usize, MemberReceiveError<<L::Source as BleSource>::Error>>,
     ),
     Outbound,
 }
 
+/// Bounded embedded supervisor with resumable handshake operations.
+///
+/// Its backend must preserve an in-flight control send across cancellation of
+/// the send future: re-entry with the same message rejoins the original physical
+/// operation, deadline and result. Unrelated supervisor events may recreate the
+/// handshake future; they must not submit the write twice. This is a stronger
+/// requirement than the generic [`BleLink`] cancellation contract.
 pub struct BluetoothAuto<B, const MEMBERS: usize> {
     backend: B,
     local: LocalPeer,
@@ -707,6 +738,7 @@ impl<B, const MEMBERS: usize> BluetoothAuto<B, MEMBERS>
 where
     B: BleBackend<MEMBERS>,
 {
+    /// Uses the default group unless shared status already contains restored configuration.
     #[must_use]
     pub fn new(
         backend: B,
@@ -725,6 +757,8 @@ where
         )
     }
 
+    /// Uses `discovery_groups` as the initial default for unconfigured shared status.
+    /// A pre-start restoration takes precedence, whether it occurs before or after construction.
     #[must_use]
     pub fn new_with_discovery_groups(
         backend: B,
@@ -735,14 +769,14 @@ where
         discovery_groups: DiscoveryGroupSet,
     ) -> Self {
         let status = BluetoothAutoStatus::new(shared);
-        status.configure_initial_discovery_groups(discovery_groups);
+        status.initialize_discovery_groups(discovery_groups);
         Self {
             backend,
             local: LocalPeer {
                 identity,
                 endpoint,
                 capabilities,
-                discovery_groups: discovery_groups.hashes(),
+                discovery_groups: status.discovery_groups().hashes(),
             },
             status,
             bitrate: contract::BLE_BITRATE_GUESS_BPS,
@@ -866,6 +900,12 @@ where
                     disable_members(&status, &mut fleet, &mut backend, &mut members).await;
                     if !status.is_failed() {
                         local.discovery_groups = status.discovery_groups().hashes();
+                        // Teardown turned the radio off. Prepare it again before publishing the
+                        // rebuilt policy, including capabilities negotiated by the backend.
+                        prepare_radio(&mut backend, &mut local, configured_capabilities, &status)
+                            .await;
+                    }
+                    if !status.is_failed() {
                         manager = ConnectionPolicy::<MEMBERS, DIAL_TRACK>::new(local);
                         manager.start(&mut |action| pending.push(action));
                         apply_radio(
@@ -1153,6 +1193,8 @@ async fn advance_handshake<L: BleLink>(
     pending: &mut Option<PendingHandshake<L>>,
     local: &LocalPeer,
 ) -> HandshakeStep<L> {
+    // The outer supervisor may cancel this future to service another event.
+    // Backends retain pending sends, including admission waits, outside it.
     let completion = match pending.as_mut() {
         Some(pending) => {
             let deadline = pending.deadline;
@@ -1297,11 +1339,17 @@ async fn advance_handshake<L: BleLink>(
 async fn recv_or_pending<L: BleLink>(
     member: &mut Option<Active<L>>,
     buf: &mut [u8; contract::BLE_HW_MTU],
-) -> Result<usize, contract::BleFrameReceiveError<<L::Source as BleSource>::Error>> {
+) -> Result<usize, MemberReceiveError<<L::Source as BleSource>::Error>> {
     match member {
-        Some(active) => contract::receive_frame(&mut active.source, buf)
-            .await
-            .map(<[u8]>::len),
+        Some(active) => match select(
+            settled_control_closed(&mut active.control),
+            contract::receive_frame(&mut active.source, buf),
+        )
+        .await
+        {
+            Either::First(()) => Err(MemberReceiveError::ControlClosed),
+            Either::Second(result) => result.map(<[u8]>::len).map_err(MemberReceiveError::Data),
+        },
         None => ::core::future::pending().await,
     }
 }
@@ -1315,7 +1363,7 @@ async fn recv_any<L: BleLink, const MEMBERS: usize>(
     bufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],
 ) -> (
     usize,
-    Result<usize, contract::BleFrameReceiveError<<L::Source as BleSource>::Error>>,
+    Result<usize, MemberReceiveError<<L::Source as BleSource>::Error>>,
 ) {
     let mut pairs = members.iter_mut().zip(bufs.iter_mut());
     let futures: [_; MEMBERS] = ::core::array::from_fn(|_| {
@@ -1639,7 +1687,11 @@ async fn apply_settled<
                     if !matches!(lane, L2capPlan::None) {
                         let _ = link.upgrade(&lane).await;
                     }
-                    let (source, sink) = link.into_data();
+                    let BleLinkParts {
+                        source,
+                        sink,
+                        control,
+                    } = link.into_parts();
                     let id = InterfaceId::from_channel_tag(
                         InterfaceKind::BluetoothPeer,
                         identity.as_bytes(),
@@ -1657,6 +1709,7 @@ async fn apply_settled<
                         address,
                         source,
                         sink,
+                        control,
                     });
                 }
             }
@@ -1678,6 +1731,8 @@ async fn apply_settled<
 
 #[cfg(test)]
 mod tests {
+    mod discovery_groups;
+
     use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     use embassy_futures::select::{select, Either};
@@ -1770,6 +1825,7 @@ mod tests {
         type Error = MockError;
         type Source = MockSource;
         type Sink = MockSink;
+        type Control = contract::NoBleControl<MockError>;
 
         fn peer_protocol(&self) -> PeerProtocol {
             self.protocol
@@ -1802,8 +1858,12 @@ mod tests {
             Ok(())
         }
 
-        fn into_data(self) -> (MockSource, MockSink) {
-            (MockSource::Pending, MockSink)
+        fn into_parts(self) -> BleLinkParts<MockSource, MockSink, Self::Control> {
+            BleLinkParts {
+                source: MockSource::Pending,
+                sink: MockSink,
+                control: None,
+            }
         }
     }
 
@@ -1857,6 +1917,7 @@ mod tests {
             address: BleAddress::new([id; 6]),
             source: MockSource::Pending,
             sink: MockSink,
+            control: None,
         }
     }
 
@@ -1877,11 +1938,13 @@ mod tests {
             let expected = if length <= contract::BLE_HW_MTU {
                 Ok(length)
             } else {
-                Err(contract::BleFrameReceiveError::Length(
-                    contract::BleReceiveError::BufferTooSmall {
-                        length,
-                        capacity: contract::BLE_HW_MTU,
-                    },
+                Err(MemberReceiveError::Data(
+                    contract::BleFrameReceiveError::Length(
+                        contract::BleReceiveError::BufferTooSmall {
+                            length,
+                            capacity: contract::BLE_HW_MTU,
+                        },
+                    ),
                 ))
             };
             assert_eq!((slot, received), (1, expected));
@@ -1901,7 +1964,9 @@ mod tests {
                 &mut Some(member),
                 &mut [0; contract::BLE_HW_MTU]
             )),
-            Err(contract::BleFrameReceiveError::Source(MockError))
+            Err(MemberReceiveError::Data(
+                contract::BleFrameReceiveError::Source(MockError)
+            ))
         );
         assert!(matches!(
             block_on(select(
@@ -1998,6 +2063,27 @@ mod tests {
         assert_eq!(status.connection(), ConnectionState::Disabled);
         status.enable();
         assert_eq!(status.connection(), ConnectionState::Failed);
+    }
+
+    #[test]
+    fn supervisor_enablement_shares_the_routing_epoch() {
+        static SHARED: BluetoothAutoShared<1> =
+            BluetoothAutoShared::new(InterfaceId::new([0x79; 8]));
+        let status = BluetoothAutoStatus::new(&SHARED);
+        let routing = status.routing_status();
+        assert!(routing.is_available());
+        status.disable();
+        assert!(!routing.is_enabled());
+        assert_eq!(routing.disable_generation(), 1);
+        status.enable();
+        assert!(status.is_enabled());
+        assert!(
+            !routing.is_available(),
+            "On waits for the manifold to retire old routes"
+        );
+        status.toggle_enabled();
+        assert_eq!(routing.disable_generation(), 2);
+        assert!(!status.is_enabled());
     }
 
     fn recovery_view<const MEMBERS: usize>(

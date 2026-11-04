@@ -18,6 +18,7 @@ pub const MAX_SINGLE_TOKEN_LEN: usize = sealed_len(MAX_SEND_SINGLE_PACKET_PLAINT
 /// Owns the material needed to resume an identity-keyed decrypt after external Diffie-Hellman.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct DecryptOwed {
+    pub destination_generation: u64,
     pub destination: DestinationHash,
     pub context: WireContext,
     pub arrived_at: InstantMillis,
@@ -39,6 +40,7 @@ pub const MAX_RATCHET_DECRYPT_PAYLOAD_LEN: usize =
 /// Owns the ciphertext and candidate secrets needed to resume a ratchet decrypt.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct RatchetDecryptOwed {
+    pub destination_generation: u64,
     pub destination: DestinationHash,
     pub context: WireContext,
     pub arrived_at: InstantMillis,
@@ -97,6 +99,9 @@ impl<S: StorageLayout> EngineState<S> {
                 else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
+                if !registered.ingress_enabled {
+                    return UpstreamDeliveryOutcome::NotForUs;
+                }
                 let Some(held) = self.held_identities.get(&registered.identity) else {
                     return UpstreamDeliveryOutcome::NotForUs;
                 };
@@ -122,6 +127,7 @@ impl<S: StorageLayout> EngineState<S> {
                         let mut token = HeaplessVec::new();
                         if token.extend_from_slice(token_bytes).is_ok() {
                             return UpstreamDeliveryOutcome::OwesDecrypt(DecryptOwed {
+                                destination_generation: registered.registration_generation,
                                 destination,
                                 context: data.header.context,
                                 arrived_at,
@@ -147,6 +153,7 @@ impl<S: StorageLayout> EngineState<S> {
                         {
                             return UpstreamDeliveryOutcome::OwesRatchetDecrypt(
                                 RatchetDecryptOwed {
+                                    destination_generation: registered.registration_generation,
                                     destination,
                                     context: data.header.context,
                                     arrived_at,
@@ -318,6 +325,110 @@ mod tests {
                 InstantMillis(1_000),
                 InterfaceId::new([0x07; 8]),
             )),
+        );
+    }
+
+    #[test]
+    fn staged_single_has_no_delivery_or_proof_until_activated() {
+        let mut state = personal_node_announcer();
+        let destination = personal_node_destination();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        assert!(state.set_single_ingress_enabled(&destination, false));
+        let mut raw = sealed_single_packet(&identity, destination, b"while staged");
+        assert!(matches!(
+            state.ingest_for_test(
+                plain_data_packet(&mut raw),
+                AttachedInterfaces::new(&transporting_interfaces())
+            ),
+            IngestPacketOutcome::Ignored(_)
+        ));
+        assert!(state.set_single_ingress_enabled(&destination, true));
+        let mut raw = sealed_single_packet(&identity, destination, b"after activation");
+        assert!(matches!(
+            state.ingest_for_test(
+                plain_data_packet(&mut raw),
+                AttachedInterfaces::new(&transporting_interfaces())
+            ),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn retired_decrypt_generations_cannot_deliver_after_same_key_resume() {
+        let descriptors = transporting_interfaces();
+        let interfaces = AttachedInterfaces::new(&descriptors);
+        let destination = personal_node_destination();
+        let mut state = personal_node_announcer();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let mut raw = sealed_single_packet(&identity, destination, b"old generation");
+        let IngestPacketOutcome::OwesDecrypt(owed) =
+            state.ingest_packet_step_with(plain_data_packet(&mut raw), interfaces)
+        else {
+            panic!("deferred decrypt");
+        };
+        let shared = x25519_diffie_hellman(&owed.encryption_secret, &owed.ephemeral_public);
+        let _ = state.unregister_destination(&destination);
+        state
+            .register_single_destination(
+                &owed.identity,
+                "personal",
+                &["node"],
+                b"",
+                ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        state.resume_decrypt(
+            owed,
+            shared,
+            interfaces,
+            &mut |_| panic!("no stale proof policy callback"),
+            &mut |_| panic!("no stale delivery"),
+        );
+
+        let mut state = ratcheted_personal_node_announcer();
+        let mut raw = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
+        let IngestPacketOutcome::OwesRatchetDecrypt(mut owed) =
+            state.ingest_packet_step_with(plain_data_packet(&mut raw), interfaces)
+        else {
+            panic!("deferred ratchet decrypt");
+        };
+        let (opened_by, plaintext) = {
+            let opened = crate::identity::decrypt_token_in_place_with_ratchets(
+                &owed.ratchet_secrets,
+                &owed.encryption_secret,
+                &owed.identity,
+                owed.identity_key_fallback,
+                &mut owed.token,
+            )
+            .unwrap();
+            (opened.opened_by, opened.plaintext.to_vec())
+        };
+        let _ = state.unregister_destination(&destination);
+        state
+            .register_single_destination(
+                &owed.identity,
+                "personal",
+                &["node"],
+                b"",
+                ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptAll,
+                RatchetPolicy::Ratcheted,
+            )
+            .unwrap();
+        state.resume_ratchet_decrypt(
+            owed,
+            crate::identity::OpenedToken {
+                opened_by,
+                plaintext: &plaintext,
+            },
+            interfaces,
+            &mut |_| panic!("no stale proof policy callback"),
+            &mut |_| panic!("no stale ratchet delivery"),
         );
     }
 

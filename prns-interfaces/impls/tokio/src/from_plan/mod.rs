@@ -243,6 +243,11 @@ impl PlanRuntimeContext {
         }
     }
 
+    /// Public identity used by a prepared native Bluetooth transport attachment.
+    pub const fn ble_identity(&self) -> Option<BleIdentity> {
+        self.ble_identity
+    }
+
     pub fn with_ble_identity(mut self, identity: BleIdentity) -> Self {
         self.ble_identity = Some(identity);
         self
@@ -295,6 +300,25 @@ impl PlanAttachments {
         for task in supervisor_tasks {
             let _ = task.await;
         }
+    }
+
+    /// Retain attachment metadata until every run future and manifold lane has
+    /// retired. Cancellation does not fabricate a successful shutdown.
+    pub async fn detach_and_wait(
+        &mut self,
+        handle: &PrnsNodeHandle,
+    ) -> Result<(), prns_runtime::runtime::InterfaceDetachError> {
+        for attachment in &mut self.groups {
+            if let Some(task) = attachment.supervisor_task.take() {
+                task.abort();
+                let _ = task.await;
+            }
+            for interface in &attachment.interfaces {
+                handle.remove_interface_and_wait(*interface).await?;
+            }
+        }
+        self.groups.clear();
+        Ok(())
     }
 
     fn push_interface(&mut self, lifecycle: ConfiguredInterfaceLifecycle, interface: InterfaceId) {
@@ -695,7 +719,17 @@ async fn stand_up<'a>(
         PlannedMedium::Pipe {
             command,
             respawn_delay,
-        } => pipe::stand_up(construction, command, *respawn_delay),
+        } => {
+            #[cfg(feature = "pipe")]
+            {
+                pipe::stand_up(construction, command, *respawn_delay)
+            }
+            #[cfg(not(feature = "pipe"))]
+            {
+                let _ = (command, respawn_delay);
+                Err(PlanFailure::InterfaceNotBuilt(PlannedInterfaceKind::Pipe))
+            }
+        }
         PlannedMedium::I2p {
             peers,
             reachability,

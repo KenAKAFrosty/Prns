@@ -64,6 +64,26 @@ All native persistence tests, including every fault-injection boundary, remain r
 Focused Miri adds memory-model checking without interpreting the entire native fault
 campaign for each release.
 
+## Xtensa outgoing call frames
+
+The shared firmware builder and direct ESP Cargo configuration explicitly select
+`-C force-frame-pointers=no` for Xtensa. The pinned ESP Rust 1.95.0.0 compiler can
+otherwise emit non-16-byte outgoing stack adjustments around calls. This policy
+does not change the RISC-V or Thumb flags. The vendored Xtensa backtrace path uses
+the windowed ABI's saved stack pointer; its forced-frame-pointer requirement is
+specific to RISC-V.
+
+The shipping ESP gate runs the shared `validation/platforms/xtensa-frame-audit.py`
+against every Xtensa ELF selected by the canonical resource baseline after the
+resource reports succeed. Known misaligned immediate adjustments fail the gate;
+unresolved dynamic adjustments remain explicit evidence. The dependency-free
+[compiler fixture](../validation/platforms/fixtures/xtensa-call-frame/README.md)
+isolates the affected lowering. Resource stack evidence still comes from
+`.debug_frame` CFA rules (Xtensa registers a1/a7), and unsupported rules and missing
+frames remain reported. Neither successful ELF inspection nor a resource report
+proves runtime stack bounds, interrupt safety, unwinding behavior on hardware, or
+whole-program alignment.
+
 ## Optional exhaustive Miri
 
 Run the exhaustive borrow-model matrix for deeper investigation:

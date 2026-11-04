@@ -1,5 +1,6 @@
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
+use embassy_sync::waitqueue::AtomicWaker;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 use crate::atomic::AtomicU64;
@@ -34,6 +35,11 @@ pub struct EmbassyInterfaceStatus {
     airtime: AtomicU32,
     transfer_rates: AtomicU64,
     enabled: AtomicBool,
+    disable_generation: AtomicU32,
+    retired_disable_generation: AtomicU32,
+    applied_enabled: AtomicBool,
+    manifold_waker: AtomicWaker,
+    queue_wakers: [AtomicWaker; 4],
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     publishes_frame_accounting: bool,
     frames_in: AtomicU64,
@@ -45,6 +51,14 @@ pub struct EmbassyInterfaceStatus {
 
 const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
 const RATES_UNPUBLISHED: u64 = u64::MAX;
+
+#[derive(Clone, Copy)]
+pub(crate) enum InterfaceQueueWakeSlot {
+    IngressProducer,
+    IngressConsumer,
+    EgressProducer,
+    EgressConsumer,
+}
 
 impl EmbassyInterfaceStatus {
     #[must_use]
@@ -70,6 +84,11 @@ impl EmbassyInterfaceStatus {
             airtime: AtomicU32::new(AIRTIME_UNPUBLISHED),
             transfer_rates: AtomicU64::new(RATES_UNPUBLISHED),
             enabled: AtomicBool::new(true),
+            disable_generation: AtomicU32::new(0),
+            retired_disable_generation: AtomicU32::new(0),
+            applied_enabled: AtomicBool::new(true),
+            manifold_waker: AtomicWaker::new(),
+            queue_wakers: [const { AtomicWaker::new() }; 4],
             enabled_changed: Signal::new(),
             publishes_frame_accounting,
             frames_in: AtomicU64::new(0),
@@ -102,19 +121,108 @@ impl EmbassyInterfaceStatus {
     }
 
     pub fn toggle_enabled(&self) {
-        let enabled = !self.enabled.fetch_xor(true, Ordering::Relaxed);
+        let enabled = critical_section::with(|_| {
+            let enabled = !self.enabled.load(Ordering::Relaxed);
+            self.store_enabled(enabled);
+            enabled
+        });
         self.enabled_changed.signal(enabled);
+        self.manifold_waker.wake();
+        self.wake_queues();
     }
 
     fn update_enabled(&self, enabled: bool) {
-        if self.enabled.swap(enabled, Ordering::Relaxed) != enabled {
+        let changed = critical_section::with(|_| {
+            if self.enabled.load(Ordering::Relaxed) == enabled {
+                return false;
+            }
+            self.store_enabled(enabled);
+            true
+        });
+        if changed {
             self.enabled_changed.signal(enabled);
+            self.manifold_waker.wake();
+            self.wake_queues();
         }
+    }
+
+    // The caller holds the critical section so enablement and the retirement epoch
+    // form one transition, including when control and radio tasks use different cores.
+    fn store_enabled(&self, enabled: bool) {
+        if !enabled {
+            self.disable_generation.fetch_add(1, Ordering::Release);
+        }
+        self.enabled.store(enabled, Ordering::Release);
     }
 
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        self.enabled.load(Ordering::Relaxed)
+        self.enabled.load(Ordering::Acquire)
+    }
+
+    /// Whether the owning manifold has retired every preceding Off transition.
+    /// A quick Off→On remains unavailable until that retirement completes.
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        self.available_generation().is_some()
+    }
+
+    /// One coherent admission snapshot; the returned generation belongs to the
+    /// frame for its entire queue lifetime, including a split grant/commit.
+    #[must_use]
+    pub fn available_generation(&self) -> Option<u32> {
+        critical_section::with(|_| {
+            let generation = self.disable_generation();
+            (self.is_enabled()
+                && generation == self.retired_disable_generation.load(Ordering::Acquire))
+            .then_some(generation)
+        })
+    }
+
+    pub(super) fn availability_state(&self) -> (bool, u32) {
+        critical_section::with(|_| (self.is_enabled(), self.disable_generation()))
+    }
+
+    pub(super) fn applied_availability_state(&self) -> (bool, u32) {
+        critical_section::with(|_| {
+            (
+                self.applied_enabled.load(Ordering::Acquire),
+                self.retired_disable_generation.load(Ordering::Acquire),
+            )
+        })
+    }
+
+    pub(crate) fn acknowledge_availability(&self, enabled: bool, generation: u32) {
+        critical_section::with(|_| {
+            self.retired_disable_generation
+                .store(generation, Ordering::Release);
+            self.applied_enabled.store(enabled, Ordering::Release);
+        });
+        self.wake_queues();
+    }
+
+    pub(super) fn register_manifold_waker(&self, waker: &core::task::Waker) {
+        self.manifold_waker.register(waker);
+    }
+
+    pub(crate) fn register_queue_waker(
+        &self,
+        slot: InterfaceQueueWakeSlot,
+        waker: &core::task::Waker,
+    ) {
+        self.queue_wakers[slot as usize].register(waker);
+    }
+
+    fn wake_queues(&self) {
+        for waker in &self.queue_wakers {
+            waker.wake();
+        }
+    }
+
+    /// Non-consuming observation of Off transitions, including Off→On between
+    /// polls. Wrapping is intentional: saturation must not hide later changes.
+    pub fn disable_generation(&self) -> u32 {
+        self.disable_generation.load(Ordering::Acquire)
     }
 
     pub async fn wait_until_enabled(&self) {
@@ -238,6 +346,26 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
 mod tests {
     use super::*;
     use embassy_futures::{block_on, join::join};
+
+    #[test]
+    fn off_generation_survives_fast_resume_and_wraps_without_saturating() {
+        let status = EmbassyInterfaceStatus::new_accounted(
+            InterfaceId::new([1; 8]),
+            ConnectionState::Connected,
+        );
+        assert_eq!(status.disable_generation(), 0);
+        status.disable();
+        status.disable();
+        status.enable();
+        assert_eq!(status.disable_generation(), 1);
+        assert!(status.is_enabled());
+        status.disable_generation.store(u32::MAX, Ordering::Relaxed);
+        status.toggle_enabled();
+        status.toggle_enabled();
+        assert_eq!(status.disable_generation(), 0);
+        status.disable();
+        assert_eq!(status.disable_generation(), 1);
+    }
 
     #[test]
     fn satisfied_waiters_return_immediately_and_connection_preserves_the_observed_state() {

@@ -17,6 +17,8 @@ enum Medium {
 
 impl RadioClock for &VirtualClock {
     fn now(&self) -> Instant {
+        self.lab.virtual_clock.set(true);
+        self.lab.clock_ms.set(self.now.get().as_millis());
         self.now.get()
     }
 
@@ -98,8 +100,8 @@ fn contention_and_duty_deadlines_drop_once_and_release_the_next_packet() {
             sink: Vec::new(),
         };
         let scenario = async {
-            lab.outbound.send(vec![0x41; LORA_MAX_PAYLOAD]).await;
-            lab.outbound.send(vec![0x42; LORA_MAX_PAYLOAD]).await;
+            lab.send_outbound(vec![0x41; LORA_MAX_PAYLOAD]).await;
+            lab.send_outbound(vec![0x42; LORA_MAX_PAYLOAD]).await;
             if occupied {
                 while lab.accepted.get() < 2 || clock.now.get().as_millis() < 10 {
                     yield_now().await;
@@ -190,21 +192,22 @@ fn saturated_fifo_yields_at_quantum_and_duty_boundaries_without_splitting_packet
             spectrum: &spectrum,
             lifecycle: lifecycle.dyn_sender(),
         })
-        .unwrap();
+        .unwrap()
+        .with_outbound_queue_policy(OutboundQueuePolicy::new(600_000).unwrap());
         let seam = Seam {
             lab: lab.clone(),
             current: Vec::new(),
             sink: Vec::new(),
         };
         let scenario = async {
-            lab.outbound.send(vec![0; LORA_MAX_PAYLOAD + 1]).await;
+            lab.send_outbound(vec![0; LORA_MAX_PAYLOAD + 1]).await;
             while lab.dispositions.borrow().is_empty() {
                 yield_now().await;
             }
             for value in 0..14 {
-                lab.outbound.send(vec![value; LORA_MAX_PAYLOAD]).await;
+                lab.send_outbound(vec![value; LORA_MAX_PAYLOAD]).await;
                 if value == 0 {
-                    lab.outbound.send(vec![0; LORA_MAX_PAYLOAD + 1]).await;
+                    lab.send_outbound(vec![0; LORA_MAX_PAYLOAD + 1]).await;
                 }
             }
             while lab.dispositions.borrow().len() < 16 {
@@ -303,7 +306,7 @@ fn interrupted_contention_restarts_difs_and_counts_each_deferral_once() {
             sink: Vec::new(),
         };
         let scenario = async {
-            lab.outbound.send(vec![1; 10]).await;
+            lab.send_outbound(vec![1; 10]).await;
             while lab.dispositions.borrow().is_empty() {
                 yield_now().await;
             }

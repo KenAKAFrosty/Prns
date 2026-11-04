@@ -12,6 +12,7 @@ mod continuation;
 mod flash;
 mod grants;
 mod names;
+mod replay_compaction;
 mod settlement;
 mod transaction;
 use flash::{Control, Cut, Flash, Operation};

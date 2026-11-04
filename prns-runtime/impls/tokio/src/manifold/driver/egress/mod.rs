@@ -25,7 +25,13 @@ use super::indexed_rows::IndexedRows;
 use super::{HeapFrameSlot, TokioGrantProducer};
 use pending::PendingEgressQueue;
 
+mod handshake;
 mod pending;
+pub use handshake::{
+    EgressHandshakeEvent, EgressHandshakeObserver, EgressHandshakePacket, EgressHandshakePhase,
+    EgressHandshakeSnapshot, EGRESS_HANDSHAKE_EVENT_LIMIT,
+};
+use handshake::{HandshakeDiagnostics, HandshakePacket, PendingHandshake};
 
 struct IndexedIfac {
     id: InterfaceId,
@@ -77,6 +83,7 @@ pub struct Egress {
     lanes: IndexedRows<EgressLane>,
     pending_frames: usize,
     pending_cursor: usize,
+    handshake: HandshakeDiagnostics,
 
     #[cfg(feature = "runtime-metrics")]
     metrics: EgressMetricsSnapshot,
@@ -148,6 +155,12 @@ fn egress_queue(frame: &[u8]) -> EgressQueue {
 }
 
 impl Egress {
+    pub(super) fn drain_fences(&mut self) -> Vec<crate::manifold::grant_lane::FrameDrainFence> {
+        (0..self.lanes.len())
+            .map(|index| self.lanes.row_mut(index).producer.drain_fence())
+            .collect()
+    }
+
     #[must_use]
     pub fn new(lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>) -> Self {
         let lanes = lanes
@@ -175,9 +188,19 @@ impl Egress {
             lanes: lanes.into(),
             pending_frames: 0,
             pending_cursor: 0,
+            handshake: HandshakeDiagnostics::default(),
             #[cfg(feature = "runtime-metrics")]
             metrics,
         }
+    }
+
+    /// Install a bounded observer without resetting any event counters. Defaults to disabled.
+    pub fn set_handshake_observer(&mut self, observer: Option<EgressHandshakeObserver>) {
+        self.handshake.set_observer(observer);
+    }
+
+    pub fn handshake_snapshot(&self) -> EgressHandshakeSnapshot {
+        self.handshake.snapshot()
     }
 
     pub(super) fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressEnqueueOutcome {
@@ -190,13 +213,36 @@ impl Egress {
         bytes: &[u8],
         queue: EgressQueue,
     ) -> EgressEnqueueOutcome {
+        let handshake = self.handshake.classify(bytes);
+        self.enqueue_as_observed(target, bytes, queue, handshake)
+    }
+
+    fn enqueue_as_observed(
+        &mut self,
+        target: InterfaceId,
+        bytes: &[u8],
+        queue: EgressQueue,
+        handshake: Option<HandshakePacket>,
+    ) -> EgressEnqueueOutcome {
         let outcome = match self.try_enqueue_as(target, bytes, queue) {
             EgressTryEnqueueOutcome::Enqueued => EgressEnqueueOutcome::Enqueued,
             EgressTryEnqueueOutcome::Unavailable => EgressEnqueueOutcome::Unavailable,
-            EgressTryEnqueueOutcome::LaneFull(index) => self.defer(index, bytes, queue),
+            EgressTryEnqueueOutcome::LaneFull(index) => self.defer(index, bytes, queue, handshake),
             EgressTryEnqueueOutcome::LaneMissing => EgressEnqueueOutcome::LaneMissing,
         };
         self.record_generic_enqueue_outcome(outcome);
+        self.handshake.observe(
+            handshake,
+            target,
+            match outcome {
+                EgressEnqueueOutcome::Enqueued => EgressHandshakePhase::Enqueued,
+                EgressEnqueueOutcome::Deferred => EgressHandshakePhase::Deferred,
+                EgressEnqueueOutcome::Unavailable => EgressHandshakePhase::Unavailable,
+                EgressEnqueueOutcome::DroppedFull => EgressHandshakePhase::DroppedFull,
+                EgressEnqueueOutcome::LaneMissing => EgressHandshakePhase::LaneMissing,
+            },
+            None,
+        );
         outcome
     }
 
@@ -280,6 +326,7 @@ impl Egress {
         source.bytes.clear();
         source.len = 0;
         source.packet_phy = Default::default();
+        let handshake = self.handshake.classify(destination.frame());
         match egress_queue(destination.frame()) {
             EgressQueue::Expedited => lane.producer.commit_expedited(),
             EgressQueue::Bulk => lane.producer.commit(),
@@ -288,11 +335,19 @@ impl Egress {
         {
             self.metrics.enqueued_frames = self.metrics.enqueued_frames.saturating_add(1);
         }
+        self.handshake
+            .observe(handshake, target, EgressHandshakePhase::Enqueued, None);
         ForwardedSlotOutcome::Moved { vacated: source }
     }
 
     #[cold]
-    fn defer(&mut self, index: usize, bytes: &[u8], queue: EgressQueue) -> EgressEnqueueOutcome {
+    fn defer(
+        &mut self,
+        index: usize,
+        bytes: &[u8],
+        queue: EgressQueue,
+        handshake: Option<HandshakePacket>,
+    ) -> EgressEnqueueOutcome {
         if !self.reconcile_lane(index) {
             return EgressEnqueueOutcome::Unavailable;
         }
@@ -300,7 +355,12 @@ impl Egress {
         if lane.pending.len() >= TOKIO_EGRESS_PENDING_DEPTH {
             return EgressEnqueueOutcome::DroppedFull;
         }
-        lane.pending.push(queue, bytes.to_vec());
+        lane.pending.push(
+            queue,
+            bytes.to_vec(),
+            handshake.map(PendingHandshake::new),
+            lane.producer.reserve_completion(),
+        );
         self.pending_frames += 1;
         lane.producer.arm_release_wake();
         #[cfg(feature = "runtime-metrics")]
@@ -349,13 +409,14 @@ impl Egress {
                 visits_without_progress += 1;
                 continue;
             };
-            let Some((queue, bytes)) = pending_frames.pop() else {
+            let Some((queue, bytes, handshake, completion)) = pending_frames.pop() else {
                 producer.disarm_release_wake();
                 visits_without_progress += 1;
                 continue;
             };
             self.pending_frames -= 1;
             slot.fill(&bytes);
+            slot.completion = Some(completion);
             match queue {
                 EgressQueue::Expedited => producer.commit_expedited(),
                 EgressQueue::Bulk => producer.commit(),
@@ -364,6 +425,14 @@ impl Egress {
                 producer.disarm_release_wake();
             } else {
                 producer.arm_release_wake();
+            }
+            if let Some(handshake) = handshake {
+                self.handshake.observe(
+                    Some(handshake.packet),
+                    lane.id,
+                    EgressHandshakePhase::Flushed,
+                    Some(handshake.age_ms()),
+                );
             }
             flushed = flushed.saturating_add(1);
             visits_without_progress = 0;
@@ -398,7 +467,14 @@ impl Egress {
 
         let recovering = lane.producer.consumer_discard_pending();
         if !available || recovering {
-            let dropped = lane.pending.clear();
+            let dropped = lane.pending.clear_observed(|handshake| {
+                self.handshake.observe(
+                    Some(handshake.packet),
+                    lane.id,
+                    EgressHandshakePhase::PendingDiscarded,
+                    Some(handshake.age_ms()),
+                );
+            });
             self.pending_frames = self.pending_frames.saturating_sub(dropped);
             lane.producer.disarm_release_wake();
             #[cfg(feature = "runtime-metrics")]
@@ -582,16 +658,20 @@ impl Egress {
         discard: &mut [u8],
     ) {
         let Some(index) = self.lanes.index_of(&target) else {
-            let _fill_result = fill(discard);
-            #[cfg(feature = "runtime-metrics")]
-            if _fill_result.is_some() {
-                self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
+            if let Some(len) = fill(discard) {
+                self.record_generic_enqueue_outcome(EgressEnqueueOutcome::LaneMissing);
+                let packet = self.handshake.classify(&discard[..len.min(discard.len())]);
+                self.handshake
+                    .observe(packet, target, EgressHandshakePhase::LaneMissing, None);
             }
             return;
         };
         if !self.reconcile_lane(index) {
-            if fill(discard).is_some() {
+            if let Some(len) = fill(discard) {
                 self.record_generic_enqueue_outcome(EgressEnqueueOutcome::Unavailable);
+                let packet = self.handshake.classify(&discard[..len.min(discard.len())]);
+                self.handshake
+                    .observe(packet, target, EgressHandshakePhase::Unavailable, None);
             }
             return;
         }
@@ -605,10 +685,13 @@ impl Egress {
                 }
                 if let Some(len) = fill(&mut slot.bytes[..hint]) {
                     slot.len = len.min(hint);
+                    let packet = self.handshake.classify(slot.frame());
                     match egress_queue(slot.frame()) {
                         EgressQueue::Expedited => lane.producer.commit_expedited(),
                         EgressQueue::Bulk => lane.producer.commit(),
                     }
+                    self.handshake
+                        .observe(packet, target, EgressHandshakePhase::Enqueued, None);
                     #[cfg(feature = "runtime-metrics")]
                     {
                         self.metrics.enqueued_frames =
@@ -622,8 +705,23 @@ impl Egress {
         if let Some(len) = fill_result {
             let len = len.min(discard.len());
             let queue = egress_queue(&discard[..len]);
-            let outcome = self.defer(index, &discard[..len], queue);
+            let packet = self.handshake.classify(&discard[..len]);
+            // Keep the original admission decision after a failed grant. A consumer may
+            // release a slot while `fill` runs, but this path still enters the pending queue.
+            let outcome = self.defer(index, &discard[..len], queue, packet);
             self.record_generic_enqueue_outcome(outcome);
+            self.handshake.observe(
+                packet,
+                target,
+                match outcome {
+                    EgressEnqueueOutcome::Enqueued => EgressHandshakePhase::Enqueued,
+                    EgressEnqueueOutcome::Deferred => EgressHandshakePhase::Deferred,
+                    EgressEnqueueOutcome::Unavailable => EgressHandshakePhase::Unavailable,
+                    EgressEnqueueOutcome::DroppedFull => EgressHandshakePhase::DroppedFull,
+                    EgressEnqueueOutcome::LaneMissing => EgressHandshakePhase::LaneMissing,
+                },
+                None,
+            );
         }
     }
 
@@ -654,10 +752,18 @@ impl Egress {
     }
 
     pub(super) fn remove_lane(&mut self, id: InterfaceId) {
-        let Some(removed) = self.lanes.remove(&id) else {
+        let Some(mut removed) = self.lanes.remove(&id) else {
             return;
         };
-        self.pending_frames = self.pending_frames.saturating_sub(removed.pending.len());
+        let dropped = removed.pending.clear_observed(|handshake| {
+            self.handshake.observe(
+                Some(handshake.packet),
+                id,
+                EgressHandshakePhase::PendingDiscarded,
+                Some(handshake.age_ms()),
+            );
+        });
+        self.pending_frames = self.pending_frames.saturating_sub(dropped);
         self.pending_cursor = if self.lanes.is_empty() {
             0
         } else {
@@ -972,13 +1078,25 @@ fn emit_for_wire(
         Some(entry) => {
             if let Some(len) = fill(&mut scratch.emit) {
                 let queue = egress_queue(&scratch.emit[..len]);
+                let packet = egress.handshake.classify(&scratch.emit[..len]);
                 if let Ok(masked_len) = entry
                     .context
                     .try_mask_outbound(&scratch.emit[..len], &mut scratch.masked)
                 {
-                    egress.enqueue_as(target, &scratch.masked[..masked_len], queue);
+                    egress.enqueue_as_observed(
+                        target,
+                        &scratch.masked[..masked_len],
+                        queue,
+                        packet,
+                    );
                 } else {
                     egress.record_ifac_rejection();
+                    egress.handshake.observe(
+                        packet,
+                        target,
+                        EgressHandshakePhase::IfacRejected,
+                        None,
+                    );
                 }
             }
         }
@@ -1033,12 +1151,26 @@ fn enqueue_for_wire(
     bytes: &[u8],
     masked: &mut [u8],
 ) {
+    let handshake = egress.handshake.classify(bytes);
     match ifac_for(ifacs, target) {
         Some(entry) => match entry.context.try_mask_outbound(bytes, masked) {
             Ok(masked_len) => {
-                egress.enqueue_as(target, &masked[..masked_len], egress_queue(bytes));
+                egress.enqueue_as_observed(
+                    target,
+                    &masked[..masked_len],
+                    egress_queue(bytes),
+                    handshake,
+                );
             }
-            Err(_) => egress.record_ifac_rejection(),
+            Err(_) => {
+                egress.record_ifac_rejection();
+                egress.handshake.observe(
+                    handshake,
+                    target,
+                    EgressHandshakePhase::IfacRejected,
+                    None,
+                );
+            }
         },
         None => {
             egress.enqueue(target, bytes);
@@ -1359,3 +1491,6 @@ pub(super) fn clear_announce_queues(pacers: &mut InterfacePacers) -> usize {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod handshake_tests;

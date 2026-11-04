@@ -52,6 +52,18 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         while let Some(expired) = self.pop_timed_out_path_request(now) {
+            #[cfg(feature = "path-diagnostics")]
+            sink(EngineReaction::Journaled(
+                crate::engine::Journaled::PathDiscovery(crate::engine::PathDiscoveryEvent::new(
+                    Some(now),
+                    None,
+                    None,
+                    crate::engine::PathDiscoveryPhase::LocalTimeout {
+                        command: expired.command_id,
+                    },
+                )),
+            ));
+
             settle(
                 sink,
                 expired.command_id,
@@ -59,6 +71,21 @@ impl<S: StorageLayout> EngineState<S> {
             );
         }
 
+        #[cfg(feature = "path-diagnostics")]
+        self.recursive_path_requests
+            .cull_expired_with(now, &mut |destination, interface| {
+                sink(EngineReaction::Journaled(
+                    crate::engine::Journaled::PathDiscovery(
+                        crate::engine::PathDiscoveryEvent::new(
+                            Some(now),
+                            Some(destination),
+                            Some(interface),
+                            crate::engine::PathDiscoveryPhase::RecursiveTimeout,
+                        ),
+                    ),
+                ));
+            });
+        #[cfg(not(feature = "path-diagnostics"))]
         self.recursive_path_requests.cull_expired(now);
         WakeSchedules {
             path_request_timeouts: self.path_request_timeouts_wake(),
@@ -180,6 +207,19 @@ impl<S: StorageLayout> EngineState<S> {
                     if !eligible {
                         continue;
                     }
+                    #[cfg(feature = "path-diagnostics")]
+                    if directed_to.is_some() {
+                        sink(EngineReaction::Journaled(
+                            crate::engine::Journaled::PathDiscovery(
+                                crate::engine::PathDiscoveryEvent::new(
+                                    Some(now),
+                                    Some(entry.destination),
+                                    Some(descriptor.id),
+                                    crate::engine::PathDiscoveryPhase::ResponseDispatched,
+                                ),
+                            ),
+                        ));
+                    }
                     match descriptor.id.kind().and_then(InterfaceKind::fanout_kind) {
                         Some(supervisor) => {
                             let bit = 1u128 << (supervisor as u8);
@@ -239,7 +279,7 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         self.reconcile_pending_link_route_evidence();
-        self.expire_unestablished_links(now, sink);
+        let routes_changed = self.expire_unestablished_links(now, interfaces, fill_random, sink);
         self.cull_overdue_transported_links(now, interfaces, fill_random, sink);
         self.close_stale_links(now, interfaces, fill_random, sink);
         self.send_due_keepalives(now, interfaces, sink);
@@ -249,32 +289,107 @@ impl<S: StorageLayout> EngineState<S> {
             receipt_timeouts: self.receipt_timeouts_wake(),
             channel_timeouts: self.channel_timeouts_wake(),
             remote_control_pairing: self.remote_control_pairing_wake(),
-            ..WakeSchedules::UNCHANGED
+            ..if routes_changed {
+                self.route_removal_wake_schedules(interfaces)
+                    .into_wake_schedules()
+            } else {
+                WakeSchedules::UNCHANGED
+            }
         }
     }
 
-    fn expire_unestablished_links(
+    fn expire_unestablished_links<F>(
         &mut self,
         now: InstantMillis,
+        interfaces: AttachedInterfaces<'_>,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) {
+    ) -> bool
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let mut routes_changed = false;
         while let Some(overdue) = self.pop_timed_out_link(now) {
             if let OverdueLink::Initiated {
+                link_id,
                 command_id,
                 mut route_evidence,
                 requested_at,
                 ..
             } = overdue
             {
-                self.routing_table
-                    .mark_unresponsive_if_not_active_since(&mut route_evidence, requested_at);
+                use crate::engine::{LinkHandshakePhase, LinkTimeoutRouteDisposition};
+                let route_generation = route_evidence.id.get();
+                let mut disposition = LinkTimeoutRouteDisposition::Preserved;
+                if self.network_transport_enabled() {
+                    disposition = if self
+                        .routing_table
+                        .mark_unresponsive_if_not_active_since(&mut route_evidence, requested_at)
+                    {
+                        LinkTimeoutRouteDisposition::TransportMarkedUnresponsive
+                    } else {
+                        LinkTimeoutRouteDisposition::TransportPreserved
+                    };
+                } else if let Some(removed) = self
+                    .routing_table
+                    .expire_failed_route(&mut route_evidence, requested_at)
+                {
+                    disposition = LinkTimeoutRouteDisposition::Removed;
+                    // Python Transport.jobs expires a never-activated endpoint path and tries
+                    // discovery again. Retire it atomically here, while preserving newer evidence
+                    // and transport-node routes. Parallel failures cannot retire a replacement.
+                    routes_changed = true;
+                    let _ = self.scheduled_announces.cancel(&removed.destination);
+                    self.dirty_interfaces.mark(removed.receiving_interface);
+                    sink(EngineReaction::Journaled(
+                        crate::engine::node_ingress::journal_route_removal(removed),
+                    ));
+                    if !self
+                        .recent_path_requests
+                        .is_throttled(&removed.destination, now)
+                    {
+                        let mut id = [0; TRUNCATED_HASH_BYTE_LEN];
+                        fill_random(&mut id);
+                        let mut request = [0; BROADCAST_MTU];
+                        if let Ok(wire_bytes) = write_path_request_wire_packet(
+                            removed.destination,
+                            None,
+                            &id,
+                            &mut request,
+                        ) {
+                            fan_frame(interfaces, FanTarget::All, &request[..wire_bytes], sink);
+                            self.recent_path_requests
+                                .mark_seen_at(removed.destination, now);
+                        }
+                    }
+                }
+                self.link_handshake_diagnostics.observe(
+                    Some(now),
+                    Some(link_id),
+                    Some(command_id),
+                    None,
+                    LinkHandshakePhase::InitiatorTimeout {
+                        requested_at,
+                        route_generation,
+                        route: disposition,
+                    },
+                );
                 settle(
                     sink,
                     command_id,
                     Settlement::EstablishLink(Err(EstablishLinkFailure::Timeout)),
                 );
+            } else if let OverdueLink::Responding { link_id } = overdue {
+                self.link_handshake_diagnostics.observe(
+                    Some(now),
+                    Some(link_id),
+                    None,
+                    None,
+                    crate::engine::LinkHandshakePhase::ResponderTimeout,
+                );
             }
         }
+        routes_changed
     }
 
     fn cull_overdue_transported_links<F>(
@@ -297,6 +412,16 @@ impl<S: StorageLayout> EngineState<S> {
                 continue;
             }
 
+            self.link_handshake_diagnostics.observe(
+                Some(now),
+                Some(overdue.link_id),
+                None,
+                Some(overdue.next_hop_interface),
+                crate::engine::LinkHandshakePhase::RelayTimeout {
+                    timeout_at: overdue.proof_timeout,
+                    route_generation: overdue.route_evidence.id.get(),
+                },
+            );
             let initiated_by_local_client = overdue.taken_hops == 0;
             let initiator_is_neighbor = overdue.taken_hops == 1;
             let path_requests_are_throttled = self

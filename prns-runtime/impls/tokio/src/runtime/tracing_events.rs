@@ -134,6 +134,8 @@ fn emit_message(message: &Message<'_>) {
 
 fn emit_diagnostic(diagnostic: &Diagnostic<'_>) {
     match diagnostic {
+        // Opt-in consumers own bounded, salted path traces. Never dump raw event IDs.
+        Diagnostic::PathDiscovery(_) => {}
         Diagnostic::PersistenceRestored {
             routes,
             destination_identities,

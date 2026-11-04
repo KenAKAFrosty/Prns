@@ -22,7 +22,7 @@ from ._native import (
     InterfaceConfig as NativeInterfaceConfig,
     InterfaceRoutingPolicy as NativeInterfaceRoutingPolicy,
     Lifecycle,
-    Limits as NativeLimits,
+    Limits as RedbLimits,
     MultiRNodeMemberConfig as NativeMultiRNodeMemberConfig,
     NativeLibrary,
     PersistenceConfig as NativePersistenceConfig,
@@ -1275,10 +1275,13 @@ def _decode_event(native: NativeLibrary, event):
             _event_bytes(native, event, f.PLAINTEXT),
         )
     if application is g.ApplicationEventKind.LINK_DELIVERY:
+        local_destination = _optional_event_bytes(native, event, f.LOCAL_DESTINATION)
         return g.ApplicationEventLinkDelivery(
             g.LinkId(_event_bytes(native, event, f.LINK_ID)),
             g.InterfaceId(_event_bytes(native, event, f.SOURCE_INTERFACE)),
             _event_bytes(native, event, f.PLAINTEXT),
+            None if local_destination is None else g.DestinationHash(local_destination),
+            _event_u64(native, event, f.ARRIVED_AT_MILLIS),
         )
     if application is g.ApplicationEventKind.REQUEST:
         requester = _optional_event_bytes(native, event, f.REQUESTER)
@@ -1504,8 +1507,8 @@ class Host:
             native_options.required_product_version = arena.string(
                 g.PRODUCT_VERSION
             )
-            native_options.limits = NativeLimits(
-                ctypes.sizeof(NativeLimits),
+            native_options.limits = RedbLimits(
+                ctypes.sizeof(RedbLimits),
                 options.limits.pending_commands,
                 options.limits.application_events,
                 options.limits.retained_event_bytes,

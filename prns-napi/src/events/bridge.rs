@@ -113,7 +113,7 @@ impl EventSink {
     }
 }
 
-impl prns_host_native::NativeEventSink for EventSink {
+impl prns_host_runtime::HostRuntimeEventSink for EventSink {
     fn running(&self) {}
 
     fn publish_application(&self, event: prns_host::ApplicationEvent) -> bool {

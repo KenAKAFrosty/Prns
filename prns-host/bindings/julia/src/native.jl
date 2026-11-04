@@ -58,7 +58,7 @@ struct NativeContractInfo
     product_version::NativeStringView
 end
 
-struct NativeLimits
+struct RedbLimits
     struct_size::Csize_t
     pending_commands::Csize_t
     application_events::Csize_t
@@ -407,7 +407,7 @@ struct NativeHostOptions
     required_abi::UInt32
     required_schema_version::UInt32
     required_product_version::NativeStringView
-    limits::NativeLimits
+    limits::RedbLimits
     role::UInt32
     identity::NativeIdentityConfig
     destinations::Ptr{NativeDestinationConfig}
@@ -1001,8 +1001,8 @@ function native_host_options(arena::NativeArena, value)
         HOST_CONTRACT_ABI,
         HOST_SCHEMA_VERSION,
         native_string_view(arena, PRODUCT_VERSION),
-        NativeLimits(
-            sizeof(NativeLimits),
+        RedbLimits(
+            sizeof(RedbLimits),
             value.limits.pending_commands,
             value.limits.application_events,
             value.limits.retained_event_bytes,

@@ -459,6 +459,7 @@ where
                     },
                 )),
                 None => {
+                    engine.observe_link_proof_rejected(owed.link_id, owed.source_interface, now);
                     if let Some(recorder) =
                         topology.frame_accounting_recorder(owed.source_interface)
                     {

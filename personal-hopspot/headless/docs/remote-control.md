@@ -87,10 +87,77 @@ The watch action emits JSON lines for admission and stream frames over 12 second
 An initial `ResyncRequired` asks the controller to fetch current snapshots;
 later resyncs invalidate them, while heartbeats confirm the stream is live.
 Cold-start control does not require the target to periodically
-announce first. The command has a bounded lifetime and closes its link afterward.
+announce first. The operation has a timeout and closes its link afterward; orderly
+storage shutdown can extend the process lifetime as described below.
 The target's configured self-announcement destination is its node page. HaLoW
 announcement delivery continues to use the shared physical broadcast channel;
 ordinary directed traffic uses peer channels.
+
+## Public cards and saved targets
+
+The same controller also consumes the shared bounded RemoteControl public-card
+codec used by other PRNS clients. Export a controller card for a trusted local
+setup tool or an existing administrator:
+
+```sh
+controller --state-dir /private/controller-state export-controller > controller.card
+```
+
+This exports only public provisioning data. A target access card returned by the
+setup tool or administrator must be addressed to this exact controller identity.
+Verify its source and intended target before importing it:
+
+```sh
+controller --state-dir /private/controller-state import-target \
+  --card target-access.card --trusted-source
+controller --state-dir /private/controller-state targets
+controller --state-dir /private/controller-state invoke \
+  --tcp 192.168.12.1:4242 --target-id "$TARGET_ID" --action describe
+```
+
+`--trusted-source` confirms the caller's deliberate trust decision; decoding a card
+does not authenticate its source. Import checks the recipient against the running
+controller and saves through `save_remote_control_target_access_card`. It waits
+for the shared authorization transaction's durable storage confirmation before
+making the access active. The store is the standard `NodePersistence`/`FileStore`
+under `STATE_DIR/state`, not a second application registry. Repeating the same
+card is allowed. An import that would change an existing target's authority or
+requests returns `Conflict`; the CLI does not silently replace it.
+
+The `target_access_saved` result reports `control_verified: false`. Saving a card
+does not create a target-side grant or prove current reachability. A successful
+authenticated `describe` verifies that operation with the saved identities.
+Stopping a caller after admission does not undo a save, and a lost acknowledgement
+can leave its outcome unknown. Inspect retained targets before retrying. The
+existing `--target-key` invocation remains a volatile lab path and does not load
+or modify this saved-target registry.
+
+The 45-second operation timeout requests orderly shutdown. The process keeps its
+state-directory lock until admitted storage work and the final flush settle, so
+storage confirmation can extend shutdown beyond that timeout.
+
+An administrator can grant an independent controller Operator access over TCP:
+
+```sh
+controller --state-dir /private/admin-state delegate \
+  --tcp 192.168.12.1:4242 --target-id "$TARGET_ID" \
+  --controller-card recipient.card --trusted-recipient --profile inspect
+```
+
+The administrator must already have imported target access permitting
+`AuthorizeController`. Verify the recipient through a trusted exchange before
+using `--trusted-recipient`. `inspect` requests the existing inspection and
+announcement operations; `operate` requests non-administrative operations,
+excluding application messages and watch streams. Both are restricted to the
+target's authenticated advertised capabilities. Neither profile grants
+Administrator authority. The result lists the exact requests.
+
+Only an `Applied` response produces `controller_authorized` output containing a
+`target_access_card` field. Transfer that field as text through a trusted channel;
+the recipient imports it with its own state directory and verifies control when
+connected. No private controller key is copied. A timeout after submitting the
+grant does not prove failure, so reconcile its target-side outcome before retrying.
+This CLI adds no USB/BLE installer or radio-configuration step.
 
 ## Current limits and next API work
 
@@ -108,8 +175,9 @@ ordinary directed traffic uses peer channels.
   format uses zero for an absent transfer-rate estimate; the typed API represents it
   as `None`, and the example emits JSON `null`. Do not read an available estimate as
   measured throughput. Radio configuration and service management are later slices.
-- The example takes the target key and endpoint explicitly. A durable controller
-  target registry would improve repeated lab use.
+- The example takes its TCP endpoint explicitly. Saved public-card targets retain
+  their identity and permissions across restarts; endpoint discovery and a
+  reviewed replacement/recovery UI remain separate work.
 - Interface-watch streaming now includes the authenticated subscription request,
   separate grant, bounded Tokio producer and reader, and typed controller API.
   Device qualification and finer invalidation events remain. See

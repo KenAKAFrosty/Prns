@@ -7,5 +7,6 @@ cd "$root"
 ./tools/prns release toolchain esp verify
 
 ./tools/prns build embedded resources report --all --platform esp
+python3 validation/platforms/xtensa-frame-check.py
 
 echo "ESP32_FIRMWARE_CHECK_GATE_OK"

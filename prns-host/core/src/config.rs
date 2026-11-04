@@ -111,6 +111,26 @@ pub struct SingleDestinationConfig {
     pub request_handlers: Vec<RequestHandlerConfig>,
 }
 
+impl SingleDestinationConfig {
+    /// Construct the canonical hosted destination with its shared policy defaults.
+    /// Bindings set their supported optional fields on this value instead of
+    /// maintaining independent policy defaults.
+    #[must_use]
+    pub fn new(name: DestinationName, identity: DestinationIdentityConfig) -> Self {
+        Self {
+            name,
+            identity,
+            announce_app_data: Vec::new(),
+            maximum_request_bytes: None,
+            proof: DestinationProofStrategy::ProveAll,
+            link_requests: DestinationLinkRequestPolicy::AcceptAll,
+            ratchet: DestinationRatchetPolicy::NoRatchets,
+            resource_strategy: crate::ResourceStrategy::Refuse,
+            request_handlers: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestHandlerConfig {
     pub path: String,

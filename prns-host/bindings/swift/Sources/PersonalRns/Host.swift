@@ -368,7 +368,7 @@ public final class Host: @unchecked Sendable {
             }
             return .claimed(
                 EventSequence(
-                    native: try NativeEventStream(pointer: stream),
+                    native: try HostRuntimeEventStream(pointer: stream),
                     decode: decodeApplicationEvent
                 )
             )
@@ -392,7 +392,7 @@ public final class Host: @unchecked Sendable {
             }
             return .claimed(
                 EventSequence(
-                    native: try NativeEventStream(pointer: stream),
+                    native: try HostRuntimeEventStream(pointer: stream),
                     decode: decodeDiagnosticEvent
                 )
             )

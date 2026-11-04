@@ -2,7 +2,7 @@ use super::backend::{BleHub, ScanFunnel, SlotJob};
 use super::discovery::{
     advertisement_parameters, connect_scan_parameters, idle_scan_parameters, DiscoveryRole,
 };
-use super::sessions::{serve_central, serve_peripheral, CentralGattSetup};
+use super::sessions::{serve_central, serve_peripheral, CentralGattSetup, PeripheralGattSetup};
 use super::*;
 
 pub async fn serve_slot<T: TroubleTransport>(
@@ -40,7 +40,10 @@ pub async fn serve_slot<T: TroubleTransport>(
                                 link,
                                 &worker,
                                 &connection,
-                                characteristics,
+                                PeripheralGattSetup {
+                                    server,
+                                    characteristics,
+                                },
                             ),
                         )
                         .await;

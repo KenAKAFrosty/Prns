@@ -120,3 +120,91 @@ fn pairing_availability_wire() -> std::vec::Vec<u8> {
     wire[header_len..header_len + payload_len].copy_from_slice(&payload[..payload_len]);
     wire[..header_len + payload_len].to_vec()
 }
+
+#[tokio::test]
+async fn pairing_inspection_reads_the_engine_after_waiter_loss_without_events() {
+    use crate::node_introspection::NodeIntrospectionRequest;
+    use crate::runtime::{
+        RemoteControlControllerPairingSnapshot, RemoteControlPairingInspectionError,
+    };
+
+    for configured in [false, true] {
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        if configured {
+            let identity = engine
+                .hold_identity(crate::identity::Zeroizing::new(
+                    [0xC4; IDENTITY_SECRET_KEY_LEN],
+                ))
+                .unwrap();
+            engine.configure_remote_control_pairing(identity).unwrap();
+        }
+        let (_wake_tx, wake_rx) = manifold_wake();
+        let (commands, receiver) = mpsc::unbounded_channel::<HostCommand>();
+        let running = tokio::spawn(run_with_store(
+            engine,
+            TokioHost::new(),
+            ManifoldWiring {
+                interfaces: std::vec![],
+                ifacs: std::vec![],
+                wake: wake_rx,
+                inbound_lanes: std::vec![],
+                commands: receiver,
+                egress: Egress::new(std::vec![]),
+            },
+            |_event| panic!("read-only pairing inspection emits no application event"),
+            InterfaceStore::new(),
+            CryptoPoolConfig::Inline,
+        ));
+        let (reply, dropped) = tokio::sync::oneshot::channel();
+        commands
+            .send(HostCommand::NodeIntrospection(
+                NodeIntrospectionRequest::RemoteControlControllerPairing { reply },
+            ))
+            .unwrap();
+        drop(dropped);
+        let (reply, observation) = tokio::sync::oneshot::channel();
+        commands
+            .send(HostCommand::NodeIntrospection(
+                NodeIntrospectionRequest::RemoteControlControllerPairing { reply },
+            ))
+            .unwrap();
+        let current = tokio::time::timeout(Duration::from_secs(2), observation)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            current,
+            if configured {
+                Ok(RemoteControlControllerPairingSnapshot::Idle)
+            } else {
+                Err(RemoteControlPairingInspectionError::Unavailable)
+            }
+        );
+        let (reply, dropped) = tokio::sync::oneshot::channel();
+        commands
+            .send(HostCommand::NodeIntrospection(
+                NodeIntrospectionRequest::RemoteControlControllerPairingStatus { reply },
+            ))
+            .unwrap();
+        drop(dropped);
+        let (reply, observation) = tokio::sync::oneshot::channel();
+        commands
+            .send(HostCommand::NodeIntrospection(
+                NodeIntrospectionRequest::RemoteControlControllerPairingStatus { reply },
+            ))
+            .unwrap();
+        assert_eq!(
+            observation.await.unwrap(),
+            if configured {
+                Ok(crate::runtime::RemoteControlControllerPairingStatus {
+                    current: RemoteControlControllerPairingSnapshot::Idle,
+                    terminal: None,
+                })
+            } else {
+                Err(RemoteControlPairingInspectionError::Unavailable)
+            }
+        );
+        running.abort();
+        assert!(running.await.unwrap_err().is_cancelled());
+    }
+}

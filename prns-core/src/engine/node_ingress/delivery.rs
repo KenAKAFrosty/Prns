@@ -73,6 +73,15 @@ impl<S: StorageLayout> EngineState<S> {
         match resolved {
             ResolvedProof::Withheld => {}
             ResolvedProof::Implicit(owed) => {
+                let Delivery::Single(single) = delivery else {
+                    return;
+                };
+                let Some(registered) = self
+                    .upstream_app_destinations
+                    .lookup_single(&single.destination)
+                else {
+                    return;
+                };
                 if io.interfaces.is_egress_eligible(source, Egress::Transmit) {
                     if let Some(signing_secret) = self
                         .held_identities
@@ -81,6 +90,8 @@ impl<S: StorageLayout> EngineState<S> {
                     {
                         (io.sink)(EngineReaction::Directive(Directive::Fulfill(
                             CryptoOwed::ProofSign(ProofSignOwed {
+                                destination: single.destination,
+                                destination_generation: registered.registration_generation,
                                 target: source,
                                 packet_hash: owed.packet_hash,
                                 signing_secret,

@@ -1,4 +1,6 @@
-pub const HOST_SCHEMA_VERSION: u32 = 1;
+pub const HOST_SEMANTIC_FINGERPRINT: &str =
+    "c97f523df32e7c1d4157bf27d0a422109f658a7536980f2bd0db5aa81759e913";
+pub const HOST_SCHEMA_VERSION: u32 = 2;
 pub const HOST_SCHEMA_ABI: u32 = 1;
 pub const HOST_SCHEMA_PRODUCT_VERSION: &str = "0.3.8";
 pub const DESTINATION_HASH_LENGTH: usize = 16;
@@ -88,6 +90,7 @@ pub const HOST_OPERATION_NAMES: &[&str] = &[
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Status {
     Ok = 0,
     InvalidArgument = 1,
@@ -159,6 +162,7 @@ impl TryFrom<u32> for Status {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BackendKind {
     Native = 1,
     Browser = 2,
@@ -191,6 +195,7 @@ impl TryFrom<u32> for BackendKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Capability {
     Loopback = 1,
     TcpClient = 2,
@@ -253,6 +258,7 @@ impl TryFrom<u32> for Capability {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum InterfaceKind {
     AutoLan = 1,
     TcpClient = 2,
@@ -333,6 +339,7 @@ impl TryFrom<u32> for InterfaceKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum InterfaceMode {
     Full = 1,
     PointToPoint = 2,
@@ -377,6 +384,7 @@ impl TryFrom<u32> for InterfaceMode {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum WebSocketFramingSelection {
     RawPacket = 1,
     Hdlc = 2,
@@ -412,6 +420,7 @@ impl TryFrom<u32> for WebSocketFramingSelection {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum InterfaceHealth {
     Initializing = 1,
     Connected = 2,
@@ -459,6 +468,7 @@ impl TryFrom<u32> for InterfaceHealth {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DiscoveryScope {
     Link = 1,
     Admin = 2,
@@ -497,6 +507,7 @@ impl TryFrom<u32> for DiscoveryScope {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MulticastAddressType {
     Temporary = 1,
     Permanent = 2,
@@ -526,6 +537,7 @@ impl TryFrom<u32> for MulticastAddressType {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SerialDataBits {
     Five = 5,
     Six = 6,
@@ -561,6 +573,7 @@ impl TryFrom<u32> for SerialDataBits {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SerialParity {
     None = 1,
     Even = 2,
@@ -593,6 +606,7 @@ impl TryFrom<u32> for SerialParity {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SerialStopBits {
     One = 1,
     Two = 2,
@@ -622,6 +636,7 @@ impl TryFrom<u32> for SerialStopBits {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum HostRole {
     Endpoint = 1,
     Transport = 2,
@@ -651,6 +666,7 @@ impl TryFrom<u32> for HostRole {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum IdentityConfigKind {
     Existing = 1,
     GenerateEphemeral = 2,
@@ -683,6 +699,7 @@ impl TryFrom<u32> for IdentityConfigKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PersistenceConfigKind {
     Ephemeral = 1,
     Directory = 2,
@@ -712,6 +729,7 @@ impl TryFrom<u32> for PersistenceConfigKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DestinationConfigKind {
     Plain = 1,
     Single = 2,
@@ -741,6 +759,7 @@ impl TryFrom<u32> for DestinationConfigKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DestinationIdentityConfigKind {
     HostIdentity = 1,
     DedicatedIdentity = 2,
@@ -770,6 +789,7 @@ impl TryFrom<u32> for DestinationIdentityConfigKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BitrateKind {
     Auto = 1,
     BitsPerSecond = 2,
@@ -799,6 +819,7 @@ impl TryFrom<u32> for BitrateKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ResponseTimeoutKind {
     LinkDefault = 1,
     Exact = 2,
@@ -828,6 +849,7 @@ impl TryFrom<u32> for ResponseTimeoutKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ResourceCompressionKind {
     Auto = 1,
     Never = 2,
@@ -857,6 +879,7 @@ impl TryFrom<u32> for ResourceCompressionKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ResourceStrategyKind {
     Refuse = 1,
     Accept = 2,
@@ -886,6 +909,7 @@ impl TryFrom<u32> for ResourceStrategyKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RequestPolicy {
     AllowNone = 1,
     AllowAll = 2,
@@ -918,6 +942,7 @@ impl TryFrom<u32> for RequestPolicy {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CommandOutcomeKind {
     Announced = 1,
     PacketDelivered = 2,
@@ -980,6 +1005,7 @@ impl TryFrom<u32> for CommandOutcomeKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CommandFailureKind {
     NodeStopped = 1,
     Busy = 2,
@@ -1171,6 +1197,7 @@ impl TryFrom<u32> for CommandFailureKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DeliveryEvidenceKind {
     ExplicitProof = 1,
     ImplicitProof = 2,
@@ -1203,6 +1230,7 @@ impl TryFrom<u32> for DeliveryEvidenceKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LifecyclePhase {
     Starting = 1,
     Running = 2,
@@ -1241,6 +1269,7 @@ impl TryFrom<u32> for LifecyclePhase {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum StopReason {
     Requested = 1,
     BackendExited = 2,
@@ -1270,6 +1299,7 @@ impl TryFrom<u32> for StopReason {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LinkClosedReason {
     Timeout = 1,
     PeerClosed = 2,
@@ -1305,6 +1335,7 @@ impl TryFrom<u32> for LinkClosedReason {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ApplicationEventKind {
     SingleDelivery = 100,
     Request = 101,
@@ -1355,6 +1386,7 @@ impl TryFrom<u32> for ApplicationEventKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DiagnosticEventKind {
     AnnounceHeard = 200,
     LinkEstablished = 201,
@@ -1438,6 +1470,7 @@ impl TryFrom<u32> for DiagnosticEventKind {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PersistenceFlushCause {
     Startup = 1,
     Interval = 2,
@@ -1476,6 +1509,7 @@ impl TryFrom<u32> for PersistenceFlushCause {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PersistenceFlushTarget {
     RoutingState = 1,
     Ratchets = 2,
@@ -1505,6 +1539,7 @@ impl TryFrom<u32> for PersistenceFlushTarget {
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EventField {
     Destination = 1,
     SourceInterface = 2,
@@ -1546,6 +1581,8 @@ pub enum EventField {
     PersistenceCause = 38,
     PersistenceTarget = 39,
     AppData = 40,
+    LocalDestination = 41,
+    ArrivedAtMillis = 42,
 }
 
 impl EventField {
@@ -1592,6 +1629,8 @@ impl EventField {
             Self::PersistenceCause => "PersistenceCause",
             Self::PersistenceTarget => "PersistenceTarget",
             Self::AppData => "AppData",
+            Self::LocalDestination => "LocalDestination",
+            Self::ArrivedAtMillis => "ArrivedAtMillis",
         }
     }
 }
@@ -1641,6 +1680,8 @@ impl TryFrom<u32> for EventField {
             38 => Ok(Self::PersistenceCause),
             39 => Ok(Self::PersistenceTarget),
             40 => Ok(Self::AppData),
+            41 => Ok(Self::LocalDestination),
+            42 => Ok(Self::ArrivedAtMillis),
             _ => Err(()),
         }
     }
@@ -2156,6 +2197,8 @@ mod tests {
             (EventField::PersistenceCause, 38, "PersistenceCause"),
             (EventField::PersistenceTarget, 39, "PersistenceTarget"),
             (EventField::AppData, 40, "AppData"),
+            (EventField::LocalDestination, 41, "LocalDestination"),
+            (EventField::ArrivedAtMillis, 42, "ArrivedAtMillis"),
         ]);
     }
 }

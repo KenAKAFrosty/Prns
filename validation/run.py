@@ -339,9 +339,11 @@ def source_cargo_lock_workspaces() -> set[str]:
     workspaces = set()
     for path in tracked_or_untracked_sources():
         relative = path.relative_to(ROOT)
-        if path.name != "Cargo.lock" or "vendor" in relative.parts:
+        if path.name != "Cargo.lock":
             continue
         parent = relative.parent.as_posix()
+        if "vendor" in relative.parts:
+            continue
         workspaces.add("." if parent == "." else parent)
     return workspaces
 

@@ -1,0 +1,24 @@
+[package]
+name = "prns-groups-uniffi-image"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+publish = false
+[lib]
+name = "prns_group_services"
+crate-type = ["cdylib", "lib"]
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+required-features = ["uniffi-bindgen"]
+[features]
+uniffi-bindgen = ["uniffi/cli", "uniffi/cargo-metadata"]
+[dependencies]
+prns-groups-uniffi = { path = ".." }
+prns-groups-core = { path = "../../../core", features = ["uniffi-bindings"] }
+prns-groups-service = { path = "../../../service", features = ["uniffi-bindings"] }
+prns-groups = { path = "../../..", default-features = false, features = ["uniffi-bindings"] }
+prns-groups-store-redb = { path = "../../../store/redb", features = ["uniffi-bindings"] }
+prns-identities-uniffi = { path = "../../../../prns-identities/bindings/uniffi" }
+uniffi = { version = "=0.31.2", default-features = false }

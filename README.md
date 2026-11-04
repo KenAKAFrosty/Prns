@@ -32,6 +32,12 @@ If one of these ecosystems is home for you, shaping its consumer API and packagi
 
 [Choose an SDK and see its exact readiness and installation path](docs/sdks.md).
 
+Applications can also use the independent [identity catalog and key vault](prns-identities/usage.md),
+[contact cards](prns-contact-card/README.md), and [bounded storage workers](prns-storage/README.md).
+Each library owns its types and storage contract; none requires a chat application.
+The [composable capability guide](docs/composable-features.md) explains how to select
+these owners and group communication, and how their storage and network lifetimes fit together.
+
 If you're already familiar with Reticulum, you can [jump to here](#coming-from-rns). 
 
 If you came here to put Reticulum on an embedded device, [flash a Hopspot here](https://reticulum.rs/flash).
@@ -167,7 +173,7 @@ Among what you gain: brand-new interfaces, a built-in operator CLI, observabilit
 
 ## Minimum supported Rust version
 
-The workspace's declared and CI-tested MSRV is Rust **1.90**. Development builds use the stable channel configured in [rust-toolchain.toml](rust-toolchain.toml).
+The core workspace's declared and CI-tested MSRV is Rust **1.90**. The firmware host tools (`personal-hopspot-builder`, `hopspot-flash`, `personal-hopspot-resources`, and `personal-hopspot-assurance`) require Rust **1.95**. Development builds use the stable channel configured in [rust-toolchain.toml](rust-toolchain.toml).
 
 ## Contributing
 

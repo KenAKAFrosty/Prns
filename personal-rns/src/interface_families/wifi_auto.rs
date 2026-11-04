@@ -3,7 +3,9 @@
     feature = "wifi-auto-apple",
     any(target_os = "macos", target_os = "ios")
 ))]
-pub use prns_interfaces_tokio::wifi_auto::apple_service_discovery;
+pub use prns_interfaces_tokio::wifi_auto::{
+    apple_service_discovery, apple_service_discovery_managed,
+};
 #[cfg(all(feature = "tokio-host", feature = "wifi-auto-mdns"))]
 pub use prns_interfaces_tokio::wifi_auto::{
     native_service_discovery, native_service_discovery_with_host_lan, NativeHostDiscovery,
@@ -13,7 +15,10 @@ pub use prns_interfaces_tokio::wifi_auto::{
     AutoWifi, AutoWifiDevicePolicy, AutoWifiPeer, AutoWifiSettings, AutoWifiSettingsError,
     AutoWifiStatus, DiscoveryLifecycleError, DiscoveryParticipation, HostLanAddress,
     HostLanInterface, HostLanInterfaceError, HostLanInventory, HostLanReplaceOutcome,
-    ServiceDiscovery, ServiceDiscoveryPublisher, SnapshotPublication,
+    PlatformServiceDiscoveryBridge, PublicationNameError, PublicationRegistrationOutcome,
+    ServiceDiscovery, ServiceDiscoveryPublisher, ServiceDiscoveryTask, ServiceRecordRejection,
+    ServiceRemovalOutcome, ServiceResolutionOutcome, SnapshotClearOutcome, SnapshotPublication,
+    TakeServiceDiscoveryError, DISCOVERY_CAPACITY, RESOLVED_CANDIDATE_INPUT_CAPACITY,
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]

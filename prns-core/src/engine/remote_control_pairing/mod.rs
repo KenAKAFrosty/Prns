@@ -376,6 +376,53 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         self.remote_control_controller_pairing.view()
     }
 
+    #[must_use]
+    pub fn remote_control_controller_pairing_terminal(
+        &self,
+    ) -> Option<crate::remote_control::RemoteControlControllerPairingTerminal> {
+        self.remote_control_controller_pairing.terminal()
+    }
+
+    /// Cancels only the displayed, unapproved exchange. Once approved, access
+    /// may already exist remotely and cannot be undone by local cancellation.
+    pub fn cancel_remote_control_controller_pairing_into<F>(
+        &mut self,
+        subject: crate::remote_control::RemoteControlControllerPairingSubject,
+        now: InstantMillis,
+        interfaces: AttachedInterfaces<'_>,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> Result<
+        crate::remote_control::RemoteControlControllerPairingAborted,
+        crate::remote_control::CancelRemoteControlControllerPairingError,
+    >
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let result = self.remote_control_controller_pairing.cancel(subject, now);
+        if result.is_ok()
+            || result
+                == Err(crate::remote_control::CancelRemoteControlControllerPairingError::Expired)
+        {
+            let context = match subject {
+                crate::remote_control::RemoteControlControllerPairingSubject::AwaitingOffer {
+                    context,
+                }
+                | crate::remote_control::RemoteControlControllerPairingSubject::Attempt {
+                    context,
+                    ..
+                } => context,
+            };
+            self.retire_remote_control_pairing_exchange_link(
+                context,
+                interfaces,
+                fill_entropy,
+                sink,
+            );
+        }
+        result
+    }
+
     #[cfg(test)]
     pub(crate) fn ingest_remote_control_pairing_request<F, Work>(
         &mut self,
@@ -1234,7 +1281,7 @@ mod tests {
                         reason:
                             RemoteControlTargetPairingBeginRejection::RequestUnsupportedForVersion {
                                 version: crate::remote_control::RemoteControlPairingProtocolVersion::V2,
-                                request: RemoteControlRequestKind::Describe,
+                                request: RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
                             },
                     },
                     "Pairing(BeginRequestUnsupportedForVersion)",
@@ -1440,6 +1487,7 @@ mod tests {
         engine
             .links
             .track_responding(RespondingLink {
+                attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
                 link_id,
                 key: LinkKey::derive(&link_id, &shared),
                 requested_at: InstantMillis(1_500),

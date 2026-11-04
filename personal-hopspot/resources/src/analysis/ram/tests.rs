@@ -32,35 +32,116 @@ fn fixed_arm_ram_charges_the_declared_stack_after_static_sections() {
     );
 }
 
-#[test]
-fn riscv_aliases_share_one_store_and_do_not_recharge_the_static_heap() {
+fn c6_sections(stack_bytes: u64) -> [AllocatedSection; 4] {
     let origin = 0x4080_0000;
-    let sections = [
+    [
         section(".trap", SectionKind::Code, origin, 0x100),
         section(".bss", SectionKind::ZeroFill, origin + 0x100, 100_000),
         section(
             ".stack",
             SectionKind::ZeroFill,
             origin + 0x100 + 100_000,
-            20_000,
+            stack_bytes,
         ),
-    ];
+        section(
+            ".dram2_uninit",
+            SectionKind::ZeroFill,
+            0x4086_E610,
+            64 * 1024,
+        ),
+    ]
+}
+
+#[test]
+fn riscv_aliases_and_reclaimed_heap_are_charged_once_with_a_stack_minimum() {
+    let sections = c6_sections(60_000);
     let usage = analyze(&XIAO_ESP32_C6, &sections).expect("valid RISC-V evidence");
-    assert_eq!(usage.len(), 1);
+    assert_eq!(usage.len(), 2);
+    let internal = backing(&usage, "internal-sram");
     assert_eq!(
-        usage[0].address_spaces,
+        internal.address_spaces,
         [
             AddressSpaceId("instruction-ram"),
             AddressSpaceId("data-ram")
         ]
     );
-    assert_eq!(usage[0].additional_reservation_bytes, 0);
-    assert_eq!(usage[0].included_reservation_bytes, 88 * 1024);
+    assert_eq!(internal.additional_reservation_bytes, 52 * 1024 + 16);
+    assert_eq!(internal.included_reservation_bytes, 24 * 1024);
     assert_eq!(
-        usage[0].capacity,
+        internal.capacity,
         RamCapacity::Known {
-            bytes: 120_256,
-            headroom_bytes: 20_000,
+            bytes: 160_256,
+            headroom_bytes: 60_000 - (52 * 1024 + 16)
+        }
+    );
+    let reclaimed = backing(&usage, "reclaimed-sram");
+    assert_eq!(reclaimed.static_section_bytes, 64 * 1024);
+    assert_eq!(reclaimed.included_reservation_bytes, 64 * 1024);
+    assert_eq!(reclaimed.additional_reservation_bytes, 0);
+    assert_eq!(
+        reclaimed.capacity,
+        RamCapacity::Known {
+            bytes: 64 * 1024,
+            headroom_bytes: 0
+        }
+    );
+    assert_eq!(
+        internal.included_reservation_bytes + reclaimed.included_reservation_bytes,
+        88 * 1024
+    );
+}
+
+#[test]
+fn riscv_link_success_with_insufficient_cpu_stack_is_rejected() {
+    assert!(matches!(
+        analyze(&XIAO_ESP32_C6, &c6_sections(52 * 1024 + 15)),
+        Err(RamAnalysisError::RamOverflow { .. })
+    ));
+    assert!(matches!(
+        analyze(&XIAO_ESP32_C6, &c6_sections(48 * 1024)),
+        Err(RamAnalysisError::RamOverflow { .. })
+    ));
+    assert!(analyze(&XIAO_ESP32_C6, &c6_sections(52 * 1024 + 16)).is_ok());
+}
+
+#[test]
+fn riscv_reclaimed_heap_requires_exact_nonoverlapping_bootloader_bank() {
+    let mut sections = c6_sections(60_000);
+    sections[3] = section(
+        ".dram2_uninit",
+        SectionKind::ZeroFill,
+        0x4086_E610 - 4,
+        64 * 1024,
+    );
+    assert!(matches!(
+        analyze(&XIAO_ESP32_C6, &sections),
+        Err(RamAnalysisError::InvalidArena { .. })
+    ));
+    assert!(matches!(
+        analyze(&XIAO_ESP32_C6, &c6_sections(60_000)[..3]),
+        Err(RamAnalysisError::IncludedReservationExceedsStatic {
+            backing_store: BackingStoreId("reclaimed-sram"),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn unused_riscv_reclaimed_ram_needs_no_synthetic_section() {
+    let profile = MemoryProfile {
+        runtime_reservations: &[],
+        ..XIAO_ESP32_C6
+    };
+    let usage = analyze(&profile, &c6_sections(60_000)[..3])
+        .expect("valid C6 evidence without reclaimed-RAM allocations");
+    let reclaimed = backing(&usage, "reclaimed-sram");
+    assert_eq!(reclaimed.static_section_bytes, 0);
+    assert_eq!(reclaimed.included_reservation_bytes, 0);
+    assert_eq!(
+        reclaimed.capacity,
+        RamCapacity::Known {
+            bytes: 64 * 1024,
+            headroom_bytes: 64 * 1024
         }
     );
 }

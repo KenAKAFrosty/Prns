@@ -13,7 +13,7 @@ use crate::routing::timing::{
     path_discovery_timeout_ms, path_request_egress_eligible, slowest_eligible_bitrate,
     PathRequestAudience,
 };
-use crate::routing::{NextHop, RouteResponsiveness};
+use crate::routing::NextHop;
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType, TransportId, TRUNCATED_HASH_BYTE_LEN};
 
@@ -108,8 +108,59 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
+        _effects: &mut super::outcome::IngestEffects<'_>,
     ) -> IngestPacketOutcome<'p> {
         let outcome = self.classify_path_request(data, source_interface, now, interfaces);
+        #[cfg(feature = "path-diagnostics")]
+        {
+            use crate::engine::{PathDiscoveryEvent, PathDiscoveryPhase, PathRequestDisposition};
+            let request = PathRequest::parse(data.payload).ok();
+            let disposition = match &outcome {
+                IngestPacketOutcome::AnswerPathRequest { .. } => {
+                    PathRequestDisposition::LocalResponse
+                }
+                IngestPacketOutcome::ScheduledPathResponse { .. } => {
+                    PathRequestDisposition::CachedResponse
+                }
+                IngestPacketOutcome::PathResponseScheduleRejected { .. } => {
+                    PathRequestDisposition::ResponseQueueFull
+                }
+                IngestPacketOutcome::ForwardRecursivePathRequest { .. } => {
+                    PathRequestDisposition::RecursiveForward
+                }
+                IngestPacketOutcome::ForwardBoundaryPathRequest { .. } => {
+                    PathRequestDisposition::BoundaryForward
+                }
+                IngestPacketOutcome::ForwardLocalClientPathRequest { .. } => {
+                    PathRequestDisposition::LocalClientForward
+                }
+                IngestPacketOutcome::RelayPathRequestToLocalClients { .. } => {
+                    PathRequestDisposition::OfferedToLocalClients
+                }
+                IngestPacketOutcome::Ignored(reason) => PathRequestDisposition::Ignored(*reason),
+                _ => unreachable!("path-request classifier returns only request dispositions"),
+            };
+            let descriptor = interfaces.descriptor_for(source_interface);
+            let mut event = PathDiscoveryEvent::new(
+                Some(now),
+                request.as_ref().map(|request| request.destination),
+                Some(source_interface),
+                PathDiscoveryPhase::RequestIngress {
+                    disposition,
+                    mode: descriptor.map(|value| value.mode),
+                    recursive: self.recursive_path_requests_enabled(descriptor),
+                    cached_interface: request
+                        .as_ref()
+                        .and_then(|request| {
+                            self.routing_table
+                                .forwarding_route_for(&request.destination)
+                        })
+                        .map(|route| route.receiving_interface),
+                },
+            );
+            event.request_tag = request.map(|request| request.id);
+            _effects.path_discovery = Some(event);
+        }
         #[cfg(feature = "runtime-metrics")]
         self.record_path_request_ingress(&outcome);
         outcome
@@ -175,23 +226,6 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented);
         }
 
-        if self.routing_table.responsiveness_of(&request.destination)
-            == Some(RouteResponsiveness::Unresponsive)
-        {
-            return match self.forward_unavailable_path_request(
-                &request,
-                source_interface,
-                from_local_client,
-                now,
-                interfaces,
-            ) {
-                IngestPacketOutcome::Ignored(IgnoreReason::NotForUs) => {
-                    IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive)
-                }
-                outcome => outcome,
-            };
-        }
-
         if interfaces
             .descriptor_for(route.receiving_interface)
             .is_none()
@@ -205,6 +239,10 @@ impl<S: StorageLayout> EngineState<S> {
             );
         }
 
+        // RNS 1.5.4 Transport.path_request answers from retained announce evidence even
+        // after a failed Link marks its path unresponsive. Withholding that answer can
+        // strand Full-mode leaves, whose unknown-path requests are not recursive.
+        // Returning the signed cache does not mark this path responsive or renew it.
         let due_at = if from_local_client {
             now
         } else {
@@ -233,6 +271,24 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
+    fn recursive_path_requests_enabled(
+        &self,
+        descriptor: Option<&crate::interfaces::InterfaceDescriptor>,
+    ) -> bool {
+        self.network_transport_enabled()
+            && descriptor.is_some_and(|descriptor| {
+                match descriptor.common.forwarding.recursive_path_requests {
+                    RecursivePathRequestPolicy::InheritNode => {
+                        self.protocol.recursive_path_request_default
+                            == RecursivePathRequestDefault::Enabled
+                            || descriptor.mode.recursively_forwards_unknown_paths()
+                    }
+                    RecursivePathRequestPolicy::Enabled => true,
+                    RecursivePathRequestPolicy::Disabled => false,
+                }
+            })
+    }
+
     fn forward_unavailable_path_request<'p>(
         &mut self,
         request: &PathRequest,
@@ -248,16 +304,7 @@ impl<S: StorageLayout> EngineState<S> {
             });
         let explicitly_forwards_recursively =
             recursive_policy == RecursivePathRequestPolicy::Enabled;
-        let forwards_recursively = self.network_transport_enabled()
-            && source_descriptor.is_some_and(|descriptor| match recursive_policy {
-                RecursivePathRequestPolicy::InheritNode => {
-                    self.protocol.recursive_path_request_default
-                        == RecursivePathRequestDefault::Enabled
-                        || descriptor.mode.recursively_forwards_unknown_paths()
-                }
-                RecursivePathRequestPolicy::Enabled => true,
-                RecursivePathRequestPolicy::Disabled => false,
-            });
+        let forwards_recursively = self.recursive_path_requests_enabled(source_descriptor);
         let forwards_across_boundary = self.network_transport_enabled()
             && !explicitly_forwards_recursively
             && recursive_policy != RecursivePathRequestPolicy::Disabled
@@ -340,6 +387,8 @@ impl<S: StorageLayout> EngineState<S> {
 
 #[cfg(test)]
 mod tests {
+    mod recovery;
+
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::{Directive, EngineReaction, IngestIo, Journaled};
@@ -347,6 +396,7 @@ mod tests {
     use crate::routing::ingress::testkit::iface;
     use crate::routing::ingress::AnnounceIngest;
     use crate::routing::path_requests::{write_path_request_wire_packet, PATH_REQUEST_DESTINATION};
+    use crate::routing::RouteResponsiveness;
     use crate::wire::{
         ContextFlag, IfacFlag, PacketType, PropagationType, WireContext, WirePacketHeader,
         BROADCAST_MTU, HEADER_MIN_LEN,
@@ -1352,7 +1402,7 @@ mod tests {
     }
 
     #[test]
-    fn unresponsive_routes_rediscover_only_with_configured_authority_and_existing_limits() {
+    fn retired_route_interfaces_rediscover_only_with_configured_authority_and_existing_limits() {
         enum Discovery {
             Forward,
             Withhold,
@@ -1427,10 +1477,7 @@ mod tests {
                     IngestPacketOutcome::Ignored(IgnoreReason::Superseded)
                 );
             } else {
-                assert_eq!(
-                    result,
-                    IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive)
-                );
+                assert_eq!(result, IngestPacketOutcome::Ignored(IgnoreReason::NotForUs));
             }
             assert_eq!(
                 relay.routing_table.responsiveness_of(&cached),
@@ -1462,7 +1509,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unresponsive_route_is_withheld_then_vouched_for_again_once_it_recovers() {
+    fn a_retained_cached_route_is_answered_before_and_after_responsiveness_recovers() {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let transport_id = [0x7a; 16];
 
@@ -1470,11 +1517,11 @@ mod tests {
             .routing_table
             .mark_responsiveness(&cached, RouteResponsiveness::Unresponsive);
 
-        let mut withheld = std::vec::Vec::new();
-        withheld.extend_from_slice(cached.as_bytes());
-        withheld.extend_from_slice(&transport_id);
-        withheld.extend_from_slice(&[0x11; 16]);
-        let mut wire = path_request_wire_with(&withheld);
+        let mut request = std::vec::Vec::new();
+        request.extend_from_slice(cached.as_bytes());
+        request.extend_from_slice(&transport_id);
+        request.extend_from_slice(&[0x11; 16]);
+        let mut wire = path_request_wire_with(&request);
         assert_eq!(
             relay.ingest_for_test(
                 InboundPacket {
@@ -1484,8 +1531,15 @@ mod tests {
                 },
                 AttachedInterfaces::new(&connected_route_interfaces()),
             ),
-            IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive),
-            "an unresponsive route is withheld so a node with a live path answers instead",
+            IngestPacketOutcome::ScheduledPathResponse {
+                destination: cached
+            },
+            "RNS answers retained cache evidence even after a failed Link",
+        );
+        assert_eq!(
+            relay.routing_table.responsiveness_of(&cached),
+            Some(RouteResponsiveness::Unresponsive),
+            "answering cached evidence does not prove that the path is responsive",
         );
 
         relay
@@ -1509,7 +1563,7 @@ mod tests {
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
             },
-            "once marked responsive again, we vouch for the route once more",
+            "a later successful exchange does not change cache-answer eligibility",
         );
     }
 
@@ -1875,7 +1929,9 @@ mod tests {
                 },
                 AttachedInterfaces::new(&[routable_descriptor(app), routable_descriptor(uplink)]),
             ),
-            IngestPacketOutcome::ScheduledPathResponse { destination: cached },
+            IngestPacketOutcome::ScheduledPathResponse {
+                destination: cached
+            },
             "a non-transport shared instance answers its local client from cache, like RNS is_from_local_client",
         );
     }

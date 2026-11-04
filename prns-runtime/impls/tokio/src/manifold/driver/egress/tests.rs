@@ -1184,3 +1184,26 @@ fn online_only_directives_skip_disconnected_interfaces() {
     assert_eq!(rx.try_peek().unwrap().frame(), b"connected");
     assert_eq!(sent, 1);
 }
+
+#[test]
+fn retirement_fence_includes_deferred_frames_without_waiting_for_later_traffic() {
+    let id = InterfaceId::new([0xF1; 8]);
+    let (producer, mut consumer) = tokio_grant_lane(128, 1);
+    let mut egress = Egress::new(vec![(id, producer)]);
+    assert_eq!(egress.enqueue(id, b"first"), EgressEnqueueOutcome::Enqueued);
+    assert_eq!(
+        egress.enqueue(id, b"deferred"),
+        EgressEnqueueOutcome::Deferred
+    );
+    let fence = egress.drain_fences();
+    assert!(!fence.iter().all(|fence| fence.is_complete()));
+    assert_eq!(consumer.try_peek().unwrap().frame(), b"first");
+    consumer.release();
+    assert_eq!(egress.flush_pending(10), 1);
+    assert_eq!(egress.enqueue(id, b"later"), EgressEnqueueOutcome::Deferred);
+    assert!(!fence.iter().all(|fence| fence.is_complete()));
+    assert_eq!(consumer.try_peek().unwrap().frame(), b"deferred");
+    consumer.release();
+    assert!(fence.iter().all(|fence| fence.is_complete()));
+    assert!(egress.has_pending());
+}

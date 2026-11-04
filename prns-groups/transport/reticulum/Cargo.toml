@@ -1,0 +1,45 @@
+[package]
+name = "prns-groups-reticulum"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Bounded group inventory and exact-envelope synchronization over borrowed Reticulum Links"
+
+[features]
+default = ["network"]
+contact-card = ["dep:prns-contact-card"]
+network = ["dep:prns-host-runtime", "dep:personal-rns", "dep:tokio"]
+
+[[test]]
+name = "enrollment"
+required-features = ["network"]
+
+[[test]]
+name = "independent_endpoints"
+required-features = ["network"]
+
+[dependencies]
+prns-contact-card = { path = "../../../prns-contact-card", optional = true }
+prns-groups-core = { path = "../../core" }
+prns-groups-service = { path = "../../service" }
+prns-groups-store = { path = "../../store" }
+prns-core = { path = "../../../prns-core", default-features = false }
+prns-host = { path = "../../../prns-host/core" }
+prns-host-runtime = { path = "../../../prns-host/impls/runtime", optional = true }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host"], optional = true }
+tokio = { version = "1", default-features = false, features = ["sync", "time"], optional = true }
+
+[dev-dependencies]
+prns-contact-card = { path = "../../../prns-contact-card", features = ["prns-identity"] }
+prns-groups-mls = { path = "../../security/mls-rs" }
+prns-groups-store-redb = { path = "../../store/redb" }
+redb = "=4.2.0"
+tempfile = "3"
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time", "test-util"] }
+
+[lints]
+workspace = true

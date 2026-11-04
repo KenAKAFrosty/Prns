@@ -57,6 +57,13 @@ pub struct RemoteControlPairingEndpoint {
 }
 
 impl RemoteControlPairingEndpoint {
+    /// Restore an observed pairing destination. This grants no authentication;
+    /// the pairing exchange still validates its invitation and signed transcript.
+    #[must_use]
+    pub const fn from_destination_hash(destination_hash: DestinationHash) -> Self {
+        Self { destination_hash }
+    }
+
     #[must_use]
     pub const fn destination_hash(&self) -> DestinationHash {
         self.destination_hash

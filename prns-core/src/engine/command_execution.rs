@@ -278,12 +278,13 @@ impl<S: StorageLayout> EngineState<S> {
             PrnsCommand::EstablishLink(establish) => {
                 let mut entropy_bytes = [0u8; EstablishLinkEntropy::LEN];
                 fill_random(&mut entropy_bytes);
-                return match self.prepare_establish_link(
+                return match self.prepare_establish_link_with_interfaces(
                     id,
                     establish,
                     now,
                     timing.first_hop_timeout_floor_ms,
                     EstablishLinkEntropy::new(entropy_bytes),
+                    interfaces,
                 ) {
                     Ok(owed) => {
                         sink(EngineReaction::Directive(Directive::Fulfill(
@@ -373,6 +374,16 @@ impl<S: StorageLayout> EngineState<S> {
                         settle(sink, command_id, Settlement::AnnounceNow(Ok(())));
                     }
                     AnnounceSignPurpose::PathResponse { target } => {
+                        #[cfg(feature = "path-diagnostics")]
+                        sink(EngineReaction::Journaled(Journaled::PathDiscovery(
+                            crate::engine::PathDiscoveryEvent::new(
+                                None,
+                                Some(dispatch.destination),
+                                Some(target),
+                                crate::engine::PathDiscoveryPhase::ResponseDispatched,
+                            ),
+                        )));
+
                         sink(EngineReaction::Directive(Directive::Send {
                             target,
                             bytes: &frame[..dispatch.wire_bytes],
@@ -831,6 +842,18 @@ impl<S: StorageLayout> EngineState<S> {
                     &mut buf,
                 ) {
                     PathRequestWriteOutcome::Written { wire_bytes, culled } => {
+                        #[cfg(feature = "path-diagnostics")]
+                        {
+                            let mut event = crate::engine::PathDiscoveryEvent::new(
+                                Some(now),
+                                Some(request.destination),
+                                None,
+                                crate::engine::PathDiscoveryPhase::LocalRequest { command: id },
+                            );
+                            event.request_tag = Some(*request.id.as_bytes());
+                            sink(EngineReaction::Journaled(Journaled::PathDiscovery(event)));
+                        }
+
                         fan_frame(interfaces, FanTarget::All, &buf[..wire_bytes], sink);
                         if let Some(culled) = culled {
                             settle(
@@ -1246,6 +1269,19 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let id = completed.owed.command_id;
+        if !interfaces.availability_allows(completed.owed.fire_on)
+            || interfaces.generation_for(completed.owed.fire_on)
+                != completed.owed.interface_generation
+        {
+            settle(
+                sink,
+                id,
+                Settlement::SendSinglePacket(Err(SendSinglePacketFailure::WriteFailed(
+                    SendSinglePacketWriteError::RouteVanished,
+                ))),
+            );
+            return WakeSchedules::UNCHANGED;
+        }
         let mut culled_request = false;
         match self.finish_encrypt(
             completed.owed,

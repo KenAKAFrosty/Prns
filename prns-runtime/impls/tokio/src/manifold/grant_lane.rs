@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
 
 use prns_core::interfaces::{FrameSink, FrameSinkError, PacketPhyStats};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
@@ -31,6 +31,8 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
             producer_parked: producer_parked.clone(),
             consumer_parked: consumer_parked.clone(),
             discard_requested: discard_requested.clone(),
+            completion_epoch: Arc::new(AtomicUsize::new(0)),
+            completion_history: Vec::new(),
         },
         TokioGrantConsumer {
             expedited: expedited_slots,
@@ -48,11 +50,31 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     )
 }
 
+/// A finite set of frames accepted before a lifecycle barrier. Completion means
+/// the interface consumer released its buffers, not physical delivery or recall.
+#[derive(Clone)]
+pub struct FrameDrainFence(Vec<Arc<AtomicUsize>>);
+impl FrameDrainFence {
+    pub fn is_complete(&self) -> bool {
+        self.0
+            .iter()
+            .all(|epoch| epoch.load(Ordering::Acquire) == 0)
+    }
+}
+
+pub(crate) struct FrameCompletion(Arc<AtomicUsize>);
+impl Drop for FrameCompletion {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Release);
+    }
+}
+
 pub struct HeapFrameSlot {
     pub len: usize,
     pub cap: usize,
     pub bytes: Vec<u8>,
     pub packet_phy: PacketPhyStats,
+    pub(crate) completion: Option<FrameCompletion>,
 }
 
 impl HeapFrameSlot {
@@ -62,6 +84,7 @@ impl HeapFrameSlot {
             cap,
             bytes: Vec::new(),
             packet_phy: PacketPhyStats::default(),
+            completion: None,
         }
     }
 
@@ -131,9 +154,34 @@ pub struct TokioGrantProducer {
     producer_parked: Arc<WakeArm>,
     consumer_parked: Arc<WakeArm>,
     discard_requested: Arc<AtomicBool>,
+    completion_epoch: Arc<AtomicUsize>,
+    completion_history: Vec<Weak<AtomicUsize>>,
 }
 
 impl TokioGrantProducer {
+    pub(crate) fn reserve_completion(&self) -> FrameCompletion {
+        self.completion_epoch.fetch_add(1, Ordering::Relaxed);
+        FrameCompletion(self.completion_epoch.clone())
+    }
+
+    pub(crate) fn drain_fence(&mut self) -> FrameDrainFence {
+        let prior = std::mem::replace(&mut self.completion_epoch, Arc::new(AtomicUsize::new(0)));
+        self.completion_history.retain(|epoch| {
+            epoch
+                .upgrade()
+                .is_some_and(|value| value.load(Ordering::Acquire) != 0)
+        });
+        if prior.load(Ordering::Acquire) != 0 {
+            self.completion_history.push(Arc::downgrade(&prior));
+        }
+        FrameDrainFence(
+            self.completion_history
+                .iter()
+                .filter_map(Weak::upgrade)
+                .collect(),
+        )
+    }
+
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -189,7 +237,10 @@ impl TokioGrantProducer {
     }
 
     fn commit_to(&mut self, queue: GrantQueue) {
-        if let Some(slot) = self.granted.take() {
+        if let Some(mut slot) = self.granted.take() {
+            if slot.completion.is_none() {
+                slot.completion = Some(self.reserve_completion());
+            }
             let committed = match queue {
                 GrantQueue::Expedited => self.expedited.push(slot).is_ok(),
                 GrantQueue::Regular => self.regular.push(slot).is_ok(),
@@ -305,10 +356,12 @@ impl TokioGrantConsumer {
             return;
         }
 
-        if let Some(slot) = self.peeked.take() {
+        if let Some(mut slot) = self.peeked.take() {
+            slot.completion = None;
             let _ = self.recycled.push(slot);
         }
-        while let Some(slot) = self.pop_next() {
+        while let Some(mut slot) = self.pop_next() {
+            slot.completion = None;
             let _ = self.recycled.push(slot);
         }
         self.expedited_streak = 0;
@@ -332,7 +385,8 @@ impl TokioGrantConsumer {
         self.peeked.take()
     }
 
-    pub(crate) fn return_slot(&mut self, slot: HeapFrameSlot) {
+    pub(crate) fn return_slot(&mut self, mut slot: HeapFrameSlot) {
+        slot.completion = None;
         match self.recycled.push(slot) {
             Ok(()) => {
                 if self.producer_parked.take_after_publish() {
@@ -352,6 +406,53 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn drain_fence_keeps_pre_barrier_work_across_later_fences_and_traffic() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 3);
+        producer.try_grant().unwrap().fill(b"before");
+        producer.commit();
+        let first = producer.drain_fence();
+        let second = producer.drain_fence();
+        producer.try_grant().unwrap().fill(b"after");
+        producer.commit_expedited();
+        assert!(!first.is_complete());
+        assert!(!second.is_complete());
+        assert_eq!(consumer.try_peek().unwrap().frame(), b"after");
+        consumer.release();
+        assert!(
+            !second.is_complete(),
+            "new traffic cannot satisfy an old fence"
+        );
+        assert_eq!(consumer.try_peek().unwrap().frame(), b"before");
+        consumer.release();
+        producer.try_grant().unwrap().fill(b"still active");
+        producer.commit();
+        assert!(first.is_complete());
+        assert!(
+            second.is_complete(),
+            "ongoing unrelated traffic cannot extend a fence"
+        );
+    }
+
+    #[test]
+    fn lane_discard_and_consumer_drop_settle_frame_fences() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 3);
+        producer.try_grant().unwrap().fill(b"discard");
+        producer.commit();
+        let fence = producer.drain_fence();
+        producer.request_consumer_discard();
+        assert!(!fence.is_complete());
+        assert!(consumer.try_peek().is_none());
+        assert!(fence.is_complete());
+        producer.try_grant().unwrap().fill(b"drop");
+        producer.commit();
+        let fence = producer.drain_fence();
+        drop(consumer);
+        // rtrb retains its ring until both owners drop.
+        drop(producer);
+        assert!(fence.is_complete());
+    }
 
     #[test]
     fn depth_is_exact_and_frames_remain_fifo() {

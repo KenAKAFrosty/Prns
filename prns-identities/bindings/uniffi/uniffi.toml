@@ -1,0 +1,5 @@
+[bindings.swift]
+module_name = "PrnsIdentityKeys"
+
+[bindings.kotlin]
+package_name = "rs.reticulum.prns.identities.keys"

@@ -5,6 +5,147 @@ use std::time::Duration;
 use prns_core::interfaces::wifi_auto::DiscoverySnapshot;
 use tokio::sync::watch;
 
+/// An acknowledged owner for a platform discovery pump. Dropping an AutoWifi
+/// supervisor closes its channel; explicit retirement also joins this task so
+/// native browsing/advertising resources are gone before a replacement starts.
+#[derive(Clone)]
+pub struct ServiceDiscoveryTask {
+    inner: Arc<DiscoveryTaskInner>,
+}
+
+struct DiscoveryTaskInner {
+    stop: watch::Sender<bool>,
+    state: tokio::sync::Mutex<DiscoveryTaskState>,
+    diagnostic: DiscoveryDiagnostic,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct DiscoveryDiagnostic(Arc<Mutex<DiscoveryDiagnosticState>>);
+
+#[derive(Default)]
+struct DiscoveryDiagnosticState {
+    detail: Option<String>,
+    active: bool,
+}
+
+impl DiscoveryDiagnostic {
+    #[cfg(any(
+        test,
+        all(
+            feature = "wifi-auto-apple",
+            any(target_os = "macos", target_os = "ios")
+        )
+    ))]
+    pub(crate) fn set(&self, detail: Option<String>) {
+        if let Ok(mut current) = self.0.lock() {
+            current.detail = detail;
+        }
+    }
+
+    fn detail(&self) -> Option<String> {
+        self.0.lock().ok().and_then(|state| state.detail.clone())
+    }
+
+    #[cfg(any(
+        test,
+        all(
+            feature = "wifi-auto-apple",
+            any(target_os = "macos", target_os = "ios")
+        )
+    ))]
+    pub(crate) fn set_active(&self, active: bool) {
+        if let Ok(mut current) = self.0.lock() {
+            current.active = active;
+        }
+    }
+}
+
+struct DiscoveryTaskState {
+    task: Option<tokio::task::JoinHandle<()>>,
+    result: Option<Result<(), String>>,
+}
+
+impl ServiceDiscoveryTask {
+    #[cfg(test)]
+    pub(crate) fn spawn(pump: impl std::future::Future<Output = ()> + Send + 'static) -> Self {
+        Self::spawn_reporting(|_| pump)
+    }
+
+    #[cfg(any(
+        test,
+        all(
+            feature = "wifi-auto-apple",
+            any(target_os = "macos", target_os = "ios")
+        )
+    ))]
+    pub(crate) fn spawn_reporting<F>(pump: impl FnOnce(DiscoveryDiagnostic) -> F) -> Self
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let (stop, mut stopping) = watch::channel(false);
+        let diagnostic = DiscoveryDiagnostic::default();
+        let pump = pump(diagnostic.clone());
+        let task = tokio::spawn(async move {
+            tokio::select! {
+                biased;
+                _ = stopping.wait_for(|requested| *requested) => {},
+                _ = pump => {},
+            }
+        });
+        Self {
+            inner: Arc::new(DiscoveryTaskInner {
+                stop,
+                diagnostic,
+                state: tokio::sync::Mutex::new(DiscoveryTaskState {
+                    task: Some(task),
+                    result: None,
+                }),
+            }),
+        }
+    }
+
+    /// The latest observed provider failure, cleared when the backend recovers.
+    /// This is a backend diagnostic, not an inferred permission state.
+    pub fn detail(&self) -> Option<String> {
+        self.inner.diagnostic.detail()
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.inner
+            .diagnostic
+            .0
+            .lock()
+            .is_ok_and(|state| state.active)
+    }
+
+    /// Cancellation of a caller's wait does not lose the task or its ownership.
+    pub async fn stop(&self) -> Result<(), String> {
+        self.inner.stop.send_replace(true);
+        let mut state = self.inner.state.lock().await;
+        if let Some(result) = &state.result {
+            return result.clone();
+        }
+        let result = match state.task.as_mut() {
+            Some(task) => task
+                .await
+                .map_err(|error| format!("platform discovery shutdown failed: {error}")),
+            None => Ok(()),
+        };
+        state.task = None;
+        state.result = Some(result.clone());
+        if let Ok(mut diagnostic) = self.inner.diagnostic.0.lock() {
+            diagnostic.active = false;
+        }
+        result
+    }
+}
+
+impl Drop for DiscoveryTaskInner {
+    fn drop(&mut self) {
+        self.stop.send_replace(true);
+    }
+}
+
 /// Whether (or how) this process may consume platform service-discovery resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoveryParticipation {
@@ -105,6 +246,7 @@ pub struct ServiceDiscovery {
     snapshot_receiver: watch::Receiver<DiscoverySnapshot>,
     participation_sender: watch::Sender<DiscoveryParticipation>,
     work_signal: Arc<WorkSignal>,
+    network_changes: watch::Sender<u64>,
 }
 
 impl ServiceDiscovery {
@@ -116,17 +258,20 @@ impl ServiceDiscovery {
         let (participation_sender, participation_receiver) =
             watch::channel(DiscoveryParticipation::Inactive);
         let work_signal = Arc::new(WorkSignal::new());
+        let (network_changes, network_change_receiver) = watch::channel(0u64);
         (
             Self {
                 snapshot_receiver,
                 participation_sender,
                 work_signal: Arc::clone(&work_signal),
+                network_changes,
             },
             ServiceDiscoveryPublisher {
                 snapshot_sender,
                 participation_receiver,
                 work_signal,
                 advertisement_capacity,
+                network_changes: network_change_receiver,
             },
         )
     }
@@ -136,6 +281,12 @@ impl ServiceDiscovery {
         if previous_participation != new_participation {
             self.work_signal.wake();
         }
+    }
+
+    pub(crate) fn network_changed(&self) {
+        self.network_changes
+            .send_modify(|revision| *revision = revision.saturating_add(1));
+        self.work_signal.wake();
     }
 
     pub(super) async fn next_snapshot(
@@ -172,9 +323,31 @@ pub struct ServiceDiscoveryPublisher {
     participation_receiver: watch::Receiver<DiscoveryParticipation>,
     work_signal: Arc<WorkSignal>,
     advertisement_capacity: NonZeroU8,
+    network_changes: watch::Receiver<u64>,
 }
 
 impl ServiceDiscoveryPublisher {
+    #[cfg(any(
+        test,
+        all(
+            feature = "wifi-auto-apple",
+            any(target_os = "macos", target_os = "ios")
+        )
+    ))]
+    /// A replacement Apple session starts from the current network state. Only
+    /// changes after this boundary should cancel its newly constructed backend.
+    pub fn subscribe_network_changes(&self) -> watch::Receiver<u64> {
+        let mut changes = self.network_changes.clone();
+        changes.borrow_and_update();
+        changes
+    }
+    /// Coalesces platform network changes so a provider can republish its current addresses.
+    pub async fn wait_for_network_change(&mut self) -> Result<(), DiscoveryLifecycleError> {
+        self.network_changes
+            .changed()
+            .await
+            .map_err(|_| DiscoveryLifecycleError::Closed)
+    }
     /// Returns the platform budget selected when the channel was created.
     #[must_use]
     pub const fn capacity(&self) -> NonZeroU8 {
@@ -269,6 +442,96 @@ mod tests {
 
     const TEST_CAPACITY: NonZeroU8 = NonZeroU8::new(4).unwrap();
     const OTHER_CAPACITY: NonZeroU8 = NonZeroU8::new(5).unwrap();
+
+    #[tokio::test]
+    async fn provider_diagnostic_reports_observation_and_clears_on_recovery() {
+        let (ready, observed) = tokio::sync::oneshot::channel();
+        let (recover, recovered) = tokio::sync::oneshot::channel();
+        let (active, activated) = tokio::sync::oneshot::channel();
+        let owner = ServiceDiscoveryTask::spawn_reporting(move |diagnostic| async move {
+            diagnostic.set(Some("native backend closed".into()));
+            let _ = ready.send(());
+            let _ = recovered.await;
+            diagnostic.set(None);
+            diagnostic.set_active(true);
+            let _ = active.send(());
+            std::future::pending::<()>().await;
+        });
+        observed.await.expect("provider observed a failure");
+        assert_eq!(owner.detail().as_deref(), Some("native backend closed"));
+        assert!(!owner.is_active());
+        recover.send(()).expect("provider remains active");
+        activated.await.expect("backend activated after recovery");
+        assert_eq!(owner.detail(), None);
+        assert!(owner.is_active());
+        owner.stop().await.expect("joined provider");
+        assert!(!owner.is_active());
+    }
+
+    #[tokio::test]
+    async fn managed_provider_retirement_joins_resources_and_survives_caller_loss() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Resource(Arc<AtomicBool>);
+        impl Drop for Resource {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let released = Arc::new(AtomicBool::new(false));
+        let resource = Resource(Arc::clone(&released));
+        let owner = ServiceDiscoveryTask::spawn(async move {
+            let _resource = resource;
+            std::future::pending::<()>().await;
+        });
+        // Losing a waiter cannot lose the join handle or manufacture completion.
+        let _ = tokio::time::timeout(Duration::ZERO, owner.stop()).await;
+        assert_eq!(owner.stop().await, Ok(()));
+        assert!(released.load(Ordering::Acquire));
+        assert_eq!(owner.stop().await, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn network_changes_are_coalesced_for_the_existing_platform_owner() {
+        let (discovery, publisher) = ServiceDiscovery::channel(TEST_CAPACITY);
+        let mut changes = publisher.subscribe_network_changes();
+        discovery.network_changed();
+        discovery.network_changed();
+        changes.changed().await.expect("platform network change");
+        assert_eq!(*changes.borrow_and_update(), 2);
+        assert!(!changes.has_changed().expect("live owner"));
+    }
+
+    #[tokio::test]
+    async fn replacement_apple_subscription_ignores_history_and_observes_new_network_changes() {
+        let (discovery, publisher) = ServiceDiscovery::channel(TEST_CAPACITY);
+        let old_session = publisher.subscribe_network_changes();
+        discovery.network_changed();
+        discovery.network_changed();
+        assert!(old_session.has_changed().expect("live owner"));
+
+        // The publisher's original watch receiver has never consumed these
+        // revisions. A plain clone would replay them on every replacement,
+        // continuously cancelling new Apple backends before they can settle.
+        let mut replacement = publisher.subscribe_network_changes();
+        assert_eq!(*replacement.borrow(), 2);
+        assert!(!replacement
+            .has_changed()
+            .expect("history already represented"));
+        discovery.network_changed();
+        replacement.changed().await.expect("genuinely new change");
+        assert_eq!(*replacement.borrow_and_update(), 3);
+
+        let mut next_replacement = publisher.subscribe_network_changes();
+        assert!(!next_replacement
+            .has_changed()
+            .expect("replacement begins current"));
+        discovery.network_changed();
+        next_replacement
+            .changed()
+            .await
+            .expect("later network return");
+        assert_eq!(*next_replacement.borrow_and_update(), 4);
+    }
 
     fn snapshot_for_peer(service_name: &str) -> DiscoverySnapshot {
         let mut service_advertisement = ServiceAdvertisement::new(

@@ -67,6 +67,7 @@ const MAXIMUM_RECORD_PAYLOAD_LEN: usize =
     };
 const RECORD_SCRATCH_LEN: usize = (MAXIMUM_RECORD_PAYLOAD_LEN + 3) & !3;
 const HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS: u64 = 24 * 60 * 60 * 1_000;
+const HOPSPOT_ROUTE_REPLAY_COMPACTION_THRESHOLD: u32 = 256;
 
 pub(crate) type RemoteControlAuthorizationSnapshot =
     HeaplessVec<u8, REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY>;
@@ -106,6 +107,7 @@ impl DiscoveryGroupConfigurationChange {
 pub struct EmbeddedCompactionPolicy {
     minimum_interval_millis: u64,
     critical_reserve_bytes: usize,
+    route_replay_compaction_threshold: u32,
 }
 
 impl EmbeddedCompactionPolicy {
@@ -114,7 +116,17 @@ impl EmbeddedCompactionPolicy {
         Self {
             minimum_interval_millis,
             critical_reserve_bytes,
+            route_replay_compaction_threshold: 0,
         }
+    }
+
+    /// Compact completed route history once this many upserts would be replayed and a
+    /// snapshot would at least halve that work. Zero disables this optional maintenance.
+    /// The persisted minimum interval still applies, including after a reboot or failed attempt.
+    #[must_use]
+    pub const fn with_route_replay_compaction_threshold(mut self, minimum_records: u32) -> Self {
+        self.route_replay_compaction_threshold = minimum_records;
+        self
     }
 
     #[must_use]
@@ -123,6 +135,7 @@ impl EmbeddedCompactionPolicy {
             HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS,
             critical_reserve_bytes,
         )
+        .with_route_replay_compaction_threshold(HOPSPOT_ROUTE_REPLAY_COMPACTION_THRESHOLD)
     }
 }
 
@@ -373,6 +386,9 @@ pub struct EmbeddedFlashPersistence<
     landing_records: u32,
     compaction: Option<CompactionPhase>,
     compaction_target: Option<EmbeddedPersistenceTarget>,
+    route_replay_records: u32,
+    compacted_route_records: u32,
+    replay_compaction_requested: bool,
     snapshot_required: bool,
     snapshot_target: EmbeddedPersistenceTarget,
     next_compaction_not_before: Option<InstantMillis>,
@@ -483,6 +499,9 @@ where
             landing_records: 0,
             compaction: None,
             compaction_target: None,
+            route_replay_records: 0,
+            compacted_route_records: 0,
+            replay_compaction_requested: false,
             snapshot_required: false,
             snapshot_target: EmbeddedPersistenceTarget::Routes,
             next_compaction_not_before: None,
@@ -534,7 +553,11 @@ where
         let mut target_accesses_snapshot = None;
         let mut discovery_group_configuration_snapshot = None;
         let mut node_name = None;
+        let mut restored_route_records = 0u32;
         let opened = FlashJournal::open(flash, self.layout, &mut scratch[..], |record| {
+            if record.kind == FlashJournalRecordKind::RouteUpsert {
+                restored_route_records = restored_route_records.saturating_add(1);
+            }
             apply_record(
                 engine,
                 remote_control,
@@ -577,6 +600,8 @@ where
                 )
             });
         self.journal = Some(journal);
+        self.route_replay_records = restored_route_records;
+        self.update_replay_compaction_request(engine);
         (self.observe_diagnostic)(EmbeddedPersistenceDiagnostic::Restored(report));
         if initialization_failed {
             self.note_write_failure(raw_now, EmbeddedPersistenceFailure::Flash);
@@ -633,6 +658,7 @@ where
                 }
             }
             Journaled::AnnounceHeldDropped { .. }
+            | Journaled::PathDiscovery(_)
             | Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
             | Journaled::PersistenceFlushed { .. }
@@ -729,6 +755,23 @@ where
         });
     }
 
+    fn update_replay_compaction_request<S: StorageLayout>(&mut self, engine: &EngineState<S>) {
+        let threshold = self.policy.compaction.route_replay_compaction_threshold;
+        self.replay_compaction_requested = threshold != 0
+            && self.route_replay_records >= threshold
+            && u64::from(self.route_replay_records)
+                >= (engine.persisted_route_destinations().count() as u64).saturating_mul(2);
+    }
+
+    fn replay_compaction_ready(&self) -> bool {
+        self.replay_compaction_requested
+            && !self.snapshot_required
+            && self.pending_routes.is_empty()
+            && self.pending_ratchets.is_empty()
+            && self.landing_batch.is_none()
+            && self.compaction.is_none()
+    }
+
     fn next_deadline(&self, now: InstantMillis) -> Option<InstantMillis> {
         if self.pending_confirmation.is_some() {
             return self.retry_not_before.or(Some(now));
@@ -762,6 +805,14 @@ where
             }
         } else {
             deadline = earlier(deadline, route_ready);
+        }
+        // Maintenance has no dirty route or durability deficit. Give it an independent
+        // deadline without clearing queued changes or reporting that saved state is lost.
+        if self.replay_compaction_ready() {
+            deadline = earlier(
+                deadline,
+                Some(self.next_compaction_not_before.unwrap_or(now).max(now)),
+            );
         }
         let timebase_ready = self.last_timebase_success.map_or(now, |last| {
             InstantMillis(
@@ -899,6 +950,19 @@ where
                 return;
             }
         }
+        if self.replay_compaction_ready()
+            && self
+                .next_compaction_not_before
+                .is_none_or(|allowed| now >= allowed)
+        {
+            // Live routes may have changed since the request was made. Recheck the benefit
+            // before spending the shared erase budget, then use the ordinary transaction.
+            self.update_replay_compaction_request(engine);
+            if self.replay_compaction_requested {
+                self.try_start_compaction(engine, now);
+                return;
+            }
+        }
         if !route_due {
             let timebase_due = self.last_timebase_success.is_none_or(|last| {
                 now.0.saturating_sub(last.0) >= self.policy.timebase_record_interval_millis
@@ -945,6 +1009,10 @@ where
             .await;
         match result {
             Ok(()) => {
+                if payload.kind == FlashJournalRecordKind::RouteUpsert {
+                    self.route_replay_records = self.route_replay_records.saturating_add(1);
+                }
+                self.update_replay_compaction_request(engine);
                 self.pending_routes.swap_remove(index);
                 self.landing_records = self.landing_records.saturating_add(1);
                 if self.pending_routes.is_empty() {
@@ -1232,6 +1300,8 @@ where
         self.snapshot_required = false;
         self.snapshot_target = EmbeddedPersistenceTarget::Routes;
         self.compaction_target = Some(target);
+        self.compacted_route_records = 0;
+        self.replay_compaction_requested = false;
         self.compaction = Some(CompactionPhase::RecordBudget { at: now });
         self.landing_batch = None;
         self.landing_records = 0;
@@ -1320,6 +1390,8 @@ where
                 {
                     Ok(()) => {
                         self.landing_records = self.landing_records.saturating_add(1);
+                        self.compacted_route_records =
+                            self.compacted_route_records.saturating_add(1);
                         self.compaction = Some(CompactionPhase::Routes { index: index + 1 });
                     }
                     Err(error) => {
@@ -1462,6 +1534,8 @@ where
     }
 
     fn complete_compaction(&mut self, now: InstantMillis) {
+        // The old arena remains authoritative until the replacement commit is confirmed.
+        self.route_replay_records = self.compacted_route_records;
         self.compaction = None;
         self.compaction_target = None;
         let records = core::mem::take(&mut self.landing_records);
