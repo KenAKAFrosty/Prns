@@ -1,0 +1,35 @@
+[package]
+name = "prns-service-runtime-uniffi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace]
+members = ["image"]
+resolver = "3"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+connections = ["prns-service-runtime/connections", "prns-host-uniffi/connections"]
+archive = ["prns-service-runtime/archive"]
+text = ["prns-groups/text"]
+contact-card = ["prns-service-runtime/contact-card", "prns-identities-uniffi/contact-card"]
+
+[dependencies]
+prns-service-runtime = { path = "../..", features = ["uniffi-bindings"] }
+prns-storage = { path = "../../../prns-storage" }
+prns-host-uniffi = { path = "../../../prns-host/bindings/uniffi" }
+prns-identities-uniffi = { path = "../../../prns-identities/bindings/uniffi", features = ["catalog"] }
+prns-identities-core = { path = "../../../prns-identities/core", features = ["uniffi-bindings"] }
+prns-identities = { path = "../../../prns-identities", features = ["uniffi-bindings"] }
+prns-identities-runtime = { path = "../../../prns-identities/runtime", features = ["uniffi-bindings"] }
+prns-groups-core = { path = "../../../prns-groups/core", features = ["uniffi-bindings"] }
+prns-groups-service = { path = "../../../prns-groups/service", features = ["uniffi-bindings"] }
+prns-groups = { path = "../../../prns-groups", default-features = false, features = ["uniffi-bindings"] }
+prns-groups-store-redb = { path = "../../../prns-groups/store/redb", features = ["uniffi-bindings"] }
+uniffi = { version = "=0.31.2", default-features = false }

@@ -1,0 +1,35 @@
+{
+  "name": "prns-expo-host-example",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "export:web": "node ../tools/stage-web.mjs && expo export --platform web",
+    "patch:runtime": "node -e \"require('node:fs').accessSync('node_modules/personal-rns-expo/patches/@ubjs+react-native+0.31.0-6.patch')\" && patch-package --error-on-fail --patch-dir node_modules/personal-rns-expo/patches",
+    "postinstall": "npm run patch:runtime"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-6",
+    "@ubjs/react-native": "0.31.0-6",
+    "expo": "~58.0.23",
+    "expo-build-properties": "58.0.12",
+    "expo-modules-core": "~58.0.30",
+    "personal-rns": "file:../../prns-js",
+    "personal-rns-expo": "file:..",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "@expo/metro-runtime": "~58.0.17",
+    "react-dom": "19.3.0",
+    "react-native-web": "~0.21.4"
+  },
+  "devDependencies": {
+    "patch-package": "8.0.1"
+  },
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": "^22.13.0 || ^24.3.0 || >=26.0.0"
+  }
+}

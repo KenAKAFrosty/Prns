@@ -384,6 +384,9 @@ impl PersistenceFlushTarget {
 
 #[repr(C)]
 pub enum Journaled<'a> {
+    /// Payload-free, opt-in discovery evidence. Runtimes must bound retention and
+    /// redact or salt public destination/interface/request identifiers before logging.
+    PathDiscovery(crate::engine::PathDiscoveryEvent),
     /// RNS 1.4.2's announce-handler `received_announce` callback as data.
     AnnounceHeard {
         observation: AnnounceObservation<'a>,

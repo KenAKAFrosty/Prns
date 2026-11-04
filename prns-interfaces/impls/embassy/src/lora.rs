@@ -29,11 +29,27 @@
 //! recoveries. These diagnostics are observational; they do not provide a
 //! listen-before-talk bypass.
 //!
-//! The active packet remains separate from the packed 6 KiB FIFO, and its
-//! contention timeout begins only when it becomes active. Scheduler additions
-//! are scalar state only: no heap allocation or additional packet buffers. A
+//! A local enqueue timestamp follows each frame from the runtime lane through
+//! the packed FIFO and active packet. The default total age limit is 120 seconds;
+//! [`LoRaInterface::with_outbound_queue_policy`] can tune it for slow profiles and
+//! queue depths. The active airtime-based contention timeout remains a separate
+//! 30–120 second bound. Expiry prevents starting a logical packet; an already
+//! started split packet finishes contiguously. Explicit Off discards volatile
+//! backlog and frames offered while disabled. Resume rejects frames from before
+//! or within the resume clock tick, including a quick Off→On between task polls.
+//! Durable application records and retries are outside this radio queue.
+//!
+//! The FIFO uses a ten-byte local header (length and original enqueue time), so
+//! the default 6 KiB stores eleven maximum 508-byte packets, plus the separate
+//! active packet. There is no heap allocation or additional packet buffer. A
 //! one-slot manifold lane provides the ingress handoff. ESP32-S3 Hopspots place
 //! the FIFO in PSRAM, while T-Echo supplies static SRAM storage.
+//!
+//! Custom seams must implement [`InterfaceSeam::next_outbound_frame`] with the
+//! original enqueue time in the Embassy monotonic clock domain. Missing or
+//! future timestamps are rejected; dequeue must never refresh frame age.
+//! Timestamp metadata and observations are local and do not change RNode or
+//! Reticulum wire bytes.
 
 use embassy_futures::select::{
     select, select3, select4, select5, Either, Either3, Either4, Either5,
@@ -65,6 +81,9 @@ use prns_runtime::manifold::driver::{
 use prns_runtime::manifold::interface_seam::{
     Interface, InterfaceSeam, OutboundDisposition, OutboundDropReason,
 };
+use prns_runtime::manifold::outbound::{
+    OutboundFrame, OutboundQueueDropReason, OutboundQueuePolicy,
+};
 use prns_runtime::manifold::throughput::ThroughputLedger;
 
 use crate::radios::{LoRaRadio, RadioEvent, RadioRecovery};
@@ -74,12 +93,18 @@ mod channel_access;
 mod clock;
 mod configuration;
 mod control;
+mod link_trace;
 #[cfg(all(test, feature = "lora-2g4"))]
 mod run_tests;
 #[cfg(test)]
 mod simulation_tests;
 mod task;
 mod transmit_queue;
+
+pub use link_trace::{
+    LoRaLinkEvent, LoRaLinkPhase, LoRaLinkSnapshot, LoRaLinkTrace, LoRaTraceDrop, LoRaTracePacket,
+    LORA_LINK_TRACE_LIMIT,
+};
 
 use clock::{EmbassyClock, RadioClock};
 use control::LoRaConfigurationCommand;
@@ -97,6 +122,21 @@ const SENSING_UNPUBLISHED: u32 = u32::MAX;
 const UNCONFIGURED_CHANNEL_TAG: &[u8] = b"SubGSetup";
 pub const LORA_TX_QUEUE_BYTES: usize = 6 * 1024;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoRaQueueSource {
+    RuntimeLane,
+    DriverQueue,
+    Active,
+}
+
+/// Payload-free observation of discarded volatile work, never a delivery receipt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoRaQueueDrop {
+    pub source: LoRaQueueSource,
+    pub reason: OutboundQueueDropReason,
+    pub age_millis: Option<u64>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum PacketPlacement {
     Active,
@@ -108,6 +148,7 @@ struct ActivePacket {
     len: Option<usize>,
     airtime_us: u64,
     activated_at_ms: u64,
+    enqueued_at_ms: u64,
 }
 
 impl ActivePacket {
@@ -117,6 +158,7 @@ impl ActivePacket {
             len: None,
             airtime_us: 0,
             activated_at_ms: 0,
+            enqueued_at_ms: 0,
         }
     }
 
@@ -125,6 +167,7 @@ impl ActivePacket {
         self.len = Some(packet.len());
         self.airtime_us = packet_airtime(packet, profile);
         self.activated_at_ms = now_ms;
+        self.enqueued_at_ms = now_ms;
     }
 
     fn clear(&mut self) -> bool {
@@ -159,6 +202,10 @@ impl ActivePacket {
 struct TransmitBacklog<'a> {
     queue: TransmitQueue<'a>,
     active: ActivePacket,
+    policy: OutboundQueuePolicy,
+    resume_after: Option<InstantMillis>,
+    observer: Option<fn(LoRaQueueDrop)>,
+    link_trace: Option<&'a LoRaLinkTrace>,
 }
 
 impl<'a> TransmitBacklog<'a> {
@@ -166,9 +213,14 @@ impl<'a> TransmitBacklog<'a> {
         Self {
             queue: TransmitQueue::new(storage),
             active: ActivePacket::new(),
+            policy: OutboundQueuePolicy::DEFAULT,
+            resume_after: None,
+            observer: None,
+            link_trace: None,
         }
     }
 
+    #[cfg(test)]
     fn accept(
         &mut self,
         packet: &[u8],
@@ -182,20 +234,280 @@ impl<'a> TransmitBacklog<'a> {
             self.active.activate(packet, profile, now_ms);
             return Ok(PacketPlacement::Active);
         }
-        self.queue.push(packet)?;
+        self.queue.push_at(packet, now_ms)?;
         Ok(PacketPlacement::Queued)
     }
 
+    #[cfg(test)]
     fn activate_next(&mut self, profile: &RadioProfile, now_ms: u64) -> bool {
+        while self.discard_expired_queue_head(now_ms).is_some() {}
+        self.activate_next_at(profile, now_ms, now_ms)
+    }
+
+    fn activate_next_at(
+        &mut self,
+        profile: &RadioProfile,
+        now_ms: u64,
+        observed_at_ms: u64,
+    ) -> bool {
         if self.active.len.is_some() {
             return false;
         }
+        let Some(enqueued_at_ms) = self.queue.front_enqueued_at() else {
+            return false;
+        };
         let Some(len) = self.queue.pop(&mut self.active.bytes) else {
             return false;
         };
         self.active.len = Some(len);
         self.active.airtime_us = packet_airtime(&self.active.bytes[..len], profile);
         self.active.activated_at_ms = now_ms;
+        self.active.enqueued_at_ms = enqueued_at_ms;
+        self.trace_active(LoRaLinkPhase::QueueActivated, Some(observed_at_ms));
+        true
+    }
+
+    fn trace_frame(&self, bytes: &[u8], phase: LoRaLinkPhase, time: &link_trace::EventTime) {
+        if let Some(trace) = self.link_trace {
+            trace.observe(link_trace::event(
+                bytes,
+                phase,
+                &crate::lora::link_trace::EventContext {
+                    time: *time,
+                    queue_bytes: self.queue.used_bytes(),
+                    active: self.active.len.is_some(),
+                },
+            ));
+        }
+    }
+
+    fn trace_active(&self, phase: LoRaLinkPhase, now_ms: Option<u64>) {
+        if self.link_trace.is_none() {
+            return;
+        }
+        if let Some(len) = self.active.len {
+            self.trace_frame(
+                &self.active.bytes[..len],
+                phase,
+                &link_trace::EventTime {
+                    at_ms: now_ms,
+                    enqueued_at: Some(self.active.enqueued_at_ms),
+                },
+            );
+        }
+    }
+
+    fn trace_front(&self, phase: LoRaLinkPhase, now_ms: Option<u64>) {
+        if self.link_trace.is_none() {
+            return;
+        }
+        // Largest wire header + complete LinkRequest. Never another MTU-sized buffer.
+        let mut prefix = [0; 102];
+        if let Some((length, copied)) = self.queue.front_prefix(&mut prefix) {
+            // Truncated requests must not accidentally derive an ID from a prefix.
+            let copied = if length == copied {
+                copied
+            } else {
+                35.min(copied)
+            };
+            self.trace_frame(
+                &prefix[..copied],
+                phase,
+                &link_trace::EventTime {
+                    at_ms: now_ms,
+                    enqueued_at: self.queue.front_enqueued_at(),
+                },
+            );
+        }
+    }
+
+    fn observe_drop(
+        &self,
+        source: LoRaQueueSource,
+        reason: OutboundQueueDropReason,
+        enqueued_at: Option<InstantMillis>,
+        now_ms: u64,
+    ) {
+        if let Some(observer) = self.observer {
+            observer(LoRaQueueDrop {
+                source,
+                reason,
+                age_millis: enqueued_at.and_then(|at| now_ms.checked_sub(at.0)),
+            });
+        }
+    }
+
+    fn discard_expired_queue_head(&mut self, now_ms: u64) -> Option<OutboundQueueDropReason> {
+        let enqueued_at = InstantMillis(self.queue.front_enqueued_at()?);
+        let reason = self
+            .policy
+            .check(Some(enqueued_at), InstantMillis(now_ms), self.resume_after)
+            .err()?;
+        self.observe_drop(
+            LoRaQueueSource::DriverQueue,
+            reason,
+            Some(enqueued_at),
+            now_ms,
+        );
+        self.trace_front(LoRaLinkPhase::QueueDropped(reason), Some(now_ms));
+        self.queue.discard_front();
+        Some(reason)
+    }
+
+    fn reject_frame(
+        &self,
+        frame: OutboundFrame<'_>,
+        now_ms: u64,
+    ) -> Option<OutboundQueueDropReason> {
+        let reason = self
+            .policy
+            .check(frame.enqueued_at, InstantMillis(now_ms), self.resume_after)
+            .err()?;
+        self.observe_drop(
+            LoRaQueueSource::RuntimeLane,
+            reason,
+            frame.enqueued_at,
+            now_ms,
+        );
+        self.trace_frame(
+            frame.bytes,
+            LoRaLinkPhase::QueueDropped(reason),
+            &link_trace::EventTime {
+                at_ms: Some(now_ms),
+                enqueued_at: frame.enqueued_at.map(|at| at.0),
+            },
+        );
+        Some(reason)
+    }
+
+    fn accept_frame(
+        &mut self,
+        frame: OutboundFrame<'_>,
+        profile: &RadioProfile,
+        active_now_ms: u64,
+        observed_at_ms: u64,
+    ) -> Result<PacketPlacement, TransmitQueueError> {
+        let Some(enqueued_at) = frame.enqueued_at else {
+            self.trace_frame(
+                frame.bytes,
+                LoRaLinkPhase::QueueRejected,
+                &link_trace::EventTime {
+                    at_ms: Some(observed_at_ms),
+                    enqueued_at: None,
+                },
+            );
+            return Err(TransmitQueueError::PacketTooLarge);
+        };
+        if frame.bytes.len() > LORA_MAX_PAYLOAD {
+            self.trace_frame(
+                frame.bytes,
+                LoRaLinkPhase::QueueRejected,
+                &link_trace::EventTime {
+                    at_ms: Some(observed_at_ms),
+                    enqueued_at: Some(enqueued_at.0),
+                },
+            );
+            return Err(TransmitQueueError::PacketTooLarge);
+        }
+        if self.active.len.is_none() && self.queue.is_empty() {
+            self.active.activate(frame.bytes, profile, active_now_ms);
+            self.active.enqueued_at_ms = enqueued_at.0;
+            self.trace_active(LoRaLinkPhase::QueueActive, Some(observed_at_ms));
+            Ok(PacketPlacement::Active)
+        } else {
+            if let Err(error) = self.queue.push_at(frame.bytes, enqueued_at.0) {
+                self.trace_frame(
+                    frame.bytes,
+                    LoRaLinkPhase::QueueRejected,
+                    &link_trace::EventTime {
+                        at_ms: Some(observed_at_ms),
+                        enqueued_at: Some(enqueued_at.0),
+                    },
+                );
+                return Err(error);
+            }
+            self.trace_frame(
+                frame.bytes,
+                LoRaLinkPhase::QueuePending,
+                &link_trace::EventTime {
+                    at_ms: Some(observed_at_ms),
+                    enqueued_at: Some(enqueued_at.0),
+                },
+            );
+            Ok(PacketPlacement::Queued)
+        }
+    }
+
+    fn expire(&mut self, now_ms: u64, seam: &mut impl InterfaceSeam) -> bool {
+        let mut active_dropped = false;
+        if self.active.len.is_some() {
+            let enqueued_at = Some(InstantMillis(self.active.enqueued_at_ms));
+            if let Err(reason) =
+                self.policy
+                    .check(enqueued_at, InstantMillis(now_ms), self.resume_after)
+            {
+                self.observe_drop(LoRaQueueSource::Active, reason, enqueued_at, now_ms);
+                self.trace_active(LoRaLinkPhase::QueueDropped(reason), Some(now_ms));
+                self.active.clear();
+                seam.complete_outbound(OutboundDisposition::Dropped(
+                    OutboundDropReason::QueueLifetime(reason),
+                ));
+                active_dropped = true;
+            }
+        }
+        while let Some(reason) = self.discard_expired_queue_head(now_ms) {
+            seam.complete_outbound(OutboundDisposition::Dropped(
+                OutboundDropReason::QueueLifetime(reason),
+            ));
+        }
+        active_dropped
+    }
+
+    fn disable(&mut self, now_ms: u64, seam: &mut impl InterfaceSeam) {
+        self.resume_after = Some(InstantMillis(now_ms));
+        if self.active.len.is_some() {
+            self.observe_drop(
+                LoRaQueueSource::Active,
+                OutboundQueueDropReason::Disabled,
+                Some(InstantMillis(self.active.enqueued_at_ms)),
+                now_ms,
+            );
+            self.trace_active(
+                LoRaLinkPhase::QueueDropped(OutboundQueueDropReason::Disabled),
+                Some(now_ms),
+            );
+            self.active.clear();
+            seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::Disabled));
+        }
+        while let Some(enqueued_at) = self.queue.front_enqueued_at() {
+            self.observe_drop(
+                LoRaQueueSource::DriverQueue,
+                OutboundQueueDropReason::Disabled,
+                Some(InstantMillis(enqueued_at)),
+                now_ms,
+            );
+            self.trace_front(
+                LoRaLinkPhase::QueueDropped(OutboundQueueDropReason::Disabled),
+                Some(now_ms),
+            );
+            self.queue.discard_front();
+            seam.complete_outbound(OutboundDisposition::Dropped(OutboundDropReason::Disabled));
+        }
+    }
+
+    fn observe_disable_transition(
+        &mut self,
+        status: &EmbassyInterfaceStatus,
+        observed: &mut u32,
+        now_ms: u64,
+        seam: &mut impl InterfaceSeam,
+    ) -> bool {
+        let generation = status.disable_generation();
+        if generation == *observed {
+            return false;
+        }
+        *observed = generation;
+        self.disable(now_ms, seam);
         true
     }
 
@@ -212,8 +524,11 @@ impl<'a> TransmitBacklog<'a> {
     }
 
     fn clear(&mut self) -> usize {
+        self.trace_active(LoRaLinkPhase::QueueCleared, None);
         let mut cleared = usize::from(self.active.clear());
-        while self.queue.pop(&mut self.active.bytes).is_some() {
+        while !self.queue.is_empty() {
+            self.trace_front(LoRaLinkPhase::QueueCleared, None);
+            self.queue.pop(&mut self.active.bytes);
             cleared += 1;
         }
         cleared
@@ -361,6 +676,8 @@ struct ChannelEvidence {
 }
 
 struct ReceivePath<'a, Seam> {
+    trace: Option<&'a LoRaLinkTrace>,
+    trace_at_ms: u64,
     profile: &'a RadioProfile,
     activity: &'a mut DemodulatorActivity,
     spectrum: &'a LoRaSpectrumStatus,
@@ -383,6 +700,7 @@ fn decoded_peer_airtime_us(event: RadioEvent, profile: &RadioProfile) -> Option<
     }
 }
 
+#[cfg(test)]
 fn reset_reassembly(
     reassembler: &mut LoRaReassembler<LORA_MAX_PAYLOAD>,
     status: &EmbassyInterfaceStatus,
@@ -392,38 +710,61 @@ fn reset_reassembly(
     }
 }
 
+fn reset_reassembly_observed(
+    reassembler: &mut LoRaReassembler<LORA_MAX_PAYLOAD>,
+    status: &EmbassyInterfaceStatus,
+    trace: Option<&LoRaLinkTrace>,
+    now: u64,
+) {
+    if reassembler.reset() == LoRaReassemblyReset::DiscardedPartial {
+        status.count_frame_undecodable();
+        link_trace::observe(trace, LoRaLinkPhase::RxReset, Some(now));
+    }
+}
+
 async fn deliver_rx<Seam: InterfaceSeam>(
     frame: ObservedAirFrame<'_>,
     status: &EmbassyInterfaceStatus,
     throughput: &mut ThroughputLedger,
     reassembler: &mut LoRaReassembler<LORA_MAX_PAYLOAD>,
     seam: &mut Seam,
+    trace: Option<&LoRaLinkTrace>,
+    trace_at_ms: u64,
 ) {
+    link_trace::observe(trace, LoRaLinkPhase::RxFrame, Some(trace_at_ms));
     status.count_frame_in();
     status.add_rx(frame.bytes.len() as u64);
     throughput.record_rx(frame.arrived_at, frame.bytes.len() as u64);
     status.set_transfer_rates(throughput.rates());
     let packet = match reassembler.feed_with_phy(frame.bytes, frame.phy) {
-        LoRaReassemblyOutcome::AwaitingSecond => return,
+        LoRaReassemblyOutcome::AwaitingSecond => {
+            link_trace::observe(trace, LoRaLinkPhase::RxAwaiting, Some(trace_at_ms));
+            return;
+        }
         LoRaReassemblyOutcome::Delivered(packet) => packet,
         LoRaReassemblyOutcome::ReplacedPartialAndAwaitingSecond => {
+            link_trace::observe(trace, LoRaLinkPhase::RxReplaced, Some(trace_at_ms));
             status.count_frame_undecodable();
             return;
         }
         LoRaReassemblyOutcome::DeliveredAfterReplacingPartial(packet) => {
+            link_trace::observe(trace, LoRaLinkPhase::RxReplaced, Some(trace_at_ms));
             status.count_frame_undecodable();
             packet
         }
         LoRaReassemblyOutcome::Rejected(LoRaReassemblyError::EmptyAirFrame) => {
+            link_trace::observe(trace, LoRaLinkPhase::RxRejected, Some(trace_at_ms));
             status.count_frame_malformed();
             return;
         }
         LoRaReassemblyOutcome::Rejected(LoRaReassemblyError::CapacityExceeded) => {
+            link_trace::observe(trace, LoRaLinkPhase::RxRejected, Some(trace_at_ms));
             status.count_frame_undecodable();
             return;
         }
     };
     if packet.bytes.is_empty() {
+        link_trace::observe(trace, LoRaLinkPhase::RxRejected, Some(trace_at_ms));
         status.count_frame_malformed();
         return;
     }
@@ -432,8 +773,37 @@ async fn deliver_rx<Seam: InterfaceSeam>(
     if let Some(snr) = phy.snr {
         phy.quality = frame.spreading_factor.signal_quality(snr);
     }
+    if let Some(trace) = trace {
+        trace.observe(link_trace::event(
+            packet.bytes,
+            LoRaLinkPhase::RxPacket,
+            &crate::lora::link_trace::EventContext {
+                time: crate::lora::link_trace::EventTime {
+                    at_ms: Some(trace_at_ms),
+                    enqueued_at: None,
+                },
+                queue_bytes: 0,
+                active: false,
+            },
+        ));
+    }
     seam.next_inbound_with_phy(packet.bytes, phy).await;
     status.count_frame_delivered();
+    if let Some(trace) = trace {
+        // The handoff may await. Do not reuse arrival time as completion time.
+        trace.observe(link_trace::event(
+            packet.bytes,
+            LoRaLinkPhase::RxDelivered,
+            &crate::lora::link_trace::EventContext {
+                time: crate::lora::link_trace::EventTime {
+                    at_ms: None,
+                    enqueued_at: None,
+                },
+                queue_bytes: 0,
+                active: false,
+            },
+        ));
+    }
 }
 
 fn choose_backoff_entropy<Seam: InterfaceSeam>(
@@ -473,17 +843,29 @@ async fn observe_radio_event<Seam: InterfaceSeam>(
                 receive.throughput,
                 receive.reassembler,
                 receive.seam,
+                receive.trace,
+                receive.trace_at_ms,
             )
             .await;
             receive.activity.frame_finished();
             ChannelObservation::Busy
         }
         RadioEvent::HeaderError => {
+            link_trace::observe(
+                receive.trace,
+                LoRaLinkPhase::RxHeaderError,
+                Some(receive.trace_at_ms),
+            );
             receive.spectrum.add_false_preamble();
             receive.activity.frame_finished();
             ChannelObservation::Busy
         }
         RadioEvent::CrcError => {
+            link_trace::observe(
+                receive.trace,
+                LoRaLinkPhase::RxCrcError,
+                Some(receive.trace_at_ms),
+            );
             receive.activity.frame_finished();
             ChannelObservation::Busy
         }
@@ -551,6 +933,32 @@ fn take_contention_priority(
     }
 }
 
+#[derive(Clone, Copy)]
+struct TxTrace<'a> {
+    trace: &'a LoRaLinkTrace,
+    enqueued_at: u64,
+    queue_bytes: usize,
+}
+impl TxTrace<'_> {
+    fn observe(&self, packet: &[u8], phase: LoRaLinkPhase, now: u64, index: usize, count: usize) {
+        let mut event = link_trace::event(
+            packet,
+            phase,
+            &crate::lora::link_trace::EventContext {
+                time: crate::lora::link_trace::EventTime {
+                    at_ms: Some(now),
+                    enqueued_at: Some(self.enqueued_at),
+                },
+                queue_bytes: self.queue_bytes,
+                active: true,
+            },
+        );
+        event.frame_index = u8::try_from(index).unwrap_or(u8::MAX);
+        event.frame_count = u8::try_from(count).unwrap_or(u8::MAX);
+        self.trace.observe(event);
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "embedded serve-loop internals pass the loop's split-borrowed locals; bundling awaits an on-hardware validation pass"
@@ -566,28 +974,84 @@ async fn transmit_packet<R: LoRaRadio, C: RadioClock>(
     started: &Instant,
     clock: &C,
     tx_frame: &mut [u8; LORA_SINGLE_FRAME_MAX],
+    trace: Option<TxTrace<'_>>,
 ) -> Result<(), LoRaTransmitError<R::Error>> {
-    for index in 0..air_frame_count(packet.len()) {
+    let count = air_frame_count(packet.len());
+    if let Some(trace) = trace {
+        trace.observe(
+            packet,
+            LoRaLinkPhase::TxStarted,
+            clock.now().as_millis(),
+            0,
+            count,
+        );
+    }
+    for index in 0..count {
         let n = match encode_air_frame_part(packet, *seq, index, tx_frame) {
             Ok(n) => n,
             Err(e) => {
+                if let Some(trace) = trace {
+                    trace.observe(
+                        packet,
+                        LoRaLinkPhase::TxFramingError,
+                        clock.now().as_millis(),
+                        index,
+                        count,
+                    );
+                }
                 crate::diagnostic_log::debug!("RNS_LORA frame {index} encode failed: {e:?}");
                 *seq = seq.wrapping_add(0x10);
                 return Err(LoRaTransmitError::Framing(e));
             }
         };
+        if let Some(trace) = trace {
+            trace.observe(
+                packet,
+                LoRaLinkPhase::TxFrameStarted,
+                clock.now().as_millis(),
+                index,
+                count,
+            );
+        }
         if let Err(e) = radio.transmit(&tx_frame[..n]).await {
+            if let Some(trace) = trace {
+                trace.observe(
+                    packet,
+                    LoRaLinkPhase::TxRadioError,
+                    clock.now().as_millis(),
+                    index,
+                    count,
+                );
+            }
             crate::diagnostic_log::debug!("RNS_LORA tx failed: {e:?}");
             *seq = seq.wrapping_add(0x10);
             return Err(LoRaTransmitError::Radio(e));
         }
-        let completed_at = InstantMillis(clock.now().duration_since(*started).as_millis());
+        if let Some(trace) = trace {
+            trace.observe(
+                packet,
+                LoRaLinkPhase::TxFrameComplete,
+                clock.now().as_millis(),
+                index,
+                count,
+            );
+        }
+        let completed_at = InstantMillis(clock.elapsed_millis(*started));
         status.add_tx(n as u64);
         throughput.record_tx(completed_at, n as u64);
         status.set_transfer_rates(throughput.rates());
         status.set_airtime(airtime.record_tx(completed_at, profile.time_on_air_us(n)));
     }
     *seq = seq.wrapping_add(0x10);
+    if let Some(trace) = trace {
+        trace.observe(
+            packet,
+            LoRaLinkPhase::TxComplete,
+            clock.now().as_millis(),
+            count.saturating_sub(1),
+            count,
+        );
+    }
     Ok(())
 }
 
@@ -832,6 +1296,9 @@ pub struct LoRaInterface<'a, 'publication, R: LoRaRadio> {
     status: &'a EmbassyInterfaceStatus,
     spectrum: &'a LoRaSpectrumStatus,
     lifecycle: DynamicSender<'a, InterfaceLifecycle<'publication>>,
+    outbound_queue_policy: OutboundQueuePolicy,
+    queue_observer: Option<fn(LoRaQueueDrop)>,
+    link_trace: Option<&'a LoRaLinkTrace>,
 }
 
 impl<'a, 'publication, R: LoRaRadio> LoRaInterface<'a, 'publication, R> {
@@ -891,7 +1358,33 @@ impl<'a, 'publication, R: LoRaRadio> LoRaInterface<'a, 'publication, R> {
             status,
             spectrum,
             lifecycle,
+            outbound_queue_policy: OutboundQueuePolicy::DEFAULT,
+            queue_observer: None,
+            link_trace: None,
         })
+    }
+
+    /// Configure total volatile queue age; the active contention timeout still applies.
+    #[must_use]
+    pub fn with_outbound_queue_policy(mut self, policy: OutboundQueuePolicy) -> Self {
+        self.outbound_queue_policy = policy;
+        self
+    }
+
+    /// The caller owns observation budgets and any logging. Default is no observer.
+    /// The callback runs inline and must remain bounded and nonblocking.
+    #[must_use]
+    pub fn with_queue_observer(mut self, observer: fn(LoRaQueueDrop)) -> Self {
+        self.queue_observer = Some(observer);
+        self
+    }
+
+    /// Opt in to bounded Link/radio observations. The caller owns the trace and
+    /// its sink must return immediately without logging, waiting, or allocating.
+    #[must_use]
+    pub fn with_link_observer(mut self, trace: &'a LoRaLinkTrace) -> Self {
+        self.link_trace = Some(trace);
+        self
     }
 
     #[must_use]
@@ -1507,6 +2000,8 @@ mod tests {
                     &mut throughput,
                     &mut reassembler,
                     &mut seam,
+                    None,
+                    0,
                 )
                 .await;
             }
@@ -1602,7 +2097,7 @@ mod tests {
     #[test]
     fn backlog_admission_and_pending_follow_active_and_queued_ownership() {
         let profile = US915_AUTO_LORA_PROFILE;
-        let mut storage = [0; LORA_MAX_PAYLOAD + 2];
+        let mut storage = [0; LORA_MAX_PAYLOAD + 10];
         let mut backlog = TransmitBacklog::new(&mut storage);
         assert!(!backlog.has_pending());
         assert!(backlog.can_accept_outbound());
@@ -1656,7 +2151,7 @@ mod tests {
             backlog.accept(&[0; LORA_MAX_PAYLOAD], &profile, 10),
             Ok(PacketPlacement::Active)
         );
-        for value in 1..=12 {
+        for value in 1..=11 {
             assert_eq!(
                 backlog.accept(&[value; LORA_MAX_PAYLOAD], &profile, 10),
                 Ok(PacketPlacement::Queued)
@@ -1664,13 +2159,13 @@ mod tests {
         }
         assert!(!backlog.can_accept_outbound());
 
-        for value in 0..=12 {
+        for value in 0..=11 {
             assert_eq!(
                 backlog.active.bytes[..backlog.active.len.unwrap()],
                 [value; LORA_MAX_PAYLOAD]
             );
             backlog.active.clear();
-            if value < 12 {
+            if value < 11 {
                 assert!(backlog.activate_next(&profile, 20 + u64::from(value)));
             }
         }
@@ -1678,7 +2173,21 @@ mod tests {
     }
 
     #[test]
-    fn disable_drops_only_the_active_packet_and_activation_starts_a_fresh_profile_timeout() {
+    fn queued_frame_age_does_not_restart_when_it_becomes_active() {
+        let mut storage = [0; LORA_TX_QUEUE_BYTES];
+        let mut backlog = TransmitBacklog::new(&mut storage);
+        let profile = US915_AUTO_LORA_PROFILE;
+        backlog.accept(b"active", &profile, 1_000).unwrap();
+        backlog.accept(b"expired request", &profile, 1_001).unwrap();
+        backlog.active.clear();
+        assert!(
+            !backlog.activate_next(&profile, 121_001),
+            "an expired queued request must not receive a new transmission lifetime"
+        );
+    }
+
+    #[test]
+    fn queued_packet_preserves_enqueue_time_while_contention_starts_on_activation() {
         let mut storage = [0; LORA_TX_QUEUE_BYTES];
         let mut backlog = TransmitBacklog::new(&mut storage);
         let original_profile = US915_AUTO_LORA_PROFILE;
@@ -1696,13 +2205,14 @@ mod tests {
                 coding_rate: CodingRate::Cr48,
             })
             .unwrap();
-        let activated_at_ms = 200_000;
+        let activated_at_ms = 20_000;
         assert!(backlog.activate_next(&current_profile, activated_at_ms));
         assert_eq!(
             backlog.active.airtime_us,
             packet_airtime(&queued, &current_profile)
         );
         assert_eq!(backlog.active.activated_at_ms, activated_at_ms);
+        assert_eq!(backlog.active.enqueued_at_ms, 1_001);
 
         let access = backlog
             .active

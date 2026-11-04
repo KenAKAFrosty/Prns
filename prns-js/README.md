@@ -31,6 +31,17 @@ const destination: DestinationHash = destinationHash(new Uint8Array(16));
 
 This subpath contains the generated types, semantic byte brands, exact-integer policy, contract constants and guards, and validation constructors. Host creation remains owned by the root, native, and browser entrypoints.
 
+## Source consumers
+
+After regenerating a host or Remote Control contract, run `npm --prefix prns-js
+run build:code` from the repository root before bundling a linked consumer.
+`npm --prefix prns-js run check:built-contracts` imports the public
+`personal-rns/contract` and `personal-rns/remote-control` exports in an isolated
+Node process and compares their fingerprints with the generated source. It
+loads no native or browser provider. Linked consumers should run this check
+before bundling so missing or stale compiled exports fail before an incompatible
+application is built.
+
 ## Create a host
 
 Node.js and Bun use the native backend selected by the root export:

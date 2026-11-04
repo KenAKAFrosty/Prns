@@ -170,6 +170,8 @@ pub struct LinkCapabilities {
 pub(super) const CONTROL_HELLO: u8 = 0x01;
 const CONTROL_WELCOME: u8 = 0x02;
 pub(super) const CONTROL_CLOSE: u8 = 0x03;
+const CONTROL_PROBE: u8 = 0x04;
+const CONTROL_PROBE_REPLY: u8 = 0x05;
 const CONTROL_IDENTITY_LEN: usize = 16;
 const ENDPOINT_LEN: usize = 2;
 const CONTROL_CAP_LEN: usize = 3;
@@ -407,6 +409,13 @@ pub enum Control {
     Close {
         reason: CloseReason,
     },
+    /// Connection-local responsiveness request, not authenticated peer identity.
+    Probe {
+        nonce: u64,
+    },
+    ProbeReply {
+        nonce: u64,
+    },
 }
 
 impl Control {
@@ -444,6 +453,16 @@ impl Control {
                 slot[1] = reason.as_u8();
                 Some(2)
             }
+            Control::Probe { nonce } | Control::ProbeReply { nonce } => {
+                let slot = out.get_mut(..9)?;
+                slot[0] = if matches!(self, Control::Probe { .. }) {
+                    CONTROL_PROBE
+                } else {
+                    CONTROL_PROBE_REPLY
+                };
+                slot[1..].copy_from_slice(&nonce.to_be_bytes());
+                Some(9)
+            }
         }
     }
 
@@ -451,6 +470,9 @@ impl Control {
         Self::try_decode(bytes).ok()
     }
 
+    // Keep the parser's Result separate from decode()'s Option conversion: fusing
+    // them expands aggregate copies substantially in size-constrained callers.
+    #[inline(never)]
     pub fn try_decode(bytes: &[u8]) -> Result<Self, ControlParseError> {
         let (tag, body) = bytes.split_first().ok_or(ControlParseError::Empty)?;
         match *tag {
@@ -480,6 +502,17 @@ impl Control {
                     .ok_or(ControlParseError::InvalidCloseReason)?,
             }),
             CONTROL_CLOSE => Err(ControlParseError::InvalidLength),
+            kind @ (CONTROL_PROBE | CONTROL_PROBE_REPLY) => {
+                let nonce = u64::from_be_bytes(
+                    body.try_into()
+                        .map_err(|_| ControlParseError::InvalidLength)?,
+                );
+                if kind == CONTROL_PROBE {
+                    Ok(Control::Probe { nonce })
+                } else {
+                    Ok(Control::ProbeReply { nonce })
+                }
+            }
             unknown => Err(ControlParseError::UnknownKind(unknown)),
         }
     }

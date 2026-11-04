@@ -1,0 +1,24 @@
+[package]
+name = "prns-expo-android"
+version = "0.3.8"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+prns-host-runtime = { path = "../../../prns-host/impls/runtime", features = ["android-platform"] }
+prns-ffi = { path = "../../../prns-ffi", default-features = false }
+jni = { version = "0.21", default-features = false }
+prns-core = { path = "../../../prns-core", default-features = false, features = ["std"] }
+prns-interfaces-tokio = { path = "../../../prns-interfaces/impls/tokio", default-features = false, features = ["wifi-auto"] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

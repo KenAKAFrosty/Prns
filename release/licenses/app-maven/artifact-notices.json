@@ -1,0 +1,2748 @@
+{
+  "schema": 1,
+  "scope": "Exact previously resolved debug/release artifact SHA256 comparison and bounded ZIP/classes.jar notice extraction. This is not full native-binary/source attribution review or license approval.",
+  "resolution": {
+    "path": "resolved-runtime.json",
+    "sha256": "2840dc095cb5d2d2bda2a54945f60888cef28b4630ac23be3dff7310c1a6ad03"
+  },
+  "pom_origins": {
+    "path": "pom-origins.json",
+    "sha256": "21915dce7620c8acfd80328a6c7c27065faa5bb60d19e8b2d5194541b6fef4c4"
+  },
+  "artifacts": [
+    {
+      "coordinate": "androidx.activity:activity-ktx:1.8.1",
+      "file_name": "activity-ktx-1.8.1.aar",
+      "sha256": "9f77caa2bbec7ceefa5c931e2f223c2b386a594ee0442d168dfeaf1c850aeb9d",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.activity:activity:1.8.1",
+      "file_name": "activity-1.8.1.aar",
+      "sha256": "66bc2c13bd91fb8ea09e445b21f784d3e5d3a9ec9b180cd07e0e9208c2f939c6",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.annotation:annotation-experimental:1.4.1",
+      "file_name": "annotation-experimental-1.4.1.aar",
+      "sha256": "6bd4c7c7476f8260cd3bdbb81183583e93fc9f790c27dea7dc314181cbf87aa0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.annotation:annotation-jvm:1.9.1",
+      "file_name": "annotation-jvm-1.9.1.jar",
+      "sha256": "1e343917ebf27ba96fe4dc52b1cad7fd32b738fbc6355bb6cd5b3b305d7212d0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/annotation/annotation/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.appcompat:appcompat-resources:1.7.1",
+      "file_name": "appcompat-resources-1.7.1.aar",
+      "sha256": "8e2db31224ca53b108c784da2b361959062716d416b210cfef3d5a3828306df0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.appcompat:appcompat:1.7.1",
+      "file_name": "appcompat-1.7.1.aar",
+      "sha256": "2ad334a323b28046e89b738c77d184cb3dcca32a551ab048851b2fda23a3ba26",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.arch.core:core-common:2.2.0",
+      "file_name": "core-common-2.2.0.jar",
+      "sha256": "65308a06b1c00ee186cb9e19321383f043b993813f1522c47f4a3e3303bdba41",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.arch.core:core-runtime:2.2.0",
+      "file_name": "core-runtime-2.2.0.aar",
+      "sha256": "a1be5e0caa2b07623862af6ae21b3ab0718123245184d0e30dea81b53f990a47",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.autofill:autofill:1.3.0",
+      "file_name": "autofill-1.3.0.aar",
+      "sha256": "b5a217cee7724ea42a382965a9b22a330b988d62cb97abe1b1af50e54370c322",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/autofill/autofill/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.camera.featurecombinationquery:featurecombinationquery:1.6.0",
+      "file_name": "featurecombinationquery-1.6.0.aar",
+      "sha256": "2c81a38355e46620f7f1419e1d6f3e908b7e5ad6c41acbc7a8f5c62f761e4e85",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/camera/featurecombinationquery/featurecombinationquery/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.camera.viewfinder:viewfinder-core:1.5.1",
+      "file_name": "viewfinder-core-1.5.1.aar",
+      "sha256": "31179ed5509e4d6d8d667efb91a039cac897b2bfd800d4c6e0b5bed376b4fa69",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/camera/viewfinder/viewfinder-core/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.camera:camera-camera2-pipe:1.6.0",
+      "file_name": "camera-camera2-pipe-1.6.0.aar",
+      "sha256": "24ccf2f8448cbab58702337bd1e8a79917b04329f85a2f765a40de3bde04798e",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/camera/camera-camera2-pipe/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.camera:camera-camera2:1.6.0",
+      "file_name": "camera-camera2-1.6.0.aar",
+      "sha256": "33e7da2f34de38c7801f7ebe3bd982857c03454752d86d16e36a5b757625a92e",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/camera/camera-camera2/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.camera:camera-core:1.6.0",
+      "file_name": "camera-core-1.6.0.aar",
+      "sha256": "d7f571c1564db1f9a942ef64f525ac93ae108821da1ea905df585c7b644062aa",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/camera/camera-core/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.camera:camera-extensions:1.6.0",
+      "file_name": "camera-extensions-1.6.0.aar",
+      "sha256": "a491289356025a68d5438d05e9c311f81286da28516de25084d0c78a40e122f8",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/camera/camera-extensions/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.camera:camera-lifecycle:1.6.0",
+      "file_name": "camera-lifecycle-1.6.0.aar",
+      "sha256": "6223c9a75d79f0c1abe2b4741cddbd8279c346be1f26177b57665cbe40b58682",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/camera/camera-lifecycle/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.camera:camera-mlkit-vision:1.6.0",
+      "file_name": "camera-mlkit-vision-1.6.0.aar",
+      "sha256": "6ff3eea61de80b189b15a3e0ce723705dafeef1422c16d5c3b6904ab8d75d425",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/camera/camera-mlkit-vision/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.camera:camera-video:1.6.0",
+      "file_name": "camera-video-1.6.0.aar",
+      "sha256": "4223604423379810fe8434a73eddabfbf1b04bbd60875e51939a446e7f484ce0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/camera/camera-video/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.camera:camera-view:1.6.0",
+      "file_name": "camera-view-1.6.0.aar",
+      "sha256": "80f533206b060fc3344285456034d7559188bfe42e76df153b906ec006e3dbfc",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/camera/camera-view/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.cardview:cardview:1.0.0",
+      "file_name": "cardview-1.0.0.aar",
+      "sha256": "1193c04c22a3d6b5946dae9f4e8c59d6adde6a71b6bd5d87fb99d82dda1afec7",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.collection:collection-jvm:1.4.4",
+      "file_name": "collection-jvm-1.4.4.jar",
+      "sha256": "539a43428df8a337622fb781401f5f0cdcd52d8b3615f0085af51c90002ff333",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.collection:collection-ktx:1.4.4",
+      "file_name": "collection-ktx-1.4.4.jar",
+      "sha256": "c6deada2fac53b8ea6523dbda77597b128006674616f140f04df23264c6d1aa3",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.concurrent:concurrent-futures-ktx:1.1.0",
+      "file_name": "concurrent-futures-ktx-1.1.0.jar",
+      "sha256": "1968bf52039e38636aa6f114cd17d7256919d1e8997417716fef9d1da1f24d85",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.concurrent:concurrent-futures:1.1.0",
+      "file_name": "concurrent-futures-1.1.0.jar",
+      "sha256": "0ce067c514a0d1049d1bebdf709e344ed3266fe9744275682937cdcb13334e9e",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.constraintlayout:constraintlayout-core:1.0.0",
+      "file_name": "constraintlayout-core-1.0.0.jar",
+      "sha256": "496c8c79664bd970c6a6be7a960a20dd157dfc5aa2f18e5b8333767ffbc59911",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.constraintlayout:constraintlayout:2.1.0",
+      "file_name": "constraintlayout-2.1.0.aar",
+      "sha256": "a458a7562363bd59c209a7dea847326a0e2b26b37a883dc3e29065a79a1c788b",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.coordinatorlayout:coordinatorlayout:1.2.0",
+      "file_name": "coordinatorlayout-1.2.0.aar",
+      "sha256": "779408b1aa330cd4a7adf1b2e85fd289c30e7edd2e8e42847b7d06589af715fa",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.core:core-backported-fixes:1.0.0",
+      "file_name": "core-backported-fixes-1.0.0.aar",
+      "sha256": "874722634db5f60745ab2f64d734dd81d3ee4eb71f175263e6565dabea54713d",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/core/core-backported-fixes/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.core:core-ktx:1.18.0",
+      "file_name": "core-ktx-1.18.0.aar",
+      "sha256": "c7c511e3df838fcbcb61ace36944de6bb7c10eb597be546974f001119939c85d",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/core/core-ktx/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.core:core-viewtree:1.0.0",
+      "file_name": "core-viewtree-1.0.0.aar",
+      "sha256": "dc1b678d58ebcf2bfa1587be68ff826694ce3d221251b9ef30d4d4b36297e6de",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/core/core-viewtree/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.core:core:1.18.0",
+      "file_name": "core-1.18.0.aar",
+      "sha256": "311d83ac67d394076ec21d12ed2d10a44b59cb2929b7dce00e5a90a93842e37d",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/core/core/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.cursoradapter:cursoradapter:1.0.0",
+      "file_name": "cursoradapter-1.0.0.aar",
+      "sha256": "a81c8fe78815fa47df5b749deb52727ad11f9397da58b16017f4eb2c11e28564",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.customview:customview:1.1.0",
+      "file_name": "customview-1.1.0.aar",
+      "sha256": "01f76ab043770a97b054046f9815717b82ce0355c02967d16c61981359dc189a",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.documentfile:documentfile:1.1.0",
+      "file_name": "documentfile-1.1.0.aar",
+      "sha256": "684e0ffcb21a660c939d1bb814521f42c4bd74816f4a117291fe6a101cf3a822",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/documentfile/documentfile/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.drawerlayout:drawerlayout:1.1.1",
+      "file_name": "drawerlayout-1.1.1.aar",
+      "sha256": "2c5f0dca378eb78ca2c4403f9889c77daa3059302260f26a07fe9f63c08926fe",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.dynamicanimation:dynamicanimation:1.1.0",
+      "file_name": "dynamicanimation-1.1.0.aar",
+      "sha256": "9062cc6637136a49ad17f8603c72519052ff9a569e617fc1b6db7086304da88f",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/dynamicanimation/dynamicanimation/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.emoji2:emoji2-views-helper:1.3.0",
+      "file_name": "emoji2-views-helper-1.3.0.aar",
+      "sha256": "9a1351295a4f739df0efe8344adaa9afb34856c3af584d4a9afbec105a45b90b",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.emoji2:emoji2:1.3.0",
+      "file_name": "emoji2-1.3.0.aar",
+      "sha256": "2bf23818b23a996ddaa1b5fd5bb32129daff6bbb2dce15166e2fccdd2010b1a5",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.exifinterface:exifinterface:1.4.2",
+      "file_name": "exifinterface-1.4.2.aar",
+      "sha256": "6bb2b68682a2023c55f35f941444ffea0157947b061e4fd7606ba935e2e77425",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/exifinterface/exifinterface/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.fragment:fragment-ktx:1.8.9",
+      "file_name": "fragment-ktx-1.8.9.aar",
+      "sha256": "078ad5877b04f4bf7350198579d81f9c8796fa20e46b4ade3f231a370456c5ad",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.fragment:fragment:1.8.9",
+      "file_name": "fragment-1.8.9.aar",
+      "sha256": "12de5b89ab6641c1d8da82b63dc816652622b06d2781b949b6fbd2dff9fac492",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.graphics:graphics-shapes-android:1.0.1",
+      "file_name": "graphics-shapes-release.aar",
+      "sha256": "7171269a4122feabb071768df46d10b362e47ac75fd0aa8dbcafa1f44f61b40c",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/graphics/graphics-shapes/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.interpolator:interpolator:1.0.0",
+      "file_name": "interpolator-1.0.0.aar",
+      "sha256": "33193135a64fe21fa2c35eec6688f1a76e512606c0fc83dc1b689e37add7732a",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-common:2.6.2",
+      "file_name": "lifecycle-common-2.6.2.jar",
+      "sha256": "f34831b6c71cd844e1d35d1be49d5e79447c5ab856346531b1e8676fda7374b1",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-livedata-core-ktx:2.6.2",
+      "file_name": "lifecycle-livedata-core-ktx-2.6.2.aar",
+      "sha256": "9f2c16e33a55ba8d67a3623a55befff2ec80643e3f0a926760df1d957c3f8aef",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-livedata-core:2.6.2",
+      "file_name": "lifecycle-livedata-core-2.6.2.aar",
+      "sha256": "2256780a3cff4a1e57fbb3d442557c17dc363ab8af105bcaf5261d8e2d5db949",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-livedata:2.6.2",
+      "file_name": "lifecycle-livedata-2.6.2.aar",
+      "sha256": "67359f609dfc2bf65da1270b23033f856064ec279f058e0a70c715f7c9003031",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-process:2.6.2",
+      "file_name": "lifecycle-process-2.6.2.aar",
+      "sha256": "0f33b1bd017f965a6afb2e7bf3e3bd343c624061c1986dea8ba2469d04349437",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-runtime-ktx:2.6.2",
+      "file_name": "lifecycle-runtime-ktx-2.6.2.aar",
+      "sha256": "28a0b834f40edd52e2f8010bdc3057d2a0cc76aaa5ac9311adb0b9ce919ca9cc",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-runtime:2.6.2",
+      "file_name": "lifecycle-runtime-2.6.2.aar",
+      "sha256": "4867fd5279742fba8388821930cb2affe06d81a52814e7e41e70392ea0ef887c",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2",
+      "file_name": "lifecycle-viewmodel-ktx-2.6.2.aar",
+      "sha256": "7fc0fa234a3321b1f34db5862b17da83d1c62c1bc66ec2fd4f1bb0a771acfabb",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-viewmodel-savedstate:2.6.2",
+      "file_name": "lifecycle-viewmodel-savedstate-2.6.2.aar",
+      "sha256": "7bc7dcbab17636ec076f12afe4d02671265c389457b1b366b37a0e8cb91e2da0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-viewmodel:2.6.2",
+      "file_name": "lifecycle-viewmodel-2.6.2.aar",
+      "sha256": "e4ff4338999e1c6c9c724719f5d4aa7dd61bf6f545d5256a27a9d375df9f2330",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.loader:loader:1.0.0",
+      "file_name": "loader-1.0.0.aar",
+      "sha256": "11f735cb3b55c458d470bed9e25254375b518b4b1bad6926783a7026db0f5025",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.media3:media3-common:1.9.0",
+      "file_name": "media3-common-1.9.0.aar",
+      "sha256": "714114bf8a56fe44f0f78b499ae7ea3bed52391313794c8abdc1b687700d42aa",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.media3:media3-container:1.9.0",
+      "file_name": "media3-container-1.9.0.aar",
+      "sha256": "f73cea4fe8a2bf9eb6462bfb7a547d1aaf55395d0007eed6fadb129b56927c0d",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.media3:media3-muxer:1.9.0",
+      "file_name": "media3-muxer-1.9.0.aar",
+      "sha256": "452b182d84cfe20d1154d999107b9aac7c218ad8ee208d35d067916a92a02031",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.profileinstaller:profileinstaller:1.3.1",
+      "file_name": "profileinstaller-1.3.1.aar",
+      "sha256": "d0e402ec31f24028a1dc7eb6a0a3f9d9635c1459392cd734396343b73d673948",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.recyclerview:recyclerview:1.2.1",
+      "file_name": "recyclerview-1.2.1.aar",
+      "sha256": "a1ea0329ee6d938305dfd0f8ce5c48dea2aac14e5606d23e7fb60afcfb655d6e",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.resourceinspection:resourceinspection-annotation:1.0.1",
+      "file_name": "resourceinspection-annotation-1.0.1.jar",
+      "sha256": "8cff870ec6fb31db48a52f4a792335b4bf8de07e03bd37823181526433ccd5cb",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.savedstate:savedstate-ktx:1.2.1",
+      "file_name": "savedstate-ktx-1.2.1.aar",
+      "sha256": "8553f87e7136c24ec5243560f48f1c32cba56daa77722f89589a5cafcb8f7894",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.savedstate:savedstate:1.2.1",
+      "file_name": "savedstate-1.2.1.aar",
+      "sha256": "21a7d4bcf6bdb94ad7b9283801529300b4fbb8808ca4f191e0cdce6fd8e4705a",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.startup:startup-runtime:1.1.1",
+      "file_name": "startup-runtime-1.1.1.aar",
+      "sha256": "e0a6329a371262fe4c450372b70fdaf33b769ef6917094723787cfce896b1dd3",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.swiperefreshlayout:swiperefreshlayout:1.1.0",
+      "file_name": "swiperefreshlayout-1.1.0.aar",
+      "sha256": "2ce7906cd1dea05aec81975db22d54382359c05a21b2527ad848bc60f6b27293",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.tracing:tracing-android:1.3.0",
+      "file_name": "tracing.aar",
+      "sha256": "f59782bbe3470a6b0c531cef262dd1fc9d9a0233490bb5e6d553e1fe6a1816b2",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/tracing/tracing/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.tracing:tracing-ktx:1.3.0",
+      "file_name": "tracing-ktx-1.3.0.aar",
+      "sha256": "7df502d572295cf23c6da4a38b3f199a4794dfcd947780cd36110eea407a0a4d",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/tracing/tracing-ktx/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.transition:transition-ktx:1.7.0",
+      "file_name": "transition-ktx-1.7.0.aar",
+      "sha256": "fca6c50f63532dadd796b73b363e534c94d95da641e66167423033361cc4d138",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/transition/transition-ktx/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.transition:transition:1.7.0",
+      "file_name": "transition-1.7.0.aar",
+      "sha256": "543a5688b8ea20d4b144500abba95a72960f380405414d733d90078d7f3c26a8",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/transition/transition/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.vectordrawable:vectordrawable-animated:1.1.0",
+      "file_name": "vectordrawable-animated-1.1.0.aar",
+      "sha256": "76da2c502371d9c38054df5e2b248d00da87809ed058f3363eae87ce5e2403f8",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.vectordrawable:vectordrawable:1.1.0",
+      "file_name": "vectordrawable-1.1.0.aar",
+      "sha256": "46fd633ac01b49b7fcabc263bf098c5a8b9e9a69774d234edcca04fb02df8e26",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.versionedparcelable:versionedparcelable:1.1.1",
+      "file_name": "versionedparcelable-1.1.1.aar",
+      "sha256": "57e8d93260d18d5b9007c9eed3c64ad159de90c8609ebfc74a347cbd514535a4",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.viewpager2:viewpager2:1.0.0",
+      "file_name": "viewpager2-1.0.0.aar",
+      "sha256": "e95c0031d4cc247cd48196c6287e58d2cee54d9c79b85afea7c90920330275af",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.viewpager:viewpager:1.0.0",
+      "file_name": "viewpager-1.0.0.aar",
+      "sha256": "147af4e14a1984010d8f155e5e19d781f03c1d70dfed02a8e0d18428b8fc8682",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "androidx.window:window-core-android:1.5.1",
+      "file_name": "window-core.aar",
+      "sha256": "b289ce85090f1f976569fa92bbac84011f54ba1b21f0ce883655b34c8f9f9eea",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/window/window-core/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "androidx.window:window:1.5.1",
+      "file_name": "window-1.5.1.aar",
+      "sha256": "3c3061966f012fc22f2e99701f683e82e732435ae2f2a1d5b2f99d82bb7b8864",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/androidx/window/window/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0.txt",
+            "encoding": "plain",
+            "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0",
+            "bytes": 10175,
+            "file_sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.facebook.fbjni:fbjni:0.7.0",
+      "file_name": "fbjni-0.7.0.aar",
+      "sha256": "7e319ae110ac5e5ef18904170aea5c3e753e915d196699d7fd39d36c8e1dfe36",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:animated-base:3.7.0",
+      "file_name": "animated-base-3.7.0.aar",
+      "sha256": "1f6ef781a85131b49b9c6869a63aba654adae335d5b22e7bd4fe39d9c7ff17f7",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:animated-drawable:3.7.0",
+      "file_name": "animated-drawable-3.7.0.aar",
+      "sha256": "c7db4dd590216c8c45cda0d5717eb5b5bad5a7b62fc67b9c069f62b7d0c72c28",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:animated-gif-lite:3.7.0",
+      "file_name": "animated-gif-lite-3.7.0.aar",
+      "sha256": "4100083dd4b82b889d078e45050b799dc23b13d4c32f830e1d81508929ef0f5d",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:animated-gif:3.7.0",
+      "file_name": "animated-gif-3.7.0.aar",
+      "sha256": "20730d4dfdceb51c60d4d7ee2f46540c6e061d5b0694f4dc9b6ce14ccc693492",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:drawee:3.7.0",
+      "file_name": "drawee-3.7.0.aar",
+      "sha256": "9d3a8294b7c5ac691993c469986f6c9b2325dc099a9850a0613c7bdea16ee188",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:fbcore:3.7.0",
+      "file_name": "fbcore-3.7.0.aar",
+      "sha256": "84bf53391952f657dcd855aea304338cb5874acc5cf0cb2328e1b72e56208dde",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:fresco:3.7.0",
+      "file_name": "fresco-3.7.0.aar",
+      "sha256": "7781655f04a3699830b1773863da43c73e11787deed7a298ed18fc77589c4587",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:imagepipeline-base:3.7.0",
+      "file_name": "imagepipeline-base-3.7.0.aar",
+      "sha256": "0e11ba10b15daa902f29f6b4addead9c3c0df42ef59ea8737eda09bc05f22111",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:imagepipeline-native:3.7.0",
+      "file_name": "imagepipeline-native-3.7.0.aar",
+      "sha256": "cf853f5aaf7cb519db246dcfe71dcfcc78a4606c28520d0a93d957a584a0e4a4",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:imagepipeline-okhttp3:3.7.0",
+      "file_name": "imagepipeline-okhttp3-3.7.0.aar",
+      "sha256": "846137fbafbe38367af5c838164235ea5dcb039a2878067e658f35632d2a9f57",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:imagepipeline:3.7.0",
+      "file_name": "imagepipeline-3.7.0.aar",
+      "sha256": "eaa89d908d53b57c5b959f346cdfc3feee2c0216291570a3c43161be65b17027",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:memory-type-ashmem:3.7.0",
+      "file_name": "memory-type-ashmem-3.7.0.aar",
+      "sha256": "9c6378341e740bfb6276075d4a78f4212184dc15a0d61dfa2088e3ed894bdfe7",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:memory-type-java:3.7.0",
+      "file_name": "memory-type-java-3.7.0.aar",
+      "sha256": "1230d2928b1c84f09fe2bf66ce42bfe5a052335771ca4d6325beb7c578596959",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:memory-type-native:3.7.0",
+      "file_name": "memory-type-native-3.7.0.aar",
+      "sha256": "43c3d45c5081ad81c4d21c78bf34ea95931e0900b1d91f7e651e60711eff9eef",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:middleware:3.7.0",
+      "file_name": "middleware-3.7.0.aar",
+      "sha256": "df47bd0fdebd7791b34469df39a3ed13078175b29fb8e131d22f494ce1c1785e",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:nativeimagefilters:3.7.0",
+      "file_name": "nativeimagefilters-3.7.0.aar",
+      "sha256": "7e999f857e532f4520a82a1410e4f23f14a7edb2e2ac38d01cb5c31fed5cf446",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:nativeimagetranscoder:3.7.0",
+      "file_name": "nativeimagetranscoder-3.7.0.aar",
+      "sha256": "18413e990db85ee7446082bdc6ed94c4d00deb8150a77d62386ebabcff9a41a0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:soloader:3.7.0",
+      "file_name": "soloader-3.7.0.aar",
+      "sha256": "fbbe0a37d91b86d4320d0728040c3264599a94b31a1de41f92a25e147f7f35ef",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:ui-common:3.7.0",
+      "file_name": "ui-common-3.7.0.aar",
+      "sha256": "60ddce78196fda40e0b5dacc6c7960dd921eeea4326e0e0578019196777794f1",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:ui-core:3.7.0",
+      "file_name": "ui-core-3.7.0.aar",
+      "sha256": "682b761f235ca85d7188b61fb1dda26f8f1849a22b5e7640e0b51aa6572104a8",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:urimod:3.7.0",
+      "file_name": "urimod-3.7.0.aar",
+      "sha256": "7d37be1a1789d29e4a7379ca2029a9f870e7a30f1d83094a4f6b902783beeb0c",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-core-common-impl:3.7.0",
+      "file_name": "vito-core-common-impl-3.7.0.aar",
+      "sha256": "afb4d55233c404199d4bdf0048429f6a2332732132b726ff6073d9b3cc5f1a50",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-core-impl:3.7.0",
+      "file_name": "vito-core-impl-3.7.0.aar",
+      "sha256": "05fc4cb1f70e82da8387f5f08a2f52326b844e54c8f868077a6b621c2beb11e6",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-core-java-impl:3.7.0",
+      "file_name": "vito-core-java-impl-3.7.0.aar",
+      "sha256": "b4c91933daa190e92989e8f8a6b983a0340d09dbee70bb8d2d5b2618484772dc",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-core:3.7.0",
+      "file_name": "vito-core-3.7.0.aar",
+      "sha256": "ae4852059563e5d00263c77a7dfaae0401951697be0837a6d040f732ae3a6bc2",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-drawee-support:3.7.0",
+      "file_name": "vito-drawee-support-3.7.0.aar",
+      "sha256": "f5bed934ccc5369b3f280a9218807a75b60927f31d69c16192e840e48c4f943c",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-options:3.7.0",
+      "file_name": "vito-options-3.7.0.aar",
+      "sha256": "c20ba21520f88affa5060b20e14bf0b6221ef7ec3dce78beaf5e0edd2b2d34d4",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-provider:3.7.0",
+      "file_name": "vito-provider-3.7.0.aar",
+      "sha256": "44a9bde903974f8b9ab2027b4b3e736c63ab6fb6f671be1a06992a50d4949ec4",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-renderer:3.7.0",
+      "file_name": "vito-renderer-3.7.0.aar",
+      "sha256": "47ee977e78fa416b0bb8acfa97bf7b1c18119baad3f3d122cbba4012780229ce",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-source:3.7.0",
+      "file_name": "vito-source-3.7.0.aar",
+      "sha256": "cbc2d4a65fc0c67475876625239abef99103d5a3b4bf3fe986140c100a440359",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.fresco:webpsupport:3.7.0",
+      "file_name": "webpsupport-3.7.0.aar",
+      "sha256": "4400108e485ed844925af134579fa248d17ecf8618d7f3b33ccd876d2ddd7ff0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.hermes:hermes-android:260318099.0.5",
+      "file_name": "hermes-android-260318099.0.5-debug.aar",
+      "sha256": "4dcdb4a0c518e4866ac40afc7c067d5efa3727782e6ca3da8284ff70466bd02c",
+      "profiles": [
+        "debugRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.hermes:hermes-android:260318099.0.5",
+      "file_name": "hermes-android-260318099.0.5-release.aar",
+      "sha256": "1c171d2ace4057127a91ee543c3fd17206fce5053c2ea85aa9376473f1e200eb",
+      "profiles": [
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.infer.annotation:infer-annotation:0.18.0",
+      "file_name": "infer-annotation-0.18.0.jar",
+      "sha256": "caefba935643dc962758a760f1627a402215af034d96c0f484d63b7fddca992f",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.react:react-android:0.88.1",
+      "file_name": "react-android-0.88.1-debug.aar",
+      "sha256": "6b249cbfeaca37b40ce12cb5b416aa85e65515bb613b23caf60cef0296db6570",
+      "profiles": [
+        "debugRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.react:react-android:0.88.1",
+      "file_name": "react-android-0.88.1-release.aar",
+      "sha256": "74db2cd99de245e56b2779b581fc4586fef2fd630ce5940cacfe7eb8cfd42b2c",
+      "profiles": [
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.soloader:annotation:0.12.1",
+      "file_name": "annotation-0.12.1.jar",
+      "sha256": "f6ddd55268bf1824225df7a35ec1b8b33cf98855a6c9c153d189899e5ef4a418",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.soloader:nativeloader:0.12.1",
+      "file_name": "nativeloader-0.12.1.jar",
+      "sha256": "971ded86009c0ac56fb2275e128f852e7dcbc41a40cd799688f8a1aebde5195d",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.soloader:soloader:0.12.1",
+      "file_name": "soloader-0.12.1.aar",
+      "sha256": "5bc6e15d712f90a0a3890d22db0eef5fe89ef3fcb3ae8aa1f8f6a6d99547c892",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.facebook.yoga:proguard-annotations:1.19.0",
+      "file_name": "proguard-annotations-1.19.0.jar",
+      "sha256": "fb65f706eea05b5640fb6b93d21d6c41f9e2b4e7a6e6d9f28ce9d2a574474995",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.android.datatransport:transport-api:2.2.1",
+      "file_name": "transport-api-2.2.1.aar",
+      "sha256": "e62f73ba1c7f5d15f5d86d8e9a298c42ccd0648e7ce60b9e312f2ecd123b5ed0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356.txt",
+            "encoding": "plain",
+            "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+            "bytes": 3,
+            "file_sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.txt",
+            "encoding": "plain",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0,
+            "file_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.android.datatransport:transport-backend-cct:2.3.3",
+      "file_name": "transport-backend-cct-2.3.3.aar",
+      "sha256": "b22a14d560a590dc875e902424b29a13a02d1faf297b7c39a9007967ffadccbd",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356.txt",
+            "encoding": "plain",
+            "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+            "bytes": 3,
+            "file_sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.txt",
+            "encoding": "plain",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0,
+            "file_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.android.datatransport:transport-runtime:2.2.6",
+      "file_name": "transport-runtime-2.2.6.aar",
+      "sha256": "d83ad23c134429691161c92476a3c83df236cd1f8badbfd4f00723b4eccd741c",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/ca9b2e984212979d947d460c8da1e1ac6adee64961784b513b453dcb634298c6.txt",
+            "encoding": "plain",
+            "sha256": "ca9b2e984212979d947d460c8da1e1ac6adee64961784b513b453dcb634298c6",
+            "bytes": 38,
+            "file_sha256": "ca9b2e984212979d947d460c8da1e1ac6adee64961784b513b453dcb634298c6"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/00bdeca73c2a7724261eb7443713e3b4b913ba0907dfe5c4d67d87f3920c1e6e.txt",
+            "encoding": "plain",
+            "sha256": "00bdeca73c2a7724261eb7443713e3b4b913ba0907dfe5c4d67d87f3920c1e6e",
+            "bytes": 11368,
+            "file_sha256": "00bdeca73c2a7724261eb7443713e3b4b913ba0907dfe5c4d67d87f3920c1e6e"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-base:18.5.0",
+      "file_name": "play-services-base-18.5.0.aar",
+      "sha256": "59a5c0c2da12311d75d965ce1f419498536b1a167fb28ff7dfc2dfd9cefa4157",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/f49b0d3754fe9430ca8e1d7578b98f9c74c912fa5182bee2db86f0c386ab7970.txt",
+            "encoding": "plain",
+            "sha256": "f49b0d3754fe9430ca8e1d7578b98f9c74c912fa5182bee2db86f0c386ab7970",
+            "bytes": 834,
+            "file_sha256": "f49b0d3754fe9430ca8e1d7578b98f9c74c912fa5182bee2db86f0c386ab7970"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/653d2e7a2bb02c79b897e826df9c3b2d8e8b1a3b2cef5e29585124fa455ddaf5.txt.gz",
+            "encoding": "gzip",
+            "sha256": "653d2e7a2bb02c79b897e826df9c3b2d8e8b1a3b2cef5e29585124fa455ddaf5",
+            "bytes": 313001,
+            "file_sha256": "5e6f5455d1a67bda6d9a626f7e20352928a43b85ed5d1fa7005fe520a6af93f1"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-basement:18.10.0",
+      "file_name": "play-services-basement-18.10.0.aar",
+      "sha256": "859963500c141053043e6b02ff3065609184078d8c72799f4d162058be52fff8",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/90b2986a150413adf0be5e6099cdbe9334d28603dfd557141ee1996ce575017a.txt",
+            "encoding": "plain",
+            "sha256": "90b2986a150413adf0be5e6099cdbe9334d28603dfd557141ee1996ce575017a",
+            "bytes": 894,
+            "file_sha256": "90b2986a150413adf0be5e6099cdbe9334d28603dfd557141ee1996ce575017a"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/9737f0368fab4ef7d0ed4ea19e4a1b014eee309af6f723975a6595bc58adaeb6.txt.gz",
+            "encoding": "gzip",
+            "sha256": "9737f0368fab4ef7d0ed4ea19e4a1b014eee309af6f723975a6595bc58adaeb6",
+            "bytes": 247814,
+            "file_sha256": "169c4645f4744c44c2bbcae197a7950f7daca167d048ccdb4d39e50070ed1252"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-code-scanner:16.1.0",
+      "file_name": "play-services-code-scanner-16.1.0.aar",
+      "sha256": "92e374e9af54c18d4ca6ea98bd7dc5a19070865861769c434aebaadb1aa53753",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/4c86737a552efafeee69547be39ec67db4fa4429a3fa5251f4f58845eae5bf2a.txt",
+            "encoding": "plain",
+            "sha256": "4c86737a552efafeee69547be39ec67db4fa4429a3fa5251f4f58845eae5bf2a",
+            "bytes": 3704,
+            "file_sha256": "4c86737a552efafeee69547be39ec67db4fa4429a3fa5251f4f58845eae5bf2a"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/e7ff2e67acddc4c1016624e40c5278a83e60839a0206640615e6d4d8abb50873.txt.gz",
+            "encoding": "gzip",
+            "sha256": "e7ff2e67acddc4c1016624e40c5278a83e60839a0206640615e6d4d8abb50873",
+            "bytes": 774500,
+            "file_sha256": "6612e7ee39880b24041ed6259fc539adb3e079a5566f97a74ad0b951ba6394c8"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-mlkit-barcode-scanning:18.3.1",
+      "file_name": "play-services-mlkit-barcode-scanning-18.3.1.aar",
+      "sha256": "f58096b98867417a698db55ddfd7c8ed0383b2117fa8f3692fa701d6132f1462",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/1d58e3d1afdf9d30cdd8a2c47b34e364385c2b8ff388315eab0d0d567df6cec0.txt",
+            "encoding": "plain",
+            "sha256": "1d58e3d1afdf9d30cdd8a2c47b34e364385c2b8ff388315eab0d0d567df6cec0",
+            "bytes": 3738,
+            "file_sha256": "1d58e3d1afdf9d30cdd8a2c47b34e364385c2b8ff388315eab0d0d567df6cec0"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/6da40abfe5e602989582ae0fbe1e86c1a781dffe7dda8a457f0263c5baa2451c.txt.gz",
+            "encoding": "gzip",
+            "sha256": "6da40abfe5e602989582ae0fbe1e86c1a781dffe7dda8a457f0263c5baa2451c",
+            "bytes": 791244,
+            "file_sha256": "95be6399e09c1784b5428018e50f3bece334d4f1bb87d8ddfec24056fa99ad5f"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1",
+      "file_name": "play-services-mlkit-document-scanner-16.0.0-beta1.aar",
+      "sha256": "ce094ba41b0ab247442c9b375868e950518290fa160781526a80768c9ef30970",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/50b1229c817f8412e0db7d32b8f3fc49aeede6ce50feae6a5dba4f48da422805.txt",
+            "encoding": "plain",
+            "sha256": "50b1229c817f8412e0db7d32b8f3fc49aeede6ce50feae6a5dba4f48da422805",
+            "bytes": 3622,
+            "file_sha256": "50b1229c817f8412e0db7d32b8f3fc49aeede6ce50feae6a5dba4f48da422805"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/27cbdeee5bf8a78a606819cf9c041bb4cd6346be831a5359909b240e78cfadb1.txt.gz",
+            "encoding": "gzip",
+            "sha256": "27cbdeee5bf8a78a606819cf9c041bb4cd6346be831a5359909b240e78cfadb1",
+            "bytes": 761456,
+            "file_sha256": "e7b8026a1c87c6c55295eff79839c833b14a9baefc11bf1afb14abf29b5efae3"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-tasks:18.2.1",
+      "file_name": "play-services-tasks-18.2.1.aar",
+      "sha256": "18f5d1ec41237d9a1661f417817272f1b18d6854366531bffde39dc0be0c97b4",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/c24c8840650fb045069d5b9d37bae5a0e58338c546a6845053d933741ed77878.txt",
+            "encoding": "plain",
+            "sha256": "c24c8840650fb045069d5b9d37bae5a0e58338c546a6845053d933741ed77878",
+            "bytes": 895,
+            "file_sha256": "c24c8840650fb045069d5b9d37bae5a0e58338c546a6845053d933741ed77878"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/ce8b3284215b312d3aaeb2ca73228b1b52557ca5151bd8725b47e11a707ccf77.txt.gz",
+            "encoding": "gzip",
+            "sha256": "ce8b3284215b312d3aaeb2ca73228b1b52557ca5151bd8725b47e11a707ccf77",
+            "bytes": 331345,
+            "file_sha256": "15622242a6496a0098e8a78baea50ae148e0417dc5e392edb1e23ee22570a3e2"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.android.material:material:1.13.0",
+      "file_name": "material-1.13.0.aar",
+      "sha256": "6d5e1cbb67c05bcdcbbf84005787dafd354a155f59a4d3800fd45fa7eb3689f5",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.android.odml:image:1.0.0-beta1",
+      "file_name": "image-1.0.0-beta1.aar",
+      "sha256": "2e71aa31f83a9415277f119de67195726f07d1760e9542c111778c320e3aa1f2",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/595c1aeca965ae48385ab3ce6f1b5b59fa029d5d18343ca63df936503db0451e.txt",
+            "encoding": "plain",
+            "sha256": "595c1aeca965ae48385ab3ce6f1b5b59fa029d5d18343ca63df936503db0451e",
+            "bytes": 2954,
+            "file_sha256": "595c1aeca965ae48385ab3ce6f1b5b59fa029d5d18343ca63df936503db0451e"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/bb0feabf4a92027b248c075821ee93e14ad4ce53fc3ebb9ca9ee18b316f6aa25.txt.gz",
+            "encoding": "gzip",
+            "sha256": "bb0feabf4a92027b248c075821ee93e14ad4ce53fc3ebb9ca9ee18b316f6aa25",
+            "bytes": 461117,
+            "file_sha256": "71127098c03f1452680184437cd3fc3fa1a62277a800841d0798682571c77a1b"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.auto.value:auto-value-annotations:1.6.3",
+      "file_name": "auto-value-annotations-1.6.3.jar",
+      "sha256": "0e951fee8c31f60270bc46553a8586001b7b93dbb12aec06373aa99a150392c0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.code.findbugs:jsr305:3.0.2",
+      "file_name": "jsr305-3.0.2.jar",
+      "sha256": "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.code.gson:gson:2.8.6",
+      "file_name": "gson-2.8.6.jar",
+      "sha256": "c8fb4839054d280b3033f800d1f5a97de2f028eb8ba2eb458ad287e536f3f25f",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.dagger:dagger:2.59",
+      "file_name": "dagger-2.59.jar",
+      "sha256": "94d5b23812cc12fa903c9ac4a42978e7e7b2622e6b51c17f8b12037ceece43cd",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.errorprone:error_prone_annotations:2.15.0",
+      "file_name": "error_prone_annotations-2.15.0.jar",
+      "sha256": "067047714349e7789a5bdbfad9d1c0af9f3a1eb28c55a0ee3f68e682f905c4eb",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.firebase:firebase-annotations:16.0.0",
+      "file_name": "firebase-annotations-16.0.0.jar",
+      "sha256": "8830f2e8a5e434cbc5e4bd18133073b6e8518a8ce8ec2ce6f3b273c91d9664c2",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.firebase:firebase-components:16.1.0",
+      "file_name": "firebase-components-16.1.0.aar",
+      "sha256": "82e91aa5ed186eedaf1f2210f5d241ba6e4456cf0c32949d5cdbe152b0e2e88b",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356.txt",
+            "encoding": "plain",
+            "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+            "bytes": 3,
+            "file_sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.txt",
+            "encoding": "plain",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0,
+            "file_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.firebase:firebase-encoders-json:17.1.0",
+      "file_name": "firebase-encoders-json-17.1.0.aar",
+      "sha256": "8295c755bcadc87a2aaee5b9e568f27fd138fd45ff1159a8ee747cf4c3a38d85",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356.txt",
+            "encoding": "plain",
+            "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+            "bytes": 3,
+            "file_sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.txt",
+            "encoding": "plain",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0,
+            "file_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.firebase:firebase-encoders:16.1.0",
+      "file_name": "firebase-encoders-16.1.0.jar",
+      "sha256": "8f89a74298bbccc2c543385208a2f0c67f603ce67e6ec21cc772e98e688f7cf5",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.guava:failureaccess:1.0.2",
+      "file_name": "failureaccess-1.0.2.jar",
+      "sha256": "8a8f81cf9b359e3f6dfa691a1e776985c061ef2f223c9b2c80753e1b458e8064",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.guava:guava:33.3.1-android",
+      "file_name": "guava-33.3.1-android.jar",
+      "sha256": "2c3e41d1b380f2044d257947a3aa82dabf3ae4b978622745254aa18b6cf89ab0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava",
+      "file_name": "listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar",
+      "sha256": "b372a037d4230aa57fbeffdef30fd6123f9c0c2db85d0aced00c91b974f33f99",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.google.mlkit:barcode-scanning-common:17.0.0",
+      "file_name": "barcode-scanning-common-17.0.0.aar",
+      "sha256": "cd0e9e71b834078d4a8a7f09e72d7d7c3a22e258e9602da7ac86146677043f14",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/bc10100ea2f94729ae8be7a3f7bbb9532003ed7570c6d1e80e86c0446f89971f.txt",
+            "encoding": "plain",
+            "sha256": "bc10100ea2f94729ae8be7a3f7bbb9532003ed7570c6d1e80e86c0446f89971f",
+            "bytes": 3535,
+            "file_sha256": "bc10100ea2f94729ae8be7a3f7bbb9532003ed7570c6d1e80e86c0446f89971f"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/ec40d1d2733f32bc3130f020a7b9edd780cd14d10d06a6423d4489848bebe589.txt.gz",
+            "encoding": "gzip",
+            "sha256": "ec40d1d2733f32bc3130f020a7b9edd780cd14d10d06a6423d4489848bebe589",
+            "bytes": 669054,
+            "file_sha256": "c65b35d0d02c00e829f3c32b35f2a2d4afd98da1e16445c4664930d5ff4d02ac"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.mlkit:barcode-scanning:17.3.0",
+      "file_name": "barcode-scanning-17.3.0.aar",
+      "sha256": "64c5cf48bb94b6c54f2c785c660640a7d167aff6ad72bc2c920706dc4187b79a",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/7b4d85879c95d3d20b8063f8288d886c911ecd841f1101e9ca5c1973fd18731e.txt",
+            "encoding": "plain",
+            "sha256": "7b4d85879c95d3d20b8063f8288d886c911ecd841f1101e9ca5c1973fd18731e",
+            "bytes": 5639,
+            "file_sha256": "7b4d85879c95d3d20b8063f8288d886c911ecd841f1101e9ca5c1973fd18731e"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/e9b45ff61aa848676acbf17cc816b2bc3dbf9ae1b57b92ea4018bb0a44347614.txt.gz",
+            "encoding": "gzip",
+            "sha256": "e9b45ff61aa848676acbf17cc816b2bc3dbf9ae1b57b92ea4018bb0a44347614",
+            "bytes": 1147454,
+            "file_sha256": "2b2caa1231d245b5aa47ec07be720223df086d0b67719a9652117ca6209d9e55"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.mlkit:common:18.11.0",
+      "file_name": "common-18.11.0.aar",
+      "sha256": "66408a08dbb2465687ff5dd0c8f6410b56549ce3ecf449d9096f3712282131d0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/c421e0ab8fb44de3aea1eaae744d7e68a1d8905e1e309368bf0ca82c95ad9d3f.txt",
+            "encoding": "plain",
+            "sha256": "c421e0ab8fb44de3aea1eaae744d7e68a1d8905e1e309368bf0ca82c95ad9d3f",
+            "bytes": 3605,
+            "file_sha256": "c421e0ab8fb44de3aea1eaae744d7e68a1d8905e1e309368bf0ca82c95ad9d3f"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/86ed829b6e5a860ae586e8aef21f14c95fa5f5255f85f6a9388e9c7b3ee48e14.txt.gz",
+            "encoding": "gzip",
+            "sha256": "86ed829b6e5a860ae586e8aef21f14c95fa5f5255f85f6a9388e9c7b3ee48e14",
+            "bytes": 769067,
+            "file_sha256": "8048c7298008b578c9dc8bbdc20934462736d815a9acef2845851834851731ff"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.mlkit:vision-common:17.3.0",
+      "file_name": "vision-common-17.3.0.aar",
+      "sha256": "c0085ca5fba00f11529c0a83b12851ea6c599bbcc8affd927e914b29a743459f",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/970e95c84c518383a7d0a5c861d2407e8ba22b9f7a536140b3d874ea3e68e44b.txt",
+            "encoding": "plain",
+            "sha256": "970e95c84c518383a7d0a5c861d2407e8ba22b9f7a536140b3d874ea3e68e44b",
+            "bytes": 3574,
+            "file_sha256": "970e95c84c518383a7d0a5c861d2407e8ba22b9f7a536140b3d874ea3e68e44b"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/33b776d5cae5981fc08236f37ccb15cf7ea91c8d17bd38a0a612d19eaacfe160.txt.gz",
+            "encoding": "gzip",
+            "sha256": "33b776d5cae5981fc08236f37ccb15cf7ea91c8d17bd38a0a612d19eaacfe160",
+            "bytes": 682395,
+            "file_sha256": "7bcb2d07e7b24efa6ac8c26e66691c43551813369799e58f32cab99d2279747b"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.google.mlkit:vision-interfaces:16.3.0",
+      "file_name": "vision-interfaces-16.3.0.aar",
+      "sha256": "8f0192a26d01b728a01a15a620d829fff7095822822694438a93127c04cb16fb",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "third_party_licenses.json",
+          "source": {
+            "path": "artifact-notice-sources/750f3c7ce8c0f0786436c51a027f093d050b0634b8d097fb80ca3f343306b1da.txt",
+            "encoding": "plain",
+            "sha256": "750f3c7ce8c0f0786436c51a027f093d050b0634b8d097fb80ca3f343306b1da",
+            "bytes": 3383,
+            "file_sha256": "750f3c7ce8c0f0786436c51a027f093d050b0634b8d097fb80ca3f343306b1da"
+          }
+        },
+        {
+          "archive_path": "third_party_licenses.txt",
+          "source": {
+            "path": "artifact-notice-sources/39ce1aa1dc8a3209adcafd71fb1a5c993cb1850abd2b2d7921e33dca3940507f.txt.gz",
+            "encoding": "gzip",
+            "sha256": "39ce1aa1dc8a3209adcafd71fb1a5c993cb1850abd2b2d7921e33dca3940507f",
+            "bytes": 704596,
+            "file_sha256": "3ee15bbc93d06536d7d6c694569c3f81b452b204e6664886e27f3c6af16868e9"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.parse.bolts:bolts-tasks:1.4.0",
+      "file_name": "bolts-tasks-1.4.0.jar",
+      "sha256": "9bc51e3eca853a9df2fbac62c2317db2c9ea619b95b5531c30440243daaccee2",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.squareup.okhttp3:okhttp-urlconnection:4.9.2",
+      "file_name": "okhttp-urlconnection-4.9.2.jar",
+      "sha256": "0e1c39aa89668f9625c9207acd4a8784dc868ad0d5a2011d9e15e0674f3b7d11",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.squareup.okhttp3:okhttp:4.9.2",
+      "file_name": "okhttp-4.9.2.jar",
+      "sha256": "3b2ee1b768c1df28c30d2fe6b38dda4d2c519210e30ca3d27950618c563c92de",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "okhttp3/internal/publicsuffix/NOTICE",
+          "source": {
+            "path": "artifact-notice-sources/8a9c58fbded5ea3474315e4a9824ca8b1486098a1a03e897e0b19419d5e1876a.txt",
+            "encoding": "plain",
+            "sha256": "8a9c58fbded5ea3474315e4a9824ca8b1486098a1a03e897e0b19419d5e1876a",
+            "bytes": 218,
+            "file_sha256": "8a9c58fbded5ea3474315e4a9824ca8b1486098a1a03e897e0b19419d5e1876a"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "com.squareup.okio:okio-jvm:3.16.0",
+      "file_name": "okio-jvm-3.16.0.jar",
+      "sha256": "c737c035ca675187bf11a67ddb9581954bf0d5ca9f3e048e838b3267cf32b5c3",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.squareup.zstd:zstd-kmp-android:0.4.0",
+      "file_name": "zstd-kmp-release.aar",
+      "sha256": "2778570454ae78026df42ace7168b8a6500f2521a5d497f2ab2fc0f804247826",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "com.squareup.zstd:zstd-kmp-okio-android:0.4.0",
+      "file_name": "zstd-kmp-okio-release.aar",
+      "sha256": "8461ece75b646bfe30f6f53a559c2eac82f745f3575d76648386182ffa7c873d",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "commons-codec:commons-codec:1.10",
+      "file_name": "commons-codec-1.10.jar",
+      "sha256": "4241dfa94e711d435f29a4604a3e2de5c4aa3c165e23bd066be6fc1fc4309569",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5.txt",
+            "encoding": "plain",
+            "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5",
+            "bytes": 11560,
+            "file_sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+          }
+        },
+        {
+          "archive_path": "META-INF/NOTICE.txt",
+          "source": {
+            "path": "artifact-notice-sources/bcb83645cb4d1a46e551f21a53477b3f8b7518471480e1b6afe04a5f9fc3af80.txt",
+            "encoding": "plain",
+            "sha256": "bcb83645cb4d1a46e551f21a53477b3f8b7518471480e1b6afe04a5f9fc3af80",
+            "bytes": 749,
+            "file_sha256": "bcb83645cb4d1a46e551f21a53477b3f8b7518471480e1b6afe04a5f9fc3af80"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "commons-io:commons-io:2.6",
+      "file_name": "commons-io-2.6.jar",
+      "sha256": "f877d304660ac2a142f3865badfc971dec7ed73c747c7f8d5d2f5139ca736513",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/8c6db340475136df3c1201d458fa5755698eace76e510471ecc9d857d6083dac.txt",
+            "encoding": "plain",
+            "bytes": 11359,
+            "file_sha256": "8c6db340475136df3c1201d458fa5755698eace76e510471ecc9d857d6083dac",
+            "sha256": "8c6db340475136df3c1201d458fa5755698eace76e510471ecc9d857d6083dac"
+          }
+        },
+        {
+          "archive_path": "META-INF/NOTICE.txt",
+          "source": {
+            "path": "artifact-notice-sources/f738390135295a249c4fb7118469ff881ae0bd11401b410f7564a52b7e54c4d2.txt",
+            "encoding": "plain",
+            "bytes": 171,
+            "file_sha256": "f738390135295a249c4fb7118469ff881ae0bd11401b410f7564a52b7e54c4d2",
+            "sha256": "f738390135295a249c4fb7118469ff881ae0bd11401b410f7564a52b7e54c4d2"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "expo.modules.asset:expo.modules.asset:58.0.20",
+      "file_name": "expo.modules.asset-58.0.20.aar",
+      "sha256": "6638572bc255e7dd1653db31deff0bc5150b52a04b0fc4e9d9db5ac63e7cbbf8",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "integrity-checked npm archive",
+      "npm_member": "package/local-maven-repo/expo/modules/asset/expo.modules.asset/58.0.20/expo.modules.asset-58.0.20.aar",
+      "npm_integrity": "sha512-atirOtDsH0l+4zxnByf4WKc7Iw2k5e2bSNAkuu79d4SLOAjAROoDizeP0qNQSMyZNoHPArw7EwTpoc8LuWvg4Q==",
+      "npm_resolved": "https://registry.npmjs.org/expo-asset/-/expo-asset-58.0.20.tgz",
+      "notices": []
+    },
+    {
+      "coordinate": "expo.modules.router:expo.modules.router:58.0.30",
+      "file_name": "expo.modules.router-58.0.30.aar",
+      "sha256": "5a620cdcb41c5bc3c82e954ffd02de6b85954cd41bde5b5694ac9d5f5f25aa8f",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "integrity-checked npm archive",
+      "npm_member": "package/local-maven-repo/expo/modules/router/expo.modules.router/58.0.30/expo.modules.router-58.0.30.aar",
+      "npm_integrity": "sha512-GzwSjiDCJeSHDiH71jeCsncMCEksRyDhGweNcVjGfW5C7JMYtROUroMBudPGtrOpKkHUQ0lampFsb8jidT4lbg==",
+      "npm_resolved": "https://registry.npmjs.org/expo-router/-/expo-router-58.0.30.tgz",
+      "notices": []
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.camera:58.0.14",
+      "file_name": "expo.modules.camera-58.0.14.aar",
+      "sha256": "adb6e9d3f7ea768e6983903806a538485dd4b014e91153778a597ce38e84cb5f",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "integrity-checked npm archive",
+      "npm_member": "package/local-maven-repo/host/exp/exponent/expo.modules.camera/58.0.14/expo.modules.camera-58.0.14.aar",
+      "npm_integrity": "sha512-yEiMuJ2d7A+EqsP8rlGIvgaUzdk/rW9CXR6R7WKqludxU3H+JcSUbPC3ldr3ZpmaYlgXP3x+oOO9BfQy7yKK2A==",
+      "npm_resolved": "https://registry.npmjs.org/expo-camera/-/expo-camera-58.0.14.tgz",
+      "notices": []
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.crypto:58.0.7",
+      "file_name": "expo.modules.crypto-58.0.7.aar",
+      "sha256": "3e72ad98ec4ea60dbd6c7794ef67d31180d203a8de19b454d0af1af634f00859",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "integrity-checked npm archive",
+      "npm_member": "package/local-maven-repo/host/exp/exponent/expo.modules.crypto/58.0.7/expo.modules.crypto-58.0.7.aar",
+      "npm_integrity": "sha512-g+4i4UpqQ5jNy1VPRvVVvr9aIdh8WwvxbpwL2ntiSESDRsXyVSeb8JM6tHVdC3b9J2nGxjtrhrsaWOo0jbSxlA==",
+      "npm_resolved": "https://registry.npmjs.org/expo-crypto/-/expo-crypto-58.0.7.tgz",
+      "notices": []
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.documentpicker:58.0.4",
+      "file_name": "expo.modules.documentpicker-58.0.4.aar",
+      "sha256": "d3ff701205e6100d3ce6e779075fa28e18c541c2a7537505f026a4544b77a1e1",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "integrity-checked npm archive",
+      "npm_member": "package/local-maven-repo/host/exp/exponent/expo.modules.documentpicker/58.0.4/expo.modules.documentpicker-58.0.4.aar",
+      "npm_integrity": "sha512-rxs+9RrpI55/BEGNB/3sXjoBG6yZDLyn6Z7KzjbbBLdX8bE2cZT4IozQ3Q5wufaEEeaHQn48EgPiuMoTsAidpg==",
+      "npm_resolved": "https://registry.npmjs.org/expo-document-picker/-/expo-document-picker-58.0.4.tgz",
+      "notices": []
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.filesystem:58.0.13",
+      "file_name": "expo.modules.filesystem-58.0.13.aar",
+      "sha256": "05b04d656f4a5b19617aeb299500fce68d6777c9c3272c1886efea7fdf2f0ab9",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "integrity-checked npm archive",
+      "npm_member": "package/local-maven-repo/host/exp/exponent/expo.modules.filesystem/58.0.13/expo.modules.filesystem-58.0.13.aar",
+      "npm_integrity": "sha512-+/1aFErkawyky5UdWI06zYeO2DeHUnfaWnYHeiI8M8Z/sB6L66gI3WUxqtvUvKJoaM0Ti1CximD3x3JwteLYIg==",
+      "npm_resolved": "https://registry.npmjs.org/expo-file-system/-/expo-file-system-58.0.13.tgz",
+      "notices": []
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.font:58.0.11",
+      "file_name": "expo.modules.font-58.0.11.aar",
+      "sha256": "8722bab1c001def6d5f57762b550c8520065b9def4951f15fa9118a310d4cd41",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "integrity-checked npm archive",
+      "npm_member": "package/local-maven-repo/host/exp/exponent/expo.modules.font/58.0.11/expo.modules.font-58.0.11.aar",
+      "npm_integrity": "sha512-6r7s6xk2L2orvum+x+TY1fzEcMtuCBRQTLgC/Su2uLzNPpT4L+E+S4IAGy8ZIjeVvwk2j2pj+HiZ23O7eh1PGQ==",
+      "npm_resolved": "https://registry.npmjs.org/expo-font/-/expo-font-58.0.11.tgz",
+      "notices": []
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.keepawake:58.0.3",
+      "file_name": "expo.modules.keepawake-58.0.3.aar",
+      "sha256": "8d1d85f4ad5abad880118a04c9bd6db709b1a8c2843a25d6e4705828088f6f61",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "integrity-checked npm archive",
+      "npm_member": "package/local-maven-repo/host/exp/exponent/expo.modules.keepawake/58.0.3/expo.modules.keepawake-58.0.3.aar",
+      "npm_integrity": "sha512-wLRF+XeVsD/Rt/ZyX+A0mk1brdf8vefWizNAPzqV5eOCgkj23LCRZdN8gUi5X8UwyR8UJ7Y7Dzdz4YDGB/4c9Q==",
+      "npm_resolved": "https://registry.npmjs.org/expo-keep-awake/-/expo-keep-awake-58.0.3.tgz",
+      "notices": []
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.linking:58.0.16",
+      "file_name": "expo.modules.linking-58.0.16.aar",
+      "sha256": "6b7c85fe2f27e3c8a6dad0a62f3c612b9d901f81af75757c2663d4e90c82479c",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "integrity-checked npm archive",
+      "npm_member": "package/local-maven-repo/host/exp/exponent/expo.modules.linking/58.0.16/expo.modules.linking-58.0.16.aar",
+      "npm_integrity": "sha512-yGz7w4nySktoOba7fS08DzzQXfEgLd60248Sz3u4m/Vzi8SKhC5xBXWmP4scGh0Ele89I350k/uvo2moVmmZJw==",
+      "npm_resolved": "https://registry.npmjs.org/expo-linking/-/expo-linking-58.0.16.tgz",
+      "notices": []
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.statusbar:58.0.4",
+      "file_name": "expo.modules.statusbar-58.0.4.aar",
+      "sha256": "c57415373df6b0c2b60474ce414fc82f2735f387f6ec638b2ebdd6543dcebccf",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "integrity-checked npm archive",
+      "npm_member": "package/local-maven-repo/host/exp/exponent/expo.modules.statusbar/58.0.4/expo.modules.statusbar-58.0.4.aar",
+      "npm_integrity": "sha512-e6JJHziSSNb1v1VSzmDrAPf6GFoPRdVOIDrTCcK3bHfbJEAZGZ3YZXfqlorZtUFDT0z6NcjaZf0mPWifJZcqew==",
+      "npm_resolved": "https://registry.npmjs.org/expo-status-bar/-/expo-status-bar-58.0.4.tgz",
+      "notices": []
+    },
+    {
+      "coordinate": "io.github.expo.kolibri:kolibri-android:0.2.4",
+      "file_name": "kolibri-android-0.2.4.aar",
+      "sha256": "bf527ae00ef8269a62b77bb949518f2e8a8ceb1a94fe9c3c5a4c522d58bdcdbb",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "io.github.expo.kolibri:runtime:0.2.4",
+      "file_name": "runtime-0.2.4.jar",
+      "sha256": "adf456eb170b4986e46ec243aaa823de5510c72549f4b119847f37c6e4cab792",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "io.github.expo.pika:pika-api:1.1.0",
+      "file_name": "pika-api-1.1.0.jar",
+      "sha256": "61e8446172bee3fdfd1e445d8947d7dd269cc048434cfc1a5f2a26f651865640",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "io.github.expo:expo-modules-v2-react:0.2.7",
+      "file_name": "expo-modules-v2-react-0.2.7.aar",
+      "sha256": "ae8f26bbc6b6168a3caa3a36752cd3b500247fbc02a28cea283f641bf7062ea0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "jakarta.inject:jakarta.inject-api:2.0.1",
+      "file_name": "jakarta.inject-api-2.0.1.jar",
+      "sha256": "f7dc98062fccf14126abb751b64fab12c312566e8cbdc8483598bffcea93af7c",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "META-INF/LICENSE.txt",
+          "source": {
+            "path": "artifact-notice-sources/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt",
+            "encoding": "plain",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+            "bytes": 11358,
+            "file_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          }
+        },
+        {
+          "archive_path": "META-INF/NOTICE.md",
+          "source": {
+            "path": "artifact-notice-sources/992ed62dd3ee17d73ce6a4a5e02dd0fed9eb326bf386aa5304e6a512214df540.txt",
+            "encoding": "plain",
+            "sha256": "992ed62dd3ee17d73ce6a4a5e02dd0fed9eb326bf386aa5304e6a512214df540",
+            "bytes": 1074,
+            "file_sha256": "992ed62dd3ee17d73ce6a4a5e02dd0fed9eb326bf386aa5304e6a512214df540"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "javax.inject:javax.inject:1",
+      "file_name": "javax.inject-1.jar",
+      "sha256": "91c77044a50c481636c32d916fd89c9118a72195390452c81065080f957de7ff",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "net.java.dev.jna:jna:5.18.1",
+      "file_name": "jna-5.18.1.aar",
+      "sha256": "7f053e3ec99e14dd71259c82c1c8a02738d64a13c31226b2acc170f3060951e0",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": [
+        {
+          "archive_path": "classes.jar!/META-INF/LICENSE",
+          "source": {
+            "path": "artifact-notice-sources/07c938b23950ab7d47a24ef35f9f5da3a05ae164278dc959ad6994135ed59ff1.txt",
+            "encoding": "plain",
+            "sha256": "07c938b23950ab7d47a24ef35f9f5da3a05ae164278dc959ad6994135ed59ff1",
+            "bytes": 797,
+            "file_sha256": "07c938b23950ab7d47a24ef35f9f5da3a05ae164278dc959ad6994135ed59ff1"
+          }
+        }
+      ]
+    },
+    {
+      "coordinate": "org.brotli:dec:0.1.2",
+      "file_name": "dec-0.1.2.jar",
+      "sha256": "615c0c3efef990d77831104475fba6a1f7971388691d4bad1471ad84101f6d52",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-annotations-jvm:1.3.72",
+      "file_name": "kotlin-annotations-jvm-1.3.72.jar",
+      "sha256": "3ee3a56dd451e33f8352e0d2803a55ca1b9156d7f8a8e0759bf8e187ff8db24a",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-reflect:2.2.10",
+      "file_name": "kotlin-reflect-2.2.10.jar",
+      "sha256": "c48db4f8cd1bfd67f72d59255065fb41bfda43ca2942dac4d9deb897aa126ba4",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.10",
+      "file_name": "kotlin-stdlib-jdk7-2.2.10.jar",
+      "sha256": "cf95eccc6cc784dff479dee0b8834f3584b93292cc5d91972e82f5d7b9e13e3b",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22",
+      "file_name": "kotlin-stdlib-jdk8-1.8.22.jar",
+      "sha256": "4198b0eaf090a4f25b6f7e5a59581f4314ba8c9f6cd1d13ee9d348e65ed8f707",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.2.20",
+      "file_name": "kotlin-stdlib-2.2.20.jar",
+      "sha256": "8836ccffd3585fadda9901244b20d42901d2f3cd581058d8434e2ffabcf3a3e7",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:atomicfu-jvm:0.28.0",
+      "file_name": "atomicfu-jvm-0.28.0.jar",
+      "sha256": "39576ec46b83412ff7a2909d24cccbba90400e91f9aa67b250309bc0872ecf52",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2",
+      "file_name": "kotlinx-coroutines-android-1.10.2.jar",
+      "sha256": "e713f1f874244115a07571065cffa0f24f5e78300e9720fea16de3af1d75fd41",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
+      "file_name": "kotlinx-coroutines-core-jvm-1.10.2.jar",
+      "sha256": "5ca175b38df331fd64155b35cd8cae1251fa9ee369709b36d42e0a288ccce3fd",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "org.jetbrains:annotations:23.0.0",
+      "file_name": "annotations-23.0.0.jar",
+      "sha256": "7b0f19724082cbfcbc66e5abea2b9bc92cf08a1ea11e191933ed43801eb3cd05",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    },
+    {
+      "coordinate": "org.jspecify:jspecify:1.0.0",
+      "file_name": "jspecify-1.0.0.jar",
+      "sha256": "1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab",
+      "profiles": [
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath"
+      ],
+      "source_observation": "existing Gradle cache",
+      "notices": []
+    }
+  ]
+}

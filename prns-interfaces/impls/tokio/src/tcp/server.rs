@@ -261,6 +261,7 @@ impl InterfaceSupervisor for TcpServer {
                         self.framing,
                     );
                     self.status.admit(connection.status());
+                    connection.status().set_endpoint(Some(peer));
                     let _ = fleet.add(connection);
                 }
                 Err(_) => {
@@ -374,6 +375,7 @@ impl<S> prns_core::interfaces::ReportsStatus for TcpServerConnection<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use prns_core::interfaces::kiss_framing::{self, KissDecoder, FEND, FESC};
     use prns_core::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
 

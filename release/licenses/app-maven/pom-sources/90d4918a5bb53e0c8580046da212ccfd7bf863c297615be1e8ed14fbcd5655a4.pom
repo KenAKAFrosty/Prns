@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <!-- This module was also published with a richer model, Gradle metadata,  -->
+  <!-- which should be used instead. Do not delete the following line which  -->
+  <!-- is to indicate to Gradle or any Gradle module metadata file consumer  -->
+  <!-- that they should prefer consuming it instead. -->
+  <!-- do_not_remove: published-with-gradle-metadata -->
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.facebook.hermes</groupId>
+  <artifactId>hermes-android</artifactId>
+  <version>260318099.0.5</version>
+  <packaging>pom</packaging>
+  <name>hermes</name>
+  <description>A JavaScript engine optimized for fast start-up of React Native apps</description>
+  <url>https://github.com/facebook/hermes/tree/static_h</url>
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://github.com/facebook/hermes/blob/HEAD/LICENSE</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+  <developers>
+    <developer>
+      <id>facebook</id>
+      <name>Facebook</name>
+    </developer>
+  </developers>
+  <scm>
+    <connection>scm:git:https://github.com/facebook/hermes.git</connection>
+    <developerConnection>scm:git:git@github.com:facebook/hermes.git</developerConnection>
+    <url>https://github.com/facebook/hermes.git</url>
+  </scm>
+  <dependencies>
+    <dependency>
+      <groupId>com.facebook.fbjni</groupId>
+      <artifactId>fbjni</artifactId>
+      <version>0.7.0</version>
+      <scope>runtime</scope>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>com.facebook.yoga</groupId>
+      <artifactId>proguard-annotations</artifactId>
+      <version>1.19.0</version>
+      <scope>runtime</scope>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>androidx.annotation</groupId>
+      <artifactId>annotation</artifactId>
+      <version>1.6.0</version>
+      <scope>runtime</scope>
+      <optional>true</optional>
+    </dependency>
+  </dependencies>
+</project>

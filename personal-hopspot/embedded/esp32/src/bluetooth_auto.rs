@@ -29,6 +29,7 @@ use crate::s3fn8::{BLE_PEER_CAPACITY, LIFECYCLE_CAP, NOTIFY_CAP};
 type BleFleet = Fleet<BridgeMutex, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type Transport = CooperativeTransport<BleConnector<'static>>;
 type HostStack = TroubleStack<Transport>;
+type BleResources = HostResources<DefaultPacketPool, PEER_CAPACITY, PEER_CAPACITY>;
 
 #[cfg(target_arch = "xtensa")]
 const _: () = assert!(
@@ -136,6 +137,21 @@ struct ReticulumGattOwned {
     columba_identity_uuid: Uuid,
 }
 
+// Keep one-time construction of the large host resources off the BLE poll frame.
+#[inline(never)]
+fn initialize_resources() -> &'static mut BleResources {
+    static RESOURCES: StaticCell<BleResources> = StaticCell::new();
+    RESOURCES.init_with(HostResources::new)
+}
+
+// Keep one-time construction of the large hub off the long-lived BLE poll frame.
+// The initialized value and capacities are unchanged; the cell owns it permanently.
+#[inline(never)]
+fn initialize_hub(shared: &'static BluetoothAutoShared<BLE_PEER_CAPACITY>) -> &'static BleHub {
+    static HUB: StaticCell<BleHub> = StaticCell::new();
+    HUB.init_with(|| BleHub::new(BluetoothAutoStatus::new(shared)))
+}
+
 pub async fn run(
     connector: BleConnector<'static>,
     mac: [u8; 6],
@@ -145,9 +161,7 @@ pub async fn run(
     spawner: Spawner,
 ) {
     let controller = TroubleController::<Transport>::new(CooperativeTransport::new(connector));
-    static RESOURCES: StaticCell<HostResources<DefaultPacketPool, PEER_CAPACITY, PEER_CAPACITY>> =
-        StaticCell::new();
-    let resources = RESOURCES.init(HostResources::new());
+    let resources = initialize_resources();
 
     let mut address = mac;
     address[5] |= 0b1100_0000;
@@ -155,9 +169,9 @@ pub async fn run(
     // assign channels from the acceptor/dialer to a slot worker (trouble-host's own objects are
     // otherwise lifetime-bound to the stack).
     static STACK: StaticCell<HostStack> = StaticCell::new();
-    let stack: &'static HostStack = STACK.init(
-        trouble_host::new(controller, resources).set_random_address(Address::random(address)),
-    );
+    let stack: &'static HostStack = STACK.init_with(|| {
+        trouble_host::new(controller, resources).set_random_address(Address::random(address))
+    });
     let Host {
         mut peripheral,
         central,
@@ -183,7 +197,7 @@ pub async fn run(
         return;
     };
     static SERVER: StaticCell<GattServer> = StaticCell::new();
-    let server: &'static GattServer = SERVER.init(AttributeServer::new(table));
+    let server: &'static GattServer = SERVER.init_with(|| AttributeServer::new(table));
 
     let mut adv_data = [0u8; MAX_ADVERTISEMENT_LEN];
     let adv_len = encode_advertisement(&mut adv_data, BleRoleCapabilities::DualRole)
@@ -196,8 +210,7 @@ pub async fn run(
     let columba_tx_uuid = bluetooth_auto::columba_tx_uuid();
     let columba_identity_uuid = bluetooth_auto::columba_identity_uuid();
 
-    static HUB: StaticCell<BleHub> = StaticCell::new();
-    let hub: &'static BleHub = HUB.init(BleHub::new(BluetoothAutoStatus::new(shared)));
+    let hub = initialize_hub(shared);
     hub.set_local_address(address);
 
     let supervisor = BluetoothAuto::new(

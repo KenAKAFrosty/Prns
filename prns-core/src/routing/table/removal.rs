@@ -3,7 +3,8 @@ use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::stored::{AnnounceAppData, AnnounceIdHistory, AnnounceRecordTable};
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::{NextHop, RouteTable};
+use crate::routing::routes::{NextHop, RouteEvidenceHandle, RouteTable};
+use crate::units::InstantMillis;
 use crate::wire::{DestinationHash, TransportId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +57,46 @@ where
         let removed = self.route_removal_at(row, RouteRemovalCause::Dropped);
         self.remove_route_at(row);
         Some(removed)
+    }
+
+    /// A failed link may retire only its own path incarnation, and only if no newer announce or
+    /// authenticated traffic has contradicted that attempt. Unlike marking responsiveness, this
+    /// also retires the remembered announce history so a cached reply can discover another path.
+    pub(crate) fn expire_failed_route(
+        &mut self,
+        handle: &mut RouteEvidenceHandle,
+        attempt_started_at: InstantMillis,
+    ) -> Option<RemovedRoute> {
+        let row = self.resolve_route_evidence(handle)?;
+        let last_active =
+            self.routes.learned_at()[row].max(self.routes.last_route_activity_at()[row]);
+        if last_active > attempt_started_at {
+            return None;
+        }
+        let removed = self.route_removal_at(row, RouteRemovalCause::Expired);
+        self.remove_route_at(row);
+        Some(removed)
+    }
+
+    /// Administrative retirement bypasses network expiry and tunnel/departure warmth.
+    pub fn drop_routes_for_interface(
+        &mut self,
+        interface: InterfaceId,
+        on_removed: &mut impl FnMut(RemovedRoute),
+    ) -> usize {
+        let mut dropped = 0;
+        let mut row = 0;
+        while row < self.routes.len() {
+            if !interface.administrative_scope_contains(self.routes.receiving_interfaces()[row]) {
+                row += 1;
+                continue;
+            }
+            let removed = self.route_removal_at(row, RouteRemovalCause::InterfaceGone);
+            self.remove_route_at(row);
+            on_removed(removed);
+            dropped += 1;
+        }
+        dropped
     }
 
     pub fn drop_routes_via(

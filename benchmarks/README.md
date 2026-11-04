@@ -36,7 +36,7 @@ slightly more memory than stock. Percentage reductions are
 `100 × (1 − Prns / reference)`: 97.24% for the memory example and 98.10% for
 the energy example, rounded to whole percentages in the headline copy. Energy
 uses the medians of `net_millijoules_per_delivered` in the
-[Linux request/response evidence](results/x86_64-unknown-linux-gnu/suites/987feb9e-471f-4e7b-aecc-321a60cd214c/request-response/).
+[Linux request/response evidence](results/x86_64-unknown-linux-gnu/suites/987feb9e-471f-4e7b-aecc-321a60cd214c/request-response).
 It measures the combined processor package above idle. Per-role energy columns
 are CPU-time attributions; they are not separate power measurements and should
 not be substituted for the combined figure. Windows has no published energy data.

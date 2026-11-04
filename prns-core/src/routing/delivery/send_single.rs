@@ -118,6 +118,8 @@ pub struct EncryptOwed {
     pub sent_at: InstantMillis,
     pub timeout_at: InstantMillis,
     pub fire_on: InterfaceId,
+    /// Local runtime epoch; never serialized onto the Reticulum wire.
+    pub interface_generation: u32,
 }
 
 /// Runtime-produced X25519 material submitted to resume one encrypted packet send.
@@ -278,6 +280,9 @@ impl<S: StorageLayout> EngineState<S> {
         let stored = self.routing_table.stored_announce_for(&send.destination)?;
         let hops = stored.hops;
         let fire_on = stored.receiving_interface;
+        if !timing.interfaces.availability_allows(fire_on) {
+            return None;
+        }
         let public_keys = stored.announce.public_keys;
         let ratchet = stored.announce.ratchet;
 
@@ -414,6 +419,7 @@ impl<S: StorageLayout> EngineState<S> {
             sent_at: now,
             timeout_at: plan.timeout_at,
             fire_on: plan.fire_on,
+            interface_generation: timing.interfaces.generation_for(plan.fire_on),
         })
     }
 
@@ -1366,6 +1372,79 @@ mod tests {
         let row = state.routing_table.path_row(&peer_destination()).unwrap();
         assert_eq!(row.last_route_activity_at, InstantMillis(0));
         assert_eq!(row.responsiveness, RouteResponsiveness::Unresponsive);
+    }
+
+    #[test]
+    fn administrative_off_rejects_preparation_without_tracking_a_receipt() {
+        let (state, _) = unratcheted_neighbor_with_a_prepared_send(b"offline", 1_000);
+        let unavailable = |_| false;
+        let interfaces = AttachedInterfaces::new(&[]).with_availability(&unavailable);
+        assert!(matches!(
+            state.prepare_send_single_packet_with_interfaces(
+                CommandId(8),
+                send_of(b"offline"),
+                InstantMillis(1_100),
+                vector_send_entropy(),
+                interfaces,
+            ),
+            SendSinglePacketPreparation::RouteVanished { id: CommandId(8) }
+        ));
+        assert!(state.receipts.is_empty());
+    }
+
+    #[test]
+    fn administrative_off_and_off_on_reject_deferred_seals_before_receipt_tracking() {
+        use crate::engine::{EngineReaction, Journaled, SendSinglePacketFailure, Settlement};
+        for (enabled, completed_generation) in [(false, 4), (true, 5)] {
+            let (mut state, _) = unratcheted_neighbor_with_a_prepared_send(b"old-work", 1_000);
+            let generation = core::sync::atomic::AtomicU32::new(4);
+            let available = core::sync::atomic::AtomicBool::new(true);
+            let epoch = |_| generation.load(core::sync::atomic::Ordering::Relaxed);
+            let availability = |_| available.load(core::sync::atomic::Ordering::Relaxed);
+            let interfaces = AttachedInterfaces::new(&[])
+                .with_availability(&availability)
+                .with_generations(&epoch);
+            let SendSinglePacketPreparation::Owed(owed) = state
+                .prepare_send_single_packet_with_interfaces(
+                    CommandId(8),
+                    send_of(b"old-work"),
+                    InstantMillis(1_100),
+                    vector_send_entropy(),
+                    interfaces,
+                )
+            else {
+                panic!("enabled route prepares work");
+            };
+            assert_eq!(owed.interface_generation, 4);
+            let (ephemeral_public, shared) =
+                crate::crypto::x25519_keys_for_seal(&owed.ephemeral_secret, &owed.dh_target);
+            available.store(enabled, core::sync::atomic::Ordering::Relaxed);
+            generation.store(completed_generation, core::sync::atomic::Ordering::Relaxed);
+            let mut settlements = 0;
+            let mut wire = [0u8; BROADCAST_MTU];
+            state.resume_encrypt(
+                EncryptCompleted {
+                    owed,
+                    ephemeral_public,
+                    shared,
+                },
+                interfaces,
+                &mut wire,
+                &mut |reaction| match reaction {
+                    EngineReaction::Journaled(Journaled::CommandSettled {
+                        id: CommandId(8),
+                        settlement:
+                            Settlement::SendSinglePacket(Err(SendSinglePacketFailure::WriteFailed(
+                                SendSinglePacketWriteError::RouteVanished,
+                            ))),
+                    }) => settlements += 1,
+                    _ => panic!("stale completion must only settle the original send"),
+                },
+            );
+            assert_eq!(settlements, 1);
+            assert!(state.receipts.is_empty());
+            assert_eq!(wire, [0u8; BROADCAST_MTU]);
+        }
     }
 
     #[test]

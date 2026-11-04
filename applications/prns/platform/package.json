@@ -1,0 +1,27 @@
+{
+  "name": "@prns/app-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Native installation and platform lifecycle for the PRNS app",
+  "license": "MIT OR Apache-2.0",
+  "main": "src/index.ts",
+  "react-native": "src/index.native.ts",
+  "types": "src/index.native.ts",
+  "exports": {
+    ".": {
+      "react-native": "./src/index.native.ts",
+      "types": "./src/index.native.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": "./package.json",
+    "./app.plugin": "./app.plugin.cjs"
+  },
+  "peerDependencies": {
+    "expo": "^58.0.0",
+    "expo-modules-core": "^58.0.0",
+    "react-native": "^0.88.0",
+    "personal-rns-expo": "0.3.8",
+    "@prns/app-bindings": "0.1.0"
+  }
+}

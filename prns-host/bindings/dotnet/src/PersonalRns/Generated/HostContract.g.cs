@@ -7,7 +7,7 @@ namespace PersonalRns;
 public static class HostContract
 {
     public const uint Abi = 1;
-    public const uint SchemaVersion = 1;
+    public const uint SchemaVersion = 2;
     public const string ProductVersion = "0.3.8";
     public const int DestinationHashLength = 16;
     public const int IdentityHashLength = 16;
@@ -424,6 +424,8 @@ public enum EventField : uint
     PersistenceCause = 38,
     PersistenceTarget = 39,
     AppData = 40,
+    LocalDestination = 41,
+    ArrivedAtMillis = 42,
 }
 
 public readonly struct DestinationHash : IEquatable<DestinationHash>
@@ -928,6 +930,9 @@ public abstract record InterfaceConfig
     public sealed record BrowserRendezvous(
         string Url
     ) : InterfaceConfig;
+    public sealed record ConfiguredBluetoothLe(
+        ImmutableArray<string> DiscoveryGroups
+    ) : InterfaceConfig;
 
     public TResult Match<TResult>(
         Func<InterfaceConfig.AutoLan, TResult> autoLan,
@@ -948,7 +953,8 @@ public abstract record InterfaceConfig
         Func<InterfaceConfig.AutomaticBluetoothLe, TResult> automaticBluetoothLe,
         Func<InterfaceConfig.WebSocketClient, TResult> webSocketClient,
         Func<InterfaceConfig.WebSocketServer, TResult> webSocketServer,
-        Func<InterfaceConfig.BrowserRendezvous, TResult> browserRendezvous
+        Func<InterfaceConfig.BrowserRendezvous, TResult> browserRendezvous,
+        Func<InterfaceConfig.ConfiguredBluetoothLe, TResult> configuredBluetoothLe
     ) =>
         this switch
         {
@@ -971,6 +977,7 @@ public abstract record InterfaceConfig
             WebSocketClient value => webSocketClient(value),
             WebSocketServer value => webSocketServer(value),
             BrowserRendezvous value => browserRendezvous(value),
+            ConfiguredBluetoothLe value => configuredBluetoothLe(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }
@@ -1562,7 +1569,9 @@ public abstract record ApplicationEvent
     public sealed record LinkDelivery(
         LinkId LinkId,
         InterfaceId SourceInterface,
-        ReadOnlyMemory<byte> Plaintext
+        ReadOnlyMemory<byte> Plaintext,
+        DestinationHash? LocalDestination,
+        ulong ArrivedAtMillis
     ) : ApplicationEvent;
 
     public TResult Match<TResult>(

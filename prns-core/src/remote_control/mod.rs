@@ -21,6 +21,8 @@ mod inventory;
 mod message;
 mod pagination;
 mod pairing;
+mod public_card;
+mod public_control;
 mod radio;
 mod service;
 mod stream;
@@ -40,6 +42,8 @@ pub use inventory::*;
 pub use message::*;
 pub use pagination::*;
 pub use pairing::*;
+pub use public_card::*;
+pub use public_control::*;
 pub use service::*;
 pub use stream::*;
 

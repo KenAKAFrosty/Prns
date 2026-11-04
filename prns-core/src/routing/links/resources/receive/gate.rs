@@ -931,6 +931,7 @@ mod tests {
         receiver
             .links
             .track_responding(RespondingLink {
+                attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
                 link_id: link_id(),
                 key: link_key(),
                 requested_at: InstantMillis(500),

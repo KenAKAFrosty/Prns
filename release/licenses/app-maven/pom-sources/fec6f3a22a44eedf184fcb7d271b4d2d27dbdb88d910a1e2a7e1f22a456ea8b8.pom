@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <!-- This module was also published with a richer model, Gradle metadata,  -->
+  <!-- which should be used instead. Do not delete the following line which  -->
+  <!-- is to indicate to Gradle or any Gradle module metadata file consumer  -->
+  <!-- that they should prefer consuming it instead. -->
+  <!-- do_not_remove: published-with-gradle-metadata -->
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>androidx.camera</groupId>
+  <artifactId>camera-camera2-pipe</artifactId>
+  <version>1.6.0</version>
+  <packaging>aar</packaging>
+  <name>Camera2 Pipe</name>
+  <description>A set of opinionated camera interfaces and implementations on top of Camera2 that will form a flexible shim layer to power Frameserver and CameraX.</description>
+  <url>https://developer.android.com/jetpack/androidx/releases/camera#1.6.0</url>
+  <inceptionYear>2020</inceptionYear>
+  <organization>
+    <name>The Android Open Source Project</name>
+  </organization>
+  <licenses>
+    <license>
+      <name>The Apache Software License, Version 2.0</name>
+      <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+  <developers>
+    <developer>
+      <name>The Android Open Source Project</name>
+    </developer>
+  </developers>
+  <scm>
+    <connection>scm:git:https://android.googlesource.com/platform/frameworks/support</connection>
+    <url>https://cs.android.com/androidx/platform/frameworks/support</url>
+  </scm>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>androidx.camera</groupId>
+        <artifactId>camera-camera2</artifactId>
+        <version>1.6.0</version>
+      </dependency>
+      <dependency>
+        <groupId>androidx.camera</groupId>
+        <artifactId>camera-compose</artifactId>
+        <version>1.6.0</version>
+      </dependency>
+      <dependency>
+        <groupId>androidx.camera</groupId>
+        <artifactId>camera-core</artifactId>
+        <version>1.6.0</version>
+      </dependency>
+      <dependency>
+        <groupId>androidx.camera</groupId>
+        <artifactId>camera-effects</artifactId>
+        <version>1.6.0</version>
+      </dependency>
+      <dependency>
+        <groupId>androidx.camera</groupId>
+        <artifactId>camera-extensions</artifactId>
+        <version>1.6.0</version>
+      </dependency>
+      <dependency>
+        <groupId>androidx.camera</groupId>
+        <artifactId>camera-lifecycle</artifactId>
+        <version>1.6.0</version>
+      </dependency>
+      <dependency>
+        <groupId>androidx.camera</groupId>
+        <artifactId>camera-mlkit-vision</artifactId>
+        <version>1.6.0</version>
+      </dependency>
+      <dependency>
+        <groupId>androidx.camera</groupId>
+        <artifactId>camera-video</artifactId>
+        <version>1.6.0</version>
+      </dependency>
+      <dependency>
+        <groupId>androidx.camera</groupId>
+        <artifactId>camera-view</artifactId>
+        <version>1.6.0</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>androidx.annotation</groupId>
+      <artifactId>annotation</artifactId>
+      <version>1.8.1</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>androidx.camera.featurecombinationquery</groupId>
+      <artifactId>featurecombinationquery</artifactId>
+      <version>1.6.0</version>
+      <scope>runtime</scope>
+      <type>aar</type>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlinx</groupId>
+      <artifactId>atomicfu</artifactId>
+      <version>0.28.0</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.google.dagger</groupId>
+      <artifactId>dagger</artifactId>
+      <version>2.59</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlin</groupId>
+      <artifactId>kotlin-stdlib</artifactId>
+      <version>2.1.20</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlinx</groupId>
+      <artifactId>kotlinx-coroutines-android</artifactId>
+      <version>1.9.0</version>
+      <scope>compile</scope>
+    </dependency>
+  </dependencies>
+</project>

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -332,6 +333,114 @@ class SwiftSetupTests(unittest.TestCase):
 
 
 class WorkflowSchedulingTests(unittest.TestCase):
+    def workflow_jobs(self, name: str) -> dict[str, str]:
+        return dict(contracts.workflow_jobs(
+            (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        ))
+
+    def test_reusable_suites_have_executable_pr_schedules_on_their_platforms(self) -> None:
+        manifest = tomllib.loads((ROOT / "validation/manifest.toml").read_text())
+        groups = {"group-communication", "named-identities", "standalone-libraries", "native-storage", "native-bindings"}
+        expected = {
+            suite["id"]: suite for suite in manifest["suite"]
+            if (suite.get("group") in groups or suite["id"] == "app-ui") and "pr" in suite["tiers"]
+        }
+        jobs = self.workflow_jobs("ci.yml")
+        scheduled: dict[str, set[str]] = {}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake_python = root / "python3"
+            fake_python.write_text(
+                "#!" + sys.executable + "\n"
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "Path(os.environ['CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n"
+            )
+            fake_python.chmod(0o755)
+            for name in ("named-identities", "standalone-libraries", "host-runtime", "group-libraries", "service-runtime", "app-consumers", "app-android-consumer"):
+                job = jobs[name]
+                self.assertNotRegex(job, r"(?m)^    (?:needs|if):")
+                self.assertNotIn("continue-on-error", job)
+                self.assertIn('toolchain: "1.98.1"' if name.startswith('app-') else 'toolchain: "1.96.0"', job)
+                steps = re.split(r"(?m)(?=^      - )", job)
+                rows = re.findall(
+                    r"- platform: (\w+)\n            runner: ([^\n]+)(?:\n            native-suite: ([^\n]+))?",
+                    job,
+                ) or [("linux", "ubuntu-24.04", "")]
+                for platform, runner, native_suite in rows:
+                    self.assertTrue(runner.startswith("macos-") if platform == "macos" else runner.startswith("ubuntu-"))
+                    for step in steps:
+                        match = re.search(r"        run: >-\n((?:          [^\n]+\n)+)", step)
+                        if match is None:
+                            continue
+                        command = " ".join(line.strip() for line in match.group(1).splitlines())
+                        if not command.startswith("python3 validation/run.py run "):
+                            continue
+                        condition = re.search(r"(?m)^        if: (.+)$", step)
+                        if condition:
+                            os_name = "macOS" if platform == "macos" else "Linux"
+                            expression = condition.group(1).replace("runner.os", repr(os_name))
+                            if not eval(expression, {"__builtins__": {}}):
+                                continue
+                        expanded = command.replace("${{ matrix.native-suite }}", native_suite)
+                        capture = root / "arguments.json"
+                        result = subprocess.run(
+                            ["bash", "-e", "-o", "pipefail", "-c", expanded],
+                            env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                                 "CAPTURE": str(capture), "GITHUB_SHA": "a" * 40},
+                            capture_output=True, text=True,
+                        )
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        arguments = json.loads(capture.read_text())
+                        self.assertEqual(arguments[:2], ["validation/run.py", "run"])
+                        self.assertEqual(arguments[-2:], ["--expected-sha", "a" * 40])
+                        flags, suites = arguments[2:-2:2], arguments[3:-2:2]
+                        self.assertTrue(flags and set(flags) == {"--suite"})
+                        for suite_id in suites:
+                            registered = next(suite for suite in manifest["suite"] if suite["id"] == suite_id)
+                            self.assertIn(registered["platform"], {"any", platform})
+                            if suite_id in expected:
+                                scheduled.setdefault(suite_id, set()).add(platform)
+        self.assertEqual(set(scheduled), set(expected))
+        self.assertEqual(scheduled["identity-key-bindings"], {"linux", "macos"})
+        self.assertEqual(scheduled["identity-key-bindings-swift"], {"macos"})
+        self.assertEqual(scheduled["identity-native-tests-linux"], {"linux"})
+        self.assertEqual(scheduled["identity-native-tests-macos"], {"macos"})
+
+
+    def test_service_runtime_is_required_with_explicit_msrv_preparation(self) -> None:
+        jobs = self.workflow_jobs("ci.yml")
+        self.assertIn("max-parallel: 16", jobs["service-runtime"])
+        self.assertIn('toolchain: "1.90.0"', jobs["service-runtime"])
+        self.assertIn("      - service-runtime\n", jobs["release-critical"])
+        self.assertIn('"$SERVICE_RUNTIME_RESULT"', jobs["release-critical"])
+        release = (ROOT / ".github/workflows/release-readiness.yml").read_text()
+        self.assertIn("matrix.id == 'service-runtime-msrv'", release)
+        self.assertIn("startsWith(matrix.id, 'native-service-bindings-msrv-')", release)
+
+    def test_app_jobs_cover_all_six_suites_and_select_the_pinned_toolchain(self) -> None:
+        jobs = self.workflow_jobs("ci.yml")
+        self.assertIn("cargo check --locked --manifest-path applications/Cargo.toml --workspace --all-targets --all-features", jobs["msrv"])
+        self.assertIn("max-parallel: 16", jobs["app-consumers"])
+        for name in ("app-consumers", "app-android-consumer"):
+            self.assertIn("      - " + name + "\n", jobs["release-critical"])
+            self.assertIn("${{ needs." + name + ".result }}", jobs["release-critical"])
+            self.assertIn('"$' + name.upper().replace("-", "_") + '_RESULT"', jobs["release-critical"])
+        release = self.workflow_jobs("release-readiness.yml")["qualify"]
+        parts = re.split(r"(?m)(?=^      - )", release)
+        pin = next(part for part in parts if "name: Prepare the pinned app Rust toolchain" in part)
+        choose = next(part for part in parts if "name: Select the app Rust toolchain" in part)
+        execute = next(part for part in parts if "name: Run exact-SHA suite" in part)
+        self.assertIn('toolchain: "1.98.1"', pin)
+        self.assertIn("components: clippy,rustfmt", pin)
+        self.assertIn("RUSTUP_TOOLCHAIN=1.98.1", choose)
+        for identifier in ("app-native", "app-native-clippy", "app-generated", "app-ui", "app-image-swift", "app-android-consumer"):
+            self.assertIn("matrix.id == '" + identifier + "'", pin)
+            self.assertIn("matrix.id == '" + identifier + "'", choose)
+            self.assertIn(identifier, execute)
+        self.assertLess(release.index("name: Prepare the pinned app Rust toolchain"), release.index("name: Prepare the pinned app Android toolchain"))
+        self.assertLess(release.index("name: Select the app Rust toolchain"), release.index("name: Prepare the selected app generation and JavaScript dependencies"))
+
     def test_deployment_deferral_does_not_accept_fake_qualification_inputs(self) -> None:
         workflow = (ROOT / ".github/workflows/suite-promote.yml").read_text()
         block = workflow.split(
@@ -369,10 +478,6 @@ class WorkflowSchedulingTests(unittest.TestCase):
                     )
                     self.assertEqual(result.returncode, expected, result.stderr)
 
-    def workflow_jobs(self, name: str) -> dict[str, str]:
-        return dict(contracts.workflow_jobs(
-            (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
-        ))
 
     def needs(self, block: str) -> set[str]:
         match = re.search(r"(?m)^    needs: (.+)$", block)
@@ -444,6 +549,8 @@ class WorkflowSchedulingTests(unittest.TestCase):
             "wasm-auto-wifi", "wasm-casework", "wasm-events", "wasm-websocket",
             "flasher-web", "esp32-firmware-check", "shipping-firmware",
             "dependency-audit", "release-contracts",
+            "react-native-sdk", "react-native-notices", "react-native-generated",
+            "app-generated", "app-ui", "app-android-consumer",
         })
         self.assertEqual(selected["uv"], {
             suite["id"] for suite in suites if suite["domain"] in {"oracles", "interop"}
@@ -580,3 +687,60 @@ class WorkflowSchedulingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReleaseSdkBootstrapTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.workflow = (ROOT / ".github/workflows/release-readiness.yml").read_text()
+
+    def test_current_release_workflow_bootstraps_sdk(self) -> None:
+        self.assertEqual(contracts.validate_release_sdk_bootstrap(self.workflow), [])
+
+    def test_rejects_missing_selected_sdk_notice_collector(self) -> None:
+        workflow = self.workflow.replace("if: matrix.id == 'react-native-notices'", "if: false")
+        self.assertIn(
+            "release-readiness.yml must prepare the selected SDK notice collector before its suite",
+            contracts.validate_release_sdk_bootstrap(workflow),
+        )
+
+    def test_rejects_overriding_the_sdk_toolchain_at_execution(self) -> None:
+        workflow = self.workflow.replace("            export RUSTUP_TOOLCHAIN=1.98.1", "            export RUSTUP_TOOLCHAIN=1.96.0")
+        self.assertIn(
+            "release-readiness.yml must run SDK suites with the reviewed Rust toolchain",
+            contracts.validate_release_sdk_bootstrap(workflow),
+        )
+
+    def test_rejects_nonexistent_sdk_matrix_group(self) -> None:
+        workflow = self.workflow.replace(
+            "matrix.id == 'react-native-sdk' || matrix.id == 'react-native-generated' || matrix.id == 'react-native-notices'",
+            "matrix.group == 'react-native-sdk'",
+        )
+        self.assertEqual(
+            contracts.validate_release_sdk_bootstrap(workflow),
+            ["release-readiness.yml must bootstrap all standalone SDK source suite IDs"],
+        )
+
+    def test_rejects_missing_or_late_core_contract_build(self) -> None:
+        command = "          npm --prefix prns-js run build:code\n"
+        for case, workflow in (
+            ("missing", self.workflow.replace(command, "")),
+            ("after SDK install", self.workflow.replace(command, "").replace(
+                "      - uses: astral-sh/setup-uv@", command + "      - uses: astral-sh/setup-uv@"
+            )),
+        ):
+            with self.subTest(case=case):
+                self.assertIn(
+                    "release-readiness.yml must select the pinned SDK toolchain, build the core contract, "
+                    "then install and patch the standalone SDK dependencies",
+                    contracts.validate_release_sdk_bootstrap(workflow),
+                )
+
+    def test_rejects_installing_rust_without_selecting_it(self) -> None:
+        workflow = self.workflow.replace(
+            "          printf 'RUSTUP_TOOLCHAIN=1.98.1\\n' >> \"$GITHUB_ENV\"\n", ""
+        )
+        self.assertIn(
+            "release-readiness.yml must select the pinned SDK toolchain, build the core contract, "
+            "then install and patch the standalone SDK dependencies",
+            contracts.validate_release_sdk_bootstrap(workflow),
+        )

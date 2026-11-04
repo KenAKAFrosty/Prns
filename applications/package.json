@@ -1,0 +1,35 @@
+{
+  "name": "prns-applications",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": "^22.13.0 || ^24.3.0 || >=26.0.0"
+  },
+  "workspaces": [
+    "prns/bindings",
+    "prns/platform",
+    "prns/app"
+  ],
+  "scripts": {
+    "api:generate": "python3 tools/native-bindings/generate.py generate",
+    "api:check": "python3 tools/native-bindings/generate.py generate --check",
+    "api:test": "python3 -m unittest discover -s tools/native-bindings -p 'test_*.py'",
+    "sdk:stage": "python3 tools/native-bindings/generate.py stage",
+    "bindings:ios": "python3 tools/native-bindings/generate.py ios",
+    "bindings:android": "python3 tools/native-bindings/generate.py android",
+    "api:image:test": "python3 tools/native-bindings/check_image.py",
+    "api:typecheck": "python3 tools/native-bindings/check_typescript.py",
+    "app:typecheck": "npm run typecheck --workspace @prns/app",
+    "app:verify": "npm run app:typecheck && npm run test --workspace @prns/app",
+    "patch:runtime": "node -e \"require('node:fs').accessSync('../prns-react-native/patches/@ubjs+react-native+0.31.0-6.patch')\" && patch-package --error-on-fail --patch-dir ../prns-react-native/patches",
+    "postinstall": "npm run patch:runtime"
+  },
+  "devDependencies": {
+    "@ubjs/core": "0.31.0-6",
+    "@ubjs/react-native": "0.31.0-6",
+    "patch-package": "8.0.1",
+    "personal-rns": "file:../prns-js",
+    "typescript": "7.0.2"
+  }
+}

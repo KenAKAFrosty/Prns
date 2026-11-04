@@ -111,6 +111,27 @@ impl<S: StorageLayout> EngineState<S> {
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
+        let source = match &ingress {
+            Ingress::Announce {
+                source_interface, ..
+            }
+            | Ingress::Data {
+                source_interface, ..
+            }
+            | Ingress::LinkRequest {
+                source_interface, ..
+            }
+            | Ingress::Proof {
+                source_interface, ..
+            } => Some(*source_interface),
+            Ingress::Malformed | Ingress::IfacRefused => None,
+        };
+        if source.is_some_and(|source| !interfaces.availability_allows(source)) {
+            // Administrative Off must not admit queued input, even before the runtime's
+            // eager cleanup pass. This is local policy, not a malformed wire packet.
+            return IngestPacketOutcome::Ignored(IgnoreReason::PermissionDenied);
+        }
+
         match ingress {
             Ingress::Announce {
                 packet_hash: _,
@@ -243,6 +264,7 @@ impl<S: StorageLayout> EngineState<S> {
                             source_interface,
                             arrived_at,
                             interfaces,
+                            effects,
                         );
                     }
                     if address == TUNNEL_SYNTHESIZE_DESTINATION {

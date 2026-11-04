@@ -7,6 +7,8 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 pub struct SerialLineConfig {
     pub baud: u32,
     pub data_bits: SerialDataBits,
@@ -15,6 +17,8 @@ pub struct SerialLineConfig {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 pub struct RNodeRadioConfig {
     pub frequency_hz: u64,
     pub bandwidth_hz: u32,
@@ -24,6 +28,8 @@ pub struct RNodeRadioConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 pub struct MultiRNodeMemberConfig {
     pub name: String,
     pub virtual_port: u8,
@@ -33,6 +39,8 @@ pub struct MultiRNodeMemberConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 pub enum InterfaceConfig {
     AutoLan {
         group_id: Option<String>,
@@ -118,6 +126,9 @@ pub enum InterfaceConfig {
     },
     AutomaticUsb,
     AutomaticBluetoothLe,
+    ConfiguredBluetoothLe {
+        discovery_groups: Vec<String>,
+    },
     WebSocketClient {
         target: String,
         framing: WebSocketFramingSelection,
@@ -142,6 +153,7 @@ pub enum InterfaceConfigError {
     MissingMembers,
     InvalidCommand,
     InvalidWebSocketUrl,
+    InvalidDiscoveryGroups,
 }
 
 impl InterfaceConfig {
@@ -163,7 +175,9 @@ impl InterfaceConfig {
             Self::I2p { .. } => InterfaceKind::I2p,
             Self::Weave { .. } => InterfaceKind::Weave,
             Self::AutomaticUsb => InterfaceKind::AutomaticUsb,
-            Self::AutomaticBluetoothLe => InterfaceKind::AutomaticBluetoothLe,
+            Self::AutomaticBluetoothLe | Self::ConfiguredBluetoothLe { .. } => {
+                InterfaceKind::AutomaticBluetoothLe
+            }
             Self::WebSocketClient { .. } => InterfaceKind::WebSocketClient,
             Self::WebSocketServer { .. } => InterfaceKind::WebSocketServer,
             Self::BrowserRendezvous { .. } => InterfaceKind::BrowserRendezvous,
@@ -262,12 +276,32 @@ impl InterfaceConfig {
                 }
             }
             Self::AutomaticUsb | Self::AutomaticBluetoothLe => {}
+            Self::ConfiguredBluetoothLe { discovery_groups } => {
+                bluetooth_discovery_groups(discovery_groups)?;
+            }
             Self::WebSocketClient { target, framing: _ }
             | Self::BrowserRendezvous { url: target } => validate_websocket(target)?,
             Self::WebSocketServer { bind, framing: _ } => required(bind)?,
         }
         Ok(())
     }
+}
+
+/// Parse the complete configuration using the transport's canonical bounds and ordering.
+pub fn bluetooth_discovery_groups(
+    names: &[String],
+) -> Result<prns_runtime::interfaces::DiscoveryGroupSet, InterfaceConfigError> {
+    use prns_runtime::interfaces::{DiscoveryGroupId, DiscoveryGroupSet, MAX_DISCOVERY_GROUPS};
+    if names.is_empty() || names.len() > MAX_DISCOVERY_GROUPS {
+        return Err(InterfaceConfigError::InvalidDiscoveryGroups);
+    }
+    let parsed = names
+        .iter()
+        .map(|name| DiscoveryGroupId::parse(name))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| InterfaceConfigError::InvalidDiscoveryGroups)?;
+    DiscoveryGroupSet::try_from_slice(&parsed)
+        .map_err(|_| InterfaceConfigError::InvalidDiscoveryGroups)
 }
 
 fn required(value: &str) -> Result<(), InterfaceConfigError> {
@@ -331,6 +365,37 @@ fn validate_websocket(value: &str) -> Result<(), InterfaceConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_bluetooth_uses_canonical_discovery_groups() {
+        let groups = bluetooth_discovery_groups(&["work".into(), "reticulum".into()]).unwrap();
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.as_str())
+                .collect::<Vec<_>>(),
+            vec!["reticulum", "work"]
+        );
+        for invalid in [
+            vec![],
+            vec!["".into()],
+            vec!["x".repeat(33)],
+            vec!["x".into(); 5],
+        ] {
+            assert_eq!(
+                bluetooth_discovery_groups(&invalid),
+                Err(InterfaceConfigError::InvalidDiscoveryGroups)
+            );
+        }
+        assert_eq!(
+            InterfaceConfig::ConfiguredBluetoothLe {
+                discovery_groups: vec!["work".into()]
+            }
+            .kind(),
+            InterfaceKind::AutomaticBluetoothLe
+        );
+        assert!(InterfaceConfig::AutomaticBluetoothLe.validate().is_ok());
+    }
 
     fn line() -> SerialLineConfig {
         SerialLineConfig {
@@ -459,7 +524,42 @@ mod tests {
         assert_eq!(cases.len(), 19);
         for case in cases {
             assert_eq!(case.validate(), Ok(()), "{:?}", case.kind());
+            #[cfg(feature = "serde")]
+            {
+                let encoded = serde_json::to_vec(&case).unwrap();
+                let decoded: InterfaceConfig = serde_json::from_slice(&encoded).unwrap();
+                assert_eq!(decoded, case);
+            }
         }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn configuration_decode_rejects_unknown_content_without_discarding_it() {
+        for encoded in [
+            r#"{"FutureTransport": {"target": "localhost:4242"}}"#,
+            r#"{"TcpClient": {"target": "localhost:4242", "bitrate": "Auto", "futurePolicy": true}}"#,
+            r#"{"Serial": {"port": "tty0", "line": {"baud": 115200, "data_bits": "Eight", "parity": "FutureParity", "stop_bits": "One"}}}"#,
+            r#"{"Serial": {"port": "tty0", "line": {"baud": 115200, "data_bits": "Eight", "parity": "None", "stop_bits": "One", "futurePolicy": true}}}"#,
+        ] {
+            assert!(serde_json::from_str::<InterfaceConfig>(encoded).is_err());
+        }
+        let policy = crate::InterfaceRoutingPolicy {
+            mode: Some(crate::InterfaceMode::Gateway),
+            gravity: Some(-3),
+            recursive_path_requests: Some(false),
+            announces_from_internal: Some(true),
+            announces_to_internal: None,
+        };
+        let encoded = serde_json::to_vec(&policy).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<crate::InterfaceRoutingPolicy>(&encoded).unwrap(),
+            policy
+        );
+        assert!(
+            serde_json::from_str::<crate::InterfaceRoutingPolicy>(r#"{"futurePolicy": true}"#)
+                .is_err()
+        );
     }
 
     #[test]

@@ -2,8 +2,9 @@ use crate::identity::IdentityHash;
 use crate::remote_control::{
     FixedRemoteControlTargetAccessTable, ForgetRemoteControlTargetOutcome,
     RemoteControlControllerIdentity, RemoteControlEndpoint, RemoteControlRequestSet,
-    RemoteControlTargetAccess, RemoteControlTargetAccessTable, SetRemoteControlTargetAccessError,
-    SetRemoteControlTargetAccessOutcome, DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
+    RemoteControlTargetAccess, RemoteControlTargetAccessCard, RemoteControlTargetAccessTable,
+    SetRemoteControlTargetAccessError, SetRemoteControlTargetAccessOutcome,
+    DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
 };
 use heapless::Vec;
 
@@ -261,5 +262,82 @@ pub trait RemoteControlTargetAccessControl {
         target: IdentityHash,
     ) -> impl core::future::Future<
         Output = Result<ForgetRemoteControlTargetOutcome, ForgetRemoteControlTargetControlError>,
+    > + Send;
+}
+
+/// Failure to durably save controller-side target access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveRemoteControlTargetAccessError {
+    Busy,
+    /// The node stopped before acknowledgement; a submitted save may already be durable.
+    NodeStopped,
+    Unavailable,
+    CapacityExhausted,
+    PersistenceUnavailable,
+    PersistenceFailed,
+    RecipientMismatch,
+    /// A card import would change access already saved for this target.
+    Conflict,
+}
+
+impl core::fmt::Display for SaveRemoteControlTargetAccessError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::Busy => "another target-access operation is pending",
+            Self::NodeStopped => {
+                "node stopped before save acknowledgement; the outcome may be unknown"
+            }
+            Self::Unavailable => "the RemoteControl service is unavailable",
+            Self::CapacityExhausted => "the saved-target table is full",
+            Self::PersistenceUnavailable => "durable authorization storage is unavailable",
+            Self::PersistenceFailed => {
+                "target access could not be saved; prior access was retained"
+            }
+            Self::RecipientMismatch => "the card is addressed to a different controller identity",
+            Self::Conflict => "the card would replace existing target access",
+        })
+    }
+}
+
+impl core::error::Error for SaveRemoteControlTargetAccessError {}
+
+impl From<SetRemoteControlTargetAccessServiceError> for SaveRemoteControlTargetAccessError {
+    fn from(error: SetRemoteControlTargetAccessServiceError) -> Self {
+        match error {
+            SetRemoteControlTargetAccessServiceError::Unavailable => Self::Unavailable,
+            SetRemoteControlTargetAccessServiceError::CapacityExhausted => Self::CapacityExhausted,
+            SetRemoteControlTargetAccessServiceError::TransactionInProgress => Self::Busy,
+        }
+    }
+}
+
+/// Optional durable controller-side access capability. Implementations must
+/// persist a successful change before activating it. A dropped waiter does not
+/// cancel admitted persistence, and a stopped acknowledgement may be uncertain.
+/// This capability never falls back to the volatile access-control setter.
+pub trait RemoteControlTargetAccessPersistence {
+    /// The running controller's public identity, even with an empty target table.
+    fn remote_control_controller_identity(
+        &self,
+    ) -> impl core::future::Future<
+        Output = Result<RemoteControlControllerIdentity, RemoteControlTargetInventoryControlError>,
+    > + Send;
+
+    /// Explicitly save or replace access after caller review.
+    fn save_remote_control_target_access(
+        &self,
+        access: RemoteControlTargetAccess,
+    ) -> impl core::future::Future<
+        Output = Result<SetRemoteControlTargetAccessOutcome, SaveRemoteControlTargetAccessError>,
+    > + Send;
+
+    /// Import recipient-bound access without replacing conflicting saved access.
+    /// The caller must verify the source separately: the card is public data and
+    /// neither a target grant receipt nor proof of authority.
+    fn save_remote_control_target_access_card(
+        &self,
+        card: RemoteControlTargetAccessCard,
+    ) -> impl core::future::Future<
+        Output = Result<SetRemoteControlTargetAccessOutcome, SaveRemoteControlTargetAccessError>,
     > + Send;
 }

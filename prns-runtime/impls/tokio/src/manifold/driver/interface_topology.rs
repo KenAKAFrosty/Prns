@@ -40,6 +40,7 @@ impl IndexRow for FrameAccountingLane {
 }
 
 pub(super) struct InterfaceTopology {
+    pub(super) services: super::service_lifecycle::ServiceRegistry,
     pub(super) interfaces: IndexedAttachedInterfaces,
     pub(super) ifacs: InterfaceIfacs,
     pub(super) inbound_lanes: IndexedRows<InboundLane>,
@@ -75,6 +76,7 @@ impl InterfaceTopology {
             .collect::<std::vec::Vec<_>>()
             .into();
         Self {
+            services: Default::default(),
             interfaces,
             ifacs: ifacs.into(),
             inbound_lanes,

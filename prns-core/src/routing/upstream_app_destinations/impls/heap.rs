@@ -103,6 +103,8 @@ mod tests {
             let upserted = table.upsert(
                 DestinationHash::new([n; TRUNCATED_HASH_BYTE_LEN]),
                 UpstreamAppDestinationKind::Single {
+                    registration_generation: 1,
+                    ingress_enabled: true,
                     identity: IdentityHash::new([n; 16]),
                     proof_strategy: ProofStrategy::ProveNone,
                     link_request_policy: LinkRequestPolicy::AcceptAll,

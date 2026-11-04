@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Audit every production npm graph shipped by a PRNS release."""
 
+import argparse
 import json
 from pathlib import Path
 import sys
 
 from npm_lockfile import verify_development_packages
 
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--scope', choices=('all', 'web'), default='all', help='web retains the website/WASM-only qualification; release audits use the default all')
+arguments = parser.parse_args()
 
 repo = Path(__file__).resolve().parents[2]
 root = repo / "prns-wasm"
@@ -121,3 +126,53 @@ print(
     "website npm graph is exact-pinned; browser/accessibility tools remain dev-only with "
     "reviewed licenses, registry sources, and lockfile integrity"
 )
+
+if arguments.scope == 'web':
+    raise SystemExit(0)
+
+# Application workspaces and source-linked packages need reachability from the
+# actual application root, not the installer's package-wide `dev` classification.
+import os
+import app_maven
+import app_npm
+
+output = repo / 'validation-artifacts/dependency-audit'
+output.mkdir(parents=True, exist_ok=True)
+cache = Path(os.environ.get('npm_config_cache', Path.home()/'.npm')) / 'prns-notice-archives'
+failures = []
+# Runtime peer archives have their own terms; a Rust crate exception does not
+# approve the separately shipped npm packages.
+sys.path.insert(0, str(repo / 'tools/uniffi'))
+import runtime_notices
+try:
+    runtime_report = runtime_notices.evidence()
+    (output/'sdk-runtime-sources.json').write_text(json.dumps(runtime_report, indent=2)+'\n')
+    runtime_notices.verify_policy(runtime_report)
+except (OSError, ValueError) as error:
+    failures.append(str(error))
+try:
+    closure = app_npm.app_closure(repo)
+    (output/'app-npm-closure.json').write_text(json.dumps(closure, indent=2)+'\n')
+    print(f"App production closure: {len(closure['packages'])} exact npm archives; "
+          f"{len(closure['unresolved_required_peers'])} unresolved required peers; "
+          f"{len(closure['unresolved_optional'])} absent optional platform entries; "
+          f"{len(closure['unselected_optional_peers'])} unselected optional peers")
+    try:
+        app_npm.audit_advisories(closure, output/'app-npm-advisories.json')
+    except (OSError, ValueError) as error:
+        failures.append(str(error))
+    report = app_npm.notice_report(repo, cache)
+    (output/'app-npm-notices.json').write_text(json.dumps(report, indent=2)+'\n')
+    app_npm.audit_notices(report)
+except (OSError, ValueError) as error:
+    failures.append(str(error))
+try:
+    report = app_maven.report(repo)
+    (output/'app-maven-notices.json').write_text(json.dumps(report, indent=2)+'\n')
+    app_maven.audit(report)
+except (OSError, ValueError) as error:
+    failures.append(str(error))
+if failures:
+    print('\n'.join(failures), file=sys.stderr)
+    raise SystemExit(1)
+print('Application npm and Maven source/attribution/license/advisory checks passed')

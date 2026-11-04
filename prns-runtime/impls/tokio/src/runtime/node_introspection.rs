@@ -36,12 +36,30 @@ pub struct DestinationIdentitySnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineInspectionSnapshot {
+    /// The same engine clock used by the returned route timestamps.
+    pub engine_time_millis: u64,
     pub link_count: u32,
     pub routes: Vec<RouteSnapshot>,
     pub destination_identities: Vec<DestinationIdentitySnapshot>,
 }
 
 pub enum NodeIntrospectionRequest {
+    RemoteControlControllerPairingStatus {
+        reply: oneshot::Sender<
+            Result<
+                crate::runtime::RemoteControlControllerPairingStatus,
+                crate::runtime::RemoteControlPairingInspectionError,
+            >,
+        >,
+    },
+    RemoteControlControllerPairing {
+        reply: oneshot::Sender<
+            Result<
+                crate::runtime::RemoteControlControllerPairingSnapshot,
+                crate::runtime::RemoteControlPairingInspectionError,
+            >,
+        >,
+    },
     LinkCount {
         reply: oneshot::Sender<u32>,
     },

@@ -1,0 +1,29 @@
+[package]
+name = "prns-identities-uniffi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace]
+members = ["image"]
+resolver = "3"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+contact-card = ["prns-identities/contact-card", "dep:prns-identities-core", "dep:prns-contact-card"]
+catalog = ["prns-identities/uniffi-bindings", "dep:prns-identities-runtime", "dep:prns-storage"]
+
+[dependencies]
+prns-contact-card = { path = "../../../prns-contact-card", optional = true, features = ["uniffi-bindings"] }
+prns-identities = { path = "../.." }
+prns-identities-core = { path = "../../core", optional = true }
+prns-core = { path = "../../../prns-core", default-features = false }
+uniffi = { version = "=0.31.2", default-features = false }
+thiserror = "2"
+prns-identities-runtime = { path = "../../runtime", optional = true }
+prns-storage = { path = "../../../prns-storage", optional = true }

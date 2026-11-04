@@ -134,6 +134,10 @@ where
     }
 
     async fn next_outbound(&mut self) -> &[u8] {
+        self.next_outbound_frame().await.bytes
+    }
+
+    async fn next_outbound_frame(&mut self) -> crate::manifold::outbound::OutboundFrame<'_> {
         match self.channel {
             ChannelBinding::Original | ChannelBinding::Published => self.outbound.release(),
             ChannelBinding::Retained => self.channel = ChannelBinding::Published,
@@ -147,7 +151,11 @@ where
                 }
             };
             if accepts {
-                return self.outbound.peek().await.frame();
+                let slot = self.outbound.peek().await;
+                return crate::manifold::outbound::OutboundFrame {
+                    enqueued_at: slot.enqueued_at,
+                    bytes: slot.frame(),
+                };
             }
             self.complete_outbound(OutboundDisposition::Dropped(
                 crate::manifold::interface_seam::OutboundDropReason::ChannelChanged,

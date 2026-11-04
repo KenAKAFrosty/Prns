@@ -32,6 +32,12 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: reusable application dependency boundary
+        run: >-
+          python3 validation/run.py run
+          --suite application-boundary
+          --suite application-boundary-tests
+          --expected-sha "${{ github.sha }}"
       - name: registry, format, and documentation gate
         run: bash validation/hygiene/fmt-docs.sh
 
@@ -62,6 +68,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - run: cargo test --workspace --locked
+      - name: Storage owner and optional redb backend
+        run: python3 validation/run.py run --suite native-storage-tests --expected-sha "$GITHUB_SHA"
 
   cargo-check:
     name: Cargo check (${{ matrix.name }})
@@ -116,6 +124,71 @@ jobs:
         run: brew install sdl2
       - name: Compile-check every host-compatible Cargo workspace
         run: ${{ matrix.command }}
+
+  host-runtime:
+    name: Host runtime (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: macos
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.90.0"
+      - name: Install Linux native development packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: host-runtime-v1
+          workspaces: |
+            .
+            prns-host/impls/runtime
+            prns-host/bindings/uniffi
+            prns-host/bindings/uniffi/image
+      - name: Check host ownership and management
+        run: >-
+          python3 validation/run.py run
+          --suite host-contract-generated
+          --suite host-contract-generator-tests
+          --suite host-native-session
+          --suite host-native-connections
+          --suite host-native-connections-clippy
+          --suite host-uniffi-session
+          --suite host-runtime-msrv
+          --expected-sha "$GITHUB_SHA"
+      - name: Check canonical Swift consumers
+        if: runner.os == 'macOS'
+        run: >-
+          python3 validation/run.py run
+          --suite native-host-swift
+          --suite native-host-connections-swift
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: host-runtime-${{ matrix.platform }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
 
   feature-core:
     # Core allocation and metrics features.
@@ -428,7 +501,7 @@ jobs:
             docs/website/target/browser-tests/results
       - name: Production engine and lock audit
         run: |
-          python3 validation/security/npm-production-audit.py
+          python3 validation/security/npm-production-audit.py --scope web
           if grep -Ei 'esp-web-install-button|unpkg\.com|esp-web-tools|playwright|axe-core' docs/website/target/hosted-assets/prns-flash.js; then exit 1; fi
           git diff --exit-code -- docs/website/public/assets/tailwind.css
 
@@ -446,10 +519,240 @@ jobs:
       - name: Release critical-path preflight
         run: python3 validation/run.py run --suite release-contracts --expected-sha "$GITHUB_SHA"
 
+  named-identities:
+    name: Identity and group libraries (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+            native-suite: identity-native-tests-linux
+          - platform: macos
+            runner: macos-latest
+            native-suite: identity-native-tests-macos
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: named-identities-v1
+          workspaces: |
+            .
+            prns-identities
+            prns-identities/bindings/uniffi
+            prns-groups/bindings/uniffi
+      - name: Run registered validation suites
+        run: >-
+          python3 validation/run.py run
+          --suite uniffi-tooling-contracts
+          --suite group-native-bindings
+          --suite identity-portable-tests
+          --suite identity-key-owner-tests
+          --suite identity-key-bindings
+          --suite identity-catalog-bindings
+          --suite identity-key-card-bindings
+          --suite identity-catalog-card-bindings
+          --suite ${{ matrix.native-suite }}
+          --expected-sha "$GITHUB_SHA"
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        if: runner.os == 'macOS'
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+        if: runner.os == 'macOS'
+        with:
+          gradle-version: "9.3.1"
+      - name: Qualify standalone Swift and Kotlin bindings
+        if: runner.os == 'macOS'
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: >-
+          python3 validation/run.py run
+          --suite group-native-bindings-swift
+          --suite group-native-bindings-kotlin
+          --suite identity-key-bindings-swift
+          --suite identity-catalog-bindings-swift
+          --suite identity-key-card-bindings-swift
+          --suite identity-catalog-card-bindings-swift
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: named-identities-${{ matrix.platform }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
+  standalone-libraries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: standalone-libraries-v1
+          workspaces: |
+            .
+      - name: Run registered validation suites
+        run: >-
+          python3 validation/run.py run
+          --suite contact-card-tests
+          --suite contact-card-clippy
+          --suite contact-card-example
+          --suite native-storage-tests
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: standalone-libraries
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
+  group-libraries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+          targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: group-libraries-v1
+          workspaces: |
+            prns-groups
+            prns-groups/security/mls-rs
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Run registered validation suites
+        run: >-
+          python3 validation/run.py run
+          --suite group-communication-tests
+          --suite group-headless-process
+          --suite group-local-consumer
+          --suite group-communication-clippy
+          --suite group-mls-adapter-tests
+          --suite group-mls-adapter-clippy
+          --suite group-mls-adapter-portable-thumb
+          --suite group-mls-adapter-portable-riscv
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: group-libraries
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
+  service-runtime:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: macos
+            runner: macos-15
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        if: runner.os == 'Linux'
+        with:
+          toolchain: "1.90.0"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: service-runtime-${{ matrix.platform }}
+          workspaces: |
+            .
+            prns-service-runtime/bindings/uniffi
+      - name: Install Linux native development packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Check service runtime and selected binding profiles
+        if: runner.os == 'Linux'
+        run: >-
+          python3 validation/run.py run
+          --suite service-runtime-minimal
+          --suite service-runtime-identities
+          --suite service-runtime-without-connections
+          --suite service-runtime-tests
+          --suite service-runtime-clippy
+          --suite native-service-bindings
+          --suite native-service-bindings-selected
+          --suite native-service-bindings-clippy
+          --suite service-runtime-msrv
+          --suite native-service-bindings-msrv-default
+          --suite native-service-bindings-msrv-selected
+          --expected-sha "$GITHUB_SHA"
+      - name: Check both Swift consumers
+        if: runner.os == 'macOS'
+        run: >-
+          python3 validation/run.py run
+          --suite native-service-bindings-swift
+          --suite native-connections-bindings-swift
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: service-runtime-${{ matrix.platform }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
-    # declared workspace floor (1.90); catches a feature or a dependency bump that
-    # quietly requires a newer compiler than we advertise.
+    # core workspace floor (1.90), with firmware host tools checked at their
+    # separately declared 1.95 floor.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -474,7 +777,16 @@ jobs:
       - name: Prove and check the advertised MSRV
         run: |
           rustc --version | grep -E '^rustc 1\.90\.0 '
-          cargo check --workspace --locked
+          cargo check --workspace --locked \
+            --exclude personal-hopspot-builder --exclude hopspot-flash \
+            --exclude personal-hopspot-resources --exclude personal-hopspot-assurance
+          cargo check --locked --manifest-path prns-groups/Cargo.toml --workspace --all-targets --all-features
+          cargo check --locked --manifest-path prns-groups/security/mls-rs/Cargo.toml --all-targets
+          cargo check --locked --manifest-path prns-groups/bindings/uniffi/Cargo.toml --workspace --all-targets
+          cargo check --locked -p prns-storage --all-targets --all-features
+          cargo check --locked -p prns-contact-card --all-targets --all-features
+          cargo check --locked --manifest-path prns-identities/Cargo.toml --workspace --all-targets --all-features
+          cargo check --locked --manifest-path prns-identities/bindings/uniffi/Cargo.toml --workspace --all-targets --all-features
       # The root-excluded workspaces declare the same 1.90 floor; hold them to it too.
       - run: cargo check --locked
         working-directory: prns-config
@@ -482,6 +794,18 @@ jobs:
         working-directory: prns-napi
       - run: cargo check --workspace --locked
         working-directory: prnsd
+      - name: Prepare app workspace MSRV dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Check the entire app workspace at the declared MSRV
+        run: cargo check --locked --manifest-path applications/Cargo.toml --workspace --all-targets --all-features
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.95.0
+      - name: Check firmware host tools at their advertised MSRV
+        run: >-
+          cargo +1.95.0 check --locked --all-targets
+          -p personal-hopspot-builder -p hopspot-flash
+          -p personal-hopspot-resources -p personal-hopspot-assurance
 
   embedded-resource-selection:
     runs-on: ubuntu-24.04
@@ -549,6 +873,8 @@ jobs:
             target/flash-artifacts/resources/configured/work/*/linker.map
             target/flash-artifacts/resources/configured/work/*/function-boundaries.json
             target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+            target/flash-artifacts/resources/configured/work/*/frame-alignment.json
+            target/flash-artifacts/resources/configured/xtensa-frame-summary.json
 
   esp32-firmware:
     needs: embedded-resource-selection
@@ -587,6 +913,8 @@ jobs:
             target/flash-artifacts/resources/configured/work/*/linker.map
             target/flash-artifacts/resources/configured/work/*/function-boundaries.json
             target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+            target/flash-artifacts/resources/configured/work/*/frame-alignment.json
+            target/flash-artifacts/resources/configured/xtensa-frame-summary.json
 
   embedded-miri:
     needs: embedded-resource-selection
@@ -964,7 +1292,7 @@ jobs:
           path: validation-artifacts/results/**
 
   deny:
-    # Locked release graph matrix: zero-copyleft licenses, RustSec, sources, unsafe drift, notices.
+    # Locked release graph matrix: license policy, RustSec, sources, unsafe drift, notices.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -990,6 +1318,14 @@ jobs:
           cargo install cargo-about --version 0.9.1 --locked --features cli
       - name: complete release dependency audit
         run: bash validation/security/deps-audit.sh
+      - name: upload dependency audit diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dependency-audit-diagnostics
+          retention-days: 7
+          if-no-files-found: ignore
+          path: validation-artifacts/dependency-audit/*.json
       - name: reject dirty generated release notices
         run: git diff --exit-code -- THIRD_PARTY_NOTICES.md
       - name: record exact release audit commit
@@ -1006,19 +1342,390 @@ jobs:
             audits/unsafe-snapshot.json
             personal-hopspot/mobile/android/dependencies/release-runtime.tsv
 
+  react-native-sdk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTUP_TOOLCHAIN: "1.98.1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - name: Install native Bluetooth development dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: rustfmt
+          toolchain: "1.98.1"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: react-native-sdk
+          workspaces: |
+            . -> target
+            prns-host/impls/runtime -> target
+            prns-host/bindings/uniffi -> target
+            prns-host/bindings/uniffi/image -> target
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Install the standalone SDK toolchain
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-react-native run patch:runtime
+      - name: Verify shared generation and upstream package inputs
+        run: |
+          python3 -m unittest discover -s tools/uniffi -p 'test_*.py'
+          python3 tools/uniffi/react_native.py check
+      - name: Install selected SDK notice collector
+        run: cargo install cargo-about --version 0.9.1 --locked --features cli
+      - name: Verify SDK and standalone default image
+        run: |
+          python3 validation/run.py run --suite react-native-sdk --suite react-native-generated --suite react-native-notices --expected-sha "$GITHUB_SHA"
+          npm pack ./prns-react-native --dry-run --ignore-scripts
+      - name: Verify native sessions and foreign conformance
+        run: python3 validation/run.py run --suite host-native-session --suite host-uniffi-session --suite host-uniffi-conformance --expected-sha "$GITHUB_SHA"
+      - name: Upload SDK validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-sdk-${{ github.sha }}
+          path: validation-artifacts/results/**
+          if-no-files-found: error
+          retention-days: 7
+
+  react-native-apple-platform:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+      - name: Verify SDK Swift lifecycle integration
+        run: python3 validation/run.py run --suite react-native-apple-platform --expected-sha "$GITHUB_SHA"
+      - name: Upload Swift validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-apple-platform-${{ github.sha }}
+          path: validation-artifacts/results/react-native-apple-platform
+          if-no-files-found: error
+          retention-days: 7
+
+  react-native-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTUP_TOOLCHAIN: "1.98.1"
+    steps:
+      - name: Use the runner temporary directory
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - name: Install host metadata build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: react-native-android
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+      - name: Install pinned SDK native build tools
+        run: |
+          sdkmanager "platforms;android-37.0" "build-tools;37.0.0" "ndk;27.1.12297006"
+          printf 'ANDROID_NDK_HOME=%s\n' "$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --locked --version 4.1.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Install standalone SDK dependencies
+        run: |
+          npm install --global npm@11.16.0
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-react-native run patch:runtime
+      - name: Build the standalone Android arm64 image
+        run: python3 validation/run.py run --suite react-native-android-image --expected-sha "$GITHUB_SHA"
+      - name: Install and compile the packed detached Android consumer
+        run: python3 validation/run.py run --suite react-native-android-consumer --expected-sha "$GITHUB_SHA"
+      - name: Upload the selected Android image for the combined archive gate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-android-image-${{ github.sha }}
+          path: prns-react-native/android/src/main/jniLibs
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload Android SDK validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-android-${{ github.sha }}
+          path: |
+            validation-artifacts/results/**
+            ${{ runner.temp }}/prns-expo-consumer-*/receipt.json
+            ${{ runner.temp }}/prns-expo-consumer-*/validation.log
+          if-no-files-found: error
+          retention-days: 7
+
+  react-native-apple-image:
+    needs: react-native-android
+    runs-on: macos-latest
+    timeout-minutes: 75
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTUP_TOOLCHAIN: "1.98.1"
+    steps:
+      - name: Use the runner temporary directory
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt
+          targets: aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: react-native-apple-image
+      - name: Record the Apple build toolchain
+        run: |
+          xcodebuild -version
+          # The reviewed native toolchain uses CocoaPods 1.16.2 with a compatible modern Ruby.
+          test "$(pod --version)" = "1.16.2"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Install standalone SDK dependencies
+        run: |
+          npm install --global npm@11.16.0
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-react-native run patch:runtime
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: react-native-android-image-${{ github.sha }}
+          path: prns-react-native/android/src/main/jniLibs
+      - name: Build the standalone iOS simulator framework
+        run: python3 validation/run.py run --suite react-native-apple-image --expected-sha "$GITHUB_SHA"
+      - name: Verify the npm archive contains both selected native images
+        run: python3 validation/run.py run --suite react-native-mobile-archive --expected-sha "$GITHUB_SHA"
+      - name: Compile the packaged Expo and Swift SDK in a detached iOS consumer
+        run: python3 validation/run.py run --suite react-native-apple-consumer --expected-sha "$GITHUB_SHA"
+      - name: Upload Apple SDK validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: react-native-apple-image-${{ github.sha }}
+          path: |
+            validation-artifacts/results/**
+            ${{ runner.temp }}/prns-expo-consumer-*/receipt.json
+            ${{ runner.temp }}/prns-expo-consumer-*/validation.log
+          if-no-files-found: error
+          retention-days: 7
+
+  app-consumers:
+    name: App consumers (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: macos
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      RUSTUP_TOOLCHAIN: "1.98.1"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      PRNS_UBRN_TARGET_DIR: ${{ github.workspace }}/target
+      PRNS_UBRN_CACHE: ${{ runner.temp }}/prns-ubrn
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.98.1"
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: app-consumers-${{ matrix.platform }}
+          workspaces: |
+            .
+            applications -> ../target
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            applications/package-lock.json
+            prns-js/package-lock.json
+      - name: Prepare the exact app image package and JavaScript dependencies
+        run: |
+          npm install --global npm@11.16.0
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          python3 applications/tools/native-bindings/generate.py stage
+          npm --prefix applications ci --ignore-scripts --no-audit --no-fund
+          npm --prefix applications run patch:runtime
+      - name: Qualify the app native API, generated contracts and UI
+        run: >-
+          python3 validation/run.py run
+          --suite app-native
+          --suite app-native-clippy
+          --suite app-generated
+          --suite app-ui
+          --expected-sha "$GITHUB_SHA"
+      - name: Qualify the actual app Swift image
+        if: runner.os == 'macOS'
+        run: >-
+          python3 validation/run.py run
+          --suite app-image-swift
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain app validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: app-consumers-${{ matrix.platform }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
+  app-android-consumer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      PRNS_UBRN_TARGET_DIR: ${{ github.workspace }}/target
+      PRNS_UBRN_CACHE: ${{ runner.temp }}/prns-ubrn
+      RUSTUP_TOOLCHAIN: "1.98.1"
+    steps:
+      - name: Use the runner temporary directory
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - name: Install host metadata build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: app-android-consumer
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+      - name: Install pinned SDK native build tools
+        run: |
+          sdkmanager "platforms;android-37.0" "build-tools;37.0.0" "ndk;27.1.12297006"
+          printf 'ANDROID_NDK_HOME=%s\n' "$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --locked --version 4.1.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            applications/package-lock.json
+            prns-js/package-lock.json
+      - name: Install the selected app dependencies
+        run: |
+          npm install --global npm@11.16.0
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          python3 applications/tools/native-bindings/generate.py stage
+          npm --prefix applications ci --ignore-scripts --no-audit --no-fund
+          npm --prefix applications run patch:runtime
+      - name: Compile and inspect the unsigned app Android consumer
+        run: >-
+          python3 validation/run.py run
+          --suite app-android-consumer
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain app Android validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: app-android-consumer-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            validation-artifacts/results/**
+            applications/target/android-qualification/**
+
   release-critical:
     name: Release critical
     if: always()
     needs:
+      - react-native-sdk
+      - react-native-apple-platform
+      - react-native-android
+      - react-native-apple-image
       - fmt
       - clippy
       - test
       - cargo-check
+      - host-runtime
       - feature-configs
       - integration-capstones
       - flasher-contracts
       - release-workflow-contracts
+      - named-identities
+      - standalone-libraries
       - msrv
+      - group-libraries
+      - service-runtime
       - embedded-resource-selection
       - no-std-embedded
       - esp32-firmware
@@ -1031,17 +1738,28 @@ jobs:
       - windows-desktop
       - local-interop
       - deny
+      - app-consumers
+      - app-android-consumer
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
+      REACT_NATIVE_SDK_RESULT: ${{ needs.react-native-sdk.result }}
+      REACT_NATIVE_APPLE_RESULT: ${{ needs.react-native-apple-platform.result }}
+      REACT_NATIVE_ANDROID_RESULT: ${{ needs.react-native-android.result }}
+      REACT_NATIVE_IMAGE_RESULT: ${{ needs.react-native-apple-image.result }}
       FMT_RESULT: ${{ needs.fmt.result }}
       CLIPPY_RESULT: ${{ needs.clippy.result }}
       TEST_RESULT: ${{ needs.test.result }}
       CARGO_CHECK_RESULT: ${{ needs.cargo-check.result }}
+      HOST_RUNTIME_RESULT: ${{ needs.host-runtime.result }}
       FEATURES_RESULT: ${{ needs.feature-configs.result }}
       INTEGRATION_CAPSTONES_RESULT: ${{ needs.integration-capstones.result }}
       FLASHER_RESULT: ${{ needs.flasher-contracts.result }}
       WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
+      NAMED_IDENTITIES_RESULT: ${{ needs.named-identities.result }}
+      STANDALONE_LIBRARIES_RESULT: ${{ needs.standalone-libraries.result }}
+      GROUP_LIBRARIES_RESULT: ${{ needs.group-libraries.result }}
+      SERVICE_RUNTIME_RESULT: ${{ needs.service-runtime.result }}
       MSRV_RESULT: ${{ needs.msrv.result }}
       EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}
       EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}
@@ -1060,24 +1778,37 @@ jobs:
       WINDOWS_RESULT: ${{ needs.windows-desktop.result }}
       INTEROP_RESULT: ${{ needs.local-interop.result }}
       DENY_RESULT: ${{ needs.deny.result }}
+      APP_CONSUMERS_RESULT: ${{ needs.app-consumers.result }}
+      APP_ANDROID_CONSUMER_RESULT: ${{ needs.app-android-consumer.result }}
     steps:
       - name: Require every release-critical lane
         run: |
           for result in \
+            "$REACT_NATIVE_SDK_RESULT" \
+            "$REACT_NATIVE_APPLE_RESULT" \
+            "$REACT_NATIVE_ANDROID_RESULT" \
+            "$REACT_NATIVE_IMAGE_RESULT" \
             "$FMT_RESULT" \
             "$CLIPPY_RESULT" \
             "$TEST_RESULT" \
             "$CARGO_CHECK_RESULT" \
+            "$HOST_RUNTIME_RESULT" \
             "$FEATURES_RESULT" \
             "$INTEGRATION_CAPSTONES_RESULT" \
             "$FLASHER_RESULT" \
             "$WORKFLOWS_RESULT" \
+            "$NAMED_IDENTITIES_RESULT" \
+            "$STANDALONE_LIBRARIES_RESULT" \
             "$MSRV_RESULT" \
+            "$GROUP_LIBRARIES_RESULT" \
+            "$SERVICE_RUNTIME_RESULT" \
             "$EMBEDDED_SELECTION_RESULT" \
             "$ANDROID_RESULT" \
             "$APPLE_RESULT" \
             "$WINDOWS_RESULT" \
             "$INTEROP_RESULT" \
+            "$APP_CONSUMERS_RESULT" \
+            "$APP_ANDROID_CONSUMER_RESULT" \
             "$DENY_RESULT"; do
             test "$result" = "success"
           done

@@ -200,6 +200,29 @@ where
         }
 
         match command {
+            HostCommand::CancelRemoteControlControllerPairing { subject, reply } => {
+                let result = match engine.remote_control_pairing_view() {
+                    crate::remote_control::RemoteControlPairingView::Unavailable => Err(crate::runtime::CancelRemoteControlControllerPairingControlError::Unavailable),
+                    _ => engine.cancel_remote_control_controller_pairing_into(subject, now, topology.interfaces.view(),
+                        &mut |entropy| host.fill_random(entropy),
+                        &mut |reaction| route_command_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, wire_scratch, journal, now))
+                        .map_err(|reason| crate::runtime::CancelRemoteControlControllerPairingControlError::Rejected { reason }),
+                };
+                let _ = reply.send(result);
+                CommandEffect::RecomputeWakeSchedules
+            }
+            HostCommand::ServiceLifecycle(command) => Self {
+                engine,
+                host,
+                topology,
+                wire_scratch,
+                journal,
+                crypto_pool,
+                owed_work,
+                #[cfg(feature = "runtime-metrics")]
+                manifold_metrics,
+            }
+            .service_lifecycle(command, now),
             HostCommand::Engine(issued) => {
                 CommandEffect::Delta(engine.ingest_command_into_with_work(
                     issued,
@@ -573,6 +596,10 @@ where
                 topology.detach(engine, id, departure, now);
                 CommandEffect::RecomputeWakeSchedules
             }
+            HostCommand::InterfaceLifecycleBarrier { reply } => {
+                let _ = reply.send(());
+                CommandEffect::UNCHANGED
+            }
             HostCommand::DropRoute { destination, reply } => {
                 let effect = engine.drop_route(&destination, topology.view());
                 if let Some(removed) = effect.removed_route() {
@@ -619,6 +646,27 @@ where
             ),
             HostCommand::NodeIntrospection(request) => {
                 match request {
+                    NodeIntrospectionRequest::RemoteControlControllerPairingStatus { reply } => {
+                        let result = match engine.remote_control_pairing_view() {
+                            crate::remote_control::RemoteControlPairingView::Unavailable => Err(
+                                crate::runtime::RemoteControlPairingInspectionError::Unavailable,
+                            ),
+                            _ => Ok(crate::runtime::RemoteControlControllerPairingStatus {
+                                current: engine.remote_control_controller_pairing_view().into(),
+                                terminal: engine.remote_control_controller_pairing_terminal(),
+                            }),
+                        };
+                        let _ = reply.send(result);
+                    }
+                    NodeIntrospectionRequest::RemoteControlControllerPairing { reply } => {
+                        let snapshot = match engine.remote_control_pairing_view() {
+                            crate::remote_control::RemoteControlPairingView::Unavailable => Err(
+                                crate::runtime::RemoteControlPairingInspectionError::Unavailable,
+                            ),
+                            _ => Ok(engine.remote_control_controller_pairing_view().into()),
+                        };
+                        let _ = reply.send(snapshot);
+                    }
                     NodeIntrospectionRequest::LinkCount { reply } => {
                         let _ = reply.send(engine.link_count());
                     }
@@ -700,6 +748,7 @@ where
                             )
                             .collect();
                         let _ = reply.send(crate::node_introspection::EngineInspectionSnapshot {
+                            engine_time_millis: now.0,
                             link_count: engine.link_count(),
                             routes,
                             destination_identities,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -20,8 +21,105 @@ SPEC.loader.exec_module(parity)
 
 
 class PrePushCiParityTests(unittest.TestCase):
+    def test_group_suites_follow_registry_inputs_and_current_platform(self) -> None:
+        suites = [
+            {"id": "current", "group": "group-communication", "tiers": ["pr"], "platform": "any", "inputs": ["prns-groups/store"]},
+            {"id": "other-platform", "group": "group-communication", "tiers": ["pr"], "platform": "windows", "inputs": ["prns-groups/store"]},
+            {"id": "scheduled", "group": "group-communication", "tiers": ["scheduled"], "platform": "any", "inputs": ["prns-groups/store"]},
+        ]
+        with mock.patch.object(parity.host_platform, "system", return_value="Linux"):
+            gates = parity.reusable_library_gates({"prns-groups/store/src/lib.rs"}, {"suite": suites})
+            self.assertEqual(tuple(g.command for g in gates), (("python3", "validation/run.py", "run", "--suite", "current"),))
+            self.assertEqual(parity.reusable_library_gates({"docs/testing.md"}, {"suite": suites}), ())
+            self.assertEqual(parity.reusable_library_gates({"prns-groups/store-neighbor/src/lib.rs"}, {"suite": suites}), ())
+            self.assertEqual(parity.reusable_library_gates({"validation/manifest.toml"}, {"suite": suites}), gates)
+
+    def test_group_source_selects_the_actual_registered_owning_suites(self) -> None:
+        gates = parity.plan_for_paths({"prns-groups/store/src/lib.rs"}).gates
+        selected = next(g for g in gates if g.name == "reusable library suites")
+        self.assertIn("group-communication-tests", selected.command)
+        self.assertIn("group-communication-clippy", selected.command)
+
+    def test_sdk_suites_follow_the_registered_source_and_platform_inputs(self) -> None:
+        manifest = parity.tomllib.loads((ROOT / "validation/manifest.toml").read_text())
+        for platform, tag in (("Linux", "linux"), ("Darwin", "macos"), ("Windows", "windows")):
+            for path in ("prns-react-native/src/index.ts", "tools/uniffi/react-native.json",
+                         "prns-host/bindings/uniffi/image/Cargo.toml"):
+                expected = {
+                    suite["id"] for suite in manifest["suite"]
+                    if suite["id"].startswith("react-native-") and "pr" in suite["tiers"]
+                    and suite["platform"] in {"any", tag}
+                    and any(path == source or path.startswith(source.rstrip("/") + "/")
+                            for source in suite["inputs"])
+                }
+                with self.subTest(platform=platform, path=path):
+                    selected, _ = self.reusable_suites({path}, platform)
+                    self.assertEqual({name for name in selected if name.startswith("react-native-")}, expected)
+        for path in ("tools/uniffi/runtime_notices.py", "tools/uniffi/react-native.json"):
+            self.assertIn("third-party notice inputs", self.gate_names({path}))
+
+
     def gate_names(self, paths: set[str]) -> set[str]:
         return {gate.name for gate in parity.plan_for_paths(paths).gates}
+
+    def reusable_suites(self, paths: set[str], platform: str = "Linux") -> tuple[set[str], tuple]:
+        with mock.patch.object(parity.host_platform, "system", return_value=platform):
+            gates = parity.plan_for_paths(paths).gates
+        selected = next((gate for gate in gates if gate.name == "reusable library suites"), None)
+        suites = set(selected.command[4::2]) if selected else set()
+        return suites, gates
+
+    def test_key_bindings_select_native_checks_and_macos_swift_consumer(self) -> None:
+        for path in ("prns-identities/src/keys.rs", "prns-identities/bindings/uniffi/src/lib.rs"):
+            with self.subTest(path=path):
+                self.assertIn("identity-key-bindings", self.reusable_suites({path}, "Linux")[0])
+                self.assertIn("identity-key-bindings-swift", self.reusable_suites({path}, "Darwin")[0])
+                self.assertNotIn("identity-key-bindings-swift", self.reusable_suites({path}, "Linux")[0])
+                self.assertNotIn("identity-key-bindings-swift", self.reusable_suites({path}, "Windows")[0])
+        self.assertIn("identity-key-bindings-swift", self.reusable_suites({"tools/uniffi/tooling.py"}, "Darwin")[0])
+
+    def test_catalog_bindings_select_both_independent_profiles(self) -> None:
+        for path in ("prns-identities/src/api/client.rs", "prns-identities/bindings/uniffi/src/catalog.rs"):
+            with self.subTest(path=path):
+                self.assertTrue({"identity-key-bindings", "identity-catalog-bindings"} <= self.reusable_suites({path}, "Linux")[0])
+                self.assertIn("identity-catalog-bindings-swift", self.reusable_suites({path}, "Darwin")[0])
+                self.assertNotIn("identity-catalog-bindings-swift", self.reusable_suites({path}, "Linux")[0])
+                self.assertNotIn("identity-catalog-bindings-swift", self.reusable_suites({path}, "Windows")[0])
+
+    def test_card_bindings_select_native_and_platform_appropriate_foreign_checks(self) -> None:
+        rust = {"identity-key-card-bindings", "identity-catalog-card-bindings"}
+        swift = {identifier + "-swift" for identifier in rust}
+        for path in ("prns-contact-card/src/api.rs", "prns-identities/src/contact_card.rs",
+                     "prns-identities/bindings/uniffi/src/lib.rs", "prns-storage/src/lib.rs"):
+            with self.subTest(path=path):
+                self.assertTrue(rust <= self.reusable_suites({path}, "Linux")[0])
+                self.assertTrue(rust | swift <= self.reusable_suites({path}, "Darwin")[0])
+                self.assertFalse(swift & self.reusable_suites({path}, "Linux")[0])
+                self.assertFalse(swift & self.reusable_suites({path}, "Windows")[0])
+        self.assertTrue(swift <= self.reusable_suites({"tools/uniffi/tooling.py"}, "Darwin")[0])
+        codec_suites = self.reusable_suites({"prns-contact-card/src/api.rs"}, "Linux")[0]
+        self.assertFalse({"identity-key-bindings", "identity-catalog-bindings"} & codec_suites)
+
+    def test_service_runtime_selects_owned_profiles_and_only_local_swift(self) -> None:
+        rust = {"service-runtime-minimal", "service-runtime-tests", "service-runtime-msrv",
+                "native-service-bindings", "native-service-bindings-selected",
+                "native-service-bindings-msrv-default", "native-service-bindings-msrv-selected"}
+        swift = {"native-service-bindings-swift", "native-connections-bindings-swift"}
+        for path in ("prns-service-runtime/src/groups/mod.rs", "prns-service-runtime/bindings/uniffi/src/lib.rs"):
+            with self.subTest(path=path):
+                self.assertTrue(rust <= self.reusable_suites({path}, "Linux")[0])
+                self.assertTrue(rust | swift <= self.reusable_suites({path}, "Darwin")[0])
+                self.assertFalse(swift & self.reusable_suites({path}, "Linux")[0])
+                self.assertFalse(swift & self.reusable_suites({path}, "Windows")[0])
+        self.assertTrue(swift <= self.reusable_suites({"tools/uniffi/tooling.py"}, "Darwin")[0])
+
+    def test_app_selects_owning_suites_without_cross_platform_foreign_checks(self) -> None:
+        common = {"app-native", "app-native-clippy", "app-generated", "app-ui"}
+        for platform, foreign in (("Linux", {"app-android-consumer"}), ("Darwin", {"app-image-swift"}), ("Windows", set())):
+            selected, _ = self.reusable_suites({"applications/prns/app/src/IdentityPanel.tsx"}, platform)
+            self.assertEqual({identifier for identifier in selected if identifier.startswith("app-")}, common | foreign)
+        self.assertIn("app-image-swift", self.reusable_suites({"tools/uniffi/tooling.py"}, "Darwin")[0])
+        self.assertIn("app-generated", self.reusable_suites({"tools/uniffi/react-native.json"}, "Linux")[0])
 
     def test_core_change_checks_root_feature_and_native_consumers(self) -> None:
         names = self.gate_names({"prns-core/src/engine.rs"})
@@ -155,6 +253,35 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertEqual(
             policy.command[-4:],
             ("advisories", "licenses", "sources", "bans"),
+        )
+
+    def test_archival_root_vendor_lock_is_not_a_dependency_policy_workspace(self) -> None:
+        names = self.gate_names({"Cargo.lock", "vendor/example/Cargo.lock"})
+        self.assertIn("dependency policy (Cargo.lock)", names)
+        self.assertNotIn("dependency policy (vendor/example/Cargo.lock)", names)
+        self.assertIn("third-party notice inputs", names)
+
+    def test_registered_first_party_vendor_workspace_keeps_dependency_policy(self) -> None:
+        workspace = "vendor/example/validation"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "validation").mkdir()
+            (root / "validation/manifest.toml").write_text(
+                f'[registry]\ncargo_lock_workspaces = ["{workspace}"]\n',
+                encoding="utf-8",
+            )
+            (root / workspace).mkdir(parents=True)
+            (root / workspace / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+            with mock.patch.object(parity, "ROOT", root):
+                gates = parity.plan_for_paths({f"{workspace}/Cargo.lock"}).gates
+        policies = [gate for gate in gates if gate.name.startswith("dependency policy (")]
+        self.assertEqual(
+            [gate.name for gate in policies],
+            [f"dependency policy ({workspace}/Cargo.lock)"],
+        )
+        self.assertIn("--locked", policies[0].command)
+        self.assertEqual(
+            policies[0].command[-4:], ("advisories", "licenses", "sources", "bans")
         )
 
     def test_embassy_change_links_the_exact_resource_matrix(self) -> None:

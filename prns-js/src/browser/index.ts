@@ -1561,6 +1561,7 @@ export class Prns {
       Weave: unsupported,
       AutomaticUsb: unsupported,
       AutomaticBluetoothLe: unsupported,
+      ConfiguredBluetoothLe: unsupported,
       WebSocketClient: ({ target, framing }) =>
         this.#attachWebSocket(target, "WebSocketClient", framing, routing),
       WebSocketServer: unsupported,

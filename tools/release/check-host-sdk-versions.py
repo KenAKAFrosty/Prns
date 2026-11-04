@@ -86,7 +86,7 @@ def main():
         "host-core": cargo_version(ROOT / "prns-host/core/Cargo.toml"),
         "host-c": cargo_version(ROOT / "prns-host/abi/c/Cargo.toml"),
         "host-native": cargo_version(
-            ROOT / "prns-host/impls/native/Cargo.toml"
+            ROOT / "prns-host/impls/runtime/Cargo.toml"
         ),
         "host-cooperative": cargo_version(
             ROOT / "prns-host/impls/cooperative/Cargo.toml"

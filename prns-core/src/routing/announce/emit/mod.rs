@@ -43,6 +43,7 @@ pub enum AnnounceSignPurpose {
 
 #[repr(C)]
 pub struct AnnounceSignOwed {
+    pub destination_generation: u64,
     pub purpose: AnnounceSignPurpose,
     pub destination: DestinationHash,
     pub identity: IdentityHash,
@@ -251,6 +252,13 @@ impl<S: StorageLayout> EngineState<S> {
                 ))
             })?;
         Ok(AnnounceSignOwed {
+            destination_generation: self
+                .upstream_app_destinations
+                .lookup_single(destination)
+                .ok_or(AnnounceWriteFailure::Rejected(
+                    AnnounceRejection::NotRegistered,
+                ))?
+                .registration_generation,
             purpose,
             destination: *destination,
             identity: identity.identity_hash(),
@@ -271,6 +279,17 @@ impl<S: StorageLayout> EngineState<S> {
         buf: &mut [u8],
     ) -> Result<OriginatedAnnounceDispatch, AnnounceWriteFailure> {
         let AnnounceSignCompleted { owed, signature } = completed;
+        if !self
+            .upstream_app_destinations
+            .lookup_single(&owed.destination)
+            .is_some_and(|registered| {
+                registered.registration_generation == owed.destination_generation
+            })
+        {
+            return Err(AnnounceWriteFailure::Rejected(
+                AnnounceRejection::NotRegistered,
+            ));
+        }
         let (name_hash, identity, _) = resolve_announce_signer(
             &self.upstream_app_destinations,
             &self.held_identities,
@@ -415,9 +434,17 @@ where
         .registration_for(destination)
         .ok_or(AnnounceRejection::NotRegistered)?;
 
-    let UpstreamAppDestinationKind::Single { identity, .. } = registered.kind else {
+    let UpstreamAppDestinationKind::Single {
+        identity,
+        ingress_enabled,
+        ..
+    } = registered.kind
+    else {
         return Err(AnnounceRejection::NotSingle);
     };
+    if !ingress_enabled {
+        return Err(AnnounceRejection::NotRegistered);
+    }
 
     let identity = held_identities
         .get(&identity)
@@ -493,6 +520,41 @@ mod tests {
         assert_eq!(
             continued_wire[..dispatch.wire_bytes],
             inline_wire[..inline_bytes]
+        );
+    }
+
+    #[test]
+    fn retired_announce_generation_cannot_emit_after_same_key_resume() {
+        let mut state = personal_node_announcer();
+        let destination = personal_node_destination();
+        let completed = state
+            .prepare_commanded_announce_sign(
+                CommandId(1),
+                &commanded(destination, AnnounceAppData::Registered),
+                InstantMillis(1000),
+                &mut test_fill_entropy,
+            )
+            .unwrap()
+            .fulfill();
+        let identity = completed.owed.identity;
+        let _ = state.unregister_destination(&destination);
+        state
+            .register_single_destination(
+                &identity,
+                "personal",
+                &["node"],
+                b"",
+                crate::routing::upstream_app_destinations::ProofStrategy::ProveNone,
+                crate::routing::upstream_app_destinations::LinkRequestPolicy::AcceptAll,
+                crate::crypto::ratchets::RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        let mut wire = [0; BROADCAST_MTU];
+        assert_eq!(
+            state.finish_announce_sign(completed, &mut wire),
+            Err(AnnounceWriteFailure::Rejected(
+                AnnounceRejection::NotRegistered
+            ))
         );
     }
 

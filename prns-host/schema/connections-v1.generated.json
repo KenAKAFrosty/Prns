@@ -1,0 +1,796 @@
+{
+  "schemaVersion": 1,
+  "authoritativeSources": [
+    "prns-host/impls/runtime/src/connections/model.rs",
+    "prns-host/impls/runtime/src/connections/binding.rs",
+    "prns-host/impls/runtime/src/attachment_scope.rs"
+  ],
+  "types": [
+    {
+      "name": "Options",
+      "kind": "struct",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/model.rs",
+      "style": "named",
+      "fields": [
+        {
+          "name": "limits",
+          "type": "Limits",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "queue_capacity",
+          "type": "NonZeroUsize",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "cache_bytes",
+          "type": "usize",
+          "public": true,
+          "borrowed": false
+        }
+      ],
+      "directions": [
+        "input"
+      ]
+    },
+    {
+      "name": "Limits",
+      "kind": "struct",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/model.rs",
+      "style": "named",
+      "fields": [
+        {
+          "name": "profiles",
+          "type": "u32",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "encoded_bytes",
+          "type": "u32",
+          "public": true,
+          "borrowed": false
+        }
+      ],
+      "directions": [
+        "input",
+        "output"
+      ]
+    },
+    {
+      "name": "Profile",
+      "kind": "struct",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/model.rs",
+      "style": "named",
+      "fields": [
+        {
+          "name": "id",
+          "type": "ProfileId",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "label",
+          "type": "String",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "enabled",
+          "type": "bool",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "config",
+          "type": "InterfaceConfig",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "routing",
+          "type": "Option<InterfaceRoutingPolicy>",
+          "public": true,
+          "borrowed": false
+        }
+      ],
+      "directions": [
+        "input",
+        "output"
+      ]
+    },
+    {
+      "name": "ProfileId",
+      "kind": "struct",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/model.rs",
+      "style": "tuple",
+      "fields": [
+        {
+          "name": "value",
+          "type": "[u8;16]",
+          "public": false,
+          "borrowed": false
+        }
+      ],
+      "directions": [
+        "input",
+        "output"
+      ]
+    },
+    {
+      "name": "Error",
+      "kind": "enum",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/model.rs",
+      "variants": [
+        {
+          "name": "Invalid",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "InputError",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "Schema",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "SchemaError",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "Conflict",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "Snapshot",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "Storage",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "Arc<redb::Error>",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "File",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "Arc<prns_storage::files::Error>",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "Spawn",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "Arc<std::io::Error>",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "EntropyUnavailable",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Busy",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Closed",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Reentrant",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "WorkerFailed",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "AlreadyBound",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "BindingChanged",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "NotEnabled",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Host",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "SessionError",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "Attachment",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "AttachmentError",
+              "public": true
+            }
+          ]
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "InputError",
+      "kind": "enum",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/model.rs",
+      "variants": [
+        {
+          "name": "InvalidLimits",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "InvalidId",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "InvalidLabel",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "InvalidTarget",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "InvalidConfig",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "UnsupportedConfig",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "DuplicateId",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "DuplicateEndpoint",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "MultipleLanProfiles",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "TooManyProfiles",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "EncodedCapacity",
+          "style": "unit",
+          "fields": []
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "SchemaError",
+      "kind": "enum",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/model.rs",
+      "variants": [
+        {
+          "name": "Missing",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Corrupt",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "UnsupportedVersion",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "u32",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "CapacityMismatch",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "RevisionExhausted",
+          "style": "unit",
+          "fields": []
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "Snapshot",
+      "kind": "struct",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/model.rs",
+      "style": "named",
+      "fields": [
+        {
+          "name": "guard",
+          "type": "Guard",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "limits",
+          "type": "Limits",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "profiles",
+          "type": "Vec<Profile>",
+          "public": true,
+          "borrowed": false
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "Guard",
+      "kind": "struct",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/model.rs",
+      "style": "named",
+      "fields": [
+        {
+          "name": "incarnation",
+          "type": "[u8;16]",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "revision",
+          "type": "u64",
+          "public": true,
+          "borrowed": false
+        }
+      ],
+      "directions": [
+        "output",
+        "input"
+      ]
+    },
+    {
+      "name": "AttachmentError",
+      "kind": "enum",
+      "namespace": "prns_host_runtime::attachment_scope",
+      "source": "prns-host/impls/runtime/src/attachment_scope.rs",
+      "variants": [
+        {
+          "name": "Closed",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Conflict",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "NotOwned",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Session",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "SessionError",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "Command",
+          "style": "tuple",
+          "fields": [
+            {
+              "name": "value",
+              "type": "CommandFailure",
+              "public": true
+            }
+          ]
+        },
+        {
+          "name": "RetirementPending",
+          "style": "named",
+          "fields": [
+            {
+              "name": "interface",
+              "type": "InterfaceId",
+              "public": false
+            },
+            {
+              "name": "failure",
+              "type": "CommandFailure",
+              "public": false
+            }
+          ]
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "BindingStatus",
+      "kind": "struct",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/binding.rs",
+      "style": "named",
+      "fields": [
+        {
+          "name": "generation",
+          "type": "u64",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "phase",
+          "type": "BindingPhase",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "cleanup_failure",
+          "type": "Option<Error>",
+          "public": true,
+          "borrowed": false
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "BindingPhase",
+      "kind": "enum",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/binding.rs",
+      "variants": [
+        {
+          "name": "Active",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Fenced",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Closing",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Closed",
+          "style": "unit",
+          "fields": []
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "BindingSnapshot",
+      "kind": "struct",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/binding.rs",
+      "style": "named",
+      "fields": [
+        {
+          "name": "generation",
+          "type": "u64",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "saved",
+          "type": "Guard",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "applied_revision",
+          "type": "Option<u64>",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "phase",
+          "type": "BindingPhase",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "attachments",
+          "type": "Vec<LiveProfile>",
+          "public": true,
+          "borrowed": false
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "LiveProfile",
+      "kind": "struct",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/binding.rs",
+      "style": "named",
+      "fields": [
+        {
+          "name": "profile",
+          "type": "Profile",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "interface",
+          "type": "Option<InterfaceId>",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "state",
+          "type": "AttachmentState",
+          "public": true,
+          "borrowed": false
+        },
+        {
+          "name": "failure",
+          "type": "Option<Error>",
+          "public": true,
+          "borrowed": false
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    },
+    {
+      "name": "AttachmentState",
+      "kind": "enum",
+      "namespace": "prns_host_runtime::connections",
+      "source": "prns-host/impls/runtime/src/connections/binding.rs",
+      "variants": [
+        {
+          "name": "Attaching",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Attached",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Retiring",
+          "style": "unit",
+          "fields": []
+        },
+        {
+          "name": "Failed",
+          "style": "unit",
+          "fields": []
+        }
+      ],
+      "directions": [
+        "output"
+      ]
+    }
+  ],
+  "clients": {
+    "Client": [
+      {
+        "name": "snapshot",
+        "async": true,
+        "parameters": [],
+        "success": "Snapshot",
+        "error": "Error",
+        "source": "prns-host/impls/runtime/src/connections/mod.rs",
+        "adapter": "ConnectionProfileClient"
+      },
+      {
+        "name": "replace",
+        "async": true,
+        "parameters": [
+          {
+            "name": "expected",
+            "type": "Guard",
+            "public": false
+          },
+          {
+            "name": "profiles",
+            "type": "Vec<Profile>",
+            "public": false
+          }
+        ],
+        "success": "Snapshot",
+        "error": "Error",
+        "source": "prns-host/impls/runtime/src/connections/mod.rs",
+        "adapter": "ConnectionProfileClient"
+      }
+    ],
+    "BindingClient": [
+      {
+        "name": "status",
+        "async": false,
+        "parameters": [],
+        "success": "BindingStatus",
+        "error": null,
+        "source": "prns-host/impls/runtime/src/connections/binding.rs",
+        "adapter": "ConnectionBindingClient"
+      },
+      {
+        "name": "snapshot",
+        "async": true,
+        "parameters": [],
+        "success": "BindingSnapshot",
+        "error": "Error",
+        "source": "prns-host/impls/runtime/src/connections/binding.rs",
+        "adapter": "ConnectionBindingClient"
+      },
+      {
+        "name": "retry",
+        "async": true,
+        "parameters": [
+          {
+            "name": "expected",
+            "type": "Guard",
+            "public": false
+          },
+          {
+            "name": "profile",
+            "type": "ProfileId",
+            "public": false
+          }
+        ],
+        "success": "()",
+        "error": "Error",
+        "source": "prns-host/impls/runtime/src/connections/binding.rs",
+        "adapter": "ConnectionBindingClient"
+      }
+    ]
+  },
+  "functions": [
+    {
+      "name": "tcp_client_config",
+      "async": false,
+      "parameters": [
+        {
+          "name": "host",
+          "type": "&str",
+          "public": false
+        },
+        {
+          "name": "port",
+          "type": "u16",
+          "public": false
+        },
+        {
+          "name": "bitrate",
+          "type": "Bitrate",
+          "public": false
+        }
+      ],
+      "success": "InterfaceConfig",
+      "error": "Error"
+    },
+    {
+      "name": "tcp_client_config_from_target",
+      "async": false,
+      "parameters": [
+        {
+          "name": "target",
+          "type": "&str",
+          "public": false
+        },
+        {
+          "name": "bitrate",
+          "type": "Bitrate",
+          "public": false
+        }
+      ],
+      "success": "InterfaceConfig",
+      "error": "Error"
+    }
+  ],
+  "representations": {
+    "ProfileId": "checked native new([u8;16]) via bytes",
+    "InterfaceId": "output bytes",
+    "opaqueNativeCauses": [
+      "Arc<prns_storage::files::Error>",
+      "Arc<redb::Error>",
+      "Arc<std::io::Error>"
+    ],
+    "transportTypes": [
+      "Bitrate",
+      "CommandFailure",
+      "InterfaceConfig",
+      "InterfaceRoutingPolicy"
+    ]
+  },
+  "feature": "connections",
+  "defaultEnabled": false
+}

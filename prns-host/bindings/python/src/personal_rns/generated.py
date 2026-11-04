@@ -5,7 +5,7 @@ from enum import IntEnum
 from typing import Any, Generic, Protocol, TypeAlias, TypeVar
 
 HOST_CONTRACT_ABI = 1
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PRODUCT_VERSION = "0.3.8"
 DESTINATION_HASH_LENGTH = 16
 IDENTITY_HASH_LENGTH = 16
@@ -356,6 +356,8 @@ class EventField(IntEnum):
     PERSISTENCE_CAUSE = 38
     PERSISTENCE_TARGET = 39
     APP_DATA = 40
+    LOCAL_DESTINATION = 41
+    ARRIVED_AT_MILLIS = 42
 
 @dataclass(frozen=True, slots=True)
 class DestinationHash:
@@ -716,6 +718,10 @@ class InterfaceConfigWebSocketServer:
 @dataclass(frozen=True, slots=True)
 class InterfaceConfigBrowserRendezvous:
     url: str
+
+@dataclass(frozen=True, slots=True)
+class InterfaceConfigConfiguredBluetoothLe:
+    discovery_groups: tuple[str, ...]
 
 @dataclass(frozen=True, slots=True)
 class DestinationIdentityConfigHostIdentity:
@@ -1215,6 +1221,8 @@ class ApplicationEventLinkDelivery:
     link_id: LinkId
     source_interface: InterfaceId
     plaintext: bytes
+    local_destination: DestinationHash | None
+    arrived_at_millis: int
 
 @dataclass(frozen=True, slots=True)
 class DiagnosticEventAnnounceHeard:
@@ -1325,7 +1333,7 @@ class DiagnosticEventPersistenceFlushFailed:
 
 IdentityConfig: TypeAlias = IdentityConfigExisting | IdentityConfigGenerateEphemeral | IdentityConfigLoadOrCreate
 PersistenceConfig: TypeAlias = PersistenceConfigEphemeral | PersistenceConfigDirectory
-InterfaceConfig: TypeAlias = InterfaceConfigAutoLan | InterfaceConfigTcpClient | InterfaceConfigTcpServer | InterfaceConfigUdp | InterfaceConfigSerial | InterfaceConfigKiss | InterfaceConfigAx25Kiss | InterfaceConfigRNode | InterfaceConfigMultiRNode | InterfaceConfigPipe | InterfaceConfigBackboneClient | InterfaceConfigBackboneServer | InterfaceConfigI2p | InterfaceConfigWeave | InterfaceConfigAutomaticUsb | InterfaceConfigAutomaticBluetoothLe | InterfaceConfigWebSocketClient | InterfaceConfigWebSocketServer | InterfaceConfigBrowserRendezvous
+InterfaceConfig: TypeAlias = InterfaceConfigAutoLan | InterfaceConfigTcpClient | InterfaceConfigTcpServer | InterfaceConfigUdp | InterfaceConfigSerial | InterfaceConfigKiss | InterfaceConfigAx25Kiss | InterfaceConfigRNode | InterfaceConfigMultiRNode | InterfaceConfigPipe | InterfaceConfigBackboneClient | InterfaceConfigBackboneServer | InterfaceConfigI2p | InterfaceConfigWeave | InterfaceConfigAutomaticUsb | InterfaceConfigAutomaticBluetoothLe | InterfaceConfigWebSocketClient | InterfaceConfigWebSocketServer | InterfaceConfigBrowserRendezvous | InterfaceConfigConfiguredBluetoothLe
 DestinationIdentityConfig: TypeAlias = DestinationIdentityConfigHostIdentity | DestinationIdentityConfigDedicatedIdentity
 Bitrate: TypeAlias = BitrateAuto | BitrateBitsPerSecond
 ResponseTimeout: TypeAlias = ResponseTimeoutLinkDefault | ResponseTimeoutExact

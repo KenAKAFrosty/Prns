@@ -41,7 +41,7 @@ pub(super) fn analyze(
                 path: path.to_path_buf(),
                 section: section_name,
             })?;
-    if matches!(section.flags(), SectionFlags::Elf { sh_flags } if sh_flags & u64::from(object::elf::SHF_ALLOC) != 0)
+    if matches!(section.flags(), SectionFlags::Elf { sh_flags, .. } if sh_flags.contains(object::elf::SHF_ALLOC))
     {
         return Err(StackMetadataError::AllocatedSection {
             path: path.to_path_buf(),

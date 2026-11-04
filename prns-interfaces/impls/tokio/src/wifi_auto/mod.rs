@@ -38,6 +38,12 @@ use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 ))]
 mod apple;
 mod discovery;
+mod service_bridge;
+pub use service_bridge::{
+    PlatformServiceDiscoveryBridge, PublicationNameError, PublicationRegistrationOutcome,
+    ServiceRecordRejection, ServiceRemovalOutcome, ServiceResolutionOutcome, SnapshotClearOutcome,
+    TakeServiceDiscoveryError, DISCOVERY_CAPACITY, RESOLVED_CANDIDATE_INPUT_CAPACITY,
+};
 mod host_lan;
 mod rendezvous;
 use rendezvous::{
@@ -52,10 +58,10 @@ mod publication_absence;
     feature = "wifi-auto-apple",
     any(target_os = "macos", target_os = "ios")
 ))]
-pub use apple::apple_service_discovery;
+pub use apple::{apple_service_discovery, apple_service_discovery_managed};
 pub use discovery::{
     DiscoveryLifecycleError, DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher,
-    SnapshotPublication,
+    ServiceDiscoveryTask, SnapshotPublication,
 };
 pub use host_lan::{
     HostLanAddress, HostLanInterface, HostLanInterfaceError, HostLanInventory,
@@ -191,6 +197,8 @@ impl AutoWifiPeer {
         channel_tag.extend_from_slice(&peer.ip().octets());
         channel_tag.extend_from_slice(&peer.scope_id().to_be_bytes());
         let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &channel_tag);
+        let status = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected);
+        status.set_endpoint(Some(core::net::SocketAddr::V6(peer)));
         Self {
             id,
             socket,
@@ -198,7 +206,7 @@ impl AutoWifiPeer {
             inbound,
             policy,
             channel_tag,
-            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected),
+            status,
         }
     }
 
@@ -638,11 +646,31 @@ pub struct AutoWifiStatus {
 struct AutoWifiShared {
     id: InterfaceId,
     enabled: watch::Sender<bool>,
+    network_changes: watch::Sender<u64>,
     member_updates: watch::Sender<std::vec::Vec<TokioInterfaceStatus>>,
     discovery_groups: watch::Sender<DiscoveryGroupSet>,
     applied_discovery_groups: watch::Sender<DiscoveryGroupSettlement>,
     discovery_group_replacement: AsyncMutex<()>,
     accounting: Mutex<AutoWifiAccounting>,
+    activation_errors: Mutex<ActivationErrors>,
+}
+
+#[derive(Default)]
+struct ActivationErrors {
+    listener: Option<io::ErrorKind>,
+    datagram: Option<io::ErrorKind>,
+    listener_ready: bool,
+    datagram_ready: bool,
+    multicast: MulticastActivation,
+    no_eligible_interfaces: bool,
+}
+
+#[derive(Default)]
+enum MulticastActivation {
+    #[default]
+    Inactive,
+    Ready,
+    Failed(io::ErrorKind),
 }
 
 #[derive(Clone)]
@@ -673,6 +701,7 @@ impl CompletedTraffic {
 impl AutoWifiStatus {
     fn new(id: InterfaceId, discovery_groups: DiscoveryGroupSet) -> Self {
         let (enabled, _) = watch::channel(true);
+        let (network_changes, _) = watch::channel(0u64);
         let (member_updates, _) = watch::channel(std::vec::Vec::new());
         let (applied_discovery_groups, _) = watch::channel(DiscoveryGroupSettlement {
             groups: discovery_groups,
@@ -683,6 +712,7 @@ impl AutoWifiStatus {
             shared: Arc::new(AutoWifiShared {
                 id,
                 enabled,
+                network_changes,
                 member_updates,
                 discovery_groups,
                 applied_discovery_groups,
@@ -692,6 +722,7 @@ impl AutoWifiStatus {
                     members: std::vec::Vec::new(),
                     local_addresses: std::vec::Vec::new(),
                 }),
+                activation_errors: Mutex::new(ActivationErrors::default()),
             }),
         }
     }
@@ -705,6 +736,90 @@ impl AutoWifiStatus {
         };
         self.replace_discovery_groups(groups);
         true
+    }
+
+    /// Native network callbacks wake this existing supervisor; they never create sockets.
+    pub fn network_changed(&self) {
+        self.shared
+            .network_changes
+            .send_modify(|revision| *revision = revision.saturating_add(1));
+    }
+
+    /// Actual local socket activation failures, independent of reconnecting peers.
+    pub fn activation_error(&self) -> Option<String> {
+        let errors = self.shared.activation_errors.lock().ok()?;
+        if let Some(error) = errors.listener {
+            Some(format!(
+                "Local network listener is unavailable ({error:?}). Discovery will retry."
+            ))
+        } else {
+            errors.datagram.map(|error| format!("Local network datagram sockets are unavailable ({error:?}). Discovery will retry.")).or_else(|| match errors.multicast {
+                MulticastActivation::Failed(error) => Some(format!("Local multicast discovery is unavailable ({error:?}). Bonjour and unicast can work independently. Discovery will retry.")),
+                _ => errors.no_eligible_interfaces.then(|| "IPv6 Reticulum multicast is unavailable without an eligible IPv6 interface. Bonjour and TCP can work independently.".into()),
+            })
+        }
+    }
+
+    /// Local listener and datagram resources are ready, regardless of peer health.
+    pub fn discovery_ready(&self) -> bool {
+        self.shared
+            .activation_errors
+            .lock()
+            .is_ok_and(|state| state.listener_ready && state.datagram_ready)
+    }
+
+    /// Host multicast discovery requires its own joined socket, independently of TCP rendezvous.
+    pub fn multicast_discovery_ready(&self) -> bool {
+        self.shared.activation_errors.lock().is_ok_and(|state| {
+            state.datagram_ready && matches!(state.multicast, MulticastActivation::Ready)
+        })
+    }
+
+    /// The TCP rendezvous lane can remain usable independently of UDP sockets.
+    pub fn rendezvous_ready(&self) -> bool {
+        self.shared
+            .activation_errors
+            .lock()
+            .is_ok_and(|state| state.listener_ready)
+    }
+
+    fn set_listener_ready(&self, ready: bool) {
+        if let Ok(mut state) = self.shared.activation_errors.lock() {
+            state.listener_ready = ready;
+        }
+    }
+
+    fn set_datagram_ready(&self, ready: bool) {
+        if let Ok(mut state) = self.shared.activation_errors.lock() {
+            state.datagram_ready = ready;
+            if !ready {
+                state.multicast = MulticastActivation::Inactive;
+            }
+        }
+    }
+
+    fn set_multicast_activation(&self, activation: MulticastActivation) {
+        if let Ok(mut state) = self.shared.activation_errors.lock() {
+            state.multicast = activation;
+        }
+    }
+
+    fn set_listener_error(&self, error: Option<io::ErrorKind>) {
+        if let Ok(mut errors) = self.shared.activation_errors.lock() {
+            errors.listener = error;
+        }
+    }
+
+    fn set_datagram_error(&self, error: Option<io::ErrorKind>) {
+        if let Ok(mut errors) = self.shared.activation_errors.lock() {
+            errors.datagram = error;
+        }
+    }
+
+    fn set_no_eligible_interfaces(&self, unavailable: bool) {
+        if let Ok(mut errors) = self.shared.activation_errors.lock() {
+            errors.no_eligible_interfaces = unavailable;
+        }
     }
 
     pub fn replace_discovery_groups(&self, groups: DiscoveryGroupSet) {
@@ -976,6 +1091,7 @@ impl InterfaceSupervisor for AutoWifi {
         };
         supervisor.publish_status();
         let mut group_rx = supervisor.status.subscribe_group();
+        let mut network_changes = supervisor.status.shared.network_changes.subscribe();
 
         let runtime_started_at = tokio::time::Instant::now();
         let mut beacon_interval = tokio::time::interval(BEACON_INTERVAL);
@@ -993,6 +1109,9 @@ impl InterfaceSupervisor for AutoWifi {
         } else {
             DiscoveryParticipation::Inactive
         };
+        supervisor
+            .status
+            .set_listener_ready(rendezvous_listener.is_some());
         let mut rendezvous_claim_schedule =
             RendezvousClaimSchedule::when_unbound(&settings, &rendezvous_listener);
         if let Some(service_discovery) = service_discovery.as_ref() {
@@ -1046,6 +1165,15 @@ impl InterfaceSupervisor for AutoWifi {
                 rendezvous_claim_schedule = RendezvousClaimSchedule::Waiting;
             }
             tokio::select! {
+                changed = network_changes.changed() => {
+                    if changed.is_ok() {
+                        if let Some(discovery) = service_discovery.as_ref() { discovery.network_changed(); }
+                        if auto_interface_network_participation(&supervisor.settings, discovery_participation) == AutoInterfaceNetworkParticipation::Active {
+                            let _ = supervisor.ensure_network_active(&mut nics, &mut sockets, network_discovery_owner);
+                            supervisor.reconcile_active_network(&mut nics, &mut sockets, network_discovery_owner);
+                        }
+                    }
+                }
                 changed = group_rx.changed() => {
                     if changed.is_ok() {
                         let group = *group_rx.borrow_and_update();
@@ -1090,6 +1218,7 @@ impl InterfaceSupervisor for AutoWifi {
                                 }
                             } else {
                                 rendezvous_listener = None;
+                                supervisor.status.set_listener_ready(false);
                                 discovery_participation = DiscoveryParticipation::Inactive;
                                 outcome = supervisor.activate_network_after_group_replacement(
                                     &mut nics,
@@ -1538,25 +1667,42 @@ impl Supervisor {
         network_discovery_owner: NetworkDiscoveryOwner,
     ) -> NetworkActivation {
         if let Some(_active_sockets) = sockets {
+            self.status.set_datagram_ready(true);
+            self.status.set_datagram_error(None);
+            self.status.set_no_eligible_interfaces(false);
             return NetworkActivation::AlreadyActive;
         }
         let fresh_nics = link_local_nics(&self.settings.devices, &self.host_lan);
         if fresh_nics.is_empty() {
+            self.status.set_datagram_ready(false);
+            self.status.set_datagram_error(None);
+            self.status.set_no_eligible_interfaces(true);
             nics.clear();
-            self.prefixes.clear();
+            self.prefixes = local_prefixes(&self.settings.devices, &self.host_lan);
             self.publish_local_addresses(nics);
             return NetworkActivation::NoEligibleInterfaces;
         }
-        let opened_sockets =
-            match open_sockets(&fresh_nics, &self.settings, network_discovery_owner) {
-                Ok(opened_sockets) => opened_sockets,
-                Err(socket_error) => {
-                    *nics = fresh_nics;
-                    return NetworkActivation::SocketUnavailable(socket_error.kind());
-                }
-            };
+        self.status.set_no_eligible_interfaces(false);
+        let mut opened_sockets = match open_sockets(&self.settings) {
+            Ok(opened_sockets) => opened_sockets,
+            Err(socket_error) => {
+                self.status.set_datagram_ready(false);
+                self.status.set_datagram_error(Some(socket_error.kind()));
+                *nics = fresh_nics;
+                return NetworkActivation::SocketUnavailable(socket_error.kind());
+            }
+        };
+        opened_sockets.refresh_multicast_discovery(
+            &fresh_nics,
+            &self.settings,
+            network_discovery_owner,
+            &self.status,
+            discovery_socket,
+        );
         *nics = fresh_nics;
         *sockets = Some(opened_sockets);
+        self.status.set_datagram_ready(true);
+        self.status.set_datagram_error(None);
         self.activate_network(nics, sockets.as_ref());
         if network_discovery_owner == NetworkDiscoveryOwner::Host {
             self.dial_initial_gateways(nics);
@@ -1573,6 +1719,8 @@ impl Supervisor {
         network_discovery_owner: NetworkDiscoveryOwner,
     ) {
         *rendezvous_listener = None;
+        self.status.set_listener_ready(false);
+        self.status.set_datagram_ready(false);
         if let Some(service_discovery) = service_discovery {
             service_discovery.set_participation(DiscoveryParticipation::Inactive);
         }
@@ -1598,6 +1746,8 @@ impl Supervisor {
     ) -> DiscoveryParticipation {
         match rendezvous_claim {
             RendezvousClaim::Central(claimed_rendezvous_listener) => {
+                self.status.set_listener_ready(true);
+                self.status.set_listener_error(None);
                 *rendezvous_listener = Some(claimed_rendezvous_listener);
                 self.remove_loopback();
                 if let NetworkActivation::SocketUnavailable(error_kind) =
@@ -1610,6 +1760,11 @@ impl Supervisor {
                 DiscoveryParticipation::Central
             }
             RendezvousClaim::Satellite => {
+                self.status.set_listener_ready(false);
+                self.status.set_datagram_ready(false);
+                self.status.set_listener_error(None);
+                self.status.set_datagram_error(None);
+                self.status.set_no_eligible_interfaces(false);
                 *rendezvous_listener = None;
                 self.teardown_auto_interface_network();
                 drop(sockets.take());
@@ -1619,6 +1774,11 @@ impl Supervisor {
                 DiscoveryParticipation::Satellite
             }
             RendezvousClaim::Unavailable(error_kind) => {
+                self.status.set_listener_ready(false);
+                self.status.set_datagram_ready(false);
+                self.status.set_listener_error(Some(error_kind));
+                self.status.set_datagram_error(None);
+                self.status.set_no_eligible_interfaces(false);
                 *rendezvous_listener = None;
                 self.teardown_auto_interface_network();
                 drop(sockets.take());
@@ -1671,6 +1831,7 @@ impl Supervisor {
                         self.policy,
                     );
                     let connection_status = tcp_connection.status();
+                    connection_status.set_endpoint(Some(peer_address));
                     let attached_connection = self.fleet.add(tcp_connection);
                     self.accepted.push(AttachedStatus {
                         attached: attached_connection,
@@ -1854,16 +2015,42 @@ impl Supervisor {
         sockets: &mut Option<Sockets>,
         network_discovery_owner: NetworkDiscoveryOwner,
     ) {
-        if let (Some(active_sockets), RebindSchedule::Due) = (sockets.as_ref(), rebind_schedule) {
-            self.reconcile_nics(
-                active_sockets.discovery.as_ref(),
-                nics,
-                network_discovery_owner,
-            );
-            if nics.is_empty() {
-                self.deactivate_network();
-                *sockets = None;
+        if sockets.is_some() && rebind_schedule == RebindSchedule::Due {
+            self.reconcile_active_network(nics, sockets, network_discovery_owner);
+        }
+    }
+
+    fn reconcile_active_network(
+        &mut self,
+        nics: &mut std::vec::Vec<Nic>,
+        sockets: &mut Option<Sockets>,
+        network_discovery_owner: NetworkDiscoveryOwner,
+    ) {
+        let topology_changed = self.reconcile_nics(
+            sockets
+                .as_ref()
+                .and_then(|sockets| sockets.discovery.as_ref()),
+            nics,
+            network_discovery_owner,
+        );
+        if nics.is_empty() {
+            self.deactivate_network();
+            drop(sockets.take());
+        } else if let Some(sockets) = sockets {
+            if topology_changed && network_discovery_owner == NetworkDiscoveryOwner::Host {
+                // A retained socket may no longer have any successful current membership.
+                // Reopen only this lane; working unicast and Bonjour resources remain owned.
+                sockets.discovery = None;
+                self.status
+                    .set_multicast_activation(MulticastActivation::Inactive);
             }
+            sockets.refresh_multicast_discovery(
+                nics,
+                &self.settings,
+                network_discovery_owner,
+                &self.status,
+                discovery_socket,
+            );
         }
     }
 
@@ -1923,9 +2110,12 @@ impl Supervisor {
     }
 
     fn deactivate_network(&mut self) {
+        self.status.set_datagram_ready(false);
         self.brains.clear();
         self.data = None;
-        self.prefixes.clear();
+        // Bonjour TCP eligibility depends on current local subnets, even when
+        // IPv6 link-local UDP discovery cannot activate on this connection.
+        self.prefixes = local_prefixes(&self.settings.devices, &self.host_lan);
         self.publish_local_addresses(&[]);
     }
 
@@ -1935,6 +2125,7 @@ impl Supervisor {
     }
 
     fn teardown_auto_interface_network(&mut self) {
+        self.status.set_datagram_ready(false);
         for (_peer_address, member) in self.members.drain() {
             self.completed.retain(&member.status);
             member.attached.teardown();
@@ -2376,15 +2567,22 @@ impl Supervisor {
         discovery: Option<&UdpSocket>,
         nics: &mut std::vec::Vec<Nic>,
         network_discovery_owner: NetworkDiscoveryOwner,
-    ) {
+    ) -> bool {
         let gateways = match network_discovery_owner {
             NetworkDiscoveryOwner::Host => platform_gateway_inventory(),
             NetworkDiscoveryOwner::Platform => Err(GatewayInventoryUnavailable),
         };
         let fresh = link_local_nics(&self.settings.devices, &self.host_lan);
+        let topology_changed =
+            fresh.len() != nics.len() || fresh.iter().any(|nic| !nics.contains(nic));
+        self.status.set_no_eligible_interfaces(fresh.is_empty());
+        if fresh.is_empty() {
+            self.status.set_datagram_ready(false);
+        }
         self.prefixes = local_prefixes(&self.settings.devices, &self.host_lan);
         self.apply_reconcile(discovery, nics, fresh, gateways);
         self.publish_local_addresses(nics);
+        topology_changed
     }
 
     fn apply_reconcile(
@@ -2481,13 +2679,58 @@ struct Sockets {
     data: Arc<UdpSocket>,
 }
 
+impl Sockets {
+    fn refresh_multicast_discovery(
+        &mut self,
+        nics: &[Nic],
+        settings: &AutoWifiSettings,
+        owner: NetworkDiscoveryOwner,
+        status: &AutoWifiStatus,
+        open: impl FnOnce(&[Nic], &AutoWifiSettings) -> io::Result<UdpSocket>,
+    ) {
+        if owner == NetworkDiscoveryOwner::Platform {
+            status.set_multicast_activation(MulticastActivation::Inactive);
+            return;
+        }
+        if self.discovery.is_none() {
+            match open(nics, settings) {
+                Ok(discovery) => self.discovery = Some(discovery),
+                Err(error) => {
+                    status.set_multicast_activation(MulticastActivation::Failed(error.kind()));
+                    return;
+                }
+            }
+        }
+        status.set_multicast_activation(MulticastActivation::Ready);
+    }
+}
+
 /// The per-scope probe obtains the kernel's send-source link-local address so the beacon token matches what peers recompute from the datagram source.
 fn link_local_nics(
     devices: &AutoWifiDevicePolicy,
     host_lan: &HostLanInventory,
 ) -> std::vec::Vec<Nic> {
+    link_local_nics_with_native(devices, host_lan, || native_link_local_nics(devices))
+}
+
+fn link_local_nics_with_native(
+    devices: &AutoWifiDevicePolicy,
+    host_lan: &HostLanInventory,
+    native: impl FnOnce() -> std::vec::Vec<Nic>,
+) -> std::vec::Vec<Nic> {
+    let mut nics = if host_lan.is_authoritative() {
+        std::vec::Vec::new()
+    } else {
+        native()
+    };
+    let seen = nics.iter().map(|nic| nic.index).collect();
+    nics.extend(host_link_local_nics(devices, host_lan, seen));
+    nics
+}
+
+fn native_link_local_nics(devices: &AutoWifiDevicePolicy) -> std::vec::Vec<Nic> {
     let Ok(ifaces) = if_addrs::get_if_addrs() else {
-        return host_link_local_nics(devices, host_lan, HashSet::new());
+        return std::vec::Vec::new();
     };
     let mut nics = std::vec::Vec::new();
     let mut seen: HashSet<u32> = HashSet::new();
@@ -2506,9 +2749,6 @@ fn link_local_nics(
         seen.insert(index);
         nics.push(Nic { link_local, index });
     }
-    host_link_local_nics(devices, host_lan, seen)
-        .into_iter()
-        .for_each(|nic| nics.push(nic));
     nics
 }
 
@@ -2578,7 +2818,44 @@ fn local_prefixes(
     auto_wifi_device_policy: &AutoWifiDevicePolicy,
     host_lan: &HostLanInventory,
 ) -> std::vec::Vec<LocalPrefix> {
-    let mut prefixes = match if_addrs::get_if_addrs() {
+    local_prefixes_with_native(auto_wifi_device_policy, host_lan, || {
+        native_local_prefixes(auto_wifi_device_policy)
+    })
+}
+
+fn local_prefixes_with_native(
+    auto_wifi_device_policy: &AutoWifiDevicePolicy,
+    host_lan: &HostLanInventory,
+    native: impl FnOnce() -> std::vec::Vec<LocalPrefix>,
+) -> std::vec::Vec<LocalPrefix> {
+    let mut prefixes = if host_lan.is_authoritative() {
+        std::vec::Vec::new()
+    } else {
+        native()
+    };
+    let present: HashSet<(IpAddr, u32)> = prefixes
+        .iter()
+        .map(|prefix| (prefix.addr, prefix.index))
+        .collect();
+    for interface in host_lan.allowed_interfaces(auto_wifi_device_policy) {
+        for address in interface.addresses() {
+            if present.contains(&(address.addr(), interface.index())) {
+                continue;
+            }
+            prefixes.push(LocalPrefix {
+                addr: address.addr(),
+                netmask: address.netmask(),
+                index: interface.index(),
+            });
+        }
+    }
+    prefixes
+}
+
+fn native_local_prefixes(
+    auto_wifi_device_policy: &AutoWifiDevicePolicy,
+) -> std::vec::Vec<LocalPrefix> {
+    match if_addrs::get_if_addrs() {
         Ok(network_interfaces) => network_interfaces
             .iter()
             .filter(|network_interface| {
@@ -2599,24 +2876,7 @@ fn local_prefixes(
             })
             .collect(),
         Err(_) => std::vec::Vec::new(),
-    };
-    let present: HashSet<(IpAddr, u32)> = prefixes
-        .iter()
-        .map(|prefix| (prefix.addr, prefix.index))
-        .collect();
-    for interface in host_lan.allowed_interfaces(auto_wifi_device_policy) {
-        for address in interface.addresses() {
-            if present.contains(&(address.addr(), interface.index())) {
-                continue;
-            }
-            prefixes.push(LocalPrefix {
-                addr: address.addr(),
-                netmask: address.netmask(),
-                index: interface.index(),
-            });
-        }
     }
-    prefixes
 }
 
 fn is_local_peer(peer_address: IpAddr, local_prefixes: &[LocalPrefix]) -> bool {
@@ -2878,16 +3138,9 @@ fn link_local_for_scope(index: u32) -> Option<Ipv6Addr> {
     ((link_local.segments()[0] & 0xffc0) == 0xfe80).then_some(link_local)
 }
 
-fn open_sockets(
-    nics: &[Nic],
-    settings: &AutoWifiSettings,
-    network_discovery_owner: NetworkDiscoveryOwner,
-) -> io::Result<Sockets> {
+fn open_sockets(settings: &AutoWifiSettings) -> io::Result<Sockets> {
     Ok(Sockets {
-        discovery: match network_discovery_owner {
-            NetworkDiscoveryOwner::Host => discovery_socket(nics, settings).ok(),
-            NetworkDiscoveryOwner::Platform => None,
-        },
+        discovery: None,
         unicast_discovery: bound_v6(settings.reverse_discovery_port())?,
         data: Arc::new(bound_v6(settings.data_port)?),
     })
@@ -3007,6 +3260,47 @@ mod tests {
             index,
             link_local: Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, link_local_tail),
         }
+    }
+
+    #[test]
+    fn authoritative_inventory_overrides_stale_native_nics_and_prefixes() {
+        let devices = AutoWifiDevicePolicy::default();
+        let stale_nic = nic(17, 0x17);
+        let stale_prefix = prefix([192, 168, 9, 1], [255, 255, 255, 0]);
+        let augmented = HostLanInventory::new();
+        assert_eq!(
+            link_local_nics_with_native(&devices, &augmented, || vec![stale_nic]),
+            vec![stale_nic]
+        );
+        assert_eq!(
+            local_prefixes_with_native(&devices, &augmented, || vec![stale_prefix]),
+            vec![stale_prefix]
+        );
+
+        let authoritative = HostLanInventory::authoritative();
+        assert!(link_local_nics_with_native(&devices, &authoritative, || {
+            panic!("authoritative connectivity must bypass stale native NIC enumeration")
+        })
+        .is_empty());
+        assert!(local_prefixes_with_native(&devices, &authoritative, || {
+            panic!("authoritative connectivity must bypass stale native prefix enumeration")
+        })
+        .is_empty());
+        authoritative.replace(vec![HostLanInterface::new(
+            "wlan0",
+            7,
+            vec![
+                HostLanAddress::new("fe80::7".parse().unwrap(), 64).unwrap(),
+                HostLanAddress::new("192.168.1.7".parse().unwrap(), 24).unwrap(),
+            ],
+        )
+        .unwrap()]);
+        assert_eq!(link_local_nics(&devices, &authoritative), vec![nic(7, 7)]);
+        assert_eq!(local_prefixes(&devices, &authoritative).len(), 2);
+
+        authoritative.replace(Vec::new());
+        assert!(link_local_nics(&devices, &authoritative).is_empty());
+        assert!(local_prefixes(&devices, &authoritative).is_empty());
     }
 
     #[test]
@@ -3510,6 +3804,420 @@ mod tests {
             ConnectionState::Disconnected,
             "the aggregate follows the live child state",
         );
+    }
+
+    #[tokio::test]
+    async fn accepted_rendezvous_retains_its_actual_loopback_endpoint() {
+        let (mut supervisor, _guard) = test_supervisor();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener");
+        let client = TcpStream::connect(listener.local_addr().expect("listener address"))
+            .await
+            .expect("test client");
+        let expected = client.local_addr().expect("client address");
+        supervisor.accept_rendezvous_connection(listener.accept().await);
+        assert_eq!(supervisor.accepted.len(), 1);
+        assert_eq!(supervisor.accepted[0].status.endpoint(), Some(expected));
+        assert!(supervisor.accepted[0]
+            .status
+            .endpoint()
+            .unwrap()
+            .ip()
+            .is_loopback());
+    }
+
+    #[tokio::test]
+    async fn local_activation_error_is_independent_of_peer_retry_and_clears_on_owner_change() {
+        let (mut supervisor, _guard) = test_supervisor();
+        let mut listener = None;
+        let mut nics = Vec::new();
+        let mut sockets = None;
+        supervisor.apply_rendezvous_claim(
+            RendezvousClaim::Unavailable(io::ErrorKind::PermissionDenied),
+            &mut listener,
+            &mut nics,
+            &mut sockets,
+            NetworkDiscoveryOwner::Platform,
+        );
+        assert!(supervisor
+            .status
+            .activation_error()
+            .unwrap()
+            .contains("PermissionDenied"));
+        assert!(!supervisor.status.discovery_ready());
+        supervisor.apply_rendezvous_claim(
+            RendezvousClaim::Satellite,
+            &mut listener,
+            &mut nics,
+            &mut sockets,
+            NetworkDiscoveryOwner::Platform,
+        );
+        assert_eq!(supervisor.status.activation_error(), None);
+        assert!(!supervisor.status.discovery_ready());
+        supervisor.settings.devices =
+            AutoWifiDevicePolicy::new(vec!["prns-validation-no-such-interface".into()], Vec::new());
+        let tcp_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("TCP-only listener");
+        supervisor.apply_rendezvous_claim(
+            RendezvousClaim::Central(RendezvousListeners::Supplied(tcp_listener)),
+            &mut listener,
+            &mut nics,
+            &mut sockets,
+            NetworkDiscoveryOwner::Platform,
+        );
+        assert!(supervisor.status.rendezvous_ready());
+        assert!(!supervisor.status.discovery_ready());
+        assert!(supervisor
+            .status
+            .activation_error()
+            .unwrap()
+            .contains("IPv6 Reticulum multicast is unavailable"));
+    }
+
+    async fn multicast_test_sockets() -> Sockets {
+        Sockets {
+            discovery: None,
+            unicast_discovery: UdpSocket::bind("[::1]:0").await.unwrap(),
+            data: Arc::new(UdpSocket::bind("[::1]:0").await.unwrap()),
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_host_multicast_retries_without_losing_rendezvous_or_unicast() {
+        let (mut supervisor, _guard) = test_supervisor();
+        let inventory = HostLanInventory::authoritative();
+        // An impossible interface index deterministically rejects every group join.
+        inventory.replace(vec![HostLanInterface::new(
+            "unavailable-test-interface",
+            u32::MAX,
+            vec![HostLanAddress::new("fe80::7".parse().unwrap(), 64).unwrap()],
+        )
+        .unwrap()]);
+        supervisor.host_lan = inventory;
+        supervisor.status.set_listener_ready(true);
+        supervisor.status.set_datagram_ready(true);
+        let mut sockets = Some(multicast_test_sockets().await);
+        let unicast_address = sockets
+            .as_ref()
+            .unwrap()
+            .unicast_discovery
+            .local_addr()
+            .unwrap();
+        let data = sockets.as_ref().unwrap().data.clone();
+        let mut nics = Vec::new();
+
+        supervisor.reconcile_network_for_beacon(
+            RebindSchedule::Waiting,
+            &mut nics,
+            &mut sockets,
+            NetworkDiscoveryOwner::Host,
+        );
+        assert_eq!(supervisor.status.activation_error(), None);
+        supervisor.reconcile_network_for_beacon(
+            RebindSchedule::Due,
+            &mut nics,
+            &mut sockets,
+            NetworkDiscoveryOwner::Host,
+        );
+        assert!(supervisor.status.rendezvous_ready());
+        assert!(supervisor.status.discovery_ready());
+        assert!(!supervisor.status.multicast_discovery_ready());
+        assert!(supervisor
+            .status
+            .activation_error()
+            .unwrap()
+            .contains("multicast discovery"));
+
+        // The network-change path retries the same missing socket as the timer.
+        supervisor
+            .status
+            .set_multicast_activation(MulticastActivation::Inactive);
+        supervisor.reconcile_active_network(&mut nics, &mut sockets, NetworkDiscoveryOwner::Host);
+        assert!(supervisor.status.activation_error().is_some());
+        let sockets = sockets.unwrap();
+        assert!(sockets.discovery.is_none());
+        assert_eq!(
+            sockets.unicast_discovery.local_addr().unwrap(),
+            unicast_address
+        );
+        assert!(Arc::ptr_eq(&sockets.data, &data));
+    }
+
+    #[tokio::test]
+    async fn host_multicast_recovers_without_replacing_working_unicast_sockets() {
+        let (supervisor, _guard) = test_supervisor();
+        supervisor.status.set_listener_ready(true);
+        supervisor.status.set_datagram_ready(true);
+        let mut sockets = multicast_test_sockets().await;
+        let unicast_address = sockets.unicast_discovery.local_addr().unwrap();
+        let data = sockets.data.clone();
+        let nics = [nic(7, 7)];
+        sockets.refresh_multicast_discovery(
+            &nics,
+            &supervisor.settings,
+            NetworkDiscoveryOwner::Host,
+            &supervisor.status,
+            |_, _| Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+        );
+        assert!(!supervisor.status.multicast_discovery_ready());
+        assert!(supervisor.status.rendezvous_ready());
+
+        let recovered = UdpSocket::bind("[::1]:0").await.unwrap();
+        sockets.refresh_multicast_discovery(
+            &nics,
+            &supervisor.settings,
+            NetworkDiscoveryOwner::Host,
+            &supervisor.status,
+            |actual_nics, _| {
+                assert_eq!(actual_nics, &nics);
+                Ok(recovered)
+            },
+        );
+        assert!(supervisor.status.multicast_discovery_ready());
+        assert_eq!(supervisor.status.activation_error(), None);
+        assert_eq!(
+            sockets.unicast_discovery.local_addr().unwrap(),
+            unicast_address
+        );
+        assert!(Arc::ptr_eq(&sockets.data, &data));
+        sockets.refresh_multicast_discovery(
+            &nics,
+            &supervisor.settings,
+            NetworkDiscoveryOwner::Host,
+            &supervisor.status,
+            |_, _| panic!("a healthy multicast socket must be retained"),
+        );
+        // Non-stock discovery groups do not run a TCP rendezvous listener.
+        supervisor.status.set_listener_ready(false);
+        assert!(supervisor.status.multicast_discovery_ready());
+        assert!(!supervisor.status.rendezvous_ready());
+        supervisor.status.set_datagram_ready(false);
+        assert!(!supervisor.status.multicast_discovery_ready());
+    }
+
+    #[tokio::test]
+    async fn platform_discovery_never_opens_a_host_multicast_socket() {
+        let (supervisor, _guard) = test_supervisor();
+        supervisor.status.set_listener_ready(true);
+        supervisor.status.set_datagram_ready(true);
+        let mut sockets = multicast_test_sockets().await;
+        for _ in 0..2 {
+            sockets.refresh_multicast_discovery(
+                &[nic(7, 7)],
+                &supervisor.settings,
+                NetworkDiscoveryOwner::Platform,
+                &supervisor.status,
+                |_, _| panic!("platform-owned discovery must never open multicast"),
+            );
+        }
+        assert!(sockets.discovery.is_none());
+        assert!(supervisor.status.rendezvous_ready());
+        assert!(supervisor.status.discovery_ready());
+        assert!(!supervisor.status.multicast_discovery_ready());
+        assert_eq!(supervisor.status.activation_error(), None);
+    }
+
+    #[tokio::test]
+    async fn changed_topology_cannot_reuse_stale_multicast_readiness() {
+        let (mut supervisor, _guard) = test_supervisor();
+        let inventory = HostLanInventory::authoritative();
+        inventory.replace(vec![HostLanInterface::new(
+            "unavailable-replacement-interface",
+            u32::MAX,
+            vec![HostLanAddress::new("fe80::8".parse().unwrap(), 64).unwrap()],
+        )
+        .unwrap()]);
+        supervisor.host_lan = inventory;
+        supervisor.status.set_listener_ready(true);
+        supervisor.status.set_datagram_ready(true);
+        let mut current = multicast_test_sockets().await;
+        let unicast_address = current.unicast_discovery.local_addr().unwrap();
+        let data = current.data.clone();
+        let mut nics = vec![nic(7, 7)];
+        let joined = UdpSocket::bind("[::1]:0").await.unwrap();
+        current.refresh_multicast_discovery(
+            &nics,
+            &supervisor.settings,
+            NetworkDiscoveryOwner::Host,
+            &supervisor.status,
+            |_, _| Ok(joined),
+        );
+        assert!(supervisor.status.multicast_discovery_ready());
+        let mut sockets = Some(current);
+
+        supervisor.reconcile_network_for_beacon(
+            RebindSchedule::Due,
+            &mut nics,
+            &mut sockets,
+            NetworkDiscoveryOwner::Host,
+        );
+        assert_eq!(nics, vec![nic(u32::MAX, 8)]);
+        assert!(!supervisor.status.multicast_discovery_ready());
+        assert!(supervisor
+            .status
+            .activation_error()
+            .unwrap()
+            .contains("multicast discovery"));
+        assert!(supervisor.status.rendezvous_ready());
+        assert!(supervisor.status.discovery_ready());
+        let sockets = sockets.unwrap();
+        assert!(sockets.discovery.is_none());
+        assert_eq!(
+            sockets.unicast_discovery.local_addr().unwrap(),
+            unicast_address
+        );
+        assert!(Arc::ptr_eq(&sockets.data, &data));
+    }
+
+    #[tokio::test]
+    async fn authoritative_network_loss_retires_connected_udp_peers_and_recovers() {
+        let (mut supervisor, _guard) = test_supervisor();
+        let inventory = HostLanInventory::authoritative();
+        let interface = HostLanInterface::new(
+            "wlan0",
+            7,
+            vec![
+                HostLanAddress::new("fe80::7".parse().unwrap(), 64).unwrap(),
+                HostLanAddress::new("192.168.1.7".parse().unwrap(), 24).unwrap(),
+            ],
+        )
+        .unwrap();
+        inventory.replace(vec![interface.clone()]);
+        supervisor.host_lan = inventory.clone();
+        let data = supervisor.data.clone().unwrap();
+        let mut sockets = Some(Sockets {
+            discovery: None,
+            unicast_discovery: UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).await.unwrap(),
+            data: data.clone(),
+        });
+        let mut nics = Vec::new();
+        let members = supervisor.status.subscribe_members();
+        supervisor.status.set_listener_ready(true);
+        supervisor.reconcile_active_network(
+            &mut nics,
+            &mut sockets,
+            NetworkDiscoveryOwner::Platform,
+        );
+        assert_eq!(nics, vec![nic(7, 7)]);
+        assert_eq!(
+            supervisor.ensure_network_active(
+                &mut nics,
+                &mut sockets,
+                NetworkDiscoveryOwner::Platform
+            ),
+            NetworkActivation::AlreadyActive
+        );
+        assert!(supervisor.status.discovery_ready());
+        let peer = ScopedPeer {
+            ip_address: "fe80::8".parse().unwrap(),
+            scope_id: 7,
+        };
+        let peer_socket = SocketAddr::V6(SocketAddrV6::new(
+            peer.ip_address,
+            contract::UNICAST_DISCOVERY_PORT,
+            0,
+            peer.scope_id,
+        ));
+        let token = contract::peering_token(&peer.ip_address);
+        supervisor.ingest_beacon(peer_socket, token.as_bytes(), 1, BeaconChannel::Unicast);
+        assert_eq!(supervisor.members.len(), 1);
+        assert_eq!(members.borrow().len(), 1);
+        assert_eq!(supervisor.status.connection(), ConnectionState::Connected);
+        supervisor.reconcile_active_network(
+            &mut nics,
+            &mut sockets,
+            NetworkDiscoveryOwner::Platform,
+        );
+        assert_eq!(
+            supervisor.members.len(),
+            1,
+            "the unchanged link keeps its peer"
+        );
+
+        // This is the same reconciliation boundary used by native network
+        // callbacks. A disconnected wlan0 still present in getifaddrs cannot
+        // survive the authoritative empty host publication.
+        inventory.replace(Vec::new());
+        supervisor.reconcile_active_network(
+            &mut nics,
+            &mut sockets,
+            NetworkDiscoveryOwner::Platform,
+        );
+        assert!(nics.is_empty());
+        assert!(supervisor.prefixes.is_empty());
+        assert!(supervisor.brains.is_empty());
+        assert!(supervisor.members.is_empty());
+        assert!(members.borrow().is_empty());
+        assert!(sockets.is_none());
+        assert!(supervisor.data.is_none());
+        assert!(!supervisor.status.discovery_ready());
+        assert!(supervisor.status.local_addresses().is_empty());
+        assert!(supervisor
+            .status
+            .activation_error()
+            .unwrap()
+            .contains("Bonjour and TCP can work independently"));
+
+        inventory.replace(vec![interface]);
+        supervisor.data = Some(data.clone());
+        sockets = Some(Sockets {
+            discovery: None,
+            unicast_discovery: UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).await.unwrap(),
+            data,
+        });
+        supervisor.reconcile_active_network(
+            &mut nics,
+            &mut sockets,
+            NetworkDiscoveryOwner::Platform,
+        );
+        supervisor.ensure_network_active(&mut nics, &mut sockets, NetworkDiscoveryOwner::Platform);
+        supervisor.ingest_beacon(peer_socket, token.as_bytes(), 2, BeaconChannel::Unicast);
+        assert_eq!(nics, vec![nic(7, 7)]);
+        assert_eq!(supervisor.members.len(), 1);
+        assert_eq!(members.borrow().len(), 1);
+        assert!(supervisor.status.discovery_ready());
+        assert_eq!(supervisor.status.activation_error(), None);
+    }
+
+    #[tokio::test]
+    async fn ipv4_bonjour_eligibility_survives_missing_ipv6_udp_and_clears_on_network_loss() {
+        let (mut supervisor, _guard) = test_supervisor();
+        let inventory = HostLanInventory::authoritative();
+        inventory.replace(vec![HostLanInterface::new(
+            "wlan0",
+            7,
+            vec![HostLanAddress::new("192.168.1.7".parse().unwrap(), 24).unwrap()],
+        )
+        .unwrap()]);
+        supervisor.host_lan = inventory.clone();
+        let mut nics = Vec::new();
+        let mut sockets = None;
+        supervisor.status.set_listener_ready(true);
+        assert_eq!(
+            supervisor.ensure_network_active(&mut nics, &mut sockets, NetworkDiscoveryOwner::Host),
+            NetworkActivation::NoEligibleInterfaces
+        );
+        supervisor.reconcile_active_network(&mut nics, &mut sockets, NetworkDiscoveryOwner::Host);
+        assert!(nics.is_empty());
+        assert!(sockets.is_none());
+        assert!(!supervisor.status.discovery_ready());
+        assert!(supervisor.status.rendezvous_ready());
+        assert_eq!(
+            supervisor.status.local_addresses(),
+            vec![("192.168.1.7".parse().unwrap(), 7)]
+        );
+        let snapshot = discovery_snapshot("ipv4-peer", "192.168.1.8:42699".parse().unwrap());
+        supervisor.reconcile_discovery(&snapshot, NetworkDiscoveryOwner::Host);
+        assert_eq!(supervisor.discovered_services.tcp_dials.members.len(), 1);
+
+        inventory.replace(Vec::new());
+        supervisor.reconcile_active_network(&mut nics, &mut sockets, NetworkDiscoveryOwner::Host);
+        supervisor.reconcile_discovery(&snapshot, NetworkDiscoveryOwner::Host);
+        assert!(supervisor.prefixes.is_empty());
+        assert!(supervisor.status.local_addresses().is_empty());
+        assert!(supervisor.discovered_services.tcp_dials.members.is_empty());
     }
 
     #[tokio::test]

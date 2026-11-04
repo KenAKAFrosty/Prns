@@ -354,6 +354,35 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
             outcome
         }
     }
+    fn cancel_interface(&mut self, interface: InterfaceId) -> usize {
+        let mut removed = 0;
+        let mut row = 0;
+        while row < self.destination.len() {
+            if interface.administrative_scope_contains(self.source_interface[row])
+                || self.directed_to[row]
+                    .is_some_and(|id| interface.administrative_scope_contains(id))
+            {
+                self.swap_remove_row(row);
+                removed += 1;
+            } else {
+                row += 1;
+            }
+        }
+        let held_before = self.held.len();
+        self.held.retain(|entry| {
+            !interface.administrative_scope_contains(entry.source_interface)
+                && !entry
+                    .directed_to
+                    .is_some_and(|id| interface.administrative_scope_contains(id))
+        });
+        removed += held_before - self.held.len();
+        if removed != 0 {
+            self.restore_orphaned_held();
+            self.refresh_earliest();
+        }
+        removed
+    }
+
     fn cancel(&mut self, destination: &DestinationHash) -> ScheduleCancellation {
         FixedScheduledAnnounceQueue::cancel(self, destination)
     }

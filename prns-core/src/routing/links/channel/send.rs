@@ -568,6 +568,7 @@ mod tests {
         state
             .links
             .track_responding(RespondingLink {
+                attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
                 link_id,
                 key: session_key(&link_id),
                 requested_at: InstantMillis(0),
@@ -597,6 +598,7 @@ mod tests {
         state
             .links
             .track_initiated(InitiatedLink {
+                attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
                 link_id,
                 destination: DestinationHash::new([0x77; 16]),
                 route_evidence: crate::routing::routes::RouteEvidenceHandle::new(

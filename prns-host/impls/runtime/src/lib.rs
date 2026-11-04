@@ -1,0 +1,3813 @@
+#![forbid(unsafe_code)]
+
+pub mod service_scope;
+
+use std::collections::BTreeMap;
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
+
+use personal_rns::config::{
+    plan_reference_config, RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceConfigParams,
+    ReferenceInterface, ReferenceMode,
+};
+use personal_rns::engine::{
+    AllowRequester, AllowRequesterFailure, AllowRequesterRejection, AnnounceAppData, AnnounceNow,
+    AnnounceNowRejection, AnnounceTarget, DeliveryEvidence as EngineDeliveryEvidence,
+    DeliveryProof, EstablishLinkFailure, EstablishLinkRejection, IdentifyFailure,
+    IdentifyRejection, LinkClosedReason as EngineLinkClosedReason,
+    PersistenceFlushCause as EnginePersistenceFlushCause,
+    PersistenceFlushTarget as EnginePersistenceFlushTarget, RequestPathFailure,
+    RequestResponseTimeout, RouteRemovalCause, SendRequestFailure, SendRequestRejection,
+    SendResourceFailure, SendResourceRejection, SendSinglePacketFailure, SendSinglePacketRejection,
+    SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
+    SetResourceStrategyFailure, SetResourceStrategyRejection,
+};
+use personal_rns::interfaces::bluetooth_auto::BleIdentity;
+use personal_rns::interfaces::BitrateBps;
+use personal_rns::manifold::reconnect::ReconnectPolicy;
+use personal_rns::persistence::FileStore;
+use personal_rns::routing::delivery::Delivery;
+use personal_rns::routing::links::channel::MessageType;
+use personal_rns::routing::links::resources::table::ApplyHashmapUpdateError;
+use personal_rns::routing::links::resources::ResourceFailureCause;
+use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolicy;
+use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
+use personal_rns::runtime::request_endpoints::RespondToken;
+use personal_rns::runtime::{
+    AnnounceNowError, Diagnostic, Message, NodePersistence, PersistenceIntent, PrnsEvent,
+    RequestOptions, RequestPathError, ResourceSendError, SegmentCompression,
+};
+use personal_rns::storage::GrowableHeap;
+use personal_rns::tcp::{TcpClientInterface, TcpServer};
+use personal_rns::udp::UdpInterface;
+use personal_rns::units::{ByteLimit, DurationMillis, RttMillis};
+use personal_rns::{
+    attach_plan_with_context, load_or_create_ble_identity, load_or_create_identity_secret,
+    request_endpoints, try_generate_identity_secret, AttachedInterface, AttachedSupervisor,
+    IdentitySecretFileError, LocalIdentityFileError, ManuallyAttached, OsRuntimeEntropy,
+    PlanAttachments, PlanFailure, PlanOutcome, PlanRuntimeContext, PreConfiguredDestination,
+    PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RatchetPolicy,
+    ResourceStrategy as EngineResourceStrategy, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+};
+use prns_host::{
+    ApplicationEvent, BackendInfo, BackendKind, Bitrate, Capability, ChannelMessage,
+    CommandFailure, CommandOutcome, DeliveryEvidence, DestinationConfig, DestinationHash,
+    DestinationIdentityConfig, DestinationLinkRequestPolicy, DestinationProofStrategy,
+    DestinationRatchetPolicy, DiagnosticEvent, HostCommand, HostConfig, HostRole, HostSnapshot,
+    IdentityConfig, IdentityHash, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode,
+    InterfaceRoutingPolicy, LinkClosedReason, LinkDelivery, LinkId, PacketHash, PersistenceConfig,
+    PersistenceFlushCause, PersistenceFlushTarget, PersistenceSnapshot, RequestAvailable,
+    RequestHandlerConfig, RequestId, RequestPathHash, RequestPolicy, ResourceAvailable,
+    ResourceCompression, ResourceHash, ResourceSegmentAvailable, ResourceStrategy,
+    ResourceStreamId, ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, SingleDelivery,
+    WebSocketFramingSelection, SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
+};
+use tokio::io::{AsyncRead, ReadBuf};
+use tokio::sync::{mpsc, oneshot, watch, Semaphore};
+
+pub mod embedding;
+pub use embedding::{
+    ApplicationEventDispatch, AuthenticatedAnnounce, HostAttachmentCleanup, HostAutoLanFactory,
+    HostEmbedding, HostLinkDiagnostics, HostPreparedAttachment, HostServiceClient,
+};
+pub mod attachment_scope;
+#[cfg(feature = "connections")]
+pub mod connections;
+pub mod owner;
+pub mod platform;
+mod readiness;
+pub mod remote_control;
+mod remote_control_discovery;
+pub mod remote_control_service;
+pub mod service_registration;
+pub use remote_control::HostRemoteControlError;
+mod session;
+pub use readiness::{Readiness, ReadinessAlreadyRegistered, RegisteredReadiness};
+pub use session::{
+    HostRuntimeEvent, HostRuntimeEventStream, HostRuntimeEventValue, HostRuntimeResourceStream,
+    HostRuntimeStreamError, HostSessionEvents, HostSessionObserver,
+};
+
+#[cfg(unix)]
+mod supplied_pipe;
+pub use prns_host_snapshot::{
+    assemble_host_snapshot, detailed_interface_topology, HostConnectionRole,
+    HostConnectionSnapshot, HostInterfaceAttachment, HostSnapshotAssemblyError,
+};
+
+/// One native inspection capture, before logical fleet folding discards member rows.
+/// Native compositions can project physical interfaces without a second, racing capture.
+pub struct HostInspectionSnapshot {
+    pub host: HostSnapshot,
+    pub engine_time_millis: u64,
+    pub physical_interfaces: Vec<HostConnectionSnapshot>,
+    pub interfaces: Vec<personal_rns::node_introspection::InterfaceInventoryEntry>,
+}
+#[cfg(unix)]
+pub use supplied_pipe::{
+    HostSuppliedPipe, SuppliedPipeConfig, SuppliedPipeOpenRequest, SuppliedPipeRequestWait,
+};
+#[cfg(unix)]
+use supplied_pipe::{SuppliedPipeAttach, SuppliedPipeBroker, SuppliedPipeLifetime};
+
+const START_TIMEOUT: Duration = Duration::from_secs(5);
+const AUTO_BITRATE_BPS: u64 = 65_000_000;
+const UPLOAD_CHUNK_CAPACITY: usize = 4;
+const MAX_UPLOAD_CHUNK_BYTES: usize = 256 * 1024;
+
+fn is_optional_safe_uint(value: Option<u64>) -> bool {
+    value.is_none_or(|value| value <= SAFE_UINT_MAX)
+}
+
+static THREAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static RESOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+pub trait HostRuntimeEventSink: Send + Sync + 'static {
+    fn publish_remote_control(
+        &self,
+        _event: remote_control_service::HostRemoteControlEvent,
+    ) -> bool {
+        false
+    }
+
+    fn running(&self);
+    fn publish_application(&self, event: ApplicationEvent) -> bool;
+    fn publish_resource(&self, event: ResourceAvailable, body: Vec<u8>) -> bool;
+    fn publish_diagnostic(&self, event: DiagnosticEvent);
+    fn stopped(&self);
+    fn failed(&self, detail: String);
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostStartError {
+    MissingCapabilities(Vec<Capability>),
+    Identity(IdentityStartError),
+    Destination(String),
+    Persistence(PersistenceStartError),
+    Runtime(String),
+    Thread(String),
+    TimedOut,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IdentityStartError {
+    EntropyUnavailable,
+    PermissionDenied { path: String },
+    Malformed { path: String, length: u64 },
+    Unavailable { path: String, detail: String },
+    InvalidMaterial,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PersistenceStartError {
+    PermissionDenied { path: String },
+    NotDirectory { path: String },
+    Unavailable { path: String, detail: String },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostSubmitError {
+    Busy,
+    Stopped,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostStopError {
+    WorkerPanicked,
+    NodeFailed(personal_rns::runtime::NodeRunError),
+    EventBackpressure,
+    InterfaceCleanupFailed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostSnapshotError {
+    Busy,
+    Stopped,
+    TimedOut,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommandWait {
+    Completed(Result<CommandOutcome, CommandFailure>),
+    TimedOut,
+    Interrupted,
+}
+
+struct CompletionState {
+    result: Option<Result<CommandOutcome, CommandFailure>>,
+    interrupted: bool,
+}
+
+pub type ReadinessSignal = Arc<dyn Fn() + Send + Sync>;
+pub type CommandReadiness = ReadinessSignal;
+
+struct CommandCompletion {
+    state: Mutex<CompletionState>,
+    ready: Condvar,
+    readiness: Option<CommandReadiness>,
+    changed: watch::Sender<()>,
+}
+
+impl CommandCompletion {
+    fn new(readiness: Option<CommandReadiness>) -> Self {
+        Self {
+            state: Mutex::new(CompletionState {
+                result: None,
+                interrupted: false,
+            }),
+            ready: Condvar::new(),
+            readiness,
+            changed: watch::channel(()).0,
+        }
+    }
+
+    fn finish(&self, result: Result<CommandOutcome, CommandFailure>) {
+        let mut state = lock(&self.state);
+        if state.result.is_some() {
+            return;
+        }
+        state.result = Some(result);
+        drop(state);
+        self.ready.notify_all();
+        self.changed.send_replace(());
+        if let Some(readiness) = &self.readiness {
+            readiness();
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct CommandHandle {
+    completion: Arc<CommandCompletion>,
+}
+
+impl CommandHandle {
+    #[must_use]
+    pub fn wait(&self, timeout: Option<Duration>) -> CommandWait {
+        let mut state = lock(&self.completion.state);
+        if let Some(result) = state.result.clone() {
+            return CommandWait::Completed(result);
+        }
+        if state.interrupted {
+            return CommandWait::Interrupted;
+        }
+        if timeout == Some(Duration::ZERO) {
+            return CommandWait::TimedOut;
+        }
+        match timeout {
+            None => {
+                while state.result.is_none() && !state.interrupted {
+                    state = self
+                        .completion
+                        .ready
+                        .wait(state)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
+            }
+            Some(timeout) => {
+                let waited = self
+                    .completion
+                    .ready
+                    .wait_timeout_while(state, timeout, |state| {
+                        state.result.is_none() && !state.interrupted
+                    })
+                    .unwrap_or_else(PoisonError::into_inner);
+                state = waited.0;
+                if waited.1.timed_out() && state.result.is_none() && !state.interrupted {
+                    return CommandWait::TimedOut;
+                }
+            }
+        }
+        if let Some(result) = state.result.clone() {
+            CommandWait::Completed(result)
+        } else {
+            CommandWait::Interrupted
+        }
+    }
+
+    /// Runtime-independent wait. Dropping this future never cancels the admitted command.
+    pub async fn wait_async(&self) -> CommandWait {
+        let mut changed = self.completion.changed.subscribe();
+        loop {
+            match self.wait(Some(Duration::ZERO)) {
+                CommandWait::TimedOut => {}
+                value => return value,
+            }
+            if changed.changed().await.is_err() {
+                return CommandWait::Interrupted;
+            }
+        }
+    }
+
+    pub fn interrupt_wait(&self) {
+        lock(&self.completion.state).interrupted = true;
+        self.completion.ready.notify_all();
+        self.completion.changed.send_replace(());
+        if let Some(readiness) = &self.completion.readiness {
+            readiness();
+        }
+    }
+}
+
+enum RuntimeCommand {
+    Contract {
+        command: HostCommand,
+        claim: Option<Arc<attachment_scope::Claim>>,
+        retirement: Option<attachment_scope::RetirementEvidence>,
+    },
+    #[cfg(unix)]
+    AttachSuppliedPipe(SuppliedPipeAttach),
+}
+
+enum RuntimeControl {
+    CloseAttachments(attachment_scope::Cleanup),
+    #[cfg(unix)]
+    DetachSuppliedPipe(Arc<SuppliedPipeBroker>),
+}
+
+struct CommandJob {
+    command: RuntimeCommand,
+    completion: Arc<CommandCompletion>,
+}
+
+pub type HostPreviewFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+pub type HostPreviewJob = Box<dyn FnOnce(PrnsNodeHandle) -> HostPreviewFuture + Send>;
+
+impl Drop for CommandJob {
+    fn drop(&mut self) {
+        self.completion.finish(Err(CommandFailure::NodeStopped));
+    }
+}
+
+struct StopState {
+    join: Option<std::thread::JoinHandle<Result<(), HostStopError>>>,
+    result: Option<Result<(), HostStopError>>,
+    directory_lock: Option<std::fs::File>,
+}
+
+pub struct HostRuntime {
+    commands: mpsc::Sender<CommandJob>,
+    // Owner cleanup uses a separate control lane, even when ordinary admission is full.
+    controls: mpsc::UnboundedSender<RuntimeControl>,
+    uploads: mpsc::Sender<UploadJob>,
+    snapshots: mpsc::Sender<SnapshotJob>,
+    preview: mpsc::Sender<HostPreviewJob>,
+    preview_slots: Arc<Semaphore>,
+    shutdown: watch::Sender<bool>,
+    stop: Mutex<StopState>,
+    stopped: AtomicBool,
+    identity_hash: IdentityHash,
+    destination_hashes: Vec<DestinationHash>,
+    handle: PrnsNodeHandle,
+    clock: personal_rns::manifold::tokio::TokioClock,
+    pairing_discovery: Arc<Mutex<remote_control_discovery::Discovery>>,
+}
+
+impl HostRuntime {
+    pub fn start(
+        config: HostConfig,
+        sink: Arc<dyn HostRuntimeEventSink>,
+    ) -> Result<Self, HostStartError> {
+        Self::start_with_embedding(config, sink, HostEmbedding::default())
+    }
+
+    pub fn start_with_embedding(
+        config: HostConfig,
+        sink: Arc<dyn HostRuntimeEventSink>,
+        embedding: HostEmbedding,
+    ) -> Result<Self, HostStartError> {
+        if embedding.application_events == ApplicationEventDispatch::EmbeddingCallback
+            && embedding.on_event.is_none()
+        {
+            return Err(HostStartError::Runtime(
+                "native application dispatch requires a callback".into(),
+            ));
+        }
+        if embedding.application_events == ApplicationEventDispatch::Queue
+            && embedding.on_event.is_some()
+        {
+            return Err(HostStartError::Runtime(
+                "an owning native event callback requires native application dispatch".into(),
+            ));
+        }
+        if embedding.remote_control_config.is_some() && embedding.remote_control.is_available() {
+            return Err(HostStartError::Runtime(
+                "remote-control service has two configuration owners".into(),
+            ));
+        }
+        let missing: Vec<Capability> = config
+            .required_capabilities
+            .iter()
+            .copied()
+            .filter(|capability| !runtime_capabilities().contains(capability))
+            .collect();
+        if !missing.is_empty() {
+            return Err(HostStartError::MissingCapabilities(missing));
+        }
+        let directory_lock = lock_persistence_directory(&config.persistence)?;
+        let pending_commands = config.limits.pending_commands();
+        let (command_tx, command_rx) = mpsc::channel(pending_commands);
+        let (control_tx, control_rx) = mpsc::unbounded_channel();
+        let (upload_tx, upload_rx) = mpsc::channel(pending_commands);
+        let (snapshot_tx, snapshot_rx) = mpsc::channel(pending_commands);
+        let (preview_tx, preview_rx) = mpsc::channel(pending_commands);
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+        let persistence_snapshot = Arc::new(Mutex::new(match &config.persistence {
+            PersistenceConfig::Ephemeral => PersistenceSnapshot::ephemeral(),
+            PersistenceConfig::Directory { .. } => PersistenceSnapshot::persistent(),
+        }));
+        let sequence = THREAD_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let worker_persistence = Arc::clone(&persistence_snapshot);
+        let join = std::thread::Builder::new()
+            .name(format!("prns-host-{sequence}"))
+            .spawn(move || {
+                let failure_sink = Arc::clone(&sink);
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    worker(
+                        config,
+                        sink,
+                        embedding,
+                        WorkerInputs {
+                            commands: command_rx,
+                            controls: control_rx,
+                            uploads: upload_rx,
+                            snapshots: snapshot_rx,
+                            preview: preview_rx,
+                            shutdown: shutdown_rx,
+                            persistence: worker_persistence,
+                        },
+                        ready_tx,
+                    )
+                }));
+                match outcome {
+                    Ok(result) => result,
+                    Err(panic) => {
+                        failure_sink.failed("native host worker panicked".into());
+                        std::panic::resume_unwind(panic);
+                    }
+                }
+            })
+            .map_err(|error| HostStartError::Thread(error.to_string()))?;
+        let ready = match ready_rx.recv_timeout(START_TIMEOUT) {
+            Ok(ready) => ready,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let _ = shutdown_tx.send(true);
+                let _ = join.join();
+                return Err(HostStartError::TimedOut);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = join.join();
+                return Err(HostStartError::Runtime(
+                    "native host exited during startup".to_string(),
+                ));
+            }
+        };
+        let ready = match ready {
+            Ok(ready) => ready,
+            Err(error) => {
+                let _ = shutdown_tx.send(true);
+                let _ = join.join();
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            commands: command_tx,
+            controls: control_tx,
+            uploads: upload_tx,
+            snapshots: snapshot_tx,
+            preview: preview_tx,
+            preview_slots: Arc::new(Semaphore::new(pending_commands)),
+            shutdown: shutdown_tx,
+            stop: Mutex::new(StopState {
+                join: Some(join),
+                result: None,
+                directory_lock,
+            }),
+            stopped: AtomicBool::new(false),
+            identity_hash: ready.identity_hash,
+            destination_hashes: ready.destination_hashes,
+            handle: ready.handle,
+            clock: ready.clock,
+            pairing_discovery: ready.pairing_discovery,
+        })
+    }
+
+    #[must_use]
+    pub const fn identity_hash(&self) -> IdentityHash {
+        self.identity_hash
+    }
+
+    #[must_use]
+    pub fn destination_hashes(&self) -> &[DestinationHash] {
+        &self.destination_hashes
+    }
+
+    /// A borrowed native service view; host lifecycle stays with the owning session.
+    pub fn service_client(&self) -> Result<HostServiceClient, HostSubmitError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(HostSubmitError::Stopped);
+        }
+        Ok(HostServiceClient {
+            handle: self.handle.clone(),
+            clock: self.clock.clone(),
+        })
+    }
+
+    pub fn preview_handle(&self) -> Result<PrnsNodeHandle, HostSubmitError> {
+        if self.stopped.load(Ordering::Acquire) {
+            Err(HostSubmitError::Stopped)
+        } else {
+            Ok(self.handle.clone())
+        }
+    }
+
+    pub async fn on_preview_runtime<T, F, Fut>(&self, run: F) -> Result<T, HostSubmitError>
+    where
+        T: Send + 'static,
+        F: FnOnce(PrnsNodeHandle) -> Fut + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+    {
+        self.begin_preview_operation(run)?
+            .await
+            .map_err(|_| HostSubmitError::Stopped)
+    }
+
+    // Separate synchronous admission from observation so a borrowed client's
+    // fence covers the actual queue insertion, never an entire asynchronous job.
+    fn begin_preview_operation<T, F, Fut>(
+        &self,
+        run: F,
+    ) -> Result<oneshot::Receiver<T>, HostSubmitError>
+    where
+        T: Send + 'static,
+        F: FnOnce(PrnsNodeHandle) -> Fut + Send + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+    {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(HostSubmitError::Stopped);
+        }
+        // One permit covers both queued and executing jobs. Dropping the foreign
+        // waiter leaves the admitted task and permit with the native owner.
+        let permit = Arc::clone(&self.preview_slots)
+            .try_acquire_owned()
+            .map_err(|_| HostSubmitError::Busy)?;
+        let (result_tx, result_rx) = oneshot::channel();
+        let job: HostPreviewJob = Box::new(move |handle| {
+            Box::pin(async move {
+                let value = run(handle).await;
+                let _ = result_tx.send(value);
+                drop(permit);
+            })
+        });
+        self.preview.try_send(job).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => HostSubmitError::Busy,
+            mpsc::error::TrySendError::Closed(_) => HostSubmitError::Stopped,
+        })?;
+        Ok(result_rx)
+    }
+
+    pub fn submit(&self, command: HostCommand) -> Result<CommandHandle, HostSubmitError> {
+        self.submit_with_readiness(command, None)
+    }
+
+    pub fn submit_with_readiness(
+        &self,
+        command: HostCommand,
+        readiness: Option<CommandReadiness>,
+    ) -> Result<CommandHandle, HostSubmitError> {
+        self.submit_native(
+            RuntimeCommand::Contract {
+                command,
+                claim: None,
+                retirement: None,
+            },
+            readiness,
+        )
+    }
+
+    fn submit_native(
+        &self,
+        command: RuntimeCommand,
+        readiness: Option<CommandReadiness>,
+    ) -> Result<CommandHandle, HostSubmitError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(HostSubmitError::Stopped);
+        }
+        let completion = Arc::new(CommandCompletion::new(readiness));
+        let job = CommandJob {
+            command,
+            completion: Arc::clone(&completion),
+        };
+        self.commands.try_send(job).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => HostSubmitError::Busy,
+            mpsc::error::TrySendError::Closed(_) => HostSubmitError::Stopped,
+        })?;
+        Ok(CommandHandle { completion })
+    }
+
+    pub fn begin_resource_upload(
+        &self,
+        link_id: LinkId,
+        declared_length: u64,
+        packed_metadata: Option<Vec<u8>>,
+        compression: ResourceCompression,
+    ) -> Result<HostRuntimeUpload, HostSubmitError> {
+        self.begin_resource_upload_with_readiness(
+            link_id,
+            declared_length,
+            packed_metadata,
+            compression,
+            None,
+        )
+    }
+
+    pub fn begin_resource_upload_with_readiness(
+        &self,
+        link_id: LinkId,
+        declared_length: u64,
+        packed_metadata: Option<Vec<u8>>,
+        compression: ResourceCompression,
+        readiness: Option<CommandReadiness>,
+    ) -> Result<HostRuntimeUpload, HostSubmitError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(HostSubmitError::Stopped);
+        }
+        let completion = Arc::new(CommandCompletion::new(readiness));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (chunks, source) = mpsc::channel(UPLOAD_CHUNK_CAPACITY);
+        self.uploads
+            .try_send(UploadJob {
+                link_id,
+                declared_length,
+                packed_metadata,
+                compression,
+                source: UploadSource::new(source),
+                completion: PendingCompletion(Arc::clone(&completion)),
+                cancelled: Arc::clone(&cancelled),
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => HostSubmitError::Busy,
+                mpsc::error::TrySendError::Closed(_) => HostSubmitError::Stopped,
+            })?;
+        Ok(HostRuntimeUpload {
+            chunks: Mutex::new(Some(chunks)),
+            completion,
+            cancelled,
+            declared_length,
+            written: AtomicU64::new(0),
+            finished: AtomicBool::new(false),
+            changed: watch::channel(()).0,
+        })
+    }
+
+    pub fn snapshot(&self, timeout: Option<Duration>) -> Result<HostSnapshot, HostSnapshotError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(HostSnapshotError::Stopped);
+        }
+        let (reply, result) = std::sync::mpsc::sync_channel(1);
+        self.snapshots
+            .try_send(SnapshotJob {
+                reply: SnapshotReply::Blocking(reply),
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => HostSnapshotError::Busy,
+                mpsc::error::TrySendError::Closed(_) => HostSnapshotError::Stopped,
+            })?;
+        match timeout {
+            Some(timeout) => result.recv_timeout(timeout).map_err(|error| match error {
+                std::sync::mpsc::RecvTimeoutError::Timeout => HostSnapshotError::TimedOut,
+                std::sync::mpsc::RecvTimeoutError::Disconnected => HostSnapshotError::Stopped,
+            }),
+            None => result.recv().map_err(|_| HostSnapshotError::Stopped),
+        }?
+    }
+
+    /// No caller runtime is required: the host executes the request and wakes this future.
+    pub async fn snapshot_async(&self) -> Result<HostSnapshot, HostSnapshotError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(HostSnapshotError::Stopped);
+        }
+        let (reply, result) = oneshot::channel();
+        self.snapshots
+            .try_send(SnapshotJob {
+                reply: SnapshotReply::Async(reply),
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => HostSnapshotError::Busy,
+                mpsc::error::TrySendError::Closed(_) => HostSnapshotError::Stopped,
+            })?;
+        result.await.map_err(|_| HostSnapshotError::Stopped)?
+    }
+
+    pub async fn inspection_async(&self) -> Result<HostInspectionSnapshot, HostSnapshotError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(HostSnapshotError::Stopped);
+        }
+        let (reply, result) = oneshot::channel();
+        self.snapshots
+            .try_send(SnapshotJob {
+                reply: SnapshotReply::Inspection(reply),
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => HostSnapshotError::Busy,
+                mpsc::error::TrySendError::Closed(_) => HostSnapshotError::Stopped,
+            })?;
+        result.await.map_err(|_| HostSnapshotError::Stopped)?
+    }
+
+    pub fn stop(&self) {
+        let _ = self.stop_result();
+    }
+
+    /// Blocking native-owner operation. Every caller observes the same joined outcome.
+    /// Foreign leases must schedule this on the lifecycle executor, never from GC/drop.
+    pub fn stop_result(&self) -> Result<(), HostStopError> {
+        self.stopped.store(true, Ordering::Release);
+        let _ = self.shutdown.send(true);
+        let mut stop = lock(&self.stop);
+        if let Some(result) = stop.result {
+            return result;
+        }
+        let result = match stop.join.take() {
+            Some(join) => join
+                .join()
+                .map_err(|_| HostStopError::WorkerPanicked)
+                .and_then(|result| result),
+            None => Ok(()),
+        };
+        stop.directory_lock.take();
+        stop.result = Some(result);
+        result
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UploadWriteError {
+    WouldBlock,
+    ChunkTooLarge,
+    LengthOverrun,
+    Finished,
+    Stopped,
+}
+
+pub struct HostRuntimeUpload {
+    chunks: Mutex<Option<mpsc::Sender<Vec<u8>>>>,
+    completion: Arc<CommandCompletion>,
+    cancelled: Arc<AtomicBool>,
+    declared_length: u64,
+    written: AtomicU64,
+    finished: AtomicBool,
+    changed: watch::Sender<()>,
+}
+
+impl HostRuntimeUpload {
+    pub fn write(&self, chunk: &[u8]) -> Result<(), UploadWriteError> {
+        if self.finished.load(Ordering::Acquire) {
+            return Err(UploadWriteError::Finished);
+        }
+        if chunk.len() > MAX_UPLOAD_CHUNK_BYTES {
+            return Err(UploadWriteError::ChunkTooLarge);
+        }
+        let length = u64::try_from(chunk.len()).map_err(|_| UploadWriteError::LengthOverrun)?;
+        let mut chunks = lock(&self.chunks);
+        if self.finished.load(Ordering::Acquire) {
+            return Err(UploadWriteError::Finished);
+        }
+        let written = self.written.load(Ordering::Acquire);
+        if written.saturating_add(length) > self.declared_length {
+            self.finished.store(true, Ordering::Release);
+            self.changed.send_replace(());
+            self.cancelled.store(true, Ordering::Release);
+            self.completion
+                .finish(Err(CommandFailure::ResourceLengthOverrun));
+            chunks.take();
+            return Err(UploadWriteError::LengthOverrun);
+        }
+        let sender = chunks.as_ref().ok_or(UploadWriteError::Finished)?;
+        sender
+            .try_send(chunk.to_vec())
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => UploadWriteError::WouldBlock,
+                mpsc::error::TrySendError::Closed(_) => UploadWriteError::Stopped,
+            })?;
+        self.written.store(written + length, Ordering::Release);
+        Ok(())
+    }
+
+    /// Waits for channel capacity without reserving bytes or mutating the upload until
+    /// admission. Cancelling the future before admission leaves the upload unchanged.
+    pub async fn write_async(&self, chunk: Vec<u8>) -> Result<(), UploadWriteError> {
+        if chunk.len() > MAX_UPLOAD_CHUNK_BYTES {
+            return Err(UploadWriteError::ChunkTooLarge);
+        }
+        let length = u64::try_from(chunk.len()).map_err(|_| UploadWriteError::LengthOverrun)?;
+        let mut changed = self.changed.subscribe();
+        let sender = {
+            let chunks = lock(&self.chunks);
+            if self.finished.load(Ordering::Acquire) {
+                return Err(UploadWriteError::Finished);
+            }
+            chunks.as_ref().cloned().ok_or(UploadWriteError::Finished)?
+        };
+        let permit = tokio::select! {
+            biased;
+            _ = changed.changed() => return Err(UploadWriteError::Finished),
+            permit = sender.reserve_owned() => permit.map_err(|_| UploadWriteError::Stopped)?,
+        };
+        let mut chunks = lock(&self.chunks);
+        if self.finished.load(Ordering::Acquire) {
+            return Err(UploadWriteError::Finished);
+        }
+        let written = self.written.load(Ordering::Acquire);
+        if written.saturating_add(length) > self.declared_length {
+            self.finished.store(true, Ordering::Release);
+            self.changed.send_replace(());
+            self.cancelled.store(true, Ordering::Release);
+            self.completion
+                .finish(Err(CommandFailure::ResourceLengthOverrun));
+            chunks.take();
+            return Err(UploadWriteError::LengthOverrun);
+        }
+        permit.send(chunk);
+        self.written.store(written + length, Ordering::Release);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn is_writable(&self) -> bool {
+        lock(&self.chunks)
+            .as_ref()
+            .is_some_and(|sender| sender.capacity() > 0 && !sender.is_closed())
+    }
+
+    pub fn finish(&self) -> CommandHandle {
+        if !self.finished.swap(true, Ordering::AcqRel) {
+            self.changed.send_replace(());
+            lock(&self.chunks).take();
+            let written = self.written.load(Ordering::Acquire);
+            if written != self.declared_length {
+                self.cancelled.store(true, Ordering::Release);
+                self.completion
+                    .finish(Err(CommandFailure::ResourceEarlyEof));
+            }
+        }
+        CommandHandle {
+            completion: Arc::clone(&self.completion),
+        }
+    }
+
+    pub fn abort(&self) {
+        if !self.finished.swap(true, Ordering::AcqRel) {
+            self.changed.send_replace(());
+            self.cancelled.store(true, Ordering::Release);
+            lock(&self.chunks).take();
+            self.completion
+                .finish(Err(CommandFailure::ResourceUploadCancelled));
+        }
+    }
+}
+
+impl Drop for HostRuntimeUpload {
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
+struct UploadJob {
+    link_id: LinkId,
+    declared_length: u64,
+    packed_metadata: Option<Vec<u8>>,
+    compression: ResourceCompression,
+    source: UploadSource,
+    completion: PendingCompletion,
+    cancelled: Arc<AtomicBool>,
+}
+
+struct SnapshotJob {
+    reply: SnapshotReply,
+}
+
+enum SnapshotReply {
+    Blocking(std::sync::mpsc::SyncSender<Result<HostSnapshot, HostSnapshotError>>),
+    Async(oneshot::Sender<Result<HostSnapshot, HostSnapshotError>>),
+    Inspection(oneshot::Sender<Result<HostInspectionSnapshot, HostSnapshotError>>),
+}
+
+impl SnapshotReply {
+    fn send(self, snapshot: Result<HostInspectionSnapshot, HostSnapshotError>) {
+        match self {
+            Self::Blocking(reply) => {
+                let _ = reply.send(snapshot.map(|snapshot| snapshot.host));
+            }
+            Self::Async(reply) => {
+                let _ = reply.send(snapshot.map(|snapshot| snapshot.host));
+            }
+            Self::Inspection(reply) => {
+                let _ = reply.send(snapshot);
+            }
+        }
+    }
+}
+
+struct PendingCompletion(Arc<CommandCompletion>);
+
+impl PendingCompletion {
+    fn finish(&self, result: Result<CommandOutcome, CommandFailure>) {
+        self.0.finish(result);
+    }
+}
+
+impl Drop for PendingCompletion {
+    fn drop(&mut self) {
+        self.0.finish(Err(CommandFailure::NodeStopped));
+    }
+}
+
+struct UploadSource {
+    chunks: mpsc::Receiver<Vec<u8>>,
+    active: Vec<u8>,
+    offset: usize,
+}
+
+impl UploadSource {
+    fn new(chunks: mpsc::Receiver<Vec<u8>>) -> Self {
+        Self {
+            chunks,
+            active: Vec::new(),
+            offset: 0,
+        }
+    }
+}
+
+impl AsyncRead for UploadSource {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        output: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        loop {
+            if self.offset < self.active.len() {
+                let available = &self.active[self.offset..];
+                let take = available.len().min(output.remaining());
+                output.put_slice(&available[..take]);
+                self.offset += take;
+                return Poll::Ready(Ok(()));
+            }
+            match Pin::new(&mut self.chunks).poll_recv(context) {
+                Poll::Ready(Some(chunk)) => {
+                    self.active = chunk;
+                    self.offset = 0;
+                }
+                Poll::Ready(None) => return Poll::Ready(Ok(())),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+impl Drop for HostRuntime {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+#[must_use]
+pub fn runtime_capabilities() -> &'static [Capability] {
+    &[
+        Capability::TcpClient,
+        Capability::TcpServer,
+        Capability::Udp,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        Capability::Serial,
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        Capability::Usb,
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "windows",
+            all(target_os = "android", feature = "android-platform")
+        ))]
+        Capability::Bluetooth,
+        Capability::Wifi,
+        Capability::WebSocket,
+        Capability::I2p,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        Capability::Weave,
+        #[cfg(unix)]
+        Capability::SuppliedPipe,
+    ]
+}
+
+#[must_use]
+pub fn runtime_interface_kinds() -> &'static [InterfaceKind] {
+    &[
+        InterfaceKind::AutoLan,
+        InterfaceKind::TcpClient,
+        InterfaceKind::TcpServer,
+        InterfaceKind::Udp,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        InterfaceKind::Serial,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        InterfaceKind::Kiss,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        InterfaceKind::Ax25Kiss,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        InterfaceKind::RNode,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        InterfaceKind::MultiRNode,
+        // Pipe also identifies externally supplied Unix descriptors, which do
+        // not create subprocesses and remain supported by mobile native hosts.
+        #[cfg(any(unix, not(any(target_os = "android", target_os = "ios"))))]
+        InterfaceKind::Pipe,
+        InterfaceKind::BackboneClient,
+        InterfaceKind::BackboneServer,
+        InterfaceKind::I2p,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        InterfaceKind::Weave,
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        InterfaceKind::AutomaticUsb,
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "windows",
+            all(target_os = "android", feature = "android-platform")
+        ))]
+        InterfaceKind::AutomaticBluetoothLe,
+        InterfaceKind::WebSocketClient,
+        InterfaceKind::WebSocketServer,
+    ]
+}
+
+#[must_use]
+pub fn runtime_backend_info() -> BackendInfo {
+    BackendInfo::new(
+        BackendKind::Native,
+        runtime_capabilities().iter().copied(),
+        runtime_interface_kinds().iter().copied(),
+    )
+}
+
+#[must_use]
+pub fn persistent_endpoint(
+    root: &Path,
+    destinations: Vec<DestinationConfig>,
+    required_capabilities: Vec<Capability>,
+    limits: prns_host::PrnsLimits,
+) -> HostConfig {
+    HostConfig {
+        identity: IdentityConfig::LoadOrCreate {
+            path: root.join("identity").to_string_lossy().into_owned(),
+        },
+        persistence: PersistenceConfig::Directory {
+            path: root.join("state").to_string_lossy().into_owned(),
+        },
+        role: HostRole::Endpoint,
+        destinations,
+        required_capabilities,
+        limits,
+    }
+}
+
+struct Ready {
+    identity_hash: IdentityHash,
+    destination_hashes: Vec<DestinationHash>,
+    handle: PrnsNodeHandle,
+    clock: personal_rns::manifold::tokio::TokioClock,
+    pairing_discovery: Arc<Mutex<remote_control_discovery::Discovery>>,
+}
+
+struct ResolvedSingle {
+    identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    announce_app_data: Vec<u8>,
+    maximum_request_bytes: Option<u64>,
+    proof: DestinationProofStrategy,
+    link_requests: DestinationLinkRequestPolicy,
+    ratchet: DestinationRatchetPolicy,
+    resource_strategy: ResourceStrategy,
+    request_handlers: Vec<RequestHandlerConfig>,
+}
+
+struct ResolvedDestination {
+    app_name: String,
+    aspects: Vec<String>,
+    single: Option<ResolvedSingle>,
+}
+
+struct ResolvedConfig {
+    host_identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    role: HostRole,
+    destinations: Vec<ResolvedDestination>,
+    persistence: ResolvedPersistence,
+    persistence_root: Option<PathBuf>,
+}
+
+enum ResolvedPersistence {
+    Ephemeral,
+    Directory(NodePersistence),
+}
+
+impl PersistenceIntent for ResolvedPersistence {
+    fn into_node_persistence(self) -> Option<NodePersistence> {
+        match self {
+            Self::Ephemeral => None,
+            Self::Directory(persistence) => Some(persistence),
+        }
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn resolve_identity(
+    identity: IdentityConfig,
+) -> Result<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>, HostStartError> {
+    match identity {
+        IdentityConfig::Existing(secret) => Ok(Zeroizing::new(*secret.expose())),
+        IdentityConfig::GenerateEphemeral => try_generate_identity_secret()
+            .map_err(|_| HostStartError::Identity(IdentityStartError::EntropyUnavailable)),
+        IdentityConfig::LoadOrCreate { path } => load_or_create_identity_secret(Path::new(&path))
+            .map_err(|error| {
+                let failure = match error {
+                    IdentitySecretFileError::Io(error)
+                        if error.kind() == std::io::ErrorKind::PermissionDenied =>
+                    {
+                        IdentityStartError::PermissionDenied { path }
+                    }
+                    IdentitySecretFileError::Io(error) => IdentityStartError::Unavailable {
+                        path,
+                        detail: error.to_string(),
+                    },
+                    IdentitySecretFileError::Malformed { len } => {
+                        IdentityStartError::Malformed { path, length: len }
+                    }
+                };
+                HostStartError::Identity(failure)
+            }),
+    }
+}
+
+/// The lock file is intentionally retained on disk: unlinking it while another process
+/// opens the directory could create independent locks for the same persisted state.
+fn lock_persistence_directory(
+    config: &PersistenceConfig,
+) -> Result<Option<std::fs::File>, HostStartError> {
+    let PersistenceConfig::Directory { path } = config else {
+        return Ok(None);
+    };
+    let map_error = |error: std::io::Error| {
+        HostStartError::Persistence(match error.kind() {
+            std::io::ErrorKind::PermissionDenied => {
+                PersistenceStartError::PermissionDenied { path: path.clone() }
+            }
+            std::io::ErrorKind::NotADirectory | std::io::ErrorKind::AlreadyExists => {
+                PersistenceStartError::NotDirectory { path: path.clone() }
+            }
+            _ => PersistenceStartError::Unavailable {
+                path: path.clone(),
+                detail: error.to_string(),
+            },
+        })
+    };
+    FileStore::new(path)
+        .prepare_directory()
+        .map_err(|error| map_error(error.into()))?;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(Path::new(path).join(".prns-host.lock"))
+        .map_err(map_error)?;
+    lock.try_lock().map_err(|error| {
+        HostStartError::Persistence(PersistenceStartError::Unavailable {
+            path: path.clone(),
+            detail: format!("persistent directory is already owned or cannot be locked: {error}"),
+        })
+    })?;
+    Ok(Some(lock))
+}
+
+fn resolve_persistence(
+    persistence: PersistenceConfig,
+) -> Result<(ResolvedPersistence, Option<PathBuf>), HostStartError> {
+    match persistence {
+        PersistenceConfig::Ephemeral => Ok((ResolvedPersistence::Ephemeral, None)),
+        PersistenceConfig::Directory { path } => {
+            let directory = Path::new(&path);
+            if directory.exists() && !directory.is_dir() {
+                return Err(HostStartError::Persistence(
+                    PersistenceStartError::NotDirectory { path },
+                ));
+            }
+            NodePersistence::custom_dir(directory)
+                .map(|persistence| {
+                    (
+                        ResolvedPersistence::Directory(persistence),
+                        Some(directory.to_path_buf()),
+                    )
+                })
+                .map_err(|error| {
+                    let failure = match error.kind() {
+                        std::io::ErrorKind::PermissionDenied => {
+                            PersistenceStartError::PermissionDenied { path }
+                        }
+                        std::io::ErrorKind::NotADirectory => {
+                            PersistenceStartError::NotDirectory { path }
+                        }
+                        _ => PersistenceStartError::Unavailable {
+                            path,
+                            detail: error.to_string(),
+                        },
+                    };
+                    HostStartError::Persistence(failure)
+                })
+        }
+    }
+}
+
+fn resolve_config(config: HostConfig) -> Result<ResolvedConfig, HostStartError> {
+    let host_identity = resolve_identity(config.identity)?;
+    let (persistence, persistence_root) = resolve_persistence(config.persistence)?;
+    let mut destinations = Vec::with_capacity(config.destinations.len());
+    for destination in config.destinations {
+        match destination {
+            DestinationConfig::Plain(name) => destinations.push(ResolvedDestination {
+                app_name: name.app_name().to_string(),
+                aspects: name.aspects().to_vec(),
+                single: None,
+            }),
+            DestinationConfig::Single(single) => {
+                if !is_optional_safe_uint(single.maximum_request_bytes) {
+                    return Err(HostStartError::Destination(
+                        "maximum request bytes must be an unsigned safe integer".to_string(),
+                    ));
+                }
+                let identity = match single.identity {
+                    DestinationIdentityConfig::HostIdentity => host_identity.clone(),
+                    DestinationIdentityConfig::Dedicated(identity) => resolve_identity(identity)?,
+                };
+                destinations.push(ResolvedDestination {
+                    app_name: single.name.app_name().to_string(),
+                    aspects: single.name.aspects().to_vec(),
+                    single: Some(ResolvedSingle {
+                        identity,
+                        announce_app_data: single.announce_app_data,
+                        maximum_request_bytes: single.maximum_request_bytes,
+                        proof: single.proof,
+                        link_requests: single.link_requests,
+                        ratchet: single.ratchet,
+                        resource_strategy: single.resource_strategy,
+                        request_handlers: single.request_handlers,
+                    }),
+                });
+            }
+        }
+    }
+    Ok(ResolvedConfig {
+        host_identity,
+        role: config.role,
+        destinations,
+        persistence,
+        persistence_root,
+    })
+}
+
+fn plan_runtime_context(
+    persistence_root: Option<&Path>,
+    identity: IdentityHash,
+) -> Result<PlanRuntimeContext, HostStartError> {
+    match persistence_root {
+        Some(root) => {
+            let identity_path = root.join("interface-identities/bluetooth-le");
+            let ble_identity = load_or_create_ble_identity(&identity_path).map_err(|error| {
+                let path = identity_path.to_string_lossy().into_owned();
+                match error {
+                    LocalIdentityFileError::Io(error)
+                        if error.kind() == std::io::ErrorKind::PermissionDenied =>
+                    {
+                        HostStartError::Persistence(PersistenceStartError::PermissionDenied {
+                            path,
+                        })
+                    }
+                    error => HostStartError::Persistence(PersistenceStartError::Unavailable {
+                        path,
+                        detail: error.to_string(),
+                    }),
+                }
+            })?;
+            Ok(
+                PlanRuntimeContext::with_rns_i2p_storage(root, engine_identity(identity))
+                    .with_ble_identity(ble_identity),
+            )
+        }
+        None => {
+            let mut bytes = [0u8; 16];
+            OsRuntimeEntropy::try_new()
+                .map_err(|_| HostStartError::Identity(IdentityStartError::EntropyUnavailable))?
+                .fill_random(&mut bytes);
+            Ok(PlanRuntimeContext::default().with_ble_identity(BleIdentity::new(bytes)))
+        }
+    }
+}
+
+fn aspect_refs(destinations: &[ResolvedDestination]) -> Vec<Vec<&str>> {
+    destinations
+        .iter()
+        .map(|destination| destination.aspects.iter().map(String::as_str).collect())
+        .collect()
+}
+
+fn build_destinations<'a>(
+    destinations: &'a [ResolvedDestination],
+    aspects: &'a [Vec<&'a str>],
+) -> Vec<PreConfiguredDestination<'a>> {
+    destinations
+        .iter()
+        .zip(aspects)
+        .map(|(destination, aspects)| match &destination.single {
+            None => PreConfiguredDestination::Plain {
+                app_name: &destination.app_name,
+                aspects,
+            },
+            Some(single) => PreConfiguredDestination::Single {
+                app_name: &destination.app_name,
+                aspects,
+                identity: single.identity.clone(),
+                announce_app_data: &single.announce_app_data,
+                proof: engine_proof_strategy(single.proof),
+                link_requests: engine_link_policy(single.link_requests),
+                ratchet: engine_ratchet_policy(single.ratchet),
+                resource_strategy: engine_resource_strategy(single.resource_strategy),
+                maximum_request_bytes: single
+                    .maximum_request_bytes
+                    .map(ByteLimit::Maximum)
+                    .unwrap_or_default(),
+                request_endpoints: personal_rns::runtime::ServeMyRequestEndpoints::No,
+            },
+        })
+        .collect()
+}
+
+struct WorkerInputs {
+    commands: mpsc::Receiver<CommandJob>,
+    controls: mpsc::UnboundedReceiver<RuntimeControl>,
+    uploads: mpsc::Receiver<UploadJob>,
+    snapshots: mpsc::Receiver<SnapshotJob>,
+    preview: mpsc::Receiver<HostPreviewJob>,
+    shutdown: watch::Receiver<bool>,
+    persistence: Arc<Mutex<PersistenceSnapshot>>,
+}
+
+fn worker(
+    config: HostConfig,
+    sink: Arc<dyn HostRuntimeEventSink>,
+    embedding: HostEmbedding,
+    inputs: WorkerInputs,
+    ready_tx: std::sync::mpsc::SyncSender<Result<Ready, HostStartError>>,
+) -> Result<(), HostStopError> {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            let failure = HostStartError::Runtime(error.to_string());
+            let _ = ready_tx.send(Err(failure.clone()));
+            sink.failed(format!("{failure:?}"));
+            return Ok(());
+        }
+    };
+    let result = runtime.block_on(run(config, sink, embedding, inputs, ready_tx));
+    // A timed Tokio shutdown can leave blocking persistence work running after
+    // this worker joins. Keep the owner and directory lock until it actually exits;
+    // callers may bound their wait without releasing unfinished native ownership.
+    drop(runtime);
+    result
+}
+
+async fn run(
+    config: HostConfig,
+    sink: Arc<dyn HostRuntimeEventSink>,
+    embedding: HostEmbedding,
+    inputs: WorkerInputs,
+    ready_tx: std::sync::mpsc::SyncSender<Result<Ready, HostStartError>>,
+) -> Result<(), HostStopError> {
+    let WorkerInputs {
+        commands: command_rx,
+        controls: control_rx,
+        uploads: upload_rx,
+        snapshots: snapshot_rx,
+        preview: preview_rx,
+        shutdown: shutdown_rx,
+        persistence: persistence_snapshot,
+    } = inputs;
+    let HostEmbedding {
+        remote_control,
+        remote_control_config,
+        plan_context: provided_context,
+        mut on_event,
+        accepted_announces,
+        link_diagnostics,
+        prepare_interfaces,
+        auto_lan_factory,
+        application_events,
+    } = embedding;
+    let resolved = match resolve_config(config) {
+        Ok(config) => config,
+        Err(error) => {
+            let _ = ready_tx.send(Err(error.clone()));
+            sink.failed(format!("{error:?}"));
+            return Ok(());
+        }
+    };
+    let ResolvedConfig {
+        host_identity,
+        role,
+        destinations: resolved_destinations,
+        persistence,
+        persistence_root,
+    } = resolved;
+    let identity = personal_rns::identity::PrivateIdentityMaterial::from_slice(&host_identity[..])
+        .map(|material| IdentityHash::new(*material.identity_hash().as_bytes()))
+        .map_err(|_| HostStartError::Identity(IdentityStartError::InvalidMaterial));
+    let identity_hash = match identity {
+        Ok(identity) => identity,
+        Err(error) => {
+            let _ = ready_tx.send(Err(error.clone()));
+            sink.failed(format!("{error:?}"));
+            return Ok(());
+        }
+    };
+    let plan_context = match provided_context
+        .map(Ok)
+        .unwrap_or_else(|| plan_runtime_context(persistence_root.as_deref(), identity_hash))
+    {
+        Ok(context) => context,
+        Err(error) => {
+            let _ = ready_tx.send(Err(error.clone()));
+            sink.failed(format!("{error:?}"));
+            return Ok(());
+        }
+    };
+    let aspects = aspect_refs(&resolved_destinations);
+    let destinations = build_destinations(&resolved_destinations, &aspects);
+    let mut destination_hashes = Vec::with_capacity(destinations.len());
+    for destination in &destinations {
+        match destination.destination_hash() {
+            Ok(hash) => destination_hashes.push(DestinationHash::new(*hash.as_bytes())),
+            Err(error) => {
+                let failure = HostStartError::Destination(format!("{error:?}"));
+                let _ = ready_tx.send(Err(failure.clone()));
+                sink.failed(format!("{failure:?}"));
+                return Ok(());
+            }
+        }
+    }
+    let resolved_remote_control = match remote_control_config
+        .map(|config| config.resolve())
+        .transpose()
+    {
+        Ok(config) => config,
+        Err(error) => {
+            let _ = ready_tx.send(Err(error.clone()));
+            sink.failed(format!("{error:?}"));
+            return Ok(());
+        }
+    };
+    let remote_control_grants;
+    let remote_control = if let Some(config) = resolved_remote_control {
+        let (identities, grants, announcement, capabilities) = config.into_parts();
+        remote_control_grants = grants;
+        let grants = if remote_control_grants.is_empty() {
+            personal_rns::remote_control::RemoteControlInitialControllerGrants::Nobody
+        } else {
+            match personal_rns::remote_control::RemoteControlControllerGrants::try_from(
+                remote_control_grants.as_slice(),
+            ) {
+                Ok(grants) => {
+                    personal_rns::remote_control::RemoteControlInitialControllerGrants::Grants(
+                        grants,
+                    )
+                }
+                Err(error) => {
+                    let failure = HostStartError::Runtime(format!(
+                        "invalid initial remote-control grants: {error:?}"
+                    ));
+                    let _ = ready_tx.send(Err(failure.clone()));
+                    sink.failed(format!("{failure:?}"));
+                    return Ok(());
+                }
+            }
+        };
+        personal_rns::remote_control::RemoteControlService::with_capabilities(
+            identities,
+            grants,
+            announcement,
+            capabilities,
+        )
+    } else {
+        remote_control
+    };
+    let remote_control_enabled = remote_control.is_available();
+    let pairing_discovery = match remote_control_discovery::Discovery::new() {
+        Ok(discovery) => Arc::new(Mutex::new(discovery)),
+        Err(error) => {
+            let _ = ready_tx.send(Err(error));
+            return Ok(());
+        }
+    };
+    let observed_pairing = Arc::clone(&pairing_discovery);
+    let event_sink = Arc::clone(&sink);
+    let backpressure = Arc::new(tokio::sync::Notify::new());
+    let event_backpressure = Arc::clone(&backpressure);
+    let event_persistence = Arc::clone(&persistence_snapshot);
+    let mut node = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: match role {
+            HostRole::Endpoint => None,
+            HostRole::Transport => Some(host_identity.clone()),
+        },
+        pre_configured_destinations: destinations,
+        app_state: personal_rns::NoRemoteControlHostControls,
+        storage: GrowableHeap,
+        request_endpoints: request_endpoints![],
+        remote_control: remote_control.into(),
+        interfaces: ManuallyAttached,
+        persistence,
+        on_event: move |event, _state: &personal_rns::NoRemoteControlHostControls| {
+            if let PrnsEvent::Message(Message::RemoteControlPairingAvailable(value)) = &event {
+                if lock(&observed_pairing).observe(value).is_err() {
+                    // This cannot arise from a valid bounded parser observation.
+                    // Fail closed if that invariant changes, without truncation.
+                    event_sink
+                        .failed("authenticated pairing observation exceeded its bound".into());
+                    event_backpressure.notify_one();
+                    return;
+                }
+            }
+            if application_events == ApplicationEventDispatch::EmbeddingCallback {
+                if let PrnsEvent::Diagnostic(diagnostic) = &event {
+                    publish_runtime_diagnostic(event_sink.as_ref(), diagnostic, &event_persistence);
+                }
+                if let Some(callback) = on_event.as_mut() {
+                    callback(event);
+                }
+                return;
+            }
+            if let PrnsEvent::Message(message) = &event {
+                if !remote_control_enabled
+                    && remote_control_service::HostRemoteControlEvent::from_message(message)
+                        .is_some()
+                {
+                    return;
+                }
+            }
+            if !publish_event(event_sink.as_ref(), event, &event_persistence) {
+                // Retain a permit even before run_until polls its stop future.
+                event_backpressure.notify_one();
+            }
+        },
+    });
+    if let Some(observers) = link_diagnostics {
+        node = node.with_link_handshake_diagnostics(observers.core, observers.egress);
+    }
+    if let Some(mut observer) = accepted_announces {
+        node = node.with_accepted_announce_observer(move |observation| {
+            observer(AuthenticatedAnnounce {
+                destination: host_destination(observation.destination),
+                announced_identity: IdentityHash::new(*observation.announced_identity.as_bytes()),
+                source_interface: InterfaceId::new(*observation.source_interface.as_bytes()),
+                hops: observation.hops.0,
+                app_data: observation.app_data,
+                arrived_at_millis: observation.arrived_at.0,
+                is_path_response: observation.is_path_response,
+            });
+        });
+    }
+    for (destination, hash) in resolved_destinations.iter().zip(&destination_hashes) {
+        let Some(single) = &destination.single else {
+            continue;
+        };
+        for handler in &single.request_handlers {
+            if let Err(error) = node.register_request_path(
+                &engine_destination(*hash),
+                &handler.path,
+                engine_request_policy(handler.policy),
+            ) {
+                let failure = HostStartError::Destination(format!(
+                    "request path {:?}: {error:?}",
+                    handler.path
+                ));
+                let _ = ready_tx.send(Err(failure.clone()));
+                sink.failed(format!("{failure:?}"));
+                return Ok(());
+            }
+        }
+    }
+    let handle = node.handle();
+    let clock = node.clock();
+    let mut prepared_attachments = BTreeMap::new();
+    if let Some(prepare) = prepare_interfaces {
+        let client = HostServiceClient {
+            handle: handle.clone(),
+            clock: clock.clone(),
+        };
+        let attachments = match prepare(&client) {
+            Ok(attachments) => attachments,
+            Err(error) => {
+                let _ = ready_tx.send(Err(error.clone()));
+                sink.failed(format!("{error:?}"));
+                return Ok(());
+            }
+        };
+        for attachment in attachments {
+            let attachment = match attachment {
+                HostPreparedAttachment::Registered { interface, kind } => {
+                    AttachmentResource::Registered { interface, kind }
+                }
+                HostPreparedAttachment::Interface { attachment, kind } => {
+                    AttachmentResource::Interface { attachment, kind }
+                }
+                HostPreparedAttachment::Supervisor { attachment, kind } => {
+                    AttachmentResource::Supervisor { attachment, kind }
+                }
+                HostPreparedAttachment::ManagedSupervisor {
+                    attachment,
+                    kind,
+                    cleanup,
+                } => AttachmentResource::ManagedSupervisor {
+                    attachment,
+                    kind,
+                    cleanup,
+                },
+            };
+            if let Some(interface) = attachment.interfaces().first().copied() {
+                let key = host_interface(interface);
+                if prepared_attachments.contains_key(&key) {
+                    let failure = HostStartError::Runtime(
+                        "prepared interface registered more than once".into(),
+                    );
+                    let _ = ready_tx.send(Err(failure.clone()));
+                    sink.failed(format!("{failure:?}"));
+                    return Ok(());
+                }
+                prepared_attachments.insert(key, attachment.into());
+            }
+        }
+    }
+    sink.running();
+    if ready_tx
+        .send(Ok(Ready {
+            identity_hash,
+            destination_hashes,
+            handle: handle.clone(),
+            clock,
+            pairing_discovery,
+        }))
+        .is_err()
+    {
+        return Ok(());
+    }
+    let (command_stop, command_stopped) = watch::channel(false);
+    let mut commands = tokio::spawn(command_loop(
+        handle.clone(),
+        CommandLoopInputs {
+            commands: command_rx,
+            controls: control_rx,
+            snapshots: snapshot_rx,
+            plan_context,
+            auto_lan_factory,
+            shutdown: command_stopped,
+            persistence: persistence_snapshot,
+            started_at: Instant::now(),
+            prepared_attachments,
+        },
+    ));
+    let (preview_stop, preview_stopped) = oneshot::channel();
+    let previews = tokio::spawn(preview_loop(
+        preview_rx,
+        handle.clone(),
+        shutdown_rx.clone(),
+        preview_stopped,
+    ));
+    let uploads = tokio::spawn(upload_loop(upload_rx, handle, shutdown_rx.clone()));
+    let overloaded = AtomicBool::new(false);
+    let mut commands_joined = false;
+    let mut interface_cleanup_failed = false;
+    let exit = node
+        .run_until(async {
+            tokio::select! {
+                () = shutdown_requested(shutdown_rx) => {},
+                () = backpressure.notified() => { overloaded.store(true, Ordering::Release); },
+            }
+            let _ = command_stop.send(true);
+            // Keep driving the manifold while accepted interface retirements
+            // and platform-provider shutdown acknowledgements complete.
+            interface_cleanup_failed = !matches!((&mut commands).await, Ok(Ok(())));
+            commands_joined = true;
+        })
+        .await
+        .map_err(HostStopError::NodeFailed)
+        .and_then(|()| {
+            if overloaded.load(Ordering::Acquire) {
+                Err(HostStopError::EventBackpressure)
+            } else if interface_cleanup_failed {
+                Err(HostStopError::InterfaceCleanupFailed)
+            } else {
+                Ok(())
+            }
+        });
+    let _ = preview_stop.send(());
+    let _ = previews.await;
+    if !commands_joined {
+        commands.abort();
+        let _ = commands.await;
+    }
+    uploads.abort();
+    let _ = uploads.await;
+    match exit {
+        Ok(()) => sink.stopped(),
+        Err(error) => sink.failed(format!("{error:?}")),
+    }
+    exit
+}
+
+async fn shutdown_requested(mut shutdown: watch::Receiver<bool>) {
+    if *shutdown.borrow() {
+        return;
+    }
+    let _ = shutdown.wait_for(|stopping| *stopping).await;
+}
+
+struct Attachment {
+    resource: AttachmentResource,
+    signature: Option<attachment_scope::Signature>,
+    claim: Option<Arc<attachment_scope::Claim>>,
+}
+
+impl From<AttachmentResource> for Attachment {
+    fn from(resource: AttachmentResource) -> Self {
+        Self {
+            resource,
+            signature: None,
+            claim: None,
+        }
+    }
+}
+
+impl Attachment {
+    fn kind(&self) -> InterfaceKind {
+        self.resource.kind()
+    }
+    fn interfaces(&self) -> Vec<personal_rns::interfaces::InterfaceId> {
+        self.resource.interfaces()
+    }
+    async fn teardown(&mut self, handle: &PrnsNodeHandle) -> Result<(), CommandFailure> {
+        self.resource.teardown(handle).await
+    }
+}
+
+enum AttachmentResource {
+    #[cfg(all(target_os = "android", feature = "android-platform"))]
+    AndroidBluetooth {
+        attachment: AttachedSupervisor,
+        session: platform::android::BluetoothSession,
+    },
+    Registered {
+        interface: personal_rns::interfaces::InterfaceId,
+        kind: InterfaceKind,
+    },
+    Interface {
+        attachment: AttachedInterface,
+        kind: InterfaceKind,
+    },
+    #[cfg(unix)]
+    SuppliedPipe {
+        attachment: AttachedInterface,
+        lifetime: SuppliedPipeLifetime,
+    },
+    Supervisor {
+        attachment: AttachedSupervisor,
+        kind: InterfaceKind,
+    },
+    ManagedSupervisor {
+        attachment: AttachedSupervisor,
+        kind: InterfaceKind,
+        cleanup: HostAttachmentCleanup,
+    },
+    Plan {
+        attachments: PlanAttachments,
+        interfaces: Vec<personal_rns::interfaces::InterfaceId>,
+        kind: InterfaceKind,
+    },
+}
+
+impl AttachmentResource {
+    fn kind(&self) -> InterfaceKind {
+        match self {
+            #[cfg(all(target_os = "android", feature = "android-platform"))]
+            Self::AndroidBluetooth { .. } => InterfaceKind::AutomaticBluetoothLe,
+            Self::Registered { kind, .. }
+            | Self::Interface { kind, .. }
+            | Self::Supervisor { kind, .. }
+            | Self::ManagedSupervisor { kind, .. }
+            | Self::Plan { kind, .. } => *kind,
+            #[cfg(unix)]
+            Self::SuppliedPipe { .. } => InterfaceKind::Pipe,
+        }
+    }
+
+    fn interfaces(&self) -> Vec<personal_rns::interfaces::InterfaceId> {
+        match self {
+            #[cfg(all(target_os = "android", feature = "android-platform"))]
+            Self::AndroidBluetooth { attachment, .. } => vec![attachment.id()],
+            Self::Registered { interface, .. } => vec![*interface],
+            Self::Interface { attachment, .. } => vec![attachment.id()],
+            #[cfg(unix)]
+            Self::SuppliedPipe { attachment, .. } => vec![attachment.id()],
+            Self::Supervisor { attachment, .. } => vec![attachment.id()],
+            Self::ManagedSupervisor { attachment, .. } => vec![attachment.id()],
+            Self::Plan { interfaces, .. } => interfaces.clone(),
+        }
+    }
+
+    async fn teardown(&mut self, handle: &PrnsNodeHandle) -> Result<(), CommandFailure> {
+        let retired = |error: personal_rns::InterfaceDetachError| CommandFailure::BackendFailed {
+            detail: error.to_string(),
+        };
+        match self {
+            #[cfg(all(target_os = "android", feature = "android-platform"))]
+            Self::AndroidBluetooth { attachment, .. } => handle
+                .remove_interface_and_wait(attachment.id())
+                .await
+                .map_err(retired)?,
+            Self::Registered { interface, .. } => handle
+                .remove_interface_and_wait(*interface)
+                .await
+                .map_err(retired)?,
+            Self::Interface { attachment, .. } => handle
+                .remove_interface_and_wait(attachment.id())
+                .await
+                .map_err(retired)?,
+            #[cfg(unix)]
+            Self::SuppliedPipe { attachment, .. } => handle
+                .remove_interface_and_wait(attachment.id())
+                .await
+                .map_err(retired)?,
+            Self::Supervisor { attachment, .. } => handle
+                .remove_interface_and_wait(attachment.id())
+                .await
+                .map_err(retired)?,
+            Self::ManagedSupervisor {
+                attachment,
+                cleanup,
+                ..
+            } => {
+                handle
+                    .remove_interface_and_wait(attachment.id())
+                    .await
+                    .map_err(retired)?;
+                cleanup()
+                    .await
+                    .map_err(|detail| CommandFailure::BackendFailed { detail })?;
+            }
+            Self::Plan { attachments, .. } => {
+                attachments.detach_and_wait(handle).await.map_err(retired)?
+            }
+        }
+        Ok(())
+    }
+}
+
+struct CommandLoopInputs {
+    commands: mpsc::Receiver<CommandJob>,
+    controls: mpsc::UnboundedReceiver<RuntimeControl>,
+    snapshots: mpsc::Receiver<SnapshotJob>,
+    plan_context: PlanRuntimeContext,
+    auto_lan_factory: Option<HostAutoLanFactory>,
+    shutdown: watch::Receiver<bool>,
+    persistence: Arc<Mutex<PersistenceSnapshot>>,
+    started_at: Instant,
+    prepared_attachments: BTreeMap<InterfaceId, Attachment>,
+}
+
+async fn command_loop(
+    handle: PrnsNodeHandle,
+    inputs: CommandLoopInputs,
+) -> Result<(), CommandFailure> {
+    let CommandLoopInputs {
+        mut commands,
+        mut controls,
+        mut snapshots,
+        plan_context,
+        auto_lan_factory,
+        mut shutdown,
+        persistence,
+        started_at,
+        prepared_attachments: mut attachments,
+    } = inputs;
+    let mut snapshot_revision = 0u64;
+    loop {
+        let work = tokio::select! {
+            command = commands.recv() => match command {
+                Some(command) => HostWork::Command(command),
+                None => break,
+            },
+            control = controls.recv() => match control {
+                Some(control) => HostWork::Control(control),
+                None => break,
+            },
+            snapshot = snapshots.recv() => match snapshot {
+                Some(snapshot) => HostWork::Snapshot(snapshot),
+                None => break,
+            },
+            _ = shutdown.wait_for(|stopping| *stopping) => break,
+        };
+        match work {
+            HostWork::Command(mut job) => {
+                let result = match &mut job.command {
+                    RuntimeCommand::Contract {
+                        command,
+                        claim,
+                        retirement,
+                    } => {
+                        execute_command(
+                            &handle,
+                            &plan_context,
+                            auto_lan_factory.as_ref(),
+                            &mut attachments,
+                            command,
+                            claim.as_ref(),
+                            retirement.as_ref(),
+                        )
+                        .await
+                    }
+                    #[cfg(unix)]
+                    RuntimeCommand::AttachSuppliedPipe(attach) => {
+                        supplied_pipe::attach(&handle, &mut attachments, attach)
+                    }
+                };
+                job.completion.finish(result);
+            }
+            HostWork::Control(control) => {
+                execute_control(&handle, &mut attachments, control).await;
+            }
+            HostWork::Snapshot(job) => {
+                snapshot_revision = snapshot_revision.saturating_add(1);
+                let snapshot = collect_snapshot(
+                    &handle,
+                    &attachments,
+                    snapshot_revision,
+                    started_at,
+                    &persistence,
+                )
+                .await;
+                job.reply.send(snapshot);
+            }
+        }
+    }
+    let mut cleanup_failure = None;
+    for (_, mut attachment) in attachments {
+        if let Err(error) = attachment.teardown(&handle).await {
+            cleanup_failure.get_or_insert(error);
+        }
+    }
+    tokio::task::yield_now().await;
+    tokio::task::yield_now().await;
+    cleanup_failure.map_or(Ok(()), Err)
+}
+
+enum HostWork {
+    Command(CommandJob),
+    Control(RuntimeControl),
+    Snapshot(SnapshotJob),
+}
+
+/// Native extension tasks share one bounded owner. Stop closes admission,
+/// aborts pending exchanges, and joins their drop guards before host teardown.
+async fn preview_loop(
+    mut jobs: mpsc::Receiver<HostPreviewJob>,
+    handle: PrnsNodeHandle,
+    mut shutdown: watch::Receiver<bool>,
+    mut stopped: oneshot::Receiver<()>,
+) {
+    let mut tasks = tokio::task::JoinSet::new();
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown.wait_for(|stopping| *stopping) => break,
+            _ = &mut stopped => break,
+            _ = tasks.join_next(), if !tasks.is_empty() => {},
+            job = jobs.recv() => match job {
+                Some(job) => { tasks.spawn(job(handle.clone())); }
+                None => break,
+            },
+        }
+    }
+    jobs.close();
+    while jobs.try_recv().is_ok() {}
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
+}
+
+async fn collect_snapshot(
+    handle: &PrnsNodeHandle,
+    attachments: &BTreeMap<InterfaceId, Attachment>,
+    revision: u64,
+    started_at: Instant,
+    persistence: &Mutex<PersistenceSnapshot>,
+) -> Result<HostInspectionSnapshot, HostSnapshotError> {
+    let raw_interfaces = handle.interface_inventory();
+    let attached_interfaces = attachments
+        .iter()
+        .flat_map(|(host_interface, attachment)| {
+            let host_interface = *host_interface;
+            let kind = attachment.kind();
+            attachment.interfaces().into_iter().map(move |interface| {
+                HostInterfaceAttachment::with_host_interface(interface, host_interface, kind)
+            })
+        })
+        .collect::<Vec<_>>();
+    let engine = handle
+        .engine_inspection_snapshot()
+        .await
+        .ok_or(HostSnapshotError::Unavailable)?;
+    let engine_time_millis = engine.engine_time_millis;
+    let physical_interfaces =
+        detailed_interface_topology(&raw_interfaces, attached_interfaces.iter().copied())
+            .map_err(|_| HostSnapshotError::Unavailable)?;
+    let host = assemble_host_snapshot(
+        raw_interfaces.clone(),
+        attached_interfaces,
+        engine,
+        runtime_backend_info(),
+        lock(persistence).clone(),
+        revision,
+        started_at.elapsed(),
+    )
+    .map_err(|_| HostSnapshotError::Unavailable)?;
+    Ok(HostInspectionSnapshot {
+        host,
+        engine_time_millis,
+        physical_interfaces,
+        interfaces: raw_interfaces,
+    })
+}
+
+async fn upload_loop(
+    mut uploads: mpsc::Receiver<UploadJob>,
+    handle: PrnsNodeHandle,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    loop {
+        let job = tokio::select! {
+            job = uploads.recv() => match job {
+                Some(job) => job,
+                None => break,
+            },
+            _ = shutdown.wait_for(|stopping| *stopping) => break,
+        };
+        let UploadJob {
+            link_id,
+            declared_length,
+            packed_metadata,
+            compression,
+            source,
+            completion,
+            cancelled,
+        } = job;
+        let compression = match compression {
+            ResourceCompression::Auto => SegmentCompression::AUTO,
+            ResourceCompression::Never => SegmentCompression::Never,
+        };
+        let result = match packed_metadata {
+            Some(metadata) => {
+                let (progress, _) = mpsc::unbounded_channel();
+                handle
+                    .send_resource_with_options(
+                        engine_link(link_id),
+                        declared_length,
+                        source,
+                        &metadata,
+                        compression,
+                        progress,
+                    )
+                    .await
+            }
+            None => {
+                handle
+                    .send_resource_with_compression(
+                        engine_link(link_id),
+                        declared_length,
+                        source,
+                        compression,
+                    )
+                    .await
+            }
+        };
+        let result = match result {
+            Ok(()) => Ok(CommandOutcome::ResourceSent),
+            Err(ResourceSendError::Source(error))
+                if cancelled.load(Ordering::Acquire)
+                    && error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                Err(CommandFailure::ResourceUploadCancelled)
+            }
+            Err(ResourceSendError::Source(error))
+                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                Err(CommandFailure::ResourceEarlyEof)
+            }
+            Err(error) => Err(resource_send_failure(error)),
+        };
+        completion.finish(result);
+    }
+}
+
+fn invalid_configuration(detail: impl Into<String>) -> CommandFailure {
+    CommandFailure::InvalidConfiguration {
+        detail: detail.into(),
+    }
+}
+
+fn endpoint_parts(
+    value: &str,
+    allow_unspecified_host: bool,
+) -> Result<(Option<String>, u16), CommandFailure> {
+    let (host, port) = if let Some(bracketed) = value.strip_prefix('[') {
+        let Some((host, port)) = bracketed.rsplit_once("]:") else {
+            return Err(invalid_configuration(format!(
+                "endpoint {value:?} must include a port"
+            )));
+        };
+        (host, port)
+    } else {
+        let Some((host, port)) = value.rsplit_once(':') else {
+            return Err(invalid_configuration(format!(
+                "endpoint {value:?} must include a port"
+            )));
+        };
+        (host, port)
+    };
+    if host.is_empty() && !allow_unspecified_host {
+        return Err(invalid_configuration(format!(
+            "endpoint {value:?} must include a host"
+        )));
+    }
+    let port = port
+        .parse::<u16>()
+        .ok()
+        .filter(|port| allow_unspecified_host || *port != 0)
+        .ok_or_else(|| invalid_configuration(format!("endpoint {value:?} has an invalid port")))?;
+    Ok(((!host.is_empty()).then(|| host.to_string()), port))
+}
+
+fn reference_bitrate(bitrate: Bitrate) -> Option<u64> {
+    match bitrate {
+        Bitrate::Auto => None,
+        Bitrate::BitsPerSecond(value) => Some(value),
+    }
+}
+
+fn reference_radio(radio: prns_host::RNodeRadioConfig) -> RNodeRadio {
+    RNodeRadio {
+        frequency: Some(radio.frequency_hz),
+        bandwidth: Some(radio.bandwidth_hz),
+        spreadingfactor: Some(radio.spreading_factor),
+        codingrate: Some(radio.coding_rate),
+        txpower: Some(radio.tx_power_dbm),
+    }
+}
+
+fn serial_data_bits(bits: prns_host::SerialDataBits) -> u8 {
+    match bits {
+        prns_host::SerialDataBits::Five => 5,
+        prns_host::SerialDataBits::Six => 6,
+        prns_host::SerialDataBits::Seven => 7,
+        prns_host::SerialDataBits::Eight => 8,
+    }
+}
+
+fn serial_parity(parity: prns_host::SerialParity) -> String {
+    match parity {
+        prns_host::SerialParity::None => "none",
+        prns_host::SerialParity::Even => "even",
+        prns_host::SerialParity::Odd => "odd",
+    }
+    .to_string()
+}
+
+fn serial_stop_bits(bits: prns_host::SerialStopBits) -> u8 {
+    match bits {
+        prns_host::SerialStopBits::One => 1,
+        prns_host::SerialStopBits::Two => 2,
+    }
+}
+
+fn shell_command(command: &[String]) -> String {
+    command
+        .iter()
+        .map(|argument| format!("'{}'", argument.replace('\'', "'\"'\"'")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, CommandFailure> {
+    let (type_name, params, bitrate) = match config {
+        InterfaceConfig::AutoLan {
+            group_id,
+            discovery_scope,
+            discovery_port,
+            data_port,
+            devices,
+            ignored_devices,
+            multicast_address_type,
+        } => (
+            "AutoInterface",
+            ReferenceConfigParams::Auto {
+                group_id: group_id.clone(),
+                group_ids: None,
+                discovery_scope: discovery_scope.map(|scope| {
+                    match scope {
+                        prns_host::DiscoveryScope::Link => "link",
+                        prns_host::DiscoveryScope::Admin => "admin",
+                        prns_host::DiscoveryScope::Site => "site",
+                        prns_host::DiscoveryScope::Organization => "organisation",
+                        prns_host::DiscoveryScope::Global => "global",
+                    }
+                    .to_string()
+                }),
+                discovery_port: *discovery_port,
+                data_port: *data_port,
+                devices: Some(devices.clone()),
+                ignored_devices: Some(ignored_devices.clone()),
+                multicast_address_type: multicast_address_type.map(|address_type| {
+                    match address_type {
+                        prns_host::MulticastAddressType::Temporary => "temporary",
+                        prns_host::MulticastAddressType::Permanent => "permanent",
+                    }
+                    .to_string()
+                }),
+            },
+            None,
+        ),
+        InterfaceConfig::TcpClient { target, bitrate } => {
+            let (host, port) = endpoint_parts(target, false)?;
+            (
+                "TCPClientInterface",
+                ReferenceConfigParams::TcpClient {
+                    target_host: host,
+                    target_port: Some(port),
+                    kiss_framing: None,
+                    i2p_tunneled: None,
+                    connect_timeout: None,
+                    max_reconnect_tries: None,
+                    fixed_mtu: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::TcpServer { bind, bitrate } => {
+            let (host, port) = endpoint_parts(bind, true)?;
+            (
+                "TCPServerInterface",
+                ReferenceConfigParams::TcpServer {
+                    listen_ip: host,
+                    listen_port: Some(port),
+                    device: None,
+                    port: None,
+                    prefer_ipv6: None,
+                    i2p_tunneled: None,
+                    kiss_framing: None,
+                    fixed_mtu: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::Udp {
+            local,
+            peer,
+            bitrate,
+        } => {
+            let (listen_ip, listen_port) = endpoint_parts(local, true)?;
+            let (forward_ip, forward_port) = endpoint_parts(peer, false)?;
+            (
+                "UDPInterface",
+                ReferenceConfigParams::Udp {
+                    listen_ip,
+                    listen_port: Some(listen_port),
+                    forward_ip,
+                    forward_port: Some(forward_port),
+                    device: None,
+                    port: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::Serial { port, line } => (
+            "SerialInterface",
+            ReferenceConfigParams::Serial {
+                port: Some(port.clone()),
+                speed: Some(line.baud),
+                databits: Some(serial_data_bits(line.data_bits)),
+                parity: Some(serial_parity(line.parity)),
+                stopbits: Some(serial_stop_bits(line.stop_bits)),
+            },
+            None,
+        ),
+        InterfaceConfig::Kiss {
+            port,
+            line,
+            flow_control,
+            preamble_millis,
+            transmit_tail_millis,
+            persistence,
+            slot_time_millis,
+            station_callsign,
+            station_interval_seconds,
+        } => (
+            "KISSInterface",
+            ReferenceConfigParams::Kiss {
+                port: Some(port.clone()),
+                speed: Some(line.baud),
+                databits: Some(serial_data_bits(line.data_bits)),
+                parity: Some(serial_parity(line.parity)),
+                stopbits: Some(serial_stop_bits(line.stop_bits)),
+                flow_control: Some(*flow_control),
+                preamble: Some(*preamble_millis),
+                txtail: Some(*transmit_tail_millis),
+                persistence: Some(u32::from(*persistence)),
+                slottime: Some(*slot_time_millis),
+                id_callsign: station_callsign.clone(),
+                id_interval: *station_interval_seconds,
+            },
+            None,
+        ),
+        InterfaceConfig::Ax25Kiss {
+            port,
+            line,
+            flow_control,
+            preamble_millis,
+            transmit_tail_millis,
+            persistence,
+            slot_time_millis,
+            callsign,
+            ssid,
+        } => (
+            "AX25KISSInterface",
+            ReferenceConfigParams::Ax25Kiss {
+                port: Some(port.clone()),
+                speed: Some(line.baud),
+                databits: Some(serial_data_bits(line.data_bits)),
+                parity: Some(serial_parity(line.parity)),
+                stopbits: Some(serial_stop_bits(line.stop_bits)),
+                flow_control: Some(*flow_control),
+                preamble: Some(*preamble_millis),
+                txtail: Some(*transmit_tail_millis),
+                persistence: Some(u32::from(*persistence)),
+                slottime: Some(*slot_time_millis),
+                callsign: Some(callsign.clone()),
+                ssid: Some(*ssid),
+            },
+            None,
+        ),
+        InterfaceConfig::RNode {
+            port,
+            radio,
+            flow_control,
+            station_callsign,
+            station_interval_seconds,
+            airtime_limit_short_centi_percent,
+            airtime_limit_long_centi_percent,
+        } => (
+            "RNodeInterface",
+            ReferenceConfigParams::Rnode {
+                port: Some(port.clone()),
+                radio: reference_radio(*radio),
+                flow_control: Some(*flow_control),
+                id_callsign: station_callsign.clone(),
+                id_interval: *station_interval_seconds,
+                airtime_limit_short: airtime_limit_short_centi_percent
+                    .map(|value| f64::from(value) / 100.0),
+                airtime_limit_long: airtime_limit_long_centi_percent
+                    .map(|value| f64::from(value) / 100.0),
+            },
+            None,
+        ),
+        InterfaceConfig::MultiRNode {
+            port,
+            station_callsign,
+            station_interval_seconds,
+            members,
+        } => (
+            "RNodeMultiInterface",
+            ReferenceConfigParams::RnodeMulti {
+                port: Some(port.clone()),
+                id_callsign: station_callsign.clone(),
+                id_interval: *station_interval_seconds,
+                subinterfaces: members
+                    .iter()
+                    .map(|member| RNodeSubinterface {
+                        name: member.name.clone(),
+                        vport: Some(member.virtual_port),
+                        radio: reference_radio(member.radio),
+                        flow_control: Some(member.flow_control),
+                        outgoing: Some(member.outgoing),
+                        airtime_limit_short: None,
+                        airtime_limit_long: None,
+                        extra: BTreeMap::new(),
+                    })
+                    .collect(),
+            },
+            None,
+        ),
+        InterfaceConfig::Pipe {
+            command,
+            respawn_delay_millis,
+        } => (
+            "PipeInterface",
+            ReferenceConfigParams::Pipe {
+                command: Some(shell_command(command)),
+                respawn_delay: Some(Duration::from_millis(*respawn_delay_millis).as_secs_f64()),
+            },
+            None,
+        ),
+        InterfaceConfig::BackboneClient { target, bitrate } => {
+            let (host, port) = endpoint_parts(target, false)?;
+            (
+                "BackboneClientInterface",
+                ReferenceConfigParams::Backbone {
+                    listen_ip: None,
+                    listen_port: None,
+                    target_host: host,
+                    target_port: Some(port),
+                    port: None,
+                    device: None,
+                    prefer_ipv6: None,
+                    i2p_tunneled: None,
+                    connect_timeout: None,
+                    max_reconnect_tries: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::BackboneServer { bind, bitrate } => {
+            let (host, port) = endpoint_parts(bind, true)?;
+            (
+                "BackboneInterface",
+                ReferenceConfigParams::Backbone {
+                    listen_ip: host,
+                    listen_port: Some(port),
+                    target_host: None,
+                    target_port: None,
+                    port: None,
+                    device: None,
+                    prefer_ipv6: None,
+                    i2p_tunneled: None,
+                    connect_timeout: None,
+                    max_reconnect_tries: None,
+                },
+                reference_bitrate(*bitrate),
+            )
+        }
+        InterfaceConfig::I2p { peers, connectable } => (
+            "I2PInterface",
+            ReferenceConfigParams::I2p {
+                peers: Some(peers.clone()),
+                connectable: Some(*connectable),
+            },
+            None,
+        ),
+        InterfaceConfig::Weave { port } => (
+            "WeaveInterface",
+            ReferenceConfigParams::Weave {
+                port: Some(port.clone()),
+            },
+            None,
+        ),
+        InterfaceConfig::AutomaticUsb => ("PrnsUsbAuto", ReferenceConfigParams::PrnsUsbAuto, None),
+        InterfaceConfig::AutomaticBluetoothLe => (
+            "PrnsBluetoothAuto",
+            ReferenceConfigParams::PrnsBluetoothAuto {
+                group_id: None,
+                group_ids: None,
+            },
+            None,
+        ),
+        InterfaceConfig::ConfiguredBluetoothLe { discovery_groups } => (
+            "PrnsBluetoothAuto",
+            ReferenceConfigParams::PrnsBluetoothAuto {
+                group_id: None,
+                group_ids: Some(discovery_groups.clone()),
+            },
+            None,
+        ),
+        InterfaceConfig::WebSocketClient { target, framing } => (
+            "PrnsWebSocketClient",
+            ReferenceConfigParams::PrnsWebSocketClient {
+                target: Some(target.clone()),
+                framing: Some(websocket_framing_selection(*framing).to_string()),
+            },
+            None,
+        ),
+        InterfaceConfig::WebSocketServer { bind, framing } => {
+            let (host, port) = endpoint_parts(bind, true)?;
+            (
+                "PrnsWebSocketServer",
+                ReferenceConfigParams::PrnsWebSocketServer {
+                    listen_ip: host,
+                    listen_port: Some(port),
+                    device: None,
+                    port: None,
+                    prefer_ipv6: None,
+                    framing: Some(websocket_framing_selection(*framing).to_string()),
+                },
+                None,
+            )
+        }
+        InterfaceConfig::BrowserRendezvous { .. } => {
+            return Err(CommandFailure::UnsupportedByBackend);
+        }
+    };
+    let mut interface = ReferenceInterface::enabled("sdk-interface", type_name, params);
+    interface.bitrate = bitrate;
+    Ok(interface)
+}
+
+fn websocket_framing_selection(framing: WebSocketFramingSelection) -> &'static str {
+    match framing {
+        WebSocketFramingSelection::RawPacket => "raw",
+        WebSocketFramingSelection::Hdlc => "hdlc",
+        WebSocketFramingSelection::Kiss => "kiss",
+        WebSocketFramingSelection::Auto => "auto",
+    }
+}
+
+fn reference_mode(mode: InterfaceMode) -> ReferenceMode {
+    match mode {
+        InterfaceMode::Full => ReferenceMode::Full,
+        InterfaceMode::PointToPoint => ReferenceMode::PointToPoint,
+        InterfaceMode::AccessPoint => ReferenceMode::AccessPoint,
+        InterfaceMode::Roaming => ReferenceMode::Roaming,
+        InterfaceMode::Boundary => ReferenceMode::Boundary,
+        InterfaceMode::Gateway => ReferenceMode::Gateway,
+        InterfaceMode::Internal => ReferenceMode::Internal,
+    }
+}
+
+fn typed_interface_plan(
+    config: &InterfaceConfig,
+    routing: Option<InterfaceRoutingPolicy>,
+) -> Result<personal_rns::config::DaemonPlan, CommandFailure> {
+    let mut reference = ReferenceConfig::default();
+    let mut interface = reference_interface(config)?;
+    if let Some(routing) = routing {
+        if routing
+            .gravity
+            .is_some_and(|gravity| !(SAFE_INT_MIN..=SAFE_INT_MAX).contains(&gravity))
+        {
+            return Err(invalid_configuration(
+                "interface gravity exceeds the exact host integer range".to_string(),
+            ));
+        }
+        interface.mode = routing.mode.map(reference_mode);
+        interface.gravity = routing.gravity;
+        interface.recursive_prs = routing.recursive_path_requests;
+        interface.announces_from_internal = routing.announces_from_internal;
+        interface.announces_to_internal = routing.announces_to_internal;
+    }
+    reference.interfaces.push(interface);
+    plan_reference_config(&reference).map_err(|error| invalid_configuration(error.to_string()))
+}
+
+fn plan_failure(config: &InterfaceConfig, failure: PlanFailure) -> CommandFailure {
+    let detail = failure.to_string();
+    match failure {
+        PlanFailure::InterfaceNotBuilt(_) => CommandFailure::UnsupportedByBackend,
+        PlanFailure::Network(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            CommandFailure::PermissionDenied { detail }
+        }
+        PlanFailure::Network(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound
+                    | std::io::ErrorKind::NotConnected
+                    | std::io::ErrorKind::AddrNotAvailable
+            ) =>
+        {
+            CommandFailure::DeviceUnavailable { detail }
+        }
+        PlanFailure::Network(_)
+            if matches!(
+                config.kind(),
+                InterfaceKind::TcpServer
+                    | InterfaceKind::Udp
+                    | InterfaceKind::BackboneServer
+                    | InterfaceKind::WebSocketServer
+            ) =>
+        {
+            CommandFailure::BindFailed { detail }
+        }
+        PlanFailure::Network(_) => CommandFailure::ConnectFailed { detail },
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        PlanFailure::WeaveIdentity(_) => CommandFailure::EntropyUnavailable,
+        PlanFailure::MissingIfacCredentials
+        | PlanFailure::AutoWifiSettings(_)
+        | PlanFailure::EmptyStationIdentification
+        | PlanFailure::Ax25Address(_)
+        | PlanFailure::RadioConfig(_)
+        | PlanFailure::UngroupedRNodeMultiMember
+        | PlanFailure::I2pInterfaceName(_)
+        | PlanFailure::I2pPeerAddress(_)
+        | PlanFailure::DuplicateI2pPeer(_)
+        | PlanFailure::MissingI2pStorage
+        | PlanFailure::MissingBleIdentity => invalid_configuration(detail),
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        PlanFailure::RNodeMultiMembers(_) => invalid_configuration(detail),
+        #[allow(unreachable_patterns)]
+        _ => invalid_configuration(detail),
+    }
+}
+
+async fn attach_typed_interface(
+    handle: &PrnsNodeHandle,
+    context: &PlanRuntimeContext,
+    auto_lan_factory: Option<&HostAutoLanFactory>,
+    config: &InterfaceConfig,
+    routing: Option<InterfaceRoutingPolicy>,
+) -> Result<(AttachmentResource, Option<CommandFailure>), CommandFailure> {
+    if !runtime_interface_kinds().contains(&config.kind()) {
+        return Err(CommandFailure::UnsupportedByBackend);
+    }
+    if matches!(config, InterfaceConfig::AutoLan { .. }) {
+        if let Some(factory) = auto_lan_factory {
+            return (match factory(handle, config, routing)? {
+                HostPreparedAttachment::Registered { interface, kind } => {
+                    Ok(AttachmentResource::Registered { interface, kind })
+                }
+                HostPreparedAttachment::Interface { attachment, kind } => {
+                    Ok(AttachmentResource::Interface { attachment, kind })
+                }
+                HostPreparedAttachment::Supervisor { attachment, kind } => {
+                    Ok(AttachmentResource::Supervisor { attachment, kind })
+                }
+                HostPreparedAttachment::ManagedSupervisor {
+                    attachment,
+                    kind,
+                    cleanup,
+                } => Ok(AttachmentResource::ManagedSupervisor {
+                    attachment,
+                    kind,
+                    cleanup,
+                }),
+            })
+            .map(|resource| (resource, None));
+        }
+    }
+    #[cfg(all(target_os = "android", feature = "android-platform"))]
+    if config.kind() == InterfaceKind::AutomaticBluetoothLe {
+        // The OS owner prepares permissions and callback pumps; the host uses the
+        // already-persisted identity and owns the attached generation thereafter.
+        if routing.is_some() {
+            return Err(CommandFailure::UnsupportedByBackend);
+        }
+        let identity = context
+            .ble_identity()
+            .ok_or_else(|| invalid_configuration("Bluetooth identity is unavailable"))?;
+        let session = platform::android::take_prepared_bluetooth().ok_or_else(|| {
+            CommandFailure::DeviceUnavailable {
+                detail: "Android Bluetooth transport has not been prepared by its platform owner"
+                    .into(),
+            }
+        })?;
+        let groups = match config {
+            InterfaceConfig::ConfiguredBluetoothLe { discovery_groups } => {
+                prns_host::bluetooth_discovery_groups(discovery_groups)
+                    .map_err(|_| invalid_configuration("Invalid Bluetooth discovery groups"))?
+            }
+            _ => personal_rns::interfaces::DiscoveryGroupSet::reticulum(),
+        };
+        let attachment =
+            handle.supervise(session.interface_with_discovery_groups(identity, groups));
+        return Ok((
+            AttachmentResource::AndroidBluetooth {
+                attachment,
+                session,
+            },
+            None,
+        ));
+    }
+    let plan = typed_interface_plan(config, routing)?;
+    let mut failure = None;
+    let attachments =
+        attach_plan_with_context(handle, &plan, context, &mut |outcome| match outcome {
+            PlanOutcome::Up { .. } => {}
+            PlanOutcome::Failed { error, .. } => {
+                if failure.is_none() {
+                    failure = Some(error);
+                }
+            }
+        })
+        .await;
+    let interfaces = attachments.interfaces().collect::<Vec<_>>();
+    if interfaces.is_empty() {
+        let mut attachments = attachments;
+        attachments.detach_and_wait(handle).await.map_err(|error| {
+            CommandFailure::BackendFailed {
+                detail: error.to_string(),
+            }
+        })?;
+        return Err(failure.map_or_else(
+            || CommandFailure::BackendFailed {
+                detail: "interface planner completed without attaching an interface".to_string(),
+            },
+            |failure| plan_failure(config, failure),
+        ));
+    }
+    Ok((
+        AttachmentResource::Plan {
+            attachments,
+            interfaces,
+            kind: config.kind(),
+        },
+        failure.map(|failure| plan_failure(config, failure)),
+    ))
+}
+
+async fn execute_control(
+    handle: &PrnsNodeHandle,
+    attachments: &mut BTreeMap<InterfaceId, Attachment>,
+    control: RuntimeControl,
+) {
+    match control {
+        RuntimeControl::CloseAttachments(cleanup) => cleanup.execute(handle, attachments).await,
+        #[cfg(unix)]
+        RuntimeControl::DetachSuppliedPipe(broker) => {
+            supplied_pipe::detach(handle, attachments, broker).await;
+        }
+    }
+}
+
+async fn execute_command(
+    handle: &PrnsNodeHandle,
+    plan_context: &PlanRuntimeContext,
+    auto_lan_factory: Option<&HostAutoLanFactory>,
+    attachments: &mut BTreeMap<InterfaceId, Attachment>,
+    command: &HostCommand,
+    claim: Option<&Arc<attachment_scope::Claim>>,
+    retirement: Option<&attachment_scope::RetirementEvidence>,
+) -> Result<CommandOutcome, CommandFailure> {
+    match command {
+        HostCommand::Announce {
+            destination,
+            interface,
+        } => {
+            let target = match interface {
+                Some(interface) => AnnounceTarget::Interface(engine_interface(*interface)),
+                None => AnnounceTarget::AllInterfaces,
+            };
+            handle
+                .announce_now(AnnounceNow {
+                    destination: engine_destination(*destination),
+                    target,
+                    app_data: AnnounceAppData::Registered,
+                })
+                .await
+                .map_err(announce_failure)?;
+            Ok(CommandOutcome::Announced)
+        }
+        HostCommand::SendSinglePacket {
+            destination,
+            payload,
+        } => {
+            let receipt = handle
+                .send_single_packet(engine_destination(*destination), payload)
+                .await
+                .map_err(send_failure)?;
+            let evidence = match receipt.evidence {
+                EngineDeliveryEvidence::Proof(DeliveryProof::Explicit(hash)) => {
+                    DeliveryEvidence::ExplicitProof(PacketHash::new(*hash.as_bytes()))
+                }
+                EngineDeliveryEvidence::Proof(DeliveryProof::Implicit(hash)) => {
+                    DeliveryEvidence::ImplicitProof(PacketHash::new(*hash.as_bytes()))
+                }
+                EngineDeliveryEvidence::Response => DeliveryEvidence::Response,
+            };
+            Ok(CommandOutcome::PacketDelivered {
+                rtt_millis: receipt.rtt.millis(),
+                evidence,
+            })
+        }
+        HostCommand::CloseLink { link_id } => {
+            if handle.close_link(engine_link(*link_id)) {
+                Ok(CommandOutcome::LinkCloseQueued)
+            } else {
+                Err(CommandFailure::NodeStopped)
+            }
+        }
+        HostCommand::AttachTcpServer { bind, bitrate } => {
+            let signature = attachment_scope::preflight(
+                attachments,
+                &InterfaceConfig::TcpServer {
+                    bind: bind.clone(),
+                    bitrate: *bitrate,
+                },
+                None,
+                claim,
+            )?;
+            let server = TcpServer::bind_with_bitrate(bind.as_str(), engine_bitrate(*bitrate)?)
+                .await
+                .map_err(|error| CommandFailure::BindFailed {
+                    detail: error.to_string(),
+                })?;
+            let attached = handle.supervise(server);
+            let interface = host_interface(attached.id());
+            attachments.insert(
+                interface,
+                attachment_scope::tracked(
+                    AttachmentResource::Supervisor {
+                        attachment: attached,
+                        kind: InterfaceKind::TcpServer,
+                    },
+                    signature,
+                    claim,
+                ),
+            );
+            Ok(CommandOutcome::InterfaceAttached { interface })
+        }
+        HostCommand::AttachTcpClient { target, bitrate } => {
+            let signature = attachment_scope::preflight(
+                attachments,
+                &InterfaceConfig::TcpClient {
+                    target: target.clone(),
+                    bitrate: *bitrate,
+                },
+                None,
+                claim,
+            )?;
+            let client = TcpClientInterface::new_with_bitrate(
+                target.clone(),
+                engine_bitrate(*bitrate)?,
+                ReconnectPolicy::STANDARD,
+            );
+            let attached = handle.add_interface(client);
+            let interface = host_interface(attached.id());
+            attachments.insert(
+                interface,
+                attachment_scope::tracked(
+                    AttachmentResource::Interface {
+                        attachment: attached,
+                        kind: InterfaceKind::TcpClient,
+                    },
+                    signature,
+                    claim,
+                ),
+            );
+            Ok(CommandOutcome::InterfaceAttached { interface })
+        }
+        HostCommand::AttachUdp {
+            local,
+            peer,
+            bitrate,
+        } => {
+            let signature = attachment_scope::preflight(
+                attachments,
+                &InterfaceConfig::Udp {
+                    local: local.clone(),
+                    peer: peer.clone(),
+                    bitrate: *bitrate,
+                },
+                None,
+                claim,
+            )?;
+            let udp = UdpInterface::bind(local.as_str(), peer.as_str(), engine_bitrate(*bitrate)?)
+                .await
+                .map_err(|error| CommandFailure::BindFailed {
+                    detail: error.to_string(),
+                })?;
+            let attached = handle.add_interface(udp);
+            let interface = host_interface(attached.id());
+            attachments.insert(
+                interface,
+                attachment_scope::tracked(
+                    AttachmentResource::Interface {
+                        attachment: attached,
+                        kind: InterfaceKind::Udp,
+                    },
+                    signature,
+                    claim,
+                ),
+            );
+            Ok(CommandOutcome::InterfaceAttached { interface })
+        }
+        HostCommand::AttachInterface { config, routing } => {
+            let signature = attachment_scope::preflight(attachments, config, *routing, claim)?;
+            config
+                .validate()
+                .map_err(|error| CommandFailure::InvalidConfiguration {
+                    detail: format!("{error:?}"),
+                })?;
+            let (attachment, failure) =
+                attach_typed_interface(handle, plan_context, auto_lan_factory, config, *routing)
+                    .await?;
+            attachment_scope::complete_attach(
+                handle,
+                attachments,
+                attachment,
+                signature,
+                claim,
+                retirement,
+                failure,
+            )
+            .await
+        }
+        HostCommand::DetachInterface { interface } => {
+            let Some(attachment) = attachments.get_mut(interface) else {
+                return Err(CommandFailure::UnknownInterface);
+            };
+            attachment_scope::require_owner(attachment, claim)?;
+            attachment.teardown(handle).await?;
+            attachments.remove(interface);
+            Ok(CommandOutcome::InterfaceDetached {
+                interface: *interface,
+            })
+        }
+        HostCommand::EstablishLink { destination } => {
+            let established = handle
+                .establish_link_with_rtt(engine_destination(*destination))
+                .await
+                .map_err(establish_link_failure)?;
+            Ok(CommandOutcome::LinkEstablished {
+                link_id: host_link(established.link_id),
+                rtt_millis: established.rtt_millis,
+            })
+        }
+        HostCommand::RequestPath { destination } => {
+            let found = handle
+                .request_path(engine_destination(*destination))
+                .await
+                .map_err(request_path_failure)?;
+            Ok(CommandOutcome::PathDiscovered { hops: found.hops.0 })
+        }
+        HostCommand::Identify { link_id, identity } => {
+            handle
+                .identify(engine_link(*link_id), engine_identity(*identity))
+                .await
+                .map_err(identify_failure)?;
+            Ok(CommandOutcome::Identified)
+        }
+        HostCommand::SendLinkPacket { link_id, payload } => {
+            let receipt = handle
+                .send_link_packet(engine_link(*link_id), payload)
+                .await
+                .map_err(send_link_failure)?;
+            Ok(delivered_outcome(receipt))
+        }
+        HostCommand::Request {
+            link_id,
+            path_hash,
+            payload,
+            timeout,
+            maximum_response_bytes,
+        } => {
+            if !is_optional_safe_uint(*maximum_response_bytes) {
+                return Err(invalid_configuration(
+                    "maximum response bytes must be an unsigned safe integer",
+                ));
+            }
+            let timeout = match timeout {
+                ResponseTimeout::LinkDefault => RequestResponseTimeout::LinkDefault,
+                ResponseTimeout::Exact { millis } => {
+                    RequestResponseTimeout::Exact(DurationMillis(*millis))
+                }
+            };
+            let (data, rtt) = handle
+                .request_with_options(
+                    engine_link(*link_id),
+                    engine_request_path(*path_hash),
+                    payload,
+                    RequestOptions {
+                        response_timeout: timeout,
+                        maximum_response_bytes: maximum_response_bytes
+                            .map(ByteLimit::Maximum)
+                            .unwrap_or_default(),
+                    },
+                )
+                .await
+                .map_err(request_failure)?;
+            Ok(CommandOutcome::ResponseReceived {
+                data: unpack_binary(&data).unwrap_or(&data).to_vec(),
+                rtt_millis: rtt.millis(),
+            })
+        }
+        HostCommand::Respond {
+            link_id,
+            request_id,
+            request_rtt_millis,
+            payload,
+        } => {
+            let rtt = handle
+                .respond_owned_bytes(
+                    RespondToken {
+                        link_id: engine_link(*link_id),
+                        request_id: personal_rns::routing::links::request::RequestId(
+                            request_id.into_bytes(),
+                        ),
+                        rtt: RttMillis::new(*request_rtt_millis),
+                    },
+                    payload.clone(),
+                )
+                .ok_or(CommandFailure::NodeStopped)?;
+            Ok(CommandOutcome::ResponseSent {
+                rtt_millis: rtt.millis(),
+            })
+        }
+        HostCommand::SendResource {
+            link_id,
+            payload,
+            packed_metadata,
+            compression,
+        } => {
+            let total_len =
+                u64::try_from(payload.len()).map_err(|_| CommandFailure::PayloadTooLarge)?;
+            let source = std::io::Cursor::new(payload);
+            let compression = match compression {
+                ResourceCompression::Auto => SegmentCompression::AUTO,
+                ResourceCompression::Never => SegmentCompression::Never,
+            };
+            let result = match packed_metadata {
+                Some(metadata) => {
+                    let (progress, _) = mpsc::unbounded_channel();
+                    handle
+                        .send_resource_with_options(
+                            engine_link(*link_id),
+                            total_len,
+                            source,
+                            metadata,
+                            compression,
+                            progress,
+                        )
+                        .await
+                }
+                None => {
+                    handle
+                        .send_resource_with_compression(
+                            engine_link(*link_id),
+                            total_len,
+                            source,
+                            compression,
+                        )
+                        .await
+                }
+            };
+            result.map_err(resource_send_failure)?;
+            Ok(CommandOutcome::ResourceSent)
+        }
+        HostCommand::SetLinkResourceStrategy { link_id, strategy } => {
+            handle
+                .set_link_resource_strategy(
+                    engine_link(*link_id),
+                    engine_resource_strategy(*strategy),
+                )
+                .await
+                .map_err(set_resource_strategy_failure)?;
+            Ok(CommandOutcome::ResourceStrategySet)
+        }
+        HostCommand::SetDestinationResourceStrategy {
+            destination,
+            strategy,
+        } => {
+            if !handle
+                .set_resource_strategy(
+                    engine_destination(*destination),
+                    engine_resource_strategy(*strategy),
+                )
+                .await
+            {
+                return Err(CommandFailure::UnknownDestination);
+            }
+            Ok(CommandOutcome::ResourceStrategySet)
+        }
+        HostCommand::SendChannelMessage {
+            link_id,
+            message_type,
+            payload,
+        } => {
+            let message_type = MessageType(*message_type);
+            if message_type.is_system_reserved() {
+                return Err(CommandFailure::InvalidChannelMessageType);
+            }
+            let receipt = handle
+                .send_channel_message(engine_link(*link_id), message_type, payload)
+                .await
+                .map_err(send_channel_failure)?;
+            Ok(delivered_outcome(receipt))
+        }
+        HostCommand::AllowRequester {
+            destination,
+            path_hash,
+            identity,
+        } => {
+            handle
+                .allow_requester(AllowRequester {
+                    destination: engine_destination(*destination),
+                    path_hash: engine_request_path(*path_hash),
+                    identity: engine_identity(*identity),
+                })
+                .await
+                .map_err(allow_requester_failure)?;
+            Ok(CommandOutcome::RequesterAllowed)
+        }
+    }
+}
+
+fn engine_bitrate(bitrate: Bitrate) -> Result<BitrateBps, CommandFailure> {
+    match bitrate {
+        Bitrate::Auto => Ok(BitrateBps::guess(AUTO_BITRATE_BPS)),
+        Bitrate::BitsPerSecond(value) => {
+            BitrateBps::new(value).ok_or(CommandFailure::InvalidBitrate)
+        }
+    }
+}
+
+fn announce_failure(error: AnnounceNowError) -> CommandFailure {
+    match error {
+        AnnounceNowError::NodeStopped => CommandFailure::NodeStopped,
+        AnnounceNowError::Busy => CommandFailure::Busy,
+        AnnounceNowError::Rejected(rejection) => match rejection {
+            AnnounceNowRejection::UnknownDestination => CommandFailure::UnknownDestination,
+            AnnounceNowRejection::NotASingleDestination => CommandFailure::NotSingleDestination,
+            AnnounceNowRejection::AppDataTooLong => CommandFailure::AnnounceAppDataTooLong,
+            AnnounceNowRejection::UnknownInterface => CommandFailure::UnknownInterface,
+        },
+        AnnounceNowError::WriteFailed(error) => CommandFailure::WriteFailed {
+            detail: format!("{error:?}"),
+        },
+    }
+}
+
+fn send_failure(error: SendError<SendSinglePacketFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(SendSinglePacketFailure::Rejected(rejection)) => match rejection {
+            SendSinglePacketRejection::NoRouteToDestination => CommandFailure::NoRouteToDestination,
+            SendSinglePacketRejection::NotDirectlyReachable => CommandFailure::NotDirectlyReachable,
+        },
+        SendError::Failed(SendSinglePacketFailure::WriteFailed(error)) => {
+            CommandFailure::WriteFailed {
+                detail: format!("{error:?}"),
+            }
+        }
+        SendError::Failed(SendSinglePacketFailure::Culled) => CommandFailure::PacketCulled,
+        SendError::Failed(SendSinglePacketFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+    }
+}
+
+fn delivered_outcome(receipt: personal_rns::PacketReceiptDelivered) -> CommandOutcome {
+    let evidence = match receipt.evidence {
+        EngineDeliveryEvidence::Proof(DeliveryProof::Explicit(hash)) => {
+            DeliveryEvidence::ExplicitProof(PacketHash::new(*hash.as_bytes()))
+        }
+        EngineDeliveryEvidence::Proof(DeliveryProof::Implicit(hash)) => {
+            DeliveryEvidence::ImplicitProof(PacketHash::new(*hash.as_bytes()))
+        }
+        EngineDeliveryEvidence::Response => DeliveryEvidence::Response,
+    };
+    CommandOutcome::PacketDelivered {
+        rtt_millis: receipt.rtt.millis(),
+        evidence,
+    }
+}
+
+fn establish_link_failure(error: SendError<EstablishLinkFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(EstablishLinkFailure::Rejected(rejection)) => match rejection {
+            EstablishLinkRejection::NoRouteToDestination => CommandFailure::NoRouteToDestination,
+            EstablishLinkRejection::NotDirectlyReachable => CommandFailure::NotDirectlyReachable,
+        },
+        SendError::Failed(EstablishLinkFailure::WriteFailed(
+            personal_rns::routing::links::establish::WriteEstablishLinkRejection::RouteVanished,
+        )) => CommandFailure::NoRouteToDestination,
+        SendError::Failed(EstablishLinkFailure::WriteFailed(error)) => {
+            CommandFailure::WriteFailed {
+                detail: format!("{error:?}"),
+            }
+        }
+        SendError::Failed(EstablishLinkFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+    }
+}
+
+fn request_path_failure(error: RequestPathError) -> CommandFailure {
+    match error {
+        RequestPathError::EntropyUnavailable => CommandFailure::EntropyUnavailable,
+        RequestPathError::NodeStopped => CommandFailure::NodeStopped,
+        RequestPathError::Failed(RequestPathFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        RequestPathError::Failed(RequestPathFailure::Culled) => CommandFailure::PacketCulled,
+        RequestPathError::Failed(RequestPathFailure::WriteFailed(error)) => {
+            CommandFailure::WriteFailed {
+                detail: format!("{error:?}"),
+            }
+        }
+    }
+}
+
+fn identify_failure(error: SendError<IdentifyFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(IdentifyFailure::Rejected(rejection)) => match rejection {
+            IdentifyRejection::NoSuchLink => CommandFailure::UnknownLink,
+            IdentifyRejection::LinkNotActive => CommandFailure::LinkNotActive,
+            IdentifyRejection::NotInitiator => CommandFailure::NotLinkInitiator,
+            IdentifyRejection::IdentityNotHeld => CommandFailure::IdentityNotHeld,
+        },
+        SendError::Failed(IdentifyFailure::WriteFailed) => CommandFailure::WriteFailed {
+            detail: "identity write failed".to_string(),
+        },
+    }
+}
+
+fn send_link_failure(error: SendError<SendToLinkFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(SendToLinkFailure::Rejected(rejection)) => match rejection {
+            SendToLinkRejection::NoSuchLink => CommandFailure::UnknownLink,
+            SendToLinkRejection::LinkNotActive => CommandFailure::LinkNotActive,
+        },
+        SendError::Failed(SendToLinkFailure::WriteFailed(error)) => CommandFailure::WriteFailed {
+            detail: format!("{error:?}"),
+        },
+        SendError::Failed(SendToLinkFailure::Culled) => CommandFailure::PacketCulled,
+        SendError::Failed(SendToLinkFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        SendError::Failed(SendToLinkFailure::LinkClosed) => CommandFailure::LinkClosed,
+    }
+}
+
+fn request_failure(error: SendError<SendRequestFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(SendRequestFailure::Rejected(rejection)) => match rejection {
+            SendRequestRejection::NoSuchLink => CommandFailure::UnknownLink,
+            SendRequestRejection::LinkNotActive => CommandFailure::LinkNotActive,
+        },
+        SendError::Failed(SendRequestFailure::WriteFailed) => CommandFailure::WriteFailed {
+            detail: "request write failed".to_string(),
+        },
+        SendError::Failed(SendRequestFailure::Culled) => CommandFailure::PacketCulled,
+        SendError::Failed(SendRequestFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        SendError::Failed(SendRequestFailure::LinkClosed) => CommandFailure::LinkClosed,
+        SendError::Failed(SendRequestFailure::ResponseTooLarge) => CommandFailure::ResponseTooLarge,
+        SendError::Failed(SendRequestFailure::ResponseTransferFailed(cause)) => match cause {
+            ResourceFailureCause::CancelledBySender => CommandFailure::ResponseCancelledBySender,
+            ResourceFailureCause::RefusedHashmapUpdate(refusal) => match refusal {
+                ApplyHashmapUpdateError::BeyondPartCount => {
+                    CommandFailure::ResponseHashmapBeyondPartCount
+                }
+                ApplyHashmapUpdateError::SkipsAhead => CommandFailure::ResponseHashmapSkipsAhead,
+                ApplyHashmapUpdateError::HashmapTooLong => CommandFailure::ResponseHashmapTooLong,
+                ApplyHashmapUpdateError::HashmapRagged => CommandFailure::ResponseHashmapRagged,
+            },
+            ResourceFailureCause::RetriesExhausted => CommandFailure::ResponseRetriesExhausted,
+            ResourceFailureCause::LinkVanished => CommandFailure::ResponseLinkVanished,
+            ResourceFailureCause::TransferUnopenable => CommandFailure::ResponseTransferUnopenable,
+            ResourceFailureCause::TransferCorrupt => CommandFailure::ResponseTransferCorrupt,
+            ResourceFailureCause::ProofUnsendable => CommandFailure::ResponseProofUnsendable,
+            ResourceFailureCause::DecompressionFailed => {
+                CommandFailure::ResponseDecompressionFailed
+            }
+            ResourceFailureCause::DecompressionTimedOut => {
+                CommandFailure::ResponseDecompressionTimedOut
+            }
+            ResourceFailureCause::OpenTimedOut => CommandFailure::ResponseOpenTimedOut,
+            ResourceFailureCause::MetadataOverrun => CommandFailure::ResponseMetadataOverrun,
+        },
+        SendError::Failed(SendRequestFailure::ResourceCapacity) => {
+            CommandFailure::ResourceTableFull
+        }
+        SendError::Failed(SendRequestFailure::RequestTransferFailed(inner)) => {
+            resource_send_failure(ResourceSendError::Rejected(inner))
+        }
+    }
+}
+
+fn resource_send_failure(error: ResourceSendError) -> CommandFailure {
+    match error {
+        ResourceSendError::Source(error) => CommandFailure::WriteFailed {
+            detail: error.to_string(),
+        },
+        ResourceSendError::UnrepresentableLength => CommandFailure::PayloadTooLarge,
+        ResourceSendError::NodeStopped => CommandFailure::NodeStopped,
+        ResourceSendError::Rejected(SendResourceFailure::Rejected(rejection)) => match rejection {
+            SendResourceRejection::NoSuchLink => CommandFailure::UnknownLink,
+            SendResourceRejection::LinkNotActive => CommandFailure::LinkNotActive,
+            SendResourceRejection::LinkBusy => CommandFailure::LinkBusy,
+            SendResourceRejection::TableFull => CommandFailure::ResourceTableFull,
+            SendResourceRejection::Build(
+                personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError::DataTooLarge,
+            ) => CommandFailure::PayloadTooLarge,
+            SendResourceRejection::Build(
+                personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError::MetadataTooLarge,
+            )
+            | SendResourceRejection::MetadataMisplaced => {
+                CommandFailure::ResourceMetadataTooLarge
+            }
+            SendResourceRejection::Build(error) => CommandFailure::WriteFailed {
+                detail: format!("{error:?}"),
+            },
+        },
+        ResourceSendError::Rejected(SendResourceFailure::WriteFailed) => {
+            CommandFailure::WriteFailed {
+                detail: "resource write failed".to_string(),
+            }
+        }
+        ResourceSendError::Rejected(SendResourceFailure::RejectedByPeer) => {
+            CommandFailure::ResourceRejectedByPeer
+        }
+        ResourceSendError::Rejected(SendResourceFailure::Sequencing) => {
+            CommandFailure::ResourceSequencingFailed
+        }
+        ResourceSendError::Rejected(SendResourceFailure::Timeout) => {
+            CommandFailure::DeliveryTimedOut
+        }
+        ResourceSendError::Rejected(SendResourceFailure::LinkClosed) => CommandFailure::LinkClosed,
+        ResourceSendError::Rejected(SendResourceFailure::PredecessorFailed) => {
+            CommandFailure::ResourcePredecessorFailed
+        }
+    }
+}
+
+fn set_resource_strategy_failure(error: SendError<SetResourceStrategyFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(SetResourceStrategyFailure::Rejected(rejection)) => match rejection {
+            SetResourceStrategyRejection::NoSuchLink => CommandFailure::UnknownLink,
+            SetResourceStrategyRejection::LinkNotActive => CommandFailure::LinkNotActive,
+        },
+    }
+}
+
+fn send_channel_failure(error: SendError<SendToChannelFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(SendToChannelFailure::Rejected(rejection)) => match rejection {
+            SendToChannelRejection::NoSuchLink => CommandFailure::UnknownLink,
+            SendToChannelRejection::LinkNotActive => CommandFailure::LinkNotActive,
+        },
+        SendError::Failed(SendToChannelFailure::WriteFailed(error)) => {
+            CommandFailure::WriteFailed {
+                detail: format!("{error:?}"),
+            }
+        }
+        SendError::Failed(SendToChannelFailure::WindowFull) => CommandFailure::ChannelWindowFull,
+        SendError::Failed(SendToChannelFailure::Untrackable) => CommandFailure::ChannelUntrackable,
+        SendError::Failed(SendToChannelFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        SendError::Failed(SendToChannelFailure::LinkClosed) => CommandFailure::LinkClosed,
+    }
+}
+
+fn allow_requester_failure(error: SendError<AllowRequesterFailure>) -> CommandFailure {
+    match error {
+        SendError::NodeStopped => CommandFailure::NodeStopped,
+        SendError::Busy => CommandFailure::Busy,
+        SendError::PayloadTooLarge => CommandFailure::PayloadTooLarge,
+        SendError::Failed(AllowRequesterFailure::Rejected(rejection)) => match rejection {
+            AllowRequesterRejection::NoSuchHandler => CommandFailure::UnknownRequestHandler,
+            AllowRequesterRejection::NoAllowList => CommandFailure::RequestPolicyNotAllowList,
+            AllowRequesterRejection::AllowListFull => CommandFailure::RequestAllowListFull,
+        },
+    }
+}
+
+fn engine_proof_strategy(strategy: DestinationProofStrategy) -> ProofStrategy {
+    match strategy {
+        DestinationProofStrategy::ProveAll => ProofStrategy::ProveAll,
+        DestinationProofStrategy::ProveNone => ProofStrategy::ProveNone,
+        DestinationProofStrategy::ProveIf => ProofStrategy::ProveIf,
+    }
+}
+
+fn engine_link_policy(policy: DestinationLinkRequestPolicy) -> LinkRequestPolicy {
+    match policy {
+        DestinationLinkRequestPolicy::AcceptAll => LinkRequestPolicy::AcceptAll,
+        DestinationLinkRequestPolicy::AcceptNone => LinkRequestPolicy::AcceptNone,
+    }
+}
+
+fn engine_ratchet_policy(policy: DestinationRatchetPolicy) -> RatchetPolicy {
+    match policy {
+        DestinationRatchetPolicy::NoRatchets => RatchetPolicy::NoRatchets,
+        DestinationRatchetPolicy::Ratcheted => RatchetPolicy::Ratcheted,
+        DestinationRatchetPolicy::RatchetsRequired => RatchetPolicy::RatchetsRequired,
+    }
+}
+
+fn engine_resource_strategy(strategy: ResourceStrategy) -> EngineResourceStrategy {
+    match strategy {
+        ResourceStrategy::Refuse => EngineResourceStrategy::AcceptNone,
+        ResourceStrategy::Accept {
+            maximum_uncompressed_bytes,
+            accept_compressed,
+        } => EngineResourceStrategy::Accept {
+            max_uncompressed_bytes: maximum_uncompressed_bytes,
+            accept_compressed,
+        },
+    }
+}
+
+fn engine_request_policy(policy: RequestPolicy) -> EngineRequestPolicy {
+    match policy {
+        RequestPolicy::AllowNone => EngineRequestPolicy::AllowNone,
+        RequestPolicy::AllowAll => EngineRequestPolicy::AllowAll,
+        RequestPolicy::AllowList => EngineRequestPolicy::AllowList,
+    }
+}
+
+fn unpack_binary(packed: &[u8]) -> Option<&[u8]> {
+    match packed {
+        [0xc4, len, rest @ ..] if rest.len() == *len as usize => Some(rest),
+        [0xc5, a, b, rest @ ..] if rest.len() == u16::from_be_bytes([*a, *b]) as usize => {
+            Some(rest)
+        }
+        [0xc6, a, b, c, d, rest @ ..]
+            if u32::try_from(rest.len()) == Ok(u32::from_be_bytes([*a, *b, *c, *d])) =>
+        {
+            Some(rest)
+        }
+        _ => None,
+    }
+}
+
+fn engine_destination(value: DestinationHash) -> personal_rns::wire::DestinationHash {
+    personal_rns::wire::DestinationHash::new(value.into_bytes())
+}
+
+fn engine_identity(value: IdentityHash) -> personal_rns::identity::IdentityHash {
+    personal_rns::identity::IdentityHash::new(value.into_bytes())
+}
+
+fn engine_request_path(
+    value: RequestPathHash,
+) -> personal_rns::routing::request_handlers::RequestPathHash {
+    personal_rns::routing::request_handlers::RequestPathHash::new(value.into_bytes())
+}
+
+fn engine_interface(value: InterfaceId) -> personal_rns::interfaces::InterfaceId {
+    personal_rns::interfaces::InterfaceId::new(value.into_bytes())
+}
+
+fn engine_link(value: LinkId) -> personal_rns::routing::links::LinkId {
+    personal_rns::routing::links::LinkId::new(value.into_bytes())
+}
+
+fn host_destination(value: personal_rns::wire::DestinationHash) -> DestinationHash {
+    DestinationHash::new(*value.as_bytes())
+}
+
+fn host_interface(value: personal_rns::interfaces::InterfaceId) -> InterfaceId {
+    InterfaceId::new(*value.as_bytes())
+}
+
+fn host_link(value: personal_rns::routing::links::LinkId) -> LinkId {
+    LinkId::new(*value.as_bytes())
+}
+
+fn host_resource_hash(
+    value: personal_rns::routing::links::resources::ResourceHash,
+) -> ResourceHash {
+    ResourceHash::new(*value.as_bytes())
+}
+
+fn publish_event(
+    sink: &dyn HostRuntimeEventSink,
+    event: PrnsEvent<'_>,
+    persistence: &Mutex<PersistenceSnapshot>,
+) -> bool {
+    match event {
+        PrnsEvent::Message(message) => publish_message(sink, message),
+        PrnsEvent::Diagnostic(diagnostic) => {
+            publish_runtime_diagnostic(sink, &diagnostic, persistence);
+            true
+        }
+    }
+}
+
+fn publish_runtime_diagnostic(
+    sink: &dyn HostRuntimeEventSink,
+    diagnostic: &Diagnostic<'_>,
+    persistence: &Mutex<PersistenceSnapshot>,
+) {
+    if let Some(diagnostic) = translate_diagnostic(diagnostic) {
+        update_persistence_snapshot(persistence, &diagnostic);
+        sink.publish_diagnostic(diagnostic);
+    }
+}
+
+fn update_persistence_snapshot(
+    persistence: &Mutex<PersistenceSnapshot>,
+    diagnostic: &DiagnosticEvent,
+) {
+    let mut persistence = lock(persistence);
+    match diagnostic {
+        DiagnosticEvent::PersistenceRestored { .. } => {
+            persistence.restored = true;
+            persistence.last_failure_detail = None;
+        }
+        DiagnosticEvent::PersistenceFlushed { cause, .. } => {
+            persistence.last_flush_cause = Some(*cause);
+            persistence.last_failure_detail = None;
+        }
+        DiagnosticEvent::PersistenceFlushFailed { cause, target } => {
+            persistence.last_failure_detail = Some(format!("{cause:?}:{target:?}"));
+        }
+        _ => {}
+    }
+}
+
+fn publish_message(sink: &dyn HostRuntimeEventSink, message: Message<'_>) -> bool {
+    if let Some(event) = remote_control_service::HostRemoteControlEvent::from_message(&message) {
+        return sink.publish_remote_control(event);
+    }
+    let event = match message {
+        Message::Delivered(Delivery::Single(delivery)) => {
+            ApplicationEvent::SingleDelivery(SingleDelivery {
+                destination: host_destination(delivery.destination),
+                source_interface: host_interface(delivery.source_interface),
+                plaintext: delivery.plaintext.to_vec(),
+            })
+        }
+        Message::Delivered(Delivery::Link(delivery)) => {
+            ApplicationEvent::LinkDelivery(LinkDelivery {
+                link_id: host_link(delivery.link_id),
+                local_destination: delivery.local_destination.map(host_destination),
+                arrived_at_millis: delivery.arrived_at.0,
+                source_interface: host_interface(delivery.source_interface),
+                plaintext: delivery.plaintext.to_vec(),
+            })
+        }
+        Message::Delivered(other @ (Delivery::Plain(_) | Delivery::Group(_))) => {
+            sink.publish_diagnostic(DiagnosticEvent::Delivered {
+                detail: format!("{other:?}"),
+            });
+            return true;
+        }
+        Message::Request {
+            destination,
+            link_id,
+            request_id,
+            requester,
+            path_hash,
+            rtt,
+            data,
+            ..
+        } => ApplicationEvent::Request(RequestAvailable {
+            destination: host_destination(destination),
+            link_id: host_link(link_id),
+            request_id: RequestId::new(request_id.0),
+            requester: requester.map(|identity| IdentityHash::new(*identity.as_bytes())),
+            path_hash: RequestPathHash::new(*path_hash.as_bytes()),
+            rtt_millis: rtt.millis(),
+            data: data.to_vec(),
+        }),
+        Message::Response {
+            link_id,
+            request_id,
+            data,
+        } => ApplicationEvent::Response(ResponseAvailable {
+            link_id: host_link(link_id),
+            request_id: RequestId::new(request_id.0),
+            data: data.to_vec(),
+        }),
+        Message::ResponseSegment {
+            link_id,
+            request_id,
+            segment_index,
+            total_segments,
+            data,
+        } => ApplicationEvent::ResponseSegment(ResponseSegmentAvailable {
+            link_id: host_link(link_id),
+            request_id: RequestId::new(request_id.0),
+            segment_index,
+            total_segments,
+            data: data.to_vec(),
+        }),
+        Message::Resource {
+            link_id,
+            hash,
+            metadata,
+            data,
+        } => {
+            let stream_id =
+                ResourceStreamId::new(RESOURCE_SEQUENCE.fetch_add(1, Ordering::Relaxed));
+            return sink.publish_resource(
+                ResourceAvailable {
+                    stream_id,
+                    link_id: host_link(link_id),
+                    hash: host_resource_hash(hash),
+                    metadata: metadata.map(<[u8]>::to_vec),
+                    total_bytes: u64::try_from(data.len()).unwrap_or(u64::MAX),
+                },
+                data.to_vec(),
+            );
+        }
+        Message::ResourceSegment {
+            link_id,
+            original_hash,
+            segment_index,
+            total_segments,
+            metadata,
+            data,
+        } => ApplicationEvent::ResourceSegment(ResourceSegmentAvailable {
+            link_id: host_link(link_id),
+            original_hash: host_resource_hash(original_hash),
+            segment_index,
+            total_segments,
+            metadata: metadata.map(<[u8]>::to_vec),
+            data: data.to_vec(),
+        }),
+        Message::ChannelMessage {
+            link_id,
+            message_type,
+            data,
+        } => ApplicationEvent::ChannelMessage(ChannelMessage {
+            link_id: host_link(link_id),
+            message_type: message_type.0,
+            data: data.to_vec(),
+        }),
+        _ => return true, // RemoteControl messages were projected above.
+    };
+    sink.publish_application(event)
+}
+
+fn translate_diagnostic(diagnostic: &Diagnostic<'_>) -> Option<DiagnosticEvent> {
+    Some(match diagnostic {
+        Diagnostic::PersistenceRestored {
+            routes,
+            destination_identities,
+            tunnels,
+            ratchets,
+            refused,
+            dropped,
+        } => DiagnosticEvent::PersistenceRestored {
+            routes: (*routes).into(),
+            destination_identities: (*destination_identities).into(),
+            tunnels: (*tunnels).into(),
+            ratchets: (*ratchets).into(),
+            refused: (*refused).into(),
+            dropped: (*dropped).into(),
+        },
+        Diagnostic::PersistenceFlushed { cause, target } => DiagnosticEvent::PersistenceFlushed {
+            cause: persistence_flush_cause(*cause),
+            target: persistence_flush_target(*target),
+        },
+        Diagnostic::PersistenceFlushFailed { cause, target } => {
+            DiagnosticEvent::PersistenceFlushFailed {
+                cause: persistence_flush_cause(*cause),
+                target: persistence_flush_target(*target),
+            }
+        }
+        Diagnostic::AnnounceHeard {
+            destination,
+            hops,
+            source_interface,
+            app_data,
+        } => DiagnosticEvent::AnnounceHeard {
+            destination: host_destination(*destination),
+            hops: *hops,
+            source_interface: host_interface(*source_interface),
+            app_data: app_data.to_vec(),
+        },
+        Diagnostic::LinkEstablished(established) => DiagnosticEvent::LinkEstablished {
+            link_id: host_link(established.link_id),
+            rtt_millis: established.rtt_millis,
+        },
+        Diagnostic::PeerIdentified { link_id, identity } => DiagnosticEvent::PeerIdentified {
+            link_id: host_link(*link_id),
+            identity: IdentityHash::new(*identity.as_bytes()),
+        },
+        Diagnostic::LinkClosed { link_id, reason } => DiagnosticEvent::LinkClosed {
+            link_id: host_link(*link_id),
+            reason: match reason {
+                EngineLinkClosedReason::Timeout => LinkClosedReason::Timeout,
+                EngineLinkClosedReason::PeerClosed => LinkClosedReason::PeerClosed,
+                EngineLinkClosedReason::MalformedRtt => LinkClosedReason::MalformedRtt,
+                EngineLinkClosedReason::LocallyClosed => LinkClosedReason::LocallyClosed,
+            },
+        },
+        Diagnostic::PathDiscovery(event) => DiagnosticEvent::BackendDiagnostic {
+            kind: "pathDiscovery".to_string(),
+            detail: event.phase.name().to_string(),
+        },
+        Diagnostic::CommandSettled { id, settlement } => DiagnosticEvent::BackendDiagnostic {
+            kind: "commandSettled".to_string(),
+            detail: format!("{}:{settlement:?}", id.0),
+        },
+        Diagnostic::RemoteControlPairingExpired { endpoint } => {
+            DiagnosticEvent::BackendDiagnostic {
+                kind: "RemoteControlPairingExpired".to_string(),
+                detail: format!("{endpoint:?}"),
+            }
+        }
+        Diagnostic::RemoteControlPairingExpiryFailed { endpoint, failure } => {
+            DiagnosticEvent::BackendDiagnostic {
+                kind: "RemoteControlPairingExpiryFailed".to_string(),
+                detail: format!("endpoint={endpoint:?}, failure={failure:?}"),
+            }
+        }
+        Diagnostic::SelfRatchetRotated { destination } => DiagnosticEvent::SelfRatchetRotated {
+            destination: host_destination(*destination),
+        },
+        Diagnostic::AnnounceHeldDropped {
+            destination,
+            source_interface,
+            cause,
+        } => DiagnosticEvent::AnnounceHeldDropped {
+            destination: host_destination(*destination),
+            source_interface: host_interface(*source_interface),
+            cause: format!("{cause:?}"),
+        },
+        Diagnostic::LinkInterfaceMismatch {
+            link_id,
+            attached_interface,
+            arrived_on,
+        } => DiagnosticEvent::LinkInterfaceMismatch {
+            link_id: host_link(*link_id),
+            attached_interface: host_interface(*attached_interface),
+            arrived_on: host_interface(*arrived_on),
+        },
+        Diagnostic::ResourceAssembled {
+            link_id,
+            original_hash,
+            total_size_bytes,
+        } => DiagnosticEvent::ResourceAssembled {
+            link_id: host_link(*link_id),
+            original_hash: host_resource_hash(*original_hash),
+            total_size_bytes: *total_size_bytes,
+        },
+        Diagnostic::ResourceFailed {
+            link_id,
+            hash,
+            cause,
+        } => DiagnosticEvent::ResourceFailed {
+            link_id: host_link(*link_id),
+            hash: host_resource_hash(*hash),
+            cause: format!("{cause:?}"),
+        },
+        Diagnostic::RouteRemoved { destination, cause } => match cause {
+            RouteRemovalCause::Expired => DiagnosticEvent::RouteExpired {
+                destination: host_destination(*destination),
+            },
+            RouteRemovalCause::Evicted => DiagnosticEvent::RouteEvicted {
+                destination: host_destination(*destination),
+            },
+            RouteRemovalCause::InterfaceGone => DiagnosticEvent::RouteInterfaceGone {
+                destination: host_destination(*destination),
+            },
+            RouteRemovalCause::Dropped => DiagnosticEvent::RouteDropped {
+                destination: host_destination(*destination),
+            },
+        },
+    })
+}
+
+fn persistence_flush_cause(cause: EnginePersistenceFlushCause) -> PersistenceFlushCause {
+    match cause {
+        EnginePersistenceFlushCause::Startup => PersistenceFlushCause::Startup,
+        EnginePersistenceFlushCause::Interval => PersistenceFlushCause::Interval,
+        EnginePersistenceFlushCause::RouteChange => PersistenceFlushCause::RouteChange,
+        EnginePersistenceFlushCause::RatchetRotation => PersistenceFlushCause::RatchetRotation,
+        EnginePersistenceFlushCause::Shutdown => PersistenceFlushCause::Shutdown,
+    }
+}
+
+fn persistence_flush_target(target: EnginePersistenceFlushTarget) -> PersistenceFlushTarget {
+    match target {
+        EnginePersistenceFlushTarget::RoutingState => PersistenceFlushTarget::RoutingState,
+        EnginePersistenceFlushTarget::Ratchets => PersistenceFlushTarget::Ratchets,
+    }
+}
+
+#[cfg(test)]
+mod tests;

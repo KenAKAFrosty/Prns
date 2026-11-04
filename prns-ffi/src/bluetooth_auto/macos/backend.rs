@@ -17,7 +17,8 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, DialOutcome, Origin, RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleEvent, BluetoothRadioState, DialOutcome, Origin, RadioMode,
+    ScanningMode,
 };
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
@@ -26,7 +27,9 @@ use super::central::{
     CentralDialCandidate, CentralPeerSession, DialCommand, DialCompletion, DialRejection,
     CENTRAL_CONTROL_INBOUND_CAPACITY,
 };
-use super::discovery::PeripheralLinkState;
+use super::diagnostics::{self, Family};
+use super::discovery::{link_recovery, PeripheralLinkState, StaleLinkRecovery};
+use super::gatt_arbitration::GattWriteGate;
 use super::gatt_link::{gatt_inbound_channel, ControlPlane, GattLink};
 use super::peripheral::PeripheralDelegate;
 #[cfg(target_os = "ios")]
@@ -35,13 +38,13 @@ use super::{
     CoreBluetoothRestorationIdentifiers,
 };
 use super::{
-    manager_signal_channel, start_scan, CoreBluetoothPeerId, L2capPublicationState, MacosBleError,
-    ManagerSignals, PublicationState, SendCentralDelegate, SendCentralManager, SendPeripheral,
-    SendPeripheralDelegate, Sighting,
+    manager_signal_channel, start_scan, CoreBluetoothPeerId, CoreBluetoothRadioStatus,
+    L2capPublicationState, MacosBleError, ManagerSignals, PublicationState, SendCentralDelegate,
+    SendCentralManager, SendPeripheral, SendPeripheralDelegate, Sighting,
 };
 
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
-const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
+pub(super) const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 const RADIO_TRANSITION_TIMEOUT: Duration = Duration::from_secs(2);
 /// Maximum recovery latency for a CoreBluetooth scan that claims to be active but has stopped
 /// delivering callbacks. Any discovery callback renews the scan lease without touching the radio.
@@ -150,6 +153,13 @@ pub(super) const fn scan_op(enabled: bool, is_scanning: bool, restart: bool) -> 
     }
 }
 
+pub(super) fn take_inbound_event<T>(event: Option<T>, inbound_open: &mut bool) -> Option<T> {
+    if event.is_none() {
+        *inbound_open = false;
+    }
+    event
+}
+
 pub(super) fn manager_readiness(signals: ManagerSignals) -> Result<Option<Psm>, MacosBleError> {
     if signals.gatt == PublicationState::Failed {
         crate::diagnostic_log::error!("bluetooth: GATT service publication failed at startup");
@@ -162,7 +172,9 @@ pub(super) fn manager_readiness(signals: ManagerSignals) -> Result<Option<Psm>, 
     let L2capPublicationState::Published(psm) = signals.l2cap else {
         return Ok(None);
     };
-    if signals.central_powered_generation == 0 || signals.gatt != PublicationState::Published {
+    if signals.radio_state() != BluetoothRadioState::PoweredOn
+        || signals.gatt != PublicationState::Published
+    {
         return Ok(None);
     }
     Ok(Some(Psm::new(psm).ok_or(MacosBleError::PublishFailed)?))
@@ -200,6 +212,10 @@ pub(super) enum DialAdmission {
     /// CoreBluetooth still lists a central-role connection, but Prns no longer has a session for
     /// it. Cancel that zombie instead of yielding forever to a non-existent inbound owner.
     CancelStaleSystemConnection,
+    /// The system may keep a peripheral connected across an ordinary app restart without a
+    /// restoration callback. Acquire this manager's local connection via connectPeripheral;
+    /// system-wide presence is neither an inbound owner nor a restored local connection.
+    AcquireSystemConnection,
 }
 
 pub(super) const fn dial_admission(
@@ -207,6 +223,7 @@ pub(super) const fn dial_admission(
     target_has_inbound_session: bool,
     has_central_session: bool,
     restored_state: Option<PeripheralLinkState>,
+    recovery: StaleLinkRecovery,
 ) -> DialAdmission {
     if target_has_inbound_session {
         DialAdmission::YieldToInboundSession
@@ -222,7 +239,10 @@ pub(super) const fn dial_admission(
     } else if already_system_connected && has_central_session {
         DialAdmission::YieldToSystemConnection
     } else if already_system_connected {
-        DialAdmission::CancelStaleSystemConnection
+        match recovery {
+            StaleLinkRecovery::Enabled => DialAdmission::CancelStaleSystemConnection,
+            StaleLinkRecovery::AcquireLocal => DialAdmission::AcquireSystemConnection,
+        }
     } else {
         DialAdmission::AttachCentralSession
     }
@@ -238,12 +258,35 @@ fn schedule_failed_dial_cleanup(
     queue: &DispatchRetained<DispatchQueue>,
     delegate: &SendCentralDelegate,
     peer_id: CoreBluetoothPeerId,
+    owner: &Arc<GattWriteGate>,
 ) {
     let delegate = SendCentralDelegate(delegate.0.clone());
+    let owner = Arc::clone(owner);
     queue.exec_async(move || {
         let delegate = delegate;
-        delegate.0.fail_peer(peer_id);
+        delegate.0.fail_write_owner(peer_id, &owner);
     });
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DialWaitFailure {
+    Closed,
+    Expired,
+}
+
+async fn await_dial_completion(
+    deadline: tokio::time::Instant,
+    completion: oneshot::Receiver<DialCompletion>,
+) -> Result<DialCompletion, DialWaitFailure> {
+    let result = tokio::time::timeout_at(deadline, completion)
+        .await
+        .map_err(|_| DialWaitFailure::Expired)?;
+    // Tokio may poll a ready callback before the timer. A late callback is not permission to
+    // exceed the original attempt budget, including time queued before this task first ran.
+    if tokio::time::Instant::now() >= deadline {
+        return Err(DialWaitFailure::Expired);
+    }
+    result.map_err(|_| DialWaitFailure::Closed)
 }
 
 fn apply_scanning(central: SendCentralManager, enabled: bool, restart: bool) {
@@ -252,6 +295,20 @@ fn apply_scanning(central: SendCentralManager, enabled: bool, restart: bool) {
     // serial dispatch queue.
     let is_scanning = unsafe { central.0.isScanning() };
     let operation = scan_op(enabled, is_scanning, restart);
+    diagnostics::emit(
+        Family::Scan,
+        format_args!(
+            "stage=scan category=decision desired={} observed_scanning={} action={}",
+            enabled,
+            is_scanning,
+            match operation {
+                ScanOp::Start => "start",
+                ScanOp::Restart => "restart",
+                ScanOp::Stop => "stop",
+                ScanOp::None => "unchanged",
+            }
+        ),
+    );
     crate::diagnostic_log::debug!("{}", operation.diagnostic_label(enabled));
     match operation {
         ScanOp::Restart => {
@@ -306,13 +363,11 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool, restored_c
         peer_id,
         mut session,
     } = command;
+    let deadline = session.dial_deadline();
+    let owner = session.write_gate();
     // SAFETY: this exact retained peripheral is queried on its CoreBluetooth serial queue.
     let restored_state =
         restored_connection.then(|| PeripheralLinkState::from(unsafe { peripheral.state() }));
-    session.configure_restoration_recovery(
-        cfg!(target_os = "ios"),
-        restored_state == Some(PeripheralLinkState::Connected),
-    );
     // The system-wide query remains only a guard for an ordinary observation. Restored admission
     // uses the exact peripheral's state because Apple's restoration array also includes pending
     // connections and may coexist with connections owned by another app.
@@ -322,6 +377,33 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool, restored_c
         target_has_inbound_session,
         delegate.has_session(peer_id),
         restored_state,
+        link_recovery(),
+    );
+    session.configure_restoration_recovery(
+        cfg!(target_os = "ios"),
+        restored_state == Some(PeripheralLinkState::Connected)
+            || admission == DialAdmission::AcquireSystemConnection,
+    );
+    let admission_category = match admission {
+        DialAdmission::YieldToSystemConnection => "yield_owned",
+        DialAdmission::YieldToInboundSession => "yield_inbound",
+        DialAdmission::RejectRestoredConnection => "reject_restored_state",
+        DialAdmission::AttachCentralSession => "connect",
+        DialAdmission::ResumeRestoredSession => "resume_discovery",
+        DialAdmission::AwaitRestoredConnection => "await_connection",
+        DialAdmission::CancelStaleSystemConnection => "cancel_stale_system",
+        DialAdmission::AcquireSystemConnection => "acquire_system_connection",
+    };
+    diagnostics::emit(
+        Family::Dial,
+        format_args!(
+            "stage=dial category=admission restored={} restored_state={} inbound_owner={} system_connected={} action={}",
+            restored_connection,
+            restored_state.map_or("not_restored", diagnostics::state_name),
+            target_has_inbound_session,
+            already_system_connected,
+            admission_category,
+        ),
     );
     let start = match admission {
         DialAdmission::YieldToSystemConnection => {
@@ -356,7 +438,9 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool, restored_c
             session.reject(DialRejection::RestoredConnectionUnavailable);
             return;
         }
-        DialAdmission::AttachCentralSession => DialStart::Connect,
+        DialAdmission::AttachCentralSession | DialAdmission::AcquireSystemConnection => {
+            DialStart::Connect
+        }
         DialAdmission::ResumeRestoredSession => DialStart::Discover,
         DialAdmission::AwaitRestoredConnection => DialStart::AwaitConnection,
         DialAdmission::CancelStaleSystemConnection => {
@@ -377,6 +461,10 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool, restored_c
         peripheral.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     }
     if !delegate.begin_session(&central, peer_id, session) {
+        return;
+    }
+    if tokio::time::Instant::now() >= deadline {
+        delegate.fail_write_owner(peer_id, &owner);
         return;
     }
     match start {
@@ -430,6 +518,7 @@ pub struct MacosBleBackend {
     manager_signals_open: bool,
     central_powered_generation: u64,
     inbound: tokio_mpsc::Receiver<GattLink>,
+    inbound_open: bool,
     sighting_events: tokio_mpsc::Receiver<()>,
     psm: Psm,
     seen: BoundedRecentSet<[u8; 6]>,
@@ -445,6 +534,7 @@ pub struct MacosBleBackend {
     radio_enabled: Arc<AtomicBool>,
     scan_liveness_at: tokio::time::Instant,
     advertising_reconcile_at: tokio::time::Instant,
+    session_liveness_enabled: bool,
 }
 
 struct NativeThread {
@@ -497,6 +587,11 @@ impl MacosBleBackend {
     pub const MAX_PEERS: usize = 7;
     #[cfg(target_os = "macos")]
     pub const MAX_PEERS: usize = 8;
+
+    #[must_use]
+    pub fn radio_status(&self) -> CoreBluetoothRadioStatus {
+        CoreBluetoothRadioStatus(self.manager_signals.clone())
+    }
 
     /// Creates CoreBluetooth managers with the existing iOS restoration identifiers.
     ///
@@ -666,7 +761,12 @@ impl MacosBleBackend {
         self.central_powered_generation = generation;
         if powered_again && self.scan_enabled {
             let central = SendCentralManager(self.central.0.clone());
+            let delegate = SendCentralDelegate(self.central_delegate.0.clone());
             self.queue.exec_async(move || {
+                let delegate = delegate;
+                if cfg!(target_os = "ios") {
+                    delegate.0.observe_system_connections(&central.0);
+                }
                 apply_scanning(central, true, true);
             });
         }
@@ -795,6 +895,11 @@ impl MacosBleBackend {
 }
 
 impl PreparedMacosBleBackend {
+    #[must_use]
+    pub fn radio_status(&self) -> CoreBluetoothRadioStatus {
+        CoreBluetoothRadioStatus(self.manager_signals.clone())
+    }
+
     pub async fn ready(mut self) -> Result<MacosBleBackend, MacosBleError> {
         let Handles {
             central,
@@ -808,8 +913,21 @@ impl PreparedMacosBleBackend {
         )
         .await;
         let (psm, central_powered_generation) = match readiness {
-            Ok(result) => result?,
+            Ok(result) => {
+                diagnostics::emit(
+                    Family::Manager,
+                    format_args!(
+                        "stage=manager category=readiness succeeded={}",
+                        result.is_ok()
+                    ),
+                );
+                result?
+            }
             Err(_) => {
+                diagnostics::emit(
+                    Family::Manager,
+                    format_args!("stage=manager category=readiness_timeout"),
+                );
                 crate::diagnostic_log::error!(
                     "bluetooth: timed out waiting for central power, GATT publication, and L2CAP publication — is Bluetooth on and permission granted?"
                 );
@@ -826,6 +944,7 @@ impl PreparedMacosBleBackend {
             manager_signals_open: true,
             central_powered_generation,
             inbound: self.inbound,
+            inbound_open: true,
             sighting_events: self.sighting_events,
             psm,
             seen: BoundedRecentSet::new(central_peripheral_capacity(MacosBleBackend::MAX_PEERS)),
@@ -843,6 +962,7 @@ impl PreparedMacosBleBackend {
             radio_enabled: self.radio_enabled,
             scan_liveness_at: tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL,
             advertising_reconcile_at: tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL,
+            session_liveness_enabled: false,
         })
     }
 }
@@ -851,9 +971,30 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
     type Error = MacosBleError;
     type Link = GattLink;
 
+    async fn set_session_liveness(&mut self, enabled: bool) -> Result<(), MacosBleError> {
+        let (completion, receiver) = oneshot::channel();
+        let peripheral = SendPeripheralDelegate(self.peripheral_delegate.0.clone());
+        self.queue.exec_async(move || {
+            let peripheral = peripheral;
+            peripheral.0.set_session_liveness(enabled);
+            let _ = completion.send(());
+        });
+        receiver.await.map_err(|_| MacosBleError::Closed)?;
+        self.session_liveness_enabled = enabled;
+        Ok(())
+    }
+
     async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), MacosBleError> {
         let enabled = mode.is_on();
         let result = self.transition_radio(enabled).await;
+        diagnostics::emit(
+            Family::Manager,
+            format_args!(
+                "stage=manager category=radio_transition enabled={} succeeded={}",
+                enabled,
+                result.is_ok()
+            ),
+        );
         if result.is_ok() {
             crate::diagnostic_log::debug!(
                 "bluetooth: CoreBluetooth logical radio resources {}",
@@ -871,6 +1012,10 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
     }
 
     async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), MacosBleError> {
+        diagnostics::emit(
+            Family::Scan,
+            format_args!("stage=scan category=request enabled={}", mode.is_on()),
+        );
         if mode.is_on() {
             crate::diagnostic_log::debug!("bluetooth: scanning requested on");
         } else {
@@ -881,12 +1026,21 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
         self.scan_liveness_at = tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL;
         let restart = cfg!(target_os = "macos") && self.scan_enabled;
         let central = SendCentralManager(self.central.0.clone());
+        let delegate = SendCentralDelegate(self.central_delegate.0.clone());
         let radio_enabled = Arc::clone(&self.radio_enabled);
         self.queue.exec_async(move || {
+            let delegate = delegate;
             crate::diagnostic_log::debug!("bluetooth: scan job started");
             if mode.is_on() && !radio_enabled.load(Ordering::Acquire) {
+                diagnostics::emit(
+                    Family::Scan,
+                    format_args!("stage=scan category=radio_disabled"),
+                );
                 crate::diagnostic_log::debug!("bluetooth: scan job skipped radio disabled");
                 return;
+            }
+            if cfg!(target_os = "ios") && mode.is_on() {
+                delegate.0.observe_system_connections(&central.0);
             }
             apply_scanning(central, mode.is_on(), restart);
         });
@@ -914,9 +1068,11 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                     }
                     continue;
                 }
-                inbound = self.inbound.recv() => match inbound {
-                    Some(link) => return BleEvent::Inbound(link),
-                    None => core::future::pending().await,
+                inbound = self.inbound.recv(), if self.inbound_open => {
+                    if let Some(link) = take_inbound_event(inbound, &mut self.inbound_open) {
+                        return BleEvent::Inbound(link);
+                    }
+                    continue;
                 },
                 Some(done) = self.dials.join_next(), if pending_dials => {
                     match done {
@@ -947,9 +1103,19 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                     None => core::future::pending().await,
                 },
                 _ = tokio::time::sleep_until(self.scan_liveness_at),
-                    if cfg!(target_os = "macos") && self.scan_enabled => {
+                    if self.scan_enabled => {
                     let scan_activity = self.scan_activity.swap(false, Ordering::Relaxed);
-                    if scan_lease(self.scan_enabled, scan_activity) == ScanLease::Expired {
+                    if cfg!(target_os = "ios") {
+                        // Retry only the read-only system query. Do not bounce iOS scanning,
+                        // healthy sessions, or the radio when a peer is absent or still in backoff.
+                        let central = SendCentralManager(self.central.0.clone());
+                        let delegate = SendCentralDelegate(self.central_delegate.0.clone());
+                        self.queue.exec_async(move || {
+                            let central = central;
+                            let delegate = delegate;
+                            delegate.0.observe_system_connections(&central.0);
+                        });
+                    } else if scan_lease(self.scan_enabled, scan_activity) == ScanLease::Expired {
                         let central = SendCentralManager(self.central.0.clone());
                         self.queue.exec_async(move || {
                             apply_scanning(central, true, true);
@@ -976,7 +1142,9 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
     }
 
     async fn dial(&mut self, address: BleAddress) -> DialOutcome {
+        diagnostics::emit(Family::Dial, format_args!("stage=dial category=request"));
         if !self.radio_enabled.load(Ordering::Acquire) {
+            diagnostics::emit(Family::Dial, format_args!("stage=dial category=radio_off"));
             return DialOutcome::RadioOff;
         }
         let token = *address.octets();
@@ -989,10 +1157,18 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                 restored,
             } => (peer_id, peripheral, rssi, restored),
             CentralDialCandidate::Busy => {
+                diagnostics::emit(
+                    Family::Dial,
+                    format_args!("stage=dial category=registry_busy"),
+                );
                 self.dial_failures.insert(address);
                 return DialOutcome::Started;
             }
             CentralDialCandidate::Missing => {
+                diagnostics::emit(
+                    Family::Dial,
+                    format_args!("stage=dial category=registry_missing"),
+                );
                 crate::diagnostic_log::warn!(
                     "bluetooth: dial to {token:02x?} — peripheral not yet sighted"
                 );
@@ -1004,12 +1180,17 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
             tokio_mpsc::channel::<Control>(CENTRAL_CONTROL_INBOUND_CAPACITY);
         let (completion_tx, completion_rx) = oneshot::channel::<DialCompletion>();
         let (data_inbound_tx, data_inbound_rx) = gatt_inbound_channel();
+        let mut session =
+            CentralPeerSession::new(address, control_tx, completion_tx, data_inbound_tx);
+        session.enable_liveness(self.session_liveness_enabled);
+        let deadline = session.dial_deadline();
+        let owner = session.write_gate();
         let command = DialCommand {
             central: self.central.0.clone(),
             delegate: self.central_delegate.0.clone(),
             peripheral: peripheral.0.clone(),
             peer_id,
-            session: CentralPeerSession::new(address, control_tx, completion_tx, data_inbound_tx),
+            session,
         };
         crate::diagnostic_log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
         let peripheral_for_admission = SendPeripheralDelegate(self.peripheral_delegate.0.clone());
@@ -1022,32 +1203,51 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
         let delegate = SendCentralDelegate(self.central_delegate.0.clone());
         let queue = self.queue.clone();
         self.dials.spawn(async move {
-            let chars = match tokio::time::timeout(DIAL_TIMEOUT, completion_rx).await {
-                Ok(Ok(DialCompletion::Ready(chars))) => chars,
-                Ok(Ok(DialCompletion::Rejected(rejection))) => {
+            let chars = match await_dial_completion(deadline, completion_rx).await {
+                Ok(DialCompletion::Ready(chars)) => {
+                    diagnostics::emit(
+                        Family::Dial,
+                        format_args!("stage=dial category=control_ready"),
+                    );
+                    chars
+                }
+                Ok(DialCompletion::Rejected(rejection)) => {
+                    diagnostics::emit(Family::Dial, format_args!("stage=dial category=rejected"));
                     crate::diagnostic_log::debug!(
                         "bluetooth: dial to {token:02x?} rejected: {rejection:?}"
                     );
                     return DialTaskOutcome::Failed { address };
                 }
-                Ok(Ok(DialCompletion::Failed)) => {
+                Ok(DialCompletion::Failed) => {
+                    diagnostics::emit(
+                        Family::Dial,
+                        format_args!("stage=dial category=control_failed"),
+                    );
                     crate::diagnostic_log::warn!(
                         "bluetooth: dial to {token:02x?} did not reach control-ready"
                     );
                     return DialTaskOutcome::Failed { address };
                 }
-                Ok(Err(_)) => {
+                Err(DialWaitFailure::Closed) => {
+                    diagnostics::emit(
+                        Family::Dial,
+                        format_args!("stage=dial category=completion_closed"),
+                    );
                     crate::diagnostic_log::warn!(
                         "bluetooth: dial to {token:02x?} closed before reaching control-ready"
                     );
-                    schedule_failed_dial_cleanup(&queue, &delegate, peer_id);
+                    schedule_failed_dial_cleanup(&queue, &delegate, peer_id, &owner);
                     return DialTaskOutcome::Failed { address };
                 }
-                Err(_) => {
+                Err(DialWaitFailure::Expired) => {
+                    diagnostics::emit(
+                        Family::Dial,
+                        format_args!("stage=dial category=control_timeout"),
+                    );
                     crate::diagnostic_log::warn!(
                         "bluetooth: dial to {token:02x?} timed out before reaching control-ready"
                     );
-                    schedule_failed_dial_cleanup(&queue, &delegate, peer_id);
+                    schedule_failed_dial_cleanup(&queue, &delegate, peer_id, &owner);
                     return DialTaskOutcome::Failed { address };
                 }
             };
@@ -1063,6 +1263,8 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                         central_delegate: SendCentralDelegate(delegate.0.clone()),
                         queue: queue.clone(),
                         peripheral_manager: send_peripheral_manager,
+                        liveness: chars.liveness,
+                        write_gate: chars.write_gate,
                     },
                     control_rx,
                     address,
@@ -1109,6 +1311,39 @@ impl Drop for MacosBleBackend {
 mod native_thread_tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test(start_paused = true)]
+    async fn ready_completion_cannot_beat_an_expired_original_dial_deadline() {
+        let deadline = tokio::time::Instant::now() + DIAL_TIMEOUT;
+        let (sender, receiver) = oneshot::channel();
+        sender.send(DialCompletion::Failed).ok().unwrap();
+        // The callback is ready before the completion task even starts. It must still consume
+        // the same deadline rather than start a fresh timeout when first polled.
+        tokio::time::advance(DIAL_TIMEOUT).await;
+        assert!(matches!(
+            await_dial_completion(deadline, receiver).await,
+            Err(DialWaitFailure::Expired)
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pending_read_and_timely_completion_share_the_original_dial_budget() {
+        let deadline = tokio::time::Instant::now() + DIAL_TIMEOUT;
+        let (sender, receiver) = oneshot::channel();
+        sender.send(DialCompletion::Failed).ok().unwrap();
+        assert!(matches!(
+            await_dial_completion(deadline, receiver).await,
+            Ok(DialCompletion::Failed)
+        ));
+
+        let (_sender, receiver) = oneshot::channel();
+        tokio::time::advance(DIAL_TIMEOUT).await;
+        assert!(matches!(
+            await_dial_completion(deadline, receiver).await,
+            Err(DialWaitFailure::Expired)
+        ));
+        assert_eq!(tokio::time::Instant::now(), deadline);
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

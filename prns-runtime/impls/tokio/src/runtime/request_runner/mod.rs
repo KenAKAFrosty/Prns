@@ -302,7 +302,7 @@ where
                         }
                     }
                     Some(command) = authorization.target_accesses.receive() => {
-                        command.apply(remote_control);
+                        command.apply(remote_control, authorization.persistence).await?;
                     }
                     Some(command) = authorization.pairing_persistence.receive() => {
                         command

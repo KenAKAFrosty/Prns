@@ -33,6 +33,9 @@ use super::resource_transfer::{
 use super::PrnsNodeHandle;
 use prns_core::rncp::write_file_metadata;
 
+pub(super) type PendingRequest =
+    oneshot::Receiver<Result<(std::vec::Vec<u8>, RttMillis), SendRequestFailure>>;
+
 const RESPONSE_PACKET_CEILING: usize = LINK_MDU - RESPONSE_WIRE_OVERHEAD;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -132,6 +135,20 @@ impl PrnsNodeHandle {
         data: std::vec::Vec<u8>,
         options: RequestOptions,
     ) -> Result<(std::vec::Vec<u8>, RttMillis), SendError<SendRequestFailure>> {
+        let settled = self.begin_request_owned_with_options(link_id, path_hash, data, options)?;
+        Self::observe_request(settled).await
+    }
+
+    /// A successful return means the request entered the runtime command lane.
+    /// It is not evidence of transmission or remote execution. Keeping this
+    /// boundary synchronous lets native owners linearize explicit cancellation.
+    pub(super) fn begin_request_owned_with_options(
+        &self,
+        link_id: LinkId,
+        path_hash: RequestPathHash,
+        data: std::vec::Vec<u8>,
+        options: RequestOptions,
+    ) -> Result<PendingRequest, SendError<SendRequestFailure>> {
         let id = self.mint();
         let (completion, settled) = oneshot::channel();
         self.commands
@@ -145,6 +162,12 @@ impl PrnsNodeHandle {
                 completion,
             }))
             .map_err(|_| SendError::NodeStopped)?;
+        Ok(settled)
+    }
+
+    pub(super) async fn observe_request(
+        settled: PendingRequest,
+    ) -> Result<(std::vec::Vec<u8>, RttMillis), SendError<SendRequestFailure>> {
         match settled.await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(failure)) => Err(SendError::Failed(failure)),

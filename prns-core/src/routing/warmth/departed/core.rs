@@ -58,6 +58,17 @@ impl<C: DepartedInterfaceTable> DepartedInterfaces<C> {
         });
     }
 
+    pub(crate) fn forget_administrative_scope(&mut self, interface: InterfaceId) {
+        let mut index = 0;
+        while index < self.table.len() {
+            if interface.administrative_scope_contains(self.table.interfaces()[index]) {
+                self.table.swap_remove(index);
+            } else {
+                index += 1;
+            }
+        }
+    }
+
     pub fn evict_expired(&mut self, now: InstantMillis) -> usize {
         let mut evicted = 0;
         while let Some(index) = self

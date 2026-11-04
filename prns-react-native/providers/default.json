@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "providers": [
+    {
+      "id": "default",
+      "manifest": "../../prns-host/bindings/uniffi/image/Cargo.toml",
+      "package": "prns-host-uniffi-image",
+      "libraryName": "prns_host_mobile",
+      "crateDirectory": "../../prns-host/bindings/uniffi/image",
+      "features": [],
+      "generationFeatures": ["uniffi-bindgen"]
+    }
+  ]
+}

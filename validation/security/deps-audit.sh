@@ -15,6 +15,42 @@ fi
 python3 "$root/validation/security/license-policy-parity.py"
 
 graphs=(
+    "app-android|applications/prns/chat-app/Cargo.toml|aarch64-linux-android"
+    "app-ios|applications/prns/chat-app/Cargo.toml|aarch64-apple-ios"
+    "service-runtime-connections-linux|prns-service-runtime/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu|connections"
+    "service-runtime-connections-macos|prns-service-runtime/bindings/uniffi/image/Cargo.toml|aarch64-apple-darwin|connections"
+    "service-runtime-linux|prns-service-runtime/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu"
+    "service-runtime-selected-linux|prns-service-runtime/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu|archive text contact-card connections"
+    "service-runtime-macos|prns-service-runtime/bindings/uniffi/image/Cargo.toml|aarch64-apple-darwin"
+    "service-runtime-selected-macos|prns-service-runtime/bindings/uniffi/image/Cargo.toml|aarch64-apple-darwin|archive text contact-card connections"
+    "service-runtime-groups-linux|prns-service-runtime/Cargo.toml|x86_64-unknown-linux-gnu|groups"
+    "service-runtime-groups-network-linux|prns-service-runtime/Cargo.toml|x86_64-unknown-linux-gnu|groups-network archive"
+    "service-runtime-groups-macos|prns-service-runtime/Cargo.toml|aarch64-apple-darwin|groups"
+    "service-runtime-groups-network-macos|prns-service-runtime/Cargo.toml|aarch64-apple-darwin|groups-network archive"
+    "service-runtime-groups-android|prns-service-runtime/Cargo.toml|aarch64-linux-android|groups"
+    "service-runtime-groups-network-android|prns-service-runtime/Cargo.toml|aarch64-linux-android|groups-network archive"
+    "service-runtime-groups-ios|prns-service-runtime/Cargo.toml|aarch64-apple-ios|groups"
+    "service-runtime-groups-network-ios|prns-service-runtime/Cargo.toml|aarch64-apple-ios|groups-network archive"
+    "group-native-local-linux|prns-groups/tests/fixtures/local-consumer/Cargo.toml|x86_64-unknown-linux-gnu"
+    "group-native-local-macos|prns-groups/tests/fixtures/local-consumer/Cargo.toml|aarch64-apple-darwin"
+    "group-native-bindings-linux|prns-groups/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu"
+    "group-native-bindings-macos|prns-groups/bindings/uniffi/image/Cargo.toml|aarch64-apple-darwin"
+    "group-headless-peer|prns-groups/Cargo.toml|x86_64-unknown-linux-gnu|headless"
+
+    "group-mls-adapter|prns-groups/security/mls-rs/Cargo.toml|x86_64-unknown-linux-gnu"
+    "group-libraries|prns-groups/Cargo.toml|x86_64-unknown-linux-gnu"
+    "group-secure-storage|prns-groups/Cargo.toml|x86_64-unknown-linux-gnu|prns-groups-store/secure"
+    "identity-keys-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu"
+    "identity-keys-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin"
+    "identity-catalog-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu|catalog"
+    "identity-catalog-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin|catalog"
+    "identity-key-card-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu|contact-card"
+    "identity-key-card-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin|contact-card"
+    "identity-catalog-card-linux|prns-identities/bindings/uniffi/Cargo.toml|x86_64-unknown-linux-gnu|catalog contact-card"
+    "identity-catalog-card-macos|prns-identities/bindings/uniffi/Cargo.toml|aarch64-apple-darwin|catalog contact-card"
+    "contact-card|prns-contact-card/Cargo.toml|x86_64-unknown-linux-gnu"
+    "identity-storage|prns-identities/Cargo.toml|x86_64-unknown-linux-gnu|redb-store"
+    "storage-redb|prns-storage/Cargo.toml|x86_64-unknown-linux-gnu|prns-storage/redb"
     "engine|Cargo.toml|x86_64-unknown-linux-gnu"
     "daemon-linux|prnsd/Cargo.toml|x86_64-unknown-linux-gnu"
     "daemon-macos|prnsd/Cargo.toml|aarch64-apple-darwin"
@@ -44,16 +80,33 @@ graphs=(
     "flasher-linux-x64|personal-hopspot/flasher/Cargo.toml|x86_64-unknown-linux-gnu"
     "flasher-linux-arm64|personal-hopspot/flasher/Cargo.toml|aarch64-unknown-linux-gnu"
     "flasher-windows-x64|personal-hopspot/flasher/Cargo.toml|x86_64-pc-windows-msvc"
+    "host-runtime-connections-linux|prns-host/impls/runtime/Cargo.toml|x86_64-unknown-linux-gnu|connections"
+    "host-connections-linux|prns-host/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu|connections"
+    "host-connections-macos|prns-host/bindings/uniffi/image/Cargo.toml|aarch64-apple-darwin|connections"
+    "host-connections-android|prns-host/bindings/uniffi/image/Cargo.toml|aarch64-linux-android|connections"
+    "host-connections-ios|prns-host/bindings/uniffi/image/Cargo.toml|aarch64-apple-ios|connections"
+    "host-runtime-linux|prns-host/impls/runtime/Cargo.toml|x86_64-unknown-linux-gnu"
+    "expo-host-linux|prns-host/bindings/uniffi/image/Cargo.toml|x86_64-unknown-linux-gnu"
+    "expo-android|prns-host/bindings/uniffi/image/Cargo.toml|aarch64-linux-android"
+    "expo-ios|prns-host/bindings/uniffi/image/Cargo.toml|aarch64-apple-ios"
 )
 
 for graph in "${graphs[@]}"; do
-    IFS='|' read -r name manifest target <<<"$graph"
-    echo "[dependency-audit] $name ($target)"
+    IFS='|' read -r name manifest target features <<<"$graph"
+    deny_args=(
+        --manifest-path "$root/$manifest"
+        --target "$target"
+        --locked
+        --exclude-dev
+    )
+    if [[ -n "$features" ]]; then
+        deny_args+=(--features "$features")
+        echo "[dependency-audit] $name ($target, default features plus $features)"
+    else
+        echo "[dependency-audit] $name ($target)"
+    fi
     cargo deny \
-        --manifest-path "$root/$manifest" \
-        --target "$target" \
-        --locked \
-        --exclude-dev \
+        "${deny_args[@]}" \
         check \
         --config "$root/deny.toml" \
         advisories licenses sources bans

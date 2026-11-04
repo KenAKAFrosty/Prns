@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "directories": [
+    "prns/bindings/typescript",
+    "prns/bindings/swift",
+    "prns/bindings/kotlin"
+  ],
+  "files": [
+    "prns/bindings/index.ts",
+    "prns/bindings/index.native.ts"
+  ],
+  "scaffolding": [
+    "prns/bindings/package.json",
+    "prns/bindings/README.md"
+  ]
+}

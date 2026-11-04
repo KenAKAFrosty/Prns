@@ -143,7 +143,7 @@ fun ResourceStream.chunks(maximumBytes: Int = 64 * 1024): Flow<Bytes> = flow {
     }
 }
 
-private class NativeResourceStream(
+private class HostRuntimeResourceStream(
     pointer: Pointer,
     override val totalBytes: ULong,
 ) : ResourceStream {
@@ -258,7 +258,7 @@ private class EventReader(private val pointer: Pointer) {
             NativeApi.library.prns_event_resource_stream(pointer, output),
             "claimResourceStream",
         )
-        return NativeResourceStream(
+        return HostRuntimeResourceStream(
             pointer = requireNotNull(output.value),
             totalBytes = u64(EventField.TOTAL_BYTES).toULong(),
         )
@@ -282,6 +282,8 @@ internal fun decodeApplicationEvent(pointer: Pointer): ApplicationEvent {
             linkId = LinkId(event.bytes(EventField.LINK_ID)),
             sourceInterface = InterfaceId(event.bytes(EventField.SOURCE_INTERFACE)),
             plaintext = Bytes(event.bytes(EventField.PLAINTEXT)),
+            localDestination = event.optionalBytes(EventField.LOCAL_DESTINATION)?.let(::DestinationHash),
+            arrivedAtMillis = event.u64(EventField.ARRIVED_AT_MILLIS),
         )
         ApplicationEventKind.REQUEST -> ApplicationEventRequest(
             destination = DestinationHash(event.bytes(EventField.DESTINATION)),

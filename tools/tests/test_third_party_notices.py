@@ -4,6 +4,7 @@ from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
 from io import StringIO
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -73,6 +74,7 @@ class ThirdPartyNoticeTests(unittest.TestCase):
             )
             with (
                 mock.patch.object(notices, "ROOT", root),
+                mock.patch.object(notices.runtime_notices, "input_paths", return_value=()),
                 mock.patch.object(notices, "ABOUT", root / "about.toml"),
                 mock.patch.object(notices, "__file__", str(root / "generator.py")),
             ):
@@ -81,7 +83,9 @@ class ThirdPartyNoticeTests(unittest.TestCase):
                     for path in notices.notice_input_paths()
                     if path.name in {"Cargo.toml", "Cargo.lock"}
                 }
-            self.assertEqual(actual, {"Cargo.toml", "Cargo.lock", "member/Cargo.toml"})
+            self.assertEqual(actual, {
+                "Cargo.toml", "Cargo.lock", "member/Cargo.toml",
+            })
 
     def test_unavailable_tracked_inventory_fails_closed(self) -> None:
         with mock.patch.object(notices.subprocess, "run") as run:
@@ -226,6 +230,118 @@ class ThirdPartyNoticeTests(unittest.TestCase):
         self.assertIn(f"+++ {output} (generated)", diagnostic)
         self.assertIn("-old notice", diagnostic)
         self.assertIn("+new notice", diagnostic)
+
+
+    def test_missing_required_peers_remain_prominent_in_rendered_notices(self) -> None:
+            npm = {'packages': [], 'unresolved_optional': [], 'unselected_optional_peers': [],
+                   'unresolved_required_peers': [['app', 'node_modules/drawer', 'gesture', '>=2']]}
+            maven = {'packages': [], 'manual_review': {'summary': 'Pending review.',
+                     'declarations': [{'name': 'ML Kit Terms of Service',
+                                       'coordinates': ['com.google.mlkit:common:18.11.0']}]}}
+            rendered = '\n'.join(notices.app_notice_lines(npm, maven))
+            self.assertIn('**Manual release-policy review pending:** Pending review.', rendered)
+            self.assertIn('**Manual review — ML Kit Terms of Service:** `com.google.mlkit:common:18.11.0`', rendered)
+            self.assertNotIn('**Unresolved release review:**', rendered)
+            self.assertIn('1 unresolved required peer declarations', rendered)
+            self.assertIn('**Unresolved required peer:** `app/node_modules/drawer` requires `gesture@>=2`', rendered)
+            self.assertIn('Missing required peers remain release-audit failures.', rendered)
+            self.assertIn('does not prove runtime dependency completeness', rendered)
+
+    def test_packaged_maven_text_is_deduplicated_deterministically_without_license_inference(self) -> None:
+            rows = [
+                {'coordinate': 'a:one:1', 'artifact':'one.aar', 'name':'Bundled component',
+                 'text':'Copyright owner\r\nPermission text  \n', 'profiles':['releaseRuntimeClasspath']},
+                {'coordinate': 'b:two:2', 'artifact':'two.aar', 'name':'Other component',
+                 'text':'Copyright owner\nPermission text\n', 'profiles':['debugRuntimeClasspath']},
+            ]
+            first, second = {}, {}
+            notices.add_maven_notices(first, {'notices':rows})
+            notices.add_maven_notices(second, {'notices':list(reversed(rows))})
+            self.assertEqual(len(first), 1)
+            self.assertEqual(notices.license_text_lines(first), notices.license_text_lines(second))
+            rendered='\n'.join(notices.license_text_lines(first))
+            self.assertIn('policy review remains unresolved', rendered)
+            self.assertIn('a:one:1 / Bundled component', rendered)
+            self.assertIn('application Android releaseRuntimeClasspath', rendered)
+            self.assertNotIn('MIT', rendered)
+
+    def test_composed_and_app_images_keep_independent_shipping_feature_graphs(self) -> None:
+            graphs = {name: (manifest, target) for name, manifest, target in notices.GRAPHS}
+            self.assertEqual(graphs['Service runtime Linux'], ("prns-service-runtime/bindings/uniffi/image/Cargo.toml", 'x86_64-unknown-linux-gnu'))
+            self.assertNotIn('Service runtime Linux', notices.GRAPH_FEATURES)
+            self.assertEqual(graphs['Service runtime selected Linux'], graphs['Service runtime Linux'])
+            self.assertEqual(notices.GRAPH_FEATURES['Service runtime selected Linux'], ("archive", "text", "contact-card", "connections"))
+            self.assertEqual(graphs['Service runtime macOS'], ("prns-service-runtime/bindings/uniffi/image/Cargo.toml", 'aarch64-apple-darwin'))
+            self.assertNotIn('Service runtime macOS', notices.GRAPH_FEATURES)
+            self.assertEqual(graphs['Service runtime selected macOS'], graphs['Service runtime macOS'])
+            self.assertEqual(notices.GRAPH_FEATURES['Service runtime selected macOS'], ("archive", "text", "contact-card", "connections"))
+            self.assertEqual(graphs['App Android'], ("applications/prns/chat-app/Cargo.toml", 'aarch64-linux-android'))
+            self.assertNotIn('App Android', notices.GRAPH_FEATURES)
+            self.assertEqual(graphs['App iOS'], ("applications/prns/chat-app/Cargo.toml", 'aarch64-apple-ios'))
+            self.assertNotIn('App iOS', notices.GRAPH_FEATURES)
+
+    def test_app_runtime_and_SDK_audit_preserve_target_feature_selections(self) -> None:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                security = root / "validation/security"
+                security.mkdir(parents=True)
+                script = security / "deps-audit.sh"
+                script.write_bytes((ROOT / "validation/security/deps-audit.sh").read_bytes())
+                binaries = root / "bin"
+                binaries.mkdir()
+                cargo = binaries / "cargo"
+                cargo.write_text(
+                    '#!/bin/sh\ncase "$*" in\n'
+                    '"deny --version") echo "cargo-deny 0.19.8" ;;\n'
+                    '"about --version") echo "cargo-about 0.9.1" ;;\n'
+                    '*) printf "CALL\\n" >> "$NOTICE_TEST_CARGO_LOG"; '
+                    'printf "%s\\n" "$@" >> "$NOTICE_TEST_CARGO_LOG" ;;\nesac\n',
+                    encoding="utf-8",
+                )
+                cargo.chmod(0o755)
+                tools = root / "tools"
+                tools.mkdir()
+                for stub in (binaries / "python3", binaries / "npm", tools / "prns"):
+                    stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                    stub.chmod(0o755)
+                cargo_log = root / "cargo-calls.txt"
+                result = subprocess.run(
+                    ["/bin/bash", str(script)],
+                    env={
+                        **os.environ,
+                        "PATH": f"{binaries}:/usr/bin:/bin",
+                        "NOTICE_TEST_CARGO_LOG": str(cargo_log),
+                    },
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                commands = [call.splitlines() for call in cargo_log.read_text().split("CALL\n")[1:]]
+                graphs = set()
+                for command in commands:
+                    self.assertEqual(command[0], "deny")
+                    self.assertIn("--locked", command)
+                    self.assertIn("--exclude-dev", command)
+                    self.assertNotIn("--all-features", command)
+                    self.assertNotIn("--no-default-features", command)
+                    manifest = Path(command[command.index("--manifest-path") + 1]).relative_to(root).as_posix()
+                    target = command[command.index("--target") + 1]
+                    features = (
+                        tuple(command[command.index("--features") + 1].split())
+                        if "--features" in command else ()
+                    )
+                    graphs.add((manifest, target, features))
+                # App graphs and inherited runtime/SDK selections
+                # must retain the same target and feature selection in the audit.
+                expected = {
+                    (manifest, target, notices.GRAPH_FEATURES.get(name, ()))
+                    for name, manifest, target in notices.GRAPHS
+                    if name.startswith(("App ", "Service runtime ", "Expo "))
+                }
+                self.assertTrue(expected <= graphs)
+                self.assertEqual(len(commands), len(graphs))
+                self.assertIn("app-android (aarch64-linux-android)", result.stdout)
+                self.assertIn("app-ios (aarch64-apple-ios)", result.stdout)
 
 
 if __name__ == "__main__":

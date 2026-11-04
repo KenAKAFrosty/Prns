@@ -1,0 +1,32 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.google.mlkit</groupId>
+  <artifactId>barcode-scanning-common</artifactId>
+  <version>17.0.0</version>
+  <packaging>aar</packaging>
+  <dependencies>
+    <dependency>
+      <groupId>com.google.android.gms</groupId>
+      <artifactId>play-services-basement</artifactId>
+      <version>18.0.0</version>
+      <scope>compile</scope>
+      <type>aar</type>
+    </dependency>
+    <dependency>
+      <groupId>com.google.mlkit</groupId>
+      <artifactId>vision-common</artifactId>
+      <version>17.0.0</version>
+      <scope>compile</scope>
+      <type>aar</type>
+    </dependency>
+  </dependencies>
+  <name>barcode-scanning-common</name>
+  <licenses>
+    <license>
+      <name>ML Kit Terms of Service</name>
+      <url>https://developers.google.com/ml-kit/terms</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+</project>

@@ -1,0 +1,44 @@
+[
+  {
+    "file": "src/index.ts",
+    "url": "https://raw.githubusercontent.com/evert/structured-header/080859e568bac3f128cfff3c8a9b924180f429ca/src/index.ts",
+    "match": true,
+    "published_sha256": "dc75e7b22127c0862bec10824333000803af7d24a00d2d9047643e5b2e7c7c41",
+    "upstream_sha256": "dc75e7b22127c0862bec10824333000803af7d24a00d2d9047643e5b2e7c7c41"
+  },
+  {
+    "file": "src/parser.ts",
+    "url": "https://raw.githubusercontent.com/evert/structured-header/080859e568bac3f128cfff3c8a9b924180f429ca/src/parser.ts",
+    "match": true,
+    "published_sha256": "7c02fddd266009aabbe5bb9704312762050a157fa8056b3beb7b3cf9dc603f8b",
+    "upstream_sha256": "7c02fddd266009aabbe5bb9704312762050a157fa8056b3beb7b3cf9dc603f8b"
+  },
+  {
+    "file": "src/serializer.ts",
+    "url": "https://raw.githubusercontent.com/evert/structured-header/080859e568bac3f128cfff3c8a9b924180f429ca/src/serializer.ts",
+    "match": true,
+    "published_sha256": "be30cbb1e238820a716830d13cda0dcd4eb08fb0ed5ae2aa30332bed86b0de07",
+    "upstream_sha256": "be30cbb1e238820a716830d13cda0dcd4eb08fb0ed5ae2aa30332bed86b0de07"
+  },
+  {
+    "file": "src/token.ts",
+    "url": "https://raw.githubusercontent.com/evert/structured-header/080859e568bac3f128cfff3c8a9b924180f429ca/src/token.ts",
+    "match": true,
+    "published_sha256": "1059f155441b669773495e8a1fef66cb844d94fbf49ab548c549d5205c5281f5",
+    "upstream_sha256": "1059f155441b669773495e8a1fef66cb844d94fbf49ab548c549d5205c5281f5"
+  },
+  {
+    "file": "src/types.ts",
+    "url": "https://raw.githubusercontent.com/evert/structured-header/080859e568bac3f128cfff3c8a9b924180f429ca/src/types.ts",
+    "match": true,
+    "published_sha256": "0c76974ef1b9d0e0098b304f2a926b4a97da020b98b6f844b39bfabd15f8626d",
+    "upstream_sha256": "0c76974ef1b9d0e0098b304f2a926b4a97da020b98b6f844b39bfabd15f8626d"
+  },
+  {
+    "file": "src/util.ts",
+    "url": "https://raw.githubusercontent.com/evert/structured-header/080859e568bac3f128cfff3c8a9b924180f429ca/src/util.ts",
+    "match": true,
+    "published_sha256": "eeb1645c68cec287c881a683efa1bef79570baa174da9ede6c6f1fccb600fa0d",
+    "upstream_sha256": "eeb1645c68cec287c881a683efa1bef79570baa174da9ede6c6f1fccb600fa0d"
+  }
+]

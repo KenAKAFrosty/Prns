@@ -1,0 +1,7 @@
+# Expo prebuild projects and local caches are regenerated from app.config.ts and
+# the owned platform module. Native product source lives in ../platform.
+/ios/
+/android/
+/.expo/
+/dist/
+/coverage/

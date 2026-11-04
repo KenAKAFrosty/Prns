@@ -1,0 +1,2181 @@
+{
+  "schema": 1,
+  "scope": "Exact preserved POM source equality only. Does not prove artifact origin, full attribution, license-policy approval, or advisory clearance.",
+  "pom_evidence_sha256": "e03c8aae7ea58711b7357925c84a8d95652a08fd5983ecd69b11b5ba55d1983a",
+  "documents": [
+    {
+      "coordinate": "androidx.activity:activity-ktx:1.8.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/activity/activity-ktx/1.8.1/activity-ktx-1.8.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/activity/activity-ktx/1.8.1/activity-ktx-1.8.1.pom",
+        "sha256": "1ee72f3f15b81f052ff7432a5a89803e28a2708f7a5c39077a32d12d86bfe7f2",
+        "bytes": 3307,
+        "retrieved_at": "2026-11-03T19:27:09.580685+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.activity:activity:1.8.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/activity/activity/1.8.1/activity-1.8.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/activity/activity/1.8.1/activity-1.8.1.pom",
+        "sha256": "c0ccbb0f6bd3f3a4fe338811dd8aee19b4919f4197613ee801bf33dd6dd702d7",
+        "bytes": 4131,
+        "retrieved_at": "2026-11-03T19:27:09.545905+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.annotation:annotation-experimental:1.4.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/annotation/annotation-experimental/1.4.1/annotation-experimental-1.4.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/annotation/annotation-experimental/1.4.1/annotation-experimental-1.4.1.pom",
+        "sha256": "fe57b228417f4d7c677903dc61fb4a7cf993d603499de26d8d8113e477cc4f1b",
+        "bytes": 2031
+      }
+    },
+    {
+      "coordinate": "androidx.annotation:annotation-jvm:1.9.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.pom",
+        "sha256": "89b99c218d60019316b50aab79816707bc21696c896a030e1b1ae038961bcb8e",
+        "bytes": 1826
+      }
+    },
+    {
+      "coordinate": "androidx.annotation:annotation:1.9.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/annotation/annotation/1.9.1/annotation-1.9.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/annotation/annotation/1.9.1/annotation-1.9.1.pom",
+        "sha256": "c733881c2e17d5f7c8661cc02a9159cb160b7b2094a27d593916c87d3e250636",
+        "bytes": 2008
+      }
+    },
+    {
+      "coordinate": "androidx.appcompat:appcompat-resources:1.7.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/appcompat/appcompat-resources/1.7.1/appcompat-resources-1.7.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/appcompat/appcompat-resources/1.7.1/appcompat-resources-1.7.1.pom",
+        "sha256": "2faf922e8c3d706f29d862b3fbb3aa1347705c21c6eae18586d2bb1f7366ea01",
+        "bytes": 2993
+      }
+    },
+    {
+      "coordinate": "androidx.appcompat:appcompat:1.7.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/appcompat/appcompat/1.7.1/appcompat-1.7.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/appcompat/appcompat/1.7.1/appcompat-1.7.1.pom",
+        "sha256": "1f79910cc20de198acf3867b1e93f9ed59ddb643585b2e9c28ee55518af1bc00",
+        "bytes": 5366
+      }
+    },
+    {
+      "coordinate": "androidx.arch.core:core-common:2.2.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/arch/core/core-common/2.2.0/core-common-2.2.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/arch/core/core-common/2.2.0/core-common-2.2.0.pom",
+        "sha256": "1e17d4af8d6425be2a69f8af4d654a87e0456259a9eef1542869bcb023547e28",
+        "bytes": 1704
+      }
+    },
+    {
+      "coordinate": "androidx.arch.core:core-runtime:2.2.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/arch/core/core-runtime/2.2.0/core-runtime-2.2.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/arch/core/core-runtime/2.2.0/core-runtime-2.2.0.pom",
+        "sha256": "0f953706598140d9d8735cdd5aeb1fa35933f4e2f31c0bf3eb81a053a4c8c1a5",
+        "bytes": 1920
+      }
+    },
+    {
+      "coordinate": "androidx.autofill:autofill:1.3.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/autofill/autofill/1.3.0/autofill-1.3.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/autofill/autofill/1.3.0/autofill-1.3.0.pom",
+        "sha256": "6292a3975ee2bbe04b958197acee6a1da0ff6d0cddbad6abbf9f4adbafb8eac9",
+        "bytes": 1810
+      }
+    },
+    {
+      "coordinate": "androidx.camera.featurecombinationquery:featurecombinationquery:1.6.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/camera/featurecombinationquery/featurecombinationquery/1.6.0/featurecombinationquery-1.6.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/camera/featurecombinationquery/featurecombinationquery/1.6.0/featurecombinationquery-1.6.0.pom",
+        "sha256": "776b35a36198dce2c6262ca8f5869453edcade5e91157da35ad8ebbc3d8e6979",
+        "bytes": 2876
+      }
+    },
+    {
+      "coordinate": "androidx.camera.viewfinder:viewfinder-core:1.5.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/camera/viewfinder/viewfinder-core/1.5.1/viewfinder-core-1.5.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/camera/viewfinder/viewfinder-core/1.5.1/viewfinder-core-1.5.1.pom",
+        "sha256": "064073c759c8a10cfe0faa49e63a2377a2863e7cf3843bb408bb87d131c917c7",
+        "bytes": 3468
+      }
+    },
+    {
+      "coordinate": "androidx.camera:camera-camera2-pipe:1.6.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-camera2-pipe/1.6.0/camera-camera2-pipe-1.6.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-camera2-pipe/1.6.0/camera-camera2-pipe-1.6.0.pom",
+        "sha256": "fec6f3a22a44eedf184fcb7d271b4d2d27dbdb88d910a1e2a7e1f22a456ea8b8",
+        "bytes": 4482
+      }
+    },
+    {
+      "coordinate": "androidx.camera:camera-camera2:1.6.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-camera2/1.6.0/camera-camera2-1.6.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-camera2/1.6.0/camera-camera2-1.6.0.pom",
+        "sha256": "fd0257e94e0857b5620dbf1c2f51948dd164869286bc020932d83e7228cd26d6",
+        "bytes": 6448
+      }
+    },
+    {
+      "coordinate": "androidx.camera:camera-core:1.6.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-core/1.6.0/camera-core-1.6.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-core/1.6.0/camera-core-1.6.0.pom",
+        "sha256": "383aa8b63f95c4da4c2bfff8daabeb508024f5d715a8ca31099a06f9a6d96d55",
+        "bytes": 7109
+      }
+    },
+    {
+      "coordinate": "androidx.camera:camera-extensions:1.6.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-extensions/1.6.0/camera-extensions-1.6.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-extensions/1.6.0/camera-extensions-1.6.0.pom",
+        "sha256": "1867144097503ba68f9a765f29ba1c6643becc625dcd3558011d5fb4634be7a1",
+        "bytes": 5624
+      }
+    },
+    {
+      "coordinate": "androidx.camera:camera-lifecycle:1.6.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-lifecycle/1.6.0/camera-lifecycle-1.6.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-lifecycle/1.6.0/camera-lifecycle-1.6.0.pom",
+        "sha256": "732ee1ac6ee7ed2ea14c3a831d9d248210b8763f1d683dca2e2a67b4d96d6d6a",
+        "bytes": 5860
+      }
+    },
+    {
+      "coordinate": "androidx.camera:camera-mlkit-vision:1.6.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-mlkit-vision/1.6.0/camera-mlkit-vision-1.6.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-mlkit-vision/1.6.0/camera-mlkit-vision-1.6.0.pom",
+        "sha256": "a6f2381682b82bbabb4ac3ee71b5675b92cec3e27a3b5cd845a0c2e11d00ea3e",
+        "bytes": 5293
+      }
+    },
+    {
+      "coordinate": "androidx.camera:camera-video:1.6.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-video/1.6.0/camera-video-1.6.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-video/1.6.0/camera-video-1.6.0.pom",
+        "sha256": "50e4f04d9496b20968bf9ee38360c6745248121fc369295215d8b5468420e61c",
+        "bytes": 6016
+      }
+    },
+    {
+      "coordinate": "androidx.camera:camera-view:1.6.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-view/1.6.0/camera-view-1.6.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/camera/camera-view/1.6.0/camera-view-1.6.0.pom",
+        "sha256": "40a4f599ef7e38a6e412f216a77f25d7acc2a29d7f3014365ae32bc702cafd82",
+        "bytes": 6900
+      }
+    },
+    {
+      "coordinate": "androidx.cardview:cardview:1.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/cardview/cardview/1.0.0/cardview-1.0.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/cardview/cardview/1.0.0/cardview-1.0.0.pom",
+        "sha256": "e64ef4e08b58358fe27b599e6fe80a1b153db014c644beee630ab271061c3e6c",
+        "bytes": 1349
+      }
+    },
+    {
+      "coordinate": "androidx.collection:collection-jvm:1.4.4",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection-jvm/1.4.4/collection-jvm-1.4.4.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection-jvm/1.4.4/collection-jvm-1.4.4.pom",
+        "sha256": "fcf28f558dff79164f0b0810dfea9fd6070b67c2702422d721335627aaa42b00",
+        "bytes": 2414,
+        "retrieved_at": "2026-11-03T19:27:09.498526+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.collection:collection-ktx:1.4.4",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection-ktx/1.4.4/collection-ktx-1.4.4.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection-ktx/1.4.4/collection-ktx-1.4.4.pom",
+        "sha256": "5626665b063c033acbb950312f7434a4213e9285308767c6c51e94007a95294e",
+        "bytes": 2086,
+        "retrieved_at": "2026-11-03T19:27:09.498666+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.collection:collection:1.4.4",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection/1.4.4/collection-1.4.4.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection/1.4.4/collection-1.4.4.pom",
+        "sha256": "5850a06a1c8b6381c28664d9dcaab52803e46a060887b2f50dca17a3edf75c64",
+        "bytes": 2425,
+        "retrieved_at": "2026-11-03T19:27:09.489764+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.concurrent:concurrent-futures-ktx:1.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/concurrent/concurrent-futures-ktx/1.1.0/concurrent-futures-ktx-1.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/concurrent/concurrent-futures-ktx/1.1.0/concurrent-futures-ktx-1.1.0.pom",
+        "sha256": "c903f8f51e3f4ea5e7e1f0a6fe3be873c357221227d103d08d7fd042f4b7570c",
+        "bytes": 2143
+      }
+    },
+    {
+      "coordinate": "androidx.concurrent:concurrent-futures:1.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/concurrent/concurrent-futures/1.1.0/concurrent-futures-1.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/concurrent/concurrent-futures/1.1.0/concurrent-futures-1.1.0.pom",
+        "sha256": "748a34eb5d13d19d187adecaea82667fded5f1b0b98a655e13ed2e4a8b3d8ae6",
+        "bytes": 1888
+      }
+    },
+    {
+      "coordinate": "androidx.constraintlayout:constraintlayout-core:1.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/constraintlayout/constraintlayout-core/1.0.0/constraintlayout-core-1.0.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/constraintlayout/constraintlayout-core/1.0.0/constraintlayout-core-1.0.0.pom",
+        "sha256": "93e01622e90b5879bb950fedb5c417c8024555fdc779481bcee21a3b5977cb8c",
+        "bytes": 1434
+      }
+    },
+    {
+      "coordinate": "androidx.constraintlayout:constraintlayout:2.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/constraintlayout/constraintlayout/2.1.0/constraintlayout-2.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/constraintlayout/constraintlayout/2.1.0/constraintlayout-2.1.0.pom",
+        "sha256": "25104af5ae91efe5fe6c9178eee35f6b02e31349505738cceb4df2df8385b585",
+        "bytes": 2044
+      }
+    },
+    {
+      "coordinate": "androidx.coordinatorlayout:coordinatorlayout:1.2.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/coordinatorlayout/coordinatorlayout/1.2.0/coordinatorlayout-1.2.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/coordinatorlayout/coordinatorlayout/1.2.0/coordinatorlayout-1.2.0.pom",
+        "sha256": "0d1848e15e289c05937aaa36bf4c62659936bcddc95ce59edf386f8646fcbd22",
+        "bytes": 2608,
+        "retrieved_at": "2026-10-30T00:55:30.700659+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.core:core-backported-fixes:1.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/core/core-backported-fixes/1.0.0/core-backported-fixes-1.0.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/core/core-backported-fixes/1.0.0/core-backported-fixes-1.0.0.pom",
+        "sha256": "539ad0c516cb9465acf63ca651a97e4d168e284e3a1c63c2326668acd046f68e",
+        "bytes": 2103
+      }
+    },
+    {
+      "coordinate": "androidx.core:core-ktx:1.18.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/core/core-ktx/1.18.0/core-ktx-1.18.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/core/core-ktx/1.18.0/core-ktx-1.18.0.pom",
+        "sha256": "3a5e0009e06517627756b9203d9a8f055fda87b215a17b775bae568697854196",
+        "bytes": 2450
+      }
+    },
+    {
+      "coordinate": "androidx.core:core-viewtree:1.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/core/core-viewtree/1.0.0/core-viewtree-1.0.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/core/core-viewtree/1.0.0/core-viewtree-1.0.0.pom",
+        "sha256": "d4f2ed1176fa8c5612b80f74c952a8799142a9ed36022a1a238fde5b140580d9",
+        "bytes": 2107
+      }
+    },
+    {
+      "coordinate": "androidx.core:core:1.18.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/core/core/1.18.0/core-1.18.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/core/core/1.18.0/core-1.18.0.pom",
+        "sha256": "57d644ebb37d309ad959d740157d8e8424e273b9c672842e4f4c758edc6d30e7",
+        "bytes": 4772
+      }
+    },
+    {
+      "coordinate": "androidx.cursoradapter:cursoradapter:1.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/cursoradapter/cursoradapter/1.0.0/cursoradapter-1.0.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/cursoradapter/cursoradapter/1.0.0/cursoradapter-1.0.0.pom",
+        "sha256": "62d95c89850af21030b19f14d5f7ecd6d8bcc9a3014c59002ec99624caac8100",
+        "bytes": 1611
+      }
+    },
+    {
+      "coordinate": "androidx.customview:customview:1.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/customview/customview/1.1.0/customview-1.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/customview/customview/1.1.0/customview-1.1.0.pom",
+        "sha256": "c814d435f73e9e6d169886d0eb96b5c5361feb48449fbbb315c908c03c588c94",
+        "bytes": 1957
+      }
+    },
+    {
+      "coordinate": "androidx.documentfile:documentfile:1.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/documentfile/documentfile/1.1.0/documentfile-1.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/documentfile/documentfile/1.1.0/documentfile-1.1.0.pom",
+        "sha256": "f3d68f5cc51f74d5415eefa617b5e6539aa89a941525762940a812e78415e4a8",
+        "bytes": 2433
+      }
+    },
+    {
+      "coordinate": "androidx.drawerlayout:drawerlayout:1.1.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/drawerlayout/drawerlayout/1.1.1/drawerlayout-1.1.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/drawerlayout/drawerlayout/1.1.1/drawerlayout-1.1.1.pom",
+        "sha256": "c12fa903ba53005962a72405f37896608718f41673fc4a62312e4536132f6f45",
+        "bytes": 1986
+      }
+    },
+    {
+      "coordinate": "androidx.dynamicanimation:dynamicanimation:1.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/dynamicanimation/dynamicanimation/1.1.0/dynamicanimation-1.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/dynamicanimation/dynamicanimation/1.1.0/dynamicanimation-1.1.0.pom",
+        "sha256": "caecb7b379585d8e4070ebafae3974a137c6689de8077f9165935b3605784a93",
+        "bytes": 2620
+      }
+    },
+    {
+      "coordinate": "androidx.emoji2:emoji2-views-helper:1.3.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/emoji2/emoji2-views-helper/1.3.0/emoji2-views-helper-1.3.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/emoji2/emoji2-views-helper/1.3.0/emoji2-views-helper-1.3.0.pom",
+        "sha256": "2673b0f5859d4361a4e9a30457852a6745d0c3c85b5e0412070483f3963ef526",
+        "bytes": 3230,
+        "retrieved_at": "2026-11-03T19:27:09.528357+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.emoji2:emoji2:1.3.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/emoji2/emoji2/1.3.0/emoji2-1.3.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/emoji2/emoji2/1.3.0/emoji2-1.3.0.pom",
+        "sha256": "14ebbea8234f013211965fdd08b42ee907ce0075af321018c8c2865c2e5db0eb",
+        "bytes": 3702,
+        "retrieved_at": "2026-11-03T19:27:09.635186+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.exifinterface:exifinterface:1.4.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/exifinterface/exifinterface/1.4.2/exifinterface-1.4.2.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/exifinterface/exifinterface/1.4.2/exifinterface-1.4.2.pom",
+        "sha256": "b11c0763f3094d28664412b7d3316bb5d1a785810fb7b4fe5f356cd5cbcd1725",
+        "bytes": 2004
+      }
+    },
+    {
+      "coordinate": "androidx.fragment:fragment-ktx:1.8.9",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/fragment/fragment-ktx/1.8.9/fragment-ktx-1.8.9.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/fragment/fragment-ktx/1.8.9/fragment-ktx-1.8.9.pom",
+        "sha256": "3f49efd6a604e2990d4baa332079c1f6b539891ea03026f1d673ca5dcf7f034f",
+        "bytes": 4047,
+        "retrieved_at": "2026-10-30T00:55:30.700659+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.fragment:fragment:1.8.9",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/fragment/fragment/1.8.9/fragment-1.8.9.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/fragment/fragment/1.8.9/fragment-1.8.9.pom",
+        "sha256": "8135a58b3ec9379c8afb4acce863f35e7654fddf1c602191f8d3feec13afed36",
+        "bytes": 5416,
+        "retrieved_at": "2026-10-30T00:55:30.700659+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.graphics:graphics-shapes-android:1.0.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/graphics/graphics-shapes-android/1.0.1/graphics-shapes-android-1.0.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/graphics/graphics-shapes-android/1.0.1/graphics-shapes-android-1.0.1.pom",
+        "sha256": "81de7bcc8549084d104d5af33b120f93e10d45424a15a454cfa1f24304aa4d11",
+        "bytes": 5079,
+        "retrieved_at": "2026-11-03T19:27:09.648497+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.graphics:graphics-shapes:1.0.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/graphics/graphics-shapes/1.0.1/graphics-shapes-1.0.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/graphics/graphics-shapes/1.0.1/graphics-shapes-1.0.1.pom",
+        "sha256": "76b50ce664fa44a4b16542081e088991cf316ae6e723aa4cd01a62719f1a8a27",
+        "bytes": 2423,
+        "retrieved_at": "2026-11-03T19:27:09.644547+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.interpolator:interpolator:1.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/interpolator/interpolator/1.0.0/interpolator-1.0.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/interpolator/interpolator/1.0.0/interpolator-1.0.0.pom",
+        "sha256": "0ddc07cc39699f48ecd9ec894b5830c0f09e22e82959294edf37217224c88b7b",
+        "bytes": 1608
+      }
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-common:2.6.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-common/2.6.2/lifecycle-common-2.6.2.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-common/2.6.2/lifecycle-common-2.6.2.pom",
+        "sha256": "57304cdac4da289a6ecdd0738e16b1d8858f1ef8e9fabe2d65a963719fd81dba",
+        "bytes": 6581,
+        "retrieved_at": "2026-11-03T19:27:09.632532+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-livedata-core-ktx:2.6.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-livedata-core-ktx/2.6.2/lifecycle-livedata-core-ktx-2.6.2.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-livedata-core-ktx/2.6.2/lifecycle-livedata-core-ktx-2.6.2.pom",
+        "sha256": "4c44c39dfe366934081f62f27cd975fc514d1f03985f59a218e842674aa2825b",
+        "bytes": 6147,
+        "retrieved_at": "2026-11-03T19:27:09.660424+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-livedata-core:2.6.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-livedata-core/2.6.2/lifecycle-livedata-core-2.6.2.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-livedata-core/2.6.2/lifecycle-livedata-core-2.6.2.pom",
+        "sha256": "1faf8ebf53f28b2f0ae2c2095371ae67d0ca16ac328fce7f163609a43214b5a4",
+        "bytes": 6490,
+        "retrieved_at": "2026-11-03T19:27:09.732433+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-livedata:2.6.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-livedata/2.6.2/lifecycle-livedata-2.6.2.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-livedata/2.6.2/lifecycle-livedata-2.6.2.pom",
+        "sha256": "d7c9e019cf68779387481877878f6c499d1786b85f2c0480e9264dd5097c51c0",
+        "bytes": 6510,
+        "retrieved_at": "2026-11-03T19:27:09.727377+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-process:2.6.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-process/2.6.2/lifecycle-process-2.6.2.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-process/2.6.2/lifecycle-process-2.6.2.pom",
+        "sha256": "1f14396ec764b44d37c143adacee01e5b68cb5f35a21bcd9cdebd7c83ea7d2e9",
+        "bytes": 6503,
+        "retrieved_at": "2026-11-03T19:27:09.727603+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-runtime-ktx:2.6.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-runtime-ktx/2.6.2/lifecycle-runtime-ktx-2.6.2.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-runtime-ktx/2.6.2/lifecycle-runtime-ktx-2.6.2.pom",
+        "sha256": "69c6ca9ff9fc9c6940bd55ef91c5b7b57deabab686d2c64a5af85152f29904cd",
+        "bytes": 6523,
+        "retrieved_at": "2026-11-03T19:27:09.748600+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-runtime:2.6.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-runtime/2.6.2/lifecycle-runtime-2.6.2.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-runtime/2.6.2/lifecycle-runtime-2.6.2.pom",
+        "sha256": "8175255546e2a5f510865f84ace680660954730240b1905d9175b4345beda977",
+        "bytes": 6877,
+        "retrieved_at": "2026-11-03T19:27:09.776200+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-viewmodel-ktx/2.6.2/lifecycle-viewmodel-ktx-2.6.2.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-viewmodel-ktx/2.6.2/lifecycle-viewmodel-ktx-2.6.2.pom",
+        "sha256": "1d336fbf91471fc497afdf9d875989261d08b564d021eaf275944865f526dcef",
+        "bytes": 6353,
+        "retrieved_at": "2026-11-03T19:27:09.777309+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-viewmodel-savedstate:2.6.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-viewmodel-savedstate/2.6.2/lifecycle-viewmodel-savedstate-2.6.2.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-viewmodel-savedstate/2.6.2/lifecycle-viewmodel-savedstate-2.6.2.pom",
+        "sha256": "7fc854440644cf52c35894d58d946b208e42769e8517d71a5efcba17865432de",
+        "bytes": 7139,
+        "retrieved_at": "2026-11-03T19:27:09.810740+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-viewmodel:2.6.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-viewmodel/2.6.2/lifecycle-viewmodel-2.6.2.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-viewmodel/2.6.2/lifecycle-viewmodel-2.6.2.pom",
+        "sha256": "a9fb0b39a8360beef7bdc8f3953d4d78f3d85304fc80adac3c8eaf530d758050",
+        "bytes": 6087,
+        "retrieved_at": "2026-11-03T19:27:09.840910+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.loader:loader:1.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/loader/loader/1.0.0/loader-1.0.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/loader/loader/1.0.0/loader-1.0.0.pom",
+        "sha256": "c978d550808b47434aa49a63164110a50b55b0bcc6160a93a2e37d5110df8c5e",
+        "bytes": 2207
+      }
+    },
+    {
+      "coordinate": "androidx.media3:media3-common:1.9.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/media3/media3-common/1.9.0/media3-common-1.9.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/media3/media3-common/1.9.0/media3-common-1.9.0.pom",
+        "sha256": "aed17d81e85da98ea766f9232f2a09fa9f1ab1433fbb824a8a4892d0e82ac0fc",
+        "bytes": 8043
+      }
+    },
+    {
+      "coordinate": "androidx.media3:media3-container:1.9.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/media3/media3-container/1.9.0/media3-container-1.9.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/media3/media3-container/1.9.0/media3-container-1.9.0.pom",
+        "sha256": "0120edcd6ce534b59d9ad4f1c5d8e6683fac283fe1a99359616d21664d5a4fbe",
+        "bytes": 1776
+      }
+    },
+    {
+      "coordinate": "androidx.media3:media3-muxer:1.9.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/media3/media3-muxer/1.9.0/media3-muxer-1.9.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/media3/media3-muxer/1.9.0/media3-muxer-1.9.0.pom",
+        "sha256": "47ca0d154bf41be19dff266aef5ca76cc327460233e5db6a09cebfb81dd3b6e6",
+        "bytes": 1971
+      }
+    },
+    {
+      "coordinate": "androidx.profileinstaller:profileinstaller:1.3.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/profileinstaller/profileinstaller/1.3.1/profileinstaller-1.3.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/profileinstaller/profileinstaller/1.3.1/profileinstaller-1.3.1.pom",
+        "sha256": "08263eb70a814a7cb26d11d3a83825f84c29f3e4b59f9134724e0e02e2bbd768",
+        "bytes": 2418,
+        "retrieved_at": "2026-11-03T19:27:09.921082+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.recyclerview:recyclerview:1.2.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/recyclerview/recyclerview/1.2.1/recyclerview-1.2.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/recyclerview/recyclerview/1.2.1/recyclerview-1.2.1.pom",
+        "sha256": "db162fcfc032cb737ba07faf2d1936c9ee362b74e0c38f31ccd2c6a2ccd79090",
+        "bytes": 2338
+      }
+    },
+    {
+      "coordinate": "androidx.resourceinspection:resourceinspection-annotation:1.0.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/resourceinspection/resourceinspection-annotation/1.0.1/resourceinspection-annotation-1.0.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/resourceinspection/resourceinspection-annotation/1.0.1/resourceinspection-annotation-1.0.1.pom",
+        "sha256": "b8eb4938ed95d7fcdaa2712ebca363e46a0f9228b8be7f23154def56846815dc",
+        "bytes": 1808
+      }
+    },
+    {
+      "coordinate": "androidx.savedstate:savedstate-ktx:1.2.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/savedstate/savedstate-ktx/1.2.1/savedstate-ktx-1.2.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/savedstate/savedstate-ktx/1.2.1/savedstate-ktx-1.2.1.pom",
+        "sha256": "d09553211f6703b19aefd608d6007c77132d27a281556a8e689d92764ec27d3b",
+        "bytes": 2236,
+        "retrieved_at": "2026-11-03T19:27:09.827156+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.savedstate:savedstate:1.2.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/savedstate/savedstate/1.2.1/savedstate-1.2.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/savedstate/savedstate/1.2.1/savedstate-1.2.1.pom",
+        "sha256": "0d33bc285df1e12f22780f1624a6f0b38ea2a6181b0955ec6641caf620c50cbf",
+        "bytes": 2549,
+        "retrieved_at": "2026-11-03T19:27:09.944931+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.startup:startup-runtime:1.1.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/startup/startup-runtime/1.1.1/startup-runtime-1.1.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/startup/startup-runtime/1.1.1/startup-runtime-1.1.1.pom",
+        "sha256": "f4114b5c6859bb1bc3caf281cb6d6f25998fa7f7292c64ceaea74a93210e746b",
+        "bytes": 1949
+      }
+    },
+    {
+      "coordinate": "androidx.swiperefreshlayout:swiperefreshlayout:1.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/swiperefreshlayout/swiperefreshlayout/1.1.0/swiperefreshlayout-1.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/swiperefreshlayout/swiperefreshlayout/1.1.0/swiperefreshlayout-1.1.0.pom",
+        "sha256": "0b8c55ce6910155a283ba98a6d094be6e0ef5e70a7371cd9fe9f71bf8ffd24ad",
+        "bytes": 2000
+      }
+    },
+    {
+      "coordinate": "androidx.tracing:tracing-android:1.3.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/tracing/tracing-android/1.3.0/tracing-android-1.3.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/tracing/tracing-android/1.3.0/tracing-android-1.3.0.pom",
+        "sha256": "0d00de26db0b0440e97a1f57ba461afa8e1dc6bad9be0e7bd779295530a4027c",
+        "bytes": 2379
+      }
+    },
+    {
+      "coordinate": "androidx.tracing:tracing-ktx:1.3.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/tracing/tracing-ktx/1.3.0/tracing-ktx-1.3.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/tracing/tracing-ktx/1.3.0/tracing-ktx-1.3.0.pom",
+        "sha256": "48c6be169601bb6f1f2b49f44379c17484381b7ebdd393aee814802622a3abd3",
+        "bytes": 2058
+      }
+    },
+    {
+      "coordinate": "androidx.tracing:tracing:1.3.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/tracing/tracing/1.3.0/tracing-1.3.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/tracing/tracing/1.3.0/tracing-1.3.0.pom",
+        "sha256": "9206f270a96977187c2827d37275e2cafd2272e58c238728661af5310814363f",
+        "bytes": 2392
+      }
+    },
+    {
+      "coordinate": "androidx.transition:transition-ktx:1.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/transition/transition-ktx/1.7.0/transition-ktx-1.7.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/transition/transition-ktx/1.7.0/transition-ktx-1.7.0.pom",
+        "sha256": "3b5cff7ada381c9925e2afe10fb38ac67b4debaf02f5ce16b7a025d98bbfd541",
+        "bytes": 2320,
+        "retrieved_at": "2026-10-30T00:55:30.700659+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.transition:transition:1.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/transition/transition/1.7.0/transition-1.7.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/transition/transition/1.7.0/transition-1.7.0.pom",
+        "sha256": "3fde268efe79514602c138adb2c73fa8d7032fce124925f01baf2e0c1dde2878",
+        "bytes": 3034,
+        "retrieved_at": "2026-10-30T00:55:30.700659+00:00"
+      }
+    },
+    {
+      "coordinate": "androidx.vectordrawable:vectordrawable-animated:1.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/vectordrawable/vectordrawable-animated/1.1.0/vectordrawable-animated-1.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/vectordrawable/vectordrawable-animated/1.1.0/vectordrawable-animated-1.1.0.pom",
+        "sha256": "276a20116b705fb75b9003ee9496c56f6fd3b32375fb232472811eba60a040bd",
+        "bytes": 1798
+      }
+    },
+    {
+      "coordinate": "androidx.vectordrawable:vectordrawable:1.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/vectordrawable/vectordrawable/1.1.0/vectordrawable-1.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/vectordrawable/vectordrawable/1.1.0/vectordrawable-1.1.0.pom",
+        "sha256": "5b0e2d5b2179e54804785cbc21ce5f473b5e1ddd55a57da482e94dcd39492bb2",
+        "bytes": 1726
+      }
+    },
+    {
+      "coordinate": "androidx.versionedparcelable:versionedparcelable:1.1.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/versionedparcelable/versionedparcelable/1.1.1/versionedparcelable-1.1.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/versionedparcelable/versionedparcelable/1.1.1/versionedparcelable-1.1.1.pom",
+        "sha256": "5f51e65873ca612de3838fa90d2ee95b8d040efd31b9c390a19bf94d615cdb2f",
+        "bytes": 1643
+      }
+    },
+    {
+      "coordinate": "androidx.viewpager2:viewpager2:1.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/viewpager2/viewpager2/1.0.0/viewpager2-1.0.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/viewpager2/viewpager2/1.0.0/viewpager2-1.0.0.pom",
+        "sha256": "4063bca7fe94fe65c98f4168f97ae10e02da0248598ad3ac21c432c7f608a17a",
+        "bytes": 2120
+      }
+    },
+    {
+      "coordinate": "androidx.viewpager:viewpager:1.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/viewpager/viewpager/1.0.0/viewpager-1.0.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/viewpager/viewpager/1.0.0/viewpager-1.0.0.pom",
+        "sha256": "1f72f836339d03c6eb013f65075e76ca87075a577578eb4f95f74a3a5d253128",
+        "bytes": 1997
+      }
+    },
+    {
+      "coordinate": "androidx.window:window-core-android:1.5.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/window/window-core-android/1.5.1/window-core-android-1.5.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/window/window-core-android/1.5.1/window-core-android-1.5.1.pom",
+        "sha256": "462ae4100a7bc2a0f1ff61f615091fc330d6e67aa0341747270c3d714c90e0cd",
+        "bytes": 3047
+      }
+    },
+    {
+      "coordinate": "androidx.window:window-core:1.5.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/window/window-core/1.5.1/window-core-1.5.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/window/window-core/1.5.1/window-core-1.5.1.pom",
+        "sha256": "2548b2304530681d715d636d5eec3f7cda29ffaa8e7b003ac97ba90b79f3d40d",
+        "bytes": 3189
+      }
+    },
+    {
+      "coordinate": "androidx.window:window:1.5.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/androidx/window/window/1.5.1/window-1.5.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/androidx/window/window/1.5.1/window-1.5.1.pom",
+        "sha256": "0a28fe17feed5c0175fbfbd6722ce78c575a1eeac09d858f08e49353f34707e0",
+        "bytes": 4032
+      }
+    },
+    {
+      "coordinate": "com.facebook.fbjni:fbjni:0.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fbjni/fbjni/0.7.0/fbjni-0.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fbjni/fbjni/0.7.0/fbjni-0.7.0.pom",
+        "sha256": "48b53b5dd4f70f3988e2bad97aa7bf5f9271369045cc0776ebe9e760d9703f04",
+        "bytes": 1719
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:animated-base:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/animated-base/3.7.0/animated-base-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/animated-base/3.7.0/animated-base-3.7.0.pom",
+        "sha256": "7041aa4e0957a8bfdc673271a79d5eac042147157e20d88158b151e532ab46db",
+        "bytes": 3923,
+        "retrieved_at": "2026-11-03T19:27:09.858330+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:animated-drawable:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/animated-drawable/3.7.0/animated-drawable-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/animated-drawable/3.7.0/animated-drawable-3.7.0.pom",
+        "sha256": "df5d8ebe4e5989aa8aef78af1e4a33af4a8e90cbede8a2fe49fe23f855208f93",
+        "bytes": 3374,
+        "retrieved_at": "2026-11-03T19:27:09.889009+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:animated-gif-lite:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/animated-gif-lite/3.7.0/animated-gif-lite-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/animated-gif-lite/3.7.0/animated-gif-lite-3.7.0.pom",
+        "sha256": "902311fd13f19f430e8b25a953b76ca275703614fafb166c9fa2c8354f609150",
+        "bytes": 2260,
+        "retrieved_at": "2026-11-03T19:27:09.953000+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:animated-gif:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/animated-gif/3.7.0/animated-gif-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/animated-gif/3.7.0/animated-gif-3.7.0.pom",
+        "sha256": "3891e75b8555c6a4ee5b01a96efc104997695839b99ee3d0270aad31ac92ba07",
+        "bytes": 2794,
+        "retrieved_at": "2026-11-03T19:27:09.913447+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:drawee:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/drawee/3.7.0/drawee-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/drawee/3.7.0/drawee-3.7.0.pom",
+        "sha256": "f0bcb53c6f9e02227cf2a579bd5fd836346d686db6da125f8eba2309aaf0d0d5",
+        "bytes": 3367,
+        "retrieved_at": "2026-11-03T19:27:09.909071+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:fbcore:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/fbcore/3.7.0/fbcore-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/fbcore/3.7.0/fbcore-3.7.0.pom",
+        "sha256": "21c44042fd7177a57c5e68cd2df706fb2fc20c847f8c2d9bb4f96b13df9f0330",
+        "bytes": 1867,
+        "retrieved_at": "2026-11-03T19:27:09.962243+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:fresco:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/fresco/3.7.0/fresco-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/fresco/3.7.0/fresco-3.7.0.pom",
+        "sha256": "f8525de9690c06547eef517d5bfa3f2f2fc4ef1347fba897011b0618c0a8e45a",
+        "bytes": 4311,
+        "retrieved_at": "2026-11-03T19:27:10.024658+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:imagepipeline-base:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/imagepipeline-base/3.7.0/imagepipeline-base-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/imagepipeline-base/3.7.0/imagepipeline-base-3.7.0.pom",
+        "sha256": "4eb31527850ba44d6c0375d2fa4fdb0ee207a877f1fe7c542dc90ae9b45ecf92",
+        "bytes": 2652,
+        "retrieved_at": "2026-11-03T19:27:09.977356+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:imagepipeline-native:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/imagepipeline-native/3.7.0/imagepipeline-native-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/imagepipeline-native/3.7.0/imagepipeline-native-3.7.0.pom",
+        "sha256": "f3b72e40ac4762a5fa05ad4eb6999f1c1188268356f90f52a939f8fe27aa4c39",
+        "bytes": 2443,
+        "retrieved_at": "2026-11-03T19:27:09.994543+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:imagepipeline-okhttp3:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/imagepipeline-okhttp3/3.7.0/imagepipeline-okhttp3-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/imagepipeline-okhttp3/3.7.0/imagepipeline-okhttp3-3.7.0.pom",
+        "sha256": "ab4f5d5e0f3dadbc1b1713dd0582dfc633aa38fc6033916dfc04ab3c6dfa9a28",
+        "bytes": 3255,
+        "retrieved_at": "2026-11-03T19:27:10.009142+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:imagepipeline:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/imagepipeline/3.7.0/imagepipeline-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/imagepipeline/3.7.0/imagepipeline-3.7.0.pom",
+        "sha256": "1ab93430424e5bee474adad5ca5389f03ce76553650bd06ca026ef75d8ebe00a",
+        "bytes": 3001,
+        "retrieved_at": "2026-11-03T19:27:10.010083+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:memory-type-ashmem:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/memory-type-ashmem/3.7.0/memory-type-ashmem-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/memory-type-ashmem/3.7.0/memory-type-ashmem-3.7.0.pom",
+        "sha256": "9f1a80b7fb4596a340bedc372e4d2f3600f335d7cd1581e825c15050669b867b",
+        "bytes": 1866,
+        "retrieved_at": "2026-11-03T19:27:10.027606+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:memory-type-java:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/memory-type-java/3.7.0/memory-type-java-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/memory-type-java/3.7.0/memory-type-java-3.7.0.pom",
+        "sha256": "0c01412e17618e9bef52e075323c9ed5afd1e07e3eef8d418e052471da6f1030",
+        "bytes": 2237,
+        "retrieved_at": "2026-11-03T19:27:10.044562+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:memory-type-native:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/memory-type-native/3.7.0/memory-type-native-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/memory-type-native/3.7.0/memory-type-native-3.7.0.pom",
+        "sha256": "ed67332ae71b53725cc91a6177c42308d6daf616ab4cfa4561f3d37e8c28f68b",
+        "bytes": 2244,
+        "retrieved_at": "2026-11-03T19:27:10.068687+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:middleware:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/middleware/3.7.0/middleware-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/middleware/3.7.0/middleware-3.7.0.pom",
+        "sha256": "07d68d03712849f95144f29aba3d417c6b2a840e4330b272b5290a633fbfb91f",
+        "bytes": 2255,
+        "retrieved_at": "2026-11-03T19:27:10.099476+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:nativeimagefilters:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/nativeimagefilters/3.7.0/nativeimagefilters-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/nativeimagefilters/3.7.0/nativeimagefilters-3.7.0.pom",
+        "sha256": "a47aae2ed3028db4585b0021f7cbed5c7edc014d6ba2164ad10ec7a5410d17e4",
+        "bytes": 3181,
+        "retrieved_at": "2026-11-03T19:27:10.109348+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:nativeimagetranscoder:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/nativeimagetranscoder/3.7.0/nativeimagetranscoder-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/nativeimagetranscoder/3.7.0/nativeimagetranscoder-3.7.0.pom",
+        "sha256": "eb28e13dbfd8bfa02430eb7f514f23d07506120d53dec6f8fd12971aaea8476e",
+        "bytes": 2451,
+        "retrieved_at": "2026-11-03T19:27:10.097417+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:soloader:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/soloader/3.7.0/soloader-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/soloader/3.7.0/soloader-3.7.0.pom",
+        "sha256": "aa95f751e40c4def4ef0e96a72e7aa54b093ca7f296d1c2ce5032b07db503c7a",
+        "bytes": 1856,
+        "retrieved_at": "2026-11-03T19:27:10.091889+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:ui-common:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/ui-common/3.7.0/ui-common-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/ui-common/3.7.0/ui-common-3.7.0.pom",
+        "sha256": "8e4718ef94ff1c630ae4ea04a1a9e1245e57827750197b2649d0797b8f824171",
+        "bytes": 1853,
+        "retrieved_at": "2026-11-03T19:27:10.116250+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:ui-core:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/ui-core/3.7.0/ui-core-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/ui-core/3.7.0/ui-core-3.7.0.pom",
+        "sha256": "440a276d95ed01ad3479f27663b97b1958e5496cff1563659890f234d32dfc60",
+        "bytes": 1676,
+        "retrieved_at": "2026-11-03T19:27:10.159246+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:urimod:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/urimod/3.7.0/urimod-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/urimod/3.7.0/urimod-3.7.0.pom",
+        "sha256": "62890d96e5d670448c0526e64ed661a6a976773c18bc2176fe1d88a74737d205",
+        "bytes": 2228,
+        "retrieved_at": "2026-11-03T19:27:10.182097+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-core-common-impl:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-core-common-impl/3.7.0/vito-core-common-impl-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-core-common-impl/3.7.0/vito-core-common-impl-3.7.0.pom",
+        "sha256": "d73cd1ea4bc6c7ec445396140c967c43e0bd7aabeb17107c41710268860a0e15",
+        "bytes": 3519,
+        "retrieved_at": "2026-11-03T19:27:10.201265+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-core-impl:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-core-impl/3.7.0/vito-core-impl-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-core-impl/3.7.0/vito-core-impl-3.7.0.pom",
+        "sha256": "17f5cc939eb2f9c594522e7198197834ff0d4efa981662424c908e6f68f73402",
+        "bytes": 4079,
+        "retrieved_at": "2026-11-03T19:27:10.179445+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-core-java-impl:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-core-java-impl/3.7.0/vito-core-java-impl-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-core-java-impl/3.7.0/vito-core-java-impl-3.7.0.pom",
+        "sha256": "60fc33e446e7e2cf77125a983f6ab1812d3993f7aa387ab8cf94358ce883f831",
+        "bytes": 3706,
+        "retrieved_at": "2026-11-03T19:27:10.192960+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-core:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-core/3.7.0/vito-core-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-core/3.7.0/vito-core-3.7.0.pom",
+        "sha256": "45e13350d5217a96fd8da90ae4a4fbb7a5d077109e9a09194e041c9bca41b539",
+        "bytes": 3294,
+        "retrieved_at": "2026-11-03T19:27:10.189241+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-drawee-support:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-drawee-support/3.7.0/vito-drawee-support-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-drawee-support/3.7.0/vito-drawee-support-3.7.0.pom",
+        "sha256": "4aeed2bfa9e59aa87345d173a314e8554c2bbb7c35e36455e0c6674f4a048b97",
+        "bytes": 2422,
+        "retrieved_at": "2026-11-03T19:27:10.245872+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-options:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-options/3.7.0/vito-options-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-options/3.7.0/vito-options-3.7.0.pom",
+        "sha256": "2327eadd722443200194a9debc34a5772e2bec39b91605d5c2c6131ca8401400",
+        "bytes": 2225,
+        "retrieved_at": "2026-11-03T19:27:10.245966+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-provider:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-provider/3.7.0/vito-provider-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-provider/3.7.0/vito-provider-3.7.0.pom",
+        "sha256": "016c7fd14e5d26852cbe6d8d63b81bc3acb12855e7c2e96451063617e86b4edd",
+        "bytes": 3158,
+        "retrieved_at": "2026-11-03T19:27:10.279335+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-renderer:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-renderer/3.7.0/vito-renderer-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-renderer/3.7.0/vito-renderer-3.7.0.pom",
+        "sha256": "619ab05d36b72389e9b0233f7702a19d10a416fd3d272cb7b614b23f2d05a6d6",
+        "bytes": 1687,
+        "retrieved_at": "2026-11-03T19:27:10.262178+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:vito-source:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-source/3.7.0/vito-source-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/vito-source/3.7.0/vito-source-3.7.0.pom",
+        "sha256": "a4961f07ade7b3a5b2e45f695db92ddbbce76003712636a6b336bc58059a8216",
+        "bytes": 2042,
+        "retrieved_at": "2026-11-03T19:27:10.256014+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.fresco:webpsupport:3.7.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/webpsupport/3.7.0/webpsupport-3.7.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/fresco/webpsupport/3.7.0/webpsupport-3.7.0.pom",
+        "sha256": "1f03895468bc824a66e3c274d0dfb677304fdb5470d7b5226c596e9c0ce4f7f8",
+        "bytes": 2650,
+        "retrieved_at": "2026-11-03T19:27:10.283076+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.hermes:hermes-android:260318099.0.5",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/hermes/hermes-android/260318099.0.5/hermes-android-260318099.0.5.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/hermes/hermes-android/260318099.0.5/hermes-android-260318099.0.5.pom",
+        "sha256": "90d4918a5bb53e0c8580046da212ccfd7bf863c297615be1e8ed14fbcd5655a4",
+        "bytes": 2213,
+        "retrieved_at": "2026-11-03T19:27:10.343060+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.infer.annotation:infer-annotation:0.18.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/infer/annotation/infer-annotation/0.18.0/infer-annotation-0.18.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/infer/annotation/infer-annotation/0.18.0/infer-annotation-0.18.0.pom",
+        "sha256": "d449ebd0489a1a00d03e4fc782b5345a0062f62519e1f1dd6bdb62d710e345bd",
+        "bytes": 3084
+      }
+    },
+    {
+      "coordinate": "com.facebook.react:react-android:0.88.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/react/react-android/0.88.1/react-android-0.88.1.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/react/react-android/0.88.1/react-android-0.88.1.pom",
+        "sha256": "f8ee73d7ce652c75f4eb3e629afa013cf30f93bc42f940297910059886f115c7",
+        "bytes": 5410,
+        "retrieved_at": "2026-11-03T19:27:10.334464+00:00"
+      }
+    },
+    {
+      "coordinate": "com.facebook.soloader:annotation:0.12.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/soloader/annotation/0.12.1/annotation-0.12.1.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/soloader/annotation/0.12.1/annotation-0.12.1.pom",
+        "sha256": "d7737ae5a34b9bd3a846b656191ad0be50b7a9480c990668882a56234e8428e6",
+        "bytes": 923
+      }
+    },
+    {
+      "coordinate": "com.facebook.soloader:nativeloader:0.12.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/soloader/nativeloader/0.12.1/nativeloader-0.12.1.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/soloader/nativeloader/0.12.1/nativeloader-0.12.1.pom",
+        "sha256": "de05d0217cb91cb552c8d04816aab408ad56eecc171d12bc2de6832b9ac2b8dc",
+        "bytes": 947
+      }
+    },
+    {
+      "coordinate": "com.facebook.soloader:soloader:0.12.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/soloader/soloader/0.12.1/soloader-0.12.1.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/soloader/soloader/0.12.1/soloader-0.12.1.pom",
+        "sha256": "2f99e4f764d3c25099faa8d8c24d1e5a37ec250ef395467a5f2e7317b99b6e9e",
+        "bytes": 1266
+      }
+    },
+    {
+      "coordinate": "com.facebook.yoga:proguard-annotations:1.19.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/facebook/yoga/proguard-annotations/1.19.0/proguard-annotations-1.19.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/facebook/yoga/proguard-annotations/1.19.0/proguard-annotations-1.19.0.pom",
+        "sha256": "9baf87787eac54aee385e374c2d688a45190493afa5da6459202f5ab23ab4966",
+        "bytes": 1465
+      }
+    },
+    {
+      "coordinate": "com.google.android.datatransport:transport-api:2.2.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/datatransport/transport-api/2.2.1/transport-api-2.2.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/android/datatransport/transport-api/2.2.1/transport-api-2.2.1.pom",
+        "sha256": "8118f805b855f18f1d12e5af59e914a7f6206f71bb1d1192a8ab9a8db4107afe",
+        "bytes": 932
+      }
+    },
+    {
+      "coordinate": "com.google.android.datatransport:transport-backend-cct:2.3.3",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/datatransport/transport-backend-cct/2.3.3/transport-backend-cct-2.3.3.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/android/datatransport/transport-backend-cct/2.3.3/transport-backend-cct-2.3.3.pom",
+        "sha256": "ab4e3c8df8bb695d6466df399f4c2e0da977c04d2fdea8a34ee51281683175b0",
+        "bytes": 1825
+      }
+    },
+    {
+      "coordinate": "com.google.android.datatransport:transport-runtime:2.2.6",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/datatransport/transport-runtime/2.2.6/transport-runtime-2.2.6.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/android/datatransport/transport-runtime/2.2.6/transport-runtime-2.2.6.pom",
+        "sha256": "aff04e2de298277827d2031cc265b5a28a030e54210a9ba3a018aa0859d29589",
+        "bytes": 1357
+      }
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-base:18.5.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-base/18.5.0/play-services-base-18.5.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-base/18.5.0/play-services-base-18.5.0.pom",
+        "sha256": "2570b515c2717af386c890e97f644782e3f86da7b677a4ff1036147e7ea622a4",
+        "bytes": 1767
+      }
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-basement:18.10.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-basement/18.10.0/play-services-basement-18.10.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-basement/18.10.0/play-services-basement-18.10.0.pom",
+        "sha256": "d1f9c4b799294ff77d6ee4efde6851f2614b81a125bcb491941699f5c5f29a9e",
+        "bytes": 1337
+      }
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-code-scanner:16.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-code-scanner/16.1.0/play-services-code-scanner-16.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-code-scanner/16.1.0/play-services-code-scanner-16.1.0.pom",
+        "sha256": "bc2ed0ddc8f2e3a27275d0bea19236fa726054ac1deb66714d13fd11e1530416",
+        "bytes": 3316
+      }
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-mlkit-barcode-scanning:18.3.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-mlkit-barcode-scanning/18.3.1/play-services-mlkit-barcode-scanning-18.3.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-mlkit-barcode-scanning/18.3.1/play-services-mlkit-barcode-scanning-18.3.1.pom",
+        "sha256": "41b5b66bc5f51409c00e627fcc31b5592076b34f57a364bd89a01c0ad9690111",
+        "bytes": 3762
+      }
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-mlkit-document-scanner/16.0.0-beta1/play-services-mlkit-document-scanner-16.0.0-beta1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-mlkit-document-scanner/16.0.0-beta1/play-services-mlkit-document-scanner-16.0.0-beta1.pom",
+        "sha256": "d126b7be7a83693f6ae4b0ba094349bf83e7d3cb5d1926d3e03402e0bb2ae35e",
+        "bytes": 3127,
+        "retrieved_at": "2026-11-03T19:27:10.373571+00:00"
+      }
+    },
+    {
+      "coordinate": "com.google.android.gms:play-services-tasks:18.2.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-tasks/18.2.1/play-services-tasks-18.2.1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/android/gms/play-services-tasks/18.2.1/play-services-tasks-18.2.1.pom",
+        "sha256": "330b41b0354d705e144eac8a97dcd60a4fa0df5b88da7d6610a2594f34acd465",
+        "bytes": 952
+      }
+    },
+    {
+      "coordinate": "com.google.android.material:material:1.13.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/material/material/1.13.0/material-1.13.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/android/material/material/1.13.0/material-1.13.0.pom",
+        "sha256": "9c1f3c4600295cc5d7f6d6886aea16d497f13f9af4675442ad271e7c2febf772",
+        "bytes": 5660
+      }
+    },
+    {
+      "coordinate": "com.google.android.odml:image:1.0.0-beta1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/android/odml/image/1.0.0-beta1/image-1.0.0-beta1.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/android/odml/image/1.0.0-beta1/image-1.0.0-beta1.pom",
+        "sha256": "795f4793c375eedf4332a0381082981a5ce70b7a0a776221ca24ad9d40cbea1c",
+        "bytes": 674
+      }
+    },
+    {
+      "coordinate": "com.google.auto.value:auto-value-annotations:1.6.3",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/auto/value/auto-value-annotations/1.6.3/auto-value-annotations-1.6.3.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/auto/value/auto-value-annotations/1.6.3/auto-value-annotations-1.6.3.pom",
+        "sha256": "e1fc780f7ee025e662b3da72723dbe2ac8dac0a2f8920f265315c4e1be3d765c",
+        "bytes": 2574
+      }
+    },
+    {
+      "coordinate": "com.google.auto.value:auto-value-parent:1.6.3",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/auto/value/auto-value-parent/1.6.3/auto-value-parent-1.6.3.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/auto/value/auto-value-parent/1.6.3/auto-value-parent-1.6.3.pom",
+        "sha256": "e59df5732b4cb34d5727181446f9ded9ce4425131a0a1062519eea196de4d8a1",
+        "bytes": 1689
+      }
+    },
+    {
+      "coordinate": "com.google.auto:auto-parent:7",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/auto/auto-parent/7/auto-parent-7.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/auto/auto-parent/7/auto-parent-7.pom",
+        "sha256": "a46426fccb5d32705ad9cbbc996f786bd048cc8cbdd21db046500169f15a4356",
+        "bytes": 6539
+      }
+    },
+    {
+      "coordinate": "com.google.code.findbugs:jsr305:3.0.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.pom",
+        "sha256": "19889dbdf1b254b2601a5ee645b8147a974644882297684c798afe5d63d78dfe",
+        "bytes": 4286
+      }
+    },
+    {
+      "coordinate": "com.google.code.gson:gson-parent:2.8.6",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/code/gson/gson-parent/2.8.6/gson-parent-2.8.6.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/code/gson/gson-parent/2.8.6/gson-parent-2.8.6.pom",
+        "sha256": "3736463859ec19267295e894940ae82a8f684413031122fe35ce7cff7e30a774",
+        "bytes": 4422
+      }
+    },
+    {
+      "coordinate": "com.google.code.gson:gson:2.8.6",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.8.6/gson-2.8.6.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.8.6/gson-2.8.6.pom",
+        "sha256": "2174415a647332d30fda04bd1cfc708a3ecc84eaf7517f596188d8244e103911",
+        "bytes": 2527
+      }
+    },
+    {
+      "coordinate": "com.google.dagger:dagger:2.59",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/dagger/dagger/2.59/dagger-2.59.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/dagger/dagger/2.59/dagger-2.59.pom",
+        "sha256": "0e47846618c7a1b7a8124fd20623a667643d73cbe0a561bb87056151aa967538",
+        "bytes": 2525
+      }
+    },
+    {
+      "coordinate": "com.google.errorprone:error_prone_annotations:2.15.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_annotations/2.15.0/error_prone_annotations-2.15.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_annotations/2.15.0/error_prone_annotations-2.15.0.pom",
+        "sha256": "7bae617e32681ebbb289c203c905f646c2a0397598af786d961a54aaa3d2b1e6",
+        "bytes": 2163
+      }
+    },
+    {
+      "coordinate": "com.google.errorprone:error_prone_parent:2.15.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_parent/2.15.0/error_prone_parent-2.15.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_parent/2.15.0/error_prone_parent-2.15.0.pom",
+        "sha256": "11dcacd17aaac69a99405273badfdaa5f9661d60d179b8a44f503958baa55f88",
+        "bytes": 11002,
+        "retrieved_at": "2026-11-03T19:27:10.597922+00:00"
+      }
+    },
+    {
+      "coordinate": "com.google.firebase:firebase-annotations:16.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/firebase/firebase-annotations/16.0.0/firebase-annotations-16.0.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/firebase/firebase-annotations/16.0.0/firebase-annotations-16.0.0.pom",
+        "sha256": "82c6d040edcb3c158b5b9865601d2bd742abcbd97cbd98903bde059da8edd087",
+        "bytes": 694
+      }
+    },
+    {
+      "coordinate": "com.google.firebase:firebase-components:16.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/firebase/firebase-components/16.1.0/firebase-components-16.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/firebase/firebase-components/16.1.0/firebase-components-16.1.0.pom",
+        "sha256": "8320c67176d416edcf58b65b2ef491b42faa1360f3cd7bf3d8c2eea4298ae70e",
+        "bytes": 1148
+      }
+    },
+    {
+      "coordinate": "com.google.firebase:firebase-encoders-json:17.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/firebase/firebase-encoders-json/17.1.0/firebase-encoders-json-17.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/firebase/firebase-encoders-json/17.1.0/firebase-encoders-json-17.1.0.pom",
+        "sha256": "c823cbed7a0e75bf30fedbba42ff1c0c8752e3dc16edccf7d0f2e5d6cb69c7a8",
+        "bytes": 1151
+      }
+    },
+    {
+      "coordinate": "com.google.firebase:firebase-encoders:16.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/firebase/firebase-encoders/16.1.0/firebase-encoders-16.1.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/firebase/firebase-encoders/16.1.0/firebase-encoders-16.1.0.pom",
+        "sha256": "687bd5744fdc54fce404a4403ebbdb847fbf651b9b87293a4a56fc4d8fc68e1c",
+        "bytes": 928
+      }
+    },
+    {
+      "coordinate": "com.google.guava:failureaccess:1.0.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/guava/failureaccess/1.0.2/failureaccess-1.0.2.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/guava/failureaccess/1.0.2/failureaccess-1.0.2.pom",
+        "sha256": "19ebc6f4bdb4edbb3d07b6ee994f846b54ef295582a9b5634719ffa9f31d03b2",
+        "bytes": 3339
+      }
+    },
+    {
+      "coordinate": "com.google.guava:guava-parent:26.0-android",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/guava/guava-parent/26.0-android/guava-parent-26.0-android.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/guava/guava-parent/26.0-android/guava-parent-26.0-android.pom",
+        "sha256": "f8698ab46ca996ce889c1afc8ca4f25eb8ac6b034dc898d4583742360016cc04",
+        "bytes": 10180
+      }
+    },
+    {
+      "coordinate": "com.google.guava:guava-parent:33.3.1-android",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/guava/guava-parent/33.3.1-android/guava-parent-33.3.1-android.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/guava/guava-parent/33.3.1-android/guava-parent-33.3.1-android.pom",
+        "sha256": "6e11986ea7250b51f847157e2dc937f32a306804dfce0007a5e81ddb9b95c579",
+        "bytes": 20632
+      }
+    },
+    {
+      "coordinate": "com.google.guava:guava:33.3.1-android",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/guava/guava/33.3.1-android/guava-33.3.1-android.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/guava/guava/33.3.1-android/guava-33.3.1-android.pom",
+        "sha256": "c728db6f2705ca3ea6a3cf2cf1260dbeff3a4524249a1b1b900edcfe9d72142f",
+        "bytes": 9321
+      }
+    },
+    {
+      "coordinate": "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.pom",
+        "sha256": "18d4b1db26153d4e55079ce1f76bb1fe05cdb862ef9954a88cbcc4ff38b8679b",
+        "bytes": 2278
+      }
+    },
+    {
+      "coordinate": "com.google.mlkit:barcode-scanning-common:17.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/mlkit/barcode-scanning-common/17.0.0/barcode-scanning-common-17.0.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/mlkit/barcode-scanning-common/17.0.0/barcode-scanning-common-17.0.0.pom",
+        "sha256": "f5caf8b670a7f048c13ee637536f21da52b59b4f2218081df320986a6e3ad3b4",
+        "bytes": 1138
+      }
+    },
+    {
+      "coordinate": "com.google.mlkit:barcode-scanning:17.3.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/mlkit/barcode-scanning/17.3.0/barcode-scanning-17.3.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/mlkit/barcode-scanning/17.3.0/barcode-scanning-17.3.0.pom",
+        "sha256": "e2677ff1bcba978d1fa067709df54aec4fb388b13f973aeacc864f681fa1758c",
+        "bytes": 1775
+      }
+    },
+    {
+      "coordinate": "com.google.mlkit:common:18.11.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/mlkit/common/18.11.0/common-18.11.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/mlkit/common/18.11.0/common-18.11.0.pom",
+        "sha256": "e50ec6f1d7c77025cdc4853b835ca4e8b1394966c5029543a699baf252aea057",
+        "bytes": 3051
+      }
+    },
+    {
+      "coordinate": "com.google.mlkit:vision-common:17.3.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/mlkit/vision-common/17.3.0/vision-common-17.3.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/mlkit/vision-common/17.3.0/vision-common-17.3.0.pom",
+        "sha256": "4e649af84e58d4c824eeabc8522e142fb30be41524b4001b699f3e95bdd366ec",
+        "bytes": 3288
+      }
+    },
+    {
+      "coordinate": "com.google.mlkit:vision-interfaces:16.3.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://dl.google.com/dl/android/maven2/com/google/mlkit/vision-interfaces/16.3.0/vision-interfaces-16.3.0.pom",
+        "resolved_url": "https://dl.google.com/dl/android/maven2/com/google/mlkit/vision-interfaces/16.3.0/vision-interfaces-16.3.0.pom",
+        "sha256": "3422392e93c7f29c30149cc37e39f535ad32705fa6e015d8cae8a8f763e73ff6",
+        "bytes": 1138
+      }
+    },
+    {
+      "coordinate": "com.parse.bolts:bolts-tasks:1.4.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/parse/bolts/bolts-tasks/1.4.0/bolts-tasks-1.4.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/parse/bolts/bolts-tasks/1.4.0/bolts-tasks-1.4.0.pom",
+        "sha256": "8cb007861162c1b9e50dd8ec07b7ce7affea8fe76e07ac408ced81cdcb8312e0",
+        "bytes": 1385
+      }
+    },
+    {
+      "coordinate": "com.squareup.okhttp3:okhttp-urlconnection:4.9.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/squareup/okhttp3/okhttp-urlconnection/4.9.2/okhttp-urlconnection-4.9.2.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/squareup/okhttp3/okhttp-urlconnection/4.9.2/okhttp-urlconnection-4.9.2.pom",
+        "sha256": "5019b2b05877af6c4e0976ec2ef0656ce61760549f153f6ef6902159b2db36c4",
+        "bytes": 1847
+      }
+    },
+    {
+      "coordinate": "com.squareup.okhttp3:okhttp:4.9.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/squareup/okhttp3/okhttp/4.9.2/okhttp-4.9.2.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/squareup/okhttp3/okhttp/4.9.2/okhttp-4.9.2.pom",
+        "sha256": "72a233eae8a5b5a0d7dd626798c6f004dfd2baef216f1396e8217d9cb876e26e",
+        "bytes": 1809
+      }
+    },
+    {
+      "coordinate": "com.squareup.okio:okio-jvm:3.16.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/squareup/okio/okio-jvm/3.16.0/okio-jvm-3.16.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/squareup/okio/okio-jvm/3.16.0/okio-jvm-3.16.0.pom",
+        "sha256": "519a517a6c69e1b985e81b0d9b75d3de45a3838688e3a0948e7a5361e54738f3",
+        "bytes": 1698
+      }
+    },
+    {
+      "coordinate": "com.squareup.okio:okio:3.16.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/squareup/okio/okio/3.16.0/okio-3.16.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/squareup/okio/okio/3.16.0/okio-3.16.0.pom",
+        "sha256": "b4972a6b8a865dce6bc47fafe6d8b93fe69289631fe73df87bb4b45c375c1ce6",
+        "bytes": 1687
+      }
+    },
+    {
+      "coordinate": "com.squareup.zstd:zstd-kmp-android:0.4.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/squareup/zstd/zstd-kmp-android/0.4.0/zstd-kmp-android-0.4.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/squareup/zstd/zstd-kmp-android/0.4.0/zstd-kmp-android-0.4.0.pom",
+        "sha256": "2ee9ba9cf373e3f8a14d1aa643d2c3f4ff79872309cae4c36e0a4f239411dae4",
+        "bytes": 1730
+      }
+    },
+    {
+      "coordinate": "com.squareup.zstd:zstd-kmp-okio-android:0.4.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/squareup/zstd/zstd-kmp-okio-android/0.4.0/zstd-kmp-okio-android-0.4.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/squareup/zstd/zstd-kmp-okio-android/0.4.0/zstd-kmp-okio-android-0.4.0.pom",
+        "sha256": "42d6bbc7ce9255183568118631ed718033d078e82a5cb9af1ebe28682e23f7d9",
+        "bytes": 2593
+      }
+    },
+    {
+      "coordinate": "com.squareup.zstd:zstd-kmp-okio:0.4.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/squareup/zstd/zstd-kmp-okio/0.4.0/zstd-kmp-okio-0.4.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/squareup/zstd/zstd-kmp-okio/0.4.0/zstd-kmp-okio-0.4.0.pom",
+        "sha256": "12dba72a6554625d95934ef9e569e6f23256807f0815c102fd12e20266bb825b",
+        "bytes": 2060
+      }
+    },
+    {
+      "coordinate": "com.squareup.zstd:zstd-kmp:0.4.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/com/squareup/zstd/zstd-kmp/0.4.0/zstd-kmp-0.4.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/com/squareup/zstd/zstd-kmp/0.4.0/zstd-kmp-0.4.0.pom",
+        "sha256": "f0cdf161ad35cc8d8c8634b4ed58397f3dfb1849cff8440368505e7149958270",
+        "bytes": 1697
+      }
+    },
+    {
+      "coordinate": "commons-codec:commons-codec:1.10",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/commons-codec/commons-codec/1.10/commons-codec-1.10.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/commons-codec/commons-codec/1.10/commons-codec-1.10.pom",
+        "sha256": "bdb8db7012d112a6e3ea8fdb7c510b300d99eff0819d27dddba9c43397ea4cfb",
+        "bytes": 11609
+      }
+    },
+    {
+      "coordinate": "commons-io:commons-io:2.6",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/commons-io/commons-io/2.6/commons-io-2.6.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/commons-io/commons-io/2.6/commons-io-2.6.pom",
+        "sha256": "0c23863893a2291f5a7afdbd8d15923b3948afd87e563fa341cdcf6eae338a60",
+        "bytes": 14256,
+        "retrieved_at": "2026-10-30T00:55:30.700659+00:00"
+      }
+    },
+    {
+      "coordinate": "expo.modules.asset:expo.modules.asset:58.0.20",
+      "status": "existing-integrity-bound-npm-origin",
+      "source": {
+        "kind": "npm-local-maven-repository",
+        "package": "expo-asset",
+        "package_version": "58.0.20",
+        "package_license_declaration": "MIT",
+        "lockfile": "applications/package-lock.json",
+        "lock_entry": "node_modules/expo-asset",
+        "resolved": "https://registry.npmjs.org/expo-asset/-/expo-asset-58.0.20.tgz",
+        "integrity": "sha512-atirOtDsH0l+4zxnByf4WKc7Iw2k5e2bSNAkuu79d4SLOAjAROoDizeP0qNQSMyZNoHPArw7EwTpoc8LuWvg4Q==",
+        "evidence_copy": "pom-sources/d1a6f58d3862745f8ab3fc168259d4a2ba98e9fe48814be3ebf8f311ccd61591.pom"
+      },
+      "pom_sha256": "d1a6f58d3862745f8ab3fc168259d4a2ba98e9fe48814be3ebf8f311ccd61591"
+    },
+    {
+      "coordinate": "expo.modules.router:expo.modules.router:58.0.30",
+      "status": "existing-integrity-bound-npm-origin",
+      "source": {
+        "kind": "npm-local-maven-repository",
+        "package": "expo-router",
+        "package_version": "58.0.30",
+        "package_license_declaration": "MIT",
+        "lockfile": "applications/package-lock.json",
+        "lock_entry": "node_modules/expo-router",
+        "resolved": "https://registry.npmjs.org/expo-router/-/expo-router-58.0.30.tgz",
+        "integrity": "sha512-GzwSjiDCJeSHDiH71jeCsncMCEksRyDhGweNcVjGfW5C7JMYtROUroMBudPGtrOpKkHUQ0lampFsb8jidT4lbg==",
+        "evidence_copy": "pom-sources/3e964c75aa121f54f43f6e4ebf9d2164ba13e3927b42e8b965a8b54f21f45348.pom"
+      },
+      "pom_sha256": "3e964c75aa121f54f43f6e4ebf9d2164ba13e3927b42e8b965a8b54f21f45348"
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.camera:58.0.14",
+      "status": "existing-integrity-bound-npm-origin",
+      "source": {
+        "kind": "npm-local-maven-repository",
+        "package": "expo-camera",
+        "package_version": "58.0.14",
+        "package_license_declaration": "MIT",
+        "lockfile": "applications/package-lock.json",
+        "lock_entry": "node_modules/expo-camera",
+        "resolved": "https://registry.npmjs.org/expo-camera/-/expo-camera-58.0.14.tgz",
+        "integrity": "sha512-yEiMuJ2d7A+EqsP8rlGIvgaUzdk/rW9CXR6R7WKqludxU3H+JcSUbPC3ldr3ZpmaYlgXP3x+oOO9BfQy7yKK2A==",
+        "evidence_copy": "pom-sources/1979d0ec1658c98dfe231ad3bc80dee79eddf19204e27c305fb6eccf22ebfafc.pom"
+      },
+      "pom_sha256": "1979d0ec1658c98dfe231ad3bc80dee79eddf19204e27c305fb6eccf22ebfafc"
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.crypto:58.0.7",
+      "status": "existing-integrity-bound-npm-origin",
+      "source": {
+        "kind": "npm-local-maven-repository",
+        "package": "expo-crypto",
+        "package_version": "58.0.7",
+        "package_license_declaration": "MIT",
+        "lockfile": "applications/package-lock.json",
+        "lock_entry": "node_modules/expo-crypto",
+        "resolved": "https://registry.npmjs.org/expo-crypto/-/expo-crypto-58.0.7.tgz",
+        "integrity": "sha512-g+4i4UpqQ5jNy1VPRvVVvr9aIdh8WwvxbpwL2ntiSESDRsXyVSeb8JM6tHVdC3b9J2nGxjtrhrsaWOo0jbSxlA==",
+        "evidence_copy": "pom-sources/0ca30ac912edf79b04b4744d3bf17999f22ab48709b29085feb6ffdc55af1347.pom"
+      },
+      "pom_sha256": "0ca30ac912edf79b04b4744d3bf17999f22ab48709b29085feb6ffdc55af1347"
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.documentpicker:58.0.4",
+      "status": "existing-integrity-bound-npm-origin",
+      "source": {
+        "kind": "npm-local-maven-repository",
+        "package": "expo-document-picker",
+        "package_version": "58.0.4",
+        "package_license_declaration": "MIT",
+        "lockfile": "applications/package-lock.json",
+        "lock_entry": "node_modules/expo-document-picker",
+        "resolved": "https://registry.npmjs.org/expo-document-picker/-/expo-document-picker-58.0.4.tgz",
+        "integrity": "sha512-rxs+9RrpI55/BEGNB/3sXjoBG6yZDLyn6Z7KzjbbBLdX8bE2cZT4IozQ3Q5wufaEEeaHQn48EgPiuMoTsAidpg==",
+        "evidence_copy": "pom-sources/0938300e2cafe8fd044248afbf9422059aa6eea12ea522b3dab75a963bde9bc8.pom"
+      },
+      "pom_sha256": "0938300e2cafe8fd044248afbf9422059aa6eea12ea522b3dab75a963bde9bc8"
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.filesystem:58.0.13",
+      "status": "existing-integrity-bound-npm-origin",
+      "source": {
+        "kind": "npm-local-maven-repository",
+        "package": "expo-file-system",
+        "package_version": "58.0.13",
+        "package_license_declaration": "MIT",
+        "lockfile": "applications/package-lock.json",
+        "lock_entry": "node_modules/expo-file-system",
+        "resolved": "https://registry.npmjs.org/expo-file-system/-/expo-file-system-58.0.13.tgz",
+        "integrity": "sha512-+/1aFErkawyky5UdWI06zYeO2DeHUnfaWnYHeiI8M8Z/sB6L66gI3WUxqtvUvKJoaM0Ti1CximD3x3JwteLYIg==",
+        "evidence_copy": "pom-sources/592485327da23101e7df44b51bffcfa8b53d7b3cb2f5860c110de13fa8114606.pom"
+      },
+      "pom_sha256": "592485327da23101e7df44b51bffcfa8b53d7b3cb2f5860c110de13fa8114606"
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.font:58.0.11",
+      "status": "existing-integrity-bound-npm-origin",
+      "source": {
+        "kind": "npm-local-maven-repository",
+        "package": "expo-font",
+        "package_version": "58.0.11",
+        "package_license_declaration": "MIT",
+        "lockfile": "applications/package-lock.json",
+        "lock_entry": "node_modules/expo-font",
+        "resolved": "https://registry.npmjs.org/expo-font/-/expo-font-58.0.11.tgz",
+        "integrity": "sha512-6r7s6xk2L2orvum+x+TY1fzEcMtuCBRQTLgC/Su2uLzNPpT4L+E+S4IAGy8ZIjeVvwk2j2pj+HiZ23O7eh1PGQ==",
+        "evidence_copy": "pom-sources/8c39a45c4fd36bda28981573d38b0ecfd100aa91e5eb0eeb252839a22588439f.pom"
+      },
+      "pom_sha256": "8c39a45c4fd36bda28981573d38b0ecfd100aa91e5eb0eeb252839a22588439f"
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.keepawake:58.0.3",
+      "status": "existing-integrity-bound-npm-origin",
+      "source": {
+        "kind": "npm-local-maven-repository",
+        "package": "expo-keep-awake",
+        "package_version": "58.0.3",
+        "package_license_declaration": "MIT",
+        "lockfile": "applications/package-lock.json",
+        "lock_entry": "node_modules/expo-keep-awake",
+        "resolved": "https://registry.npmjs.org/expo-keep-awake/-/expo-keep-awake-58.0.3.tgz",
+        "integrity": "sha512-wLRF+XeVsD/Rt/ZyX+A0mk1brdf8vefWizNAPzqV5eOCgkj23LCRZdN8gUi5X8UwyR8UJ7Y7Dzdz4YDGB/4c9Q==",
+        "evidence_copy": "pom-sources/94bb679a5d69c03c3acfa623e54a70edb736442c55ba17e843886e0346784dde.pom"
+      },
+      "pom_sha256": "94bb679a5d69c03c3acfa623e54a70edb736442c55ba17e843886e0346784dde"
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.linking:58.0.16",
+      "status": "existing-integrity-bound-npm-origin",
+      "source": {
+        "kind": "npm-local-maven-repository",
+        "package": "expo-linking",
+        "package_version": "58.0.16",
+        "package_license_declaration": "MIT",
+        "lockfile": "applications/package-lock.json",
+        "lock_entry": "node_modules/expo-linking",
+        "resolved": "https://registry.npmjs.org/expo-linking/-/expo-linking-58.0.16.tgz",
+        "integrity": "sha512-yGz7w4nySktoOba7fS08DzzQXfEgLd60248Sz3u4m/Vzi8SKhC5xBXWmP4scGh0Ele89I350k/uvo2moVmmZJw==",
+        "evidence_copy": "pom-sources/26cfce7833254fc2d6c4215c498aef76e8af4fe4081fe0277834010038fb93ce.pom"
+      },
+      "pom_sha256": "26cfce7833254fc2d6c4215c498aef76e8af4fe4081fe0277834010038fb93ce"
+    },
+    {
+      "coordinate": "host.exp.exponent:expo.modules.statusbar:58.0.4",
+      "status": "existing-integrity-bound-npm-origin",
+      "source": {
+        "kind": "npm-local-maven-repository",
+        "package": "expo-status-bar",
+        "package_version": "58.0.4",
+        "package_license_declaration": "MIT",
+        "lockfile": "applications/package-lock.json",
+        "lock_entry": "node_modules/expo-status-bar",
+        "resolved": "https://registry.npmjs.org/expo-status-bar/-/expo-status-bar-58.0.4.tgz",
+        "integrity": "sha512-e6JJHziSSNb1v1VSzmDrAPf6GFoPRdVOIDrTCcK3bHfbJEAZGZ3YZXfqlorZtUFDT0z6NcjaZf0mPWifJZcqew==",
+        "evidence_copy": "pom-sources/9b19937cbf4061dcca2419a28f888bab5cf2c8512c51b5840089cbbfbfa8c404.pom"
+      },
+      "pom_sha256": "9b19937cbf4061dcca2419a28f888bab5cf2c8512c51b5840089cbbfbfa8c404"
+    },
+    {
+      "coordinate": "io.github.expo.kolibri:kolibri-android:0.2.4",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/io/github/expo/kolibri/kolibri-android/0.2.4/kolibri-android-0.2.4.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/io/github/expo/kolibri/kolibri-android/0.2.4/kolibri-android-0.2.4.pom",
+        "sha256": "7133b50d1722e0d17c5c6085db8c7e3d29f7b411b36e55f601466f2e61f0464b",
+        "bytes": 1867,
+        "retrieved_at": "2026-11-03T19:27:10.443516+00:00"
+      }
+    },
+    {
+      "coordinate": "io.github.expo.kolibri:runtime:0.2.4",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/io/github/expo/kolibri/runtime/0.2.4/runtime-0.2.4.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/io/github/expo/kolibri/runtime/0.2.4/runtime-0.2.4.pom",
+        "sha256": "64afc58e0452d1bc1c2c05d961f6aed895a5750ae6c2f52250af1806031ce364",
+        "bytes": 1818,
+        "retrieved_at": "2026-11-03T19:27:10.444393+00:00"
+      }
+    },
+    {
+      "coordinate": "io.github.expo.pika:pika-api:1.1.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/io/github/expo/pika/pika-api/1.1.0/pika-api-1.1.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/io/github/expo/pika/pika-api/1.1.0/pika-api-1.1.0.pom",
+        "sha256": "6053f874438885b4ae0ee881ec5ec3e6bbb6691819d3d7a48a60c469ab8b42a4",
+        "bytes": 1767,
+        "retrieved_at": "2026-11-03T19:27:10.449848+00:00"
+      }
+    },
+    {
+      "coordinate": "io.github.expo:expo-modules-v2-react:0.2.7",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/io/github/expo/expo-modules-v2-react/0.2.7/expo-modules-v2-react-0.2.7.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/io/github/expo/expo-modules-v2-react/0.2.7/expo-modules-v2-react-0.2.7.pom",
+        "sha256": "9f2f5d4e85b48d8c87621f055756c503132457a84d02c621961d6dc7ea0673f7",
+        "bytes": 2717,
+        "retrieved_at": "2026-11-03T19:27:10.485768+00:00"
+      }
+    },
+    {
+      "coordinate": "jakarta.inject:jakarta.inject-api:2.0.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/jakarta/inject/jakarta.inject-api/2.0.1/jakarta.inject-api-2.0.1.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/jakarta/inject/jakarta.inject-api/2.0.1/jakarta.inject-api-2.0.1.pom",
+        "sha256": "e7fd7232e96307a575b2494c9367d68cf43ec98244aace3ccc23e1773ffa6fda",
+        "bytes": 5922
+      }
+    },
+    {
+      "coordinate": "javax.inject:javax.inject:1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/javax/inject/javax.inject/1/javax.inject-1.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/javax/inject/javax.inject/1/javax.inject-1.pom",
+        "sha256": "943e12b100627804638fa285805a0ab788a680266531e650921ebfe4621a8bfa",
+        "bytes": 612
+      }
+    },
+    {
+      "coordinate": "net.java.dev.jna:jna:5.18.1",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/net/java/dev/jna/jna/5.18.1/jna-5.18.1.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/net/java/dev/jna/jna/5.18.1/jna-5.18.1.pom",
+        "sha256": "98b62ae6ff280d747fb359fc42e48fed113d45bc3729a823dc30b8308a806645",
+        "bytes": 2030
+      }
+    },
+    {
+      "coordinate": "org.apache.commons:commons-parent:35",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-parent/35/commons-parent-35.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-parent/35/commons-parent-35.pom",
+        "sha256": "7098a1ab8336ecd4c9dc21cbbcac869f82c66f64b8ac4f7988d41b4fcb44e49a",
+        "bytes": 57772
+      }
+    },
+    {
+      "coordinate": "org.apache.commons:commons-parent:42",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-parent/42/commons-parent-42.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/apache/commons/commons-parent/42/commons-parent-42.pom",
+        "sha256": "cd313494c670b483ec256972af1698b330e598f807002354eb765479f604b09c",
+        "bytes": 67956,
+        "retrieved_at": "2026-10-30T00:55:30.700659+00:00"
+      }
+    },
+    {
+      "coordinate": "org.apache:apache:15",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/apache/apache/15/apache-15.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/apache/apache/15/apache-15.pom",
+        "sha256": "36c2f2f979ac67b450c0cb480e4e9baf6b40f3a681f22ba9692287d1139ad494",
+        "bytes": 15236
+      }
+    },
+    {
+      "coordinate": "org.apache:apache:18",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/apache/apache/18/apache-18.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/apache/apache/18/apache-18.pom",
+        "sha256": "7831307285fd475bbc36b20ae38e7882f11c3153b1d5930f852d44eda8f33c17",
+        "bytes": 15667,
+        "retrieved_at": "2026-10-30T00:55:30.700659+00:00"
+      }
+    },
+    {
+      "coordinate": "org.brotli:dec:0.1.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/brotli/dec/0.1.2/dec-0.1.2.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/brotli/dec/0.1.2/dec-0.1.2.pom",
+        "sha256": "1d3db28e001eb9a01732d0c98be062af9af536d942897a0c937984af8b4228c0",
+        "bytes": 4304
+      }
+    },
+    {
+      "coordinate": "org.brotli:parent:0.1.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/brotli/parent/0.1.2/parent-0.1.2.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/brotli/parent/0.1.2/parent-0.1.2.pom",
+        "sha256": "116f9d6632c13cd49c3f33337765075fcefa1ab911e9e2b7762736cad4a8f569",
+        "bytes": 2975
+      }
+    },
+    {
+      "coordinate": "org.eclipse.ee4j:project:1.0.6",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/eclipse/ee4j/project/1.0.6/project-1.0.6.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/eclipse/ee4j/project/1.0.6/project-1.0.6.pom",
+        "sha256": "4e7d8329d8da7dcf30779d824241be145f27108932f5a5a24eb907677bc8d72d",
+        "bytes": 13331,
+        "retrieved_at": "2026-11-03T19:27:10.601903+00:00"
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-annotations-jvm:1.3.72",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-annotations-jvm/1.3.72/kotlin-annotations-jvm-1.3.72.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-annotations-jvm/1.3.72/kotlin-annotations-jvm-1.3.72.pom",
+        "sha256": "58d42ef0c4a8b216fd4c9716d18368000df64d094f74ee6488165af0bb817457",
+        "bytes": 1182
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-bom:1.8.22",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-bom/1.8.22/kotlin-bom-1.8.22.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-bom/1.8.22/kotlin-bom-1.8.22.pom",
+        "sha256": "c8d794eb761888d34369e677de8eaba0b01f9e8a756cfbff53215ccfa5c58c3f",
+        "bytes": 9338
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-reflect:2.2.10",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-reflect/2.2.10/kotlin-reflect-2.2.10.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-reflect/2.2.10/kotlin-reflect-2.2.10.pom",
+        "sha256": "ae46614906414404cefc41a467435205d6dee67a2390598328a639ad2bacbd11",
+        "bytes": 1372,
+        "retrieved_at": "2026-11-03T19:27:10.462405+00:00"
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.10",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-jdk7/2.2.10/kotlin-stdlib-jdk7-2.2.10.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-jdk7/2.2.10/kotlin-stdlib-jdk7-2.2.10.pom",
+        "sha256": "be494907e0e19c78bb821154afa1776d5ad7a058b4ab30090f74354b0e1338de",
+        "bytes": 1389,
+        "retrieved_at": "2026-11-03T19:27:10.515441+00:00"
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-jdk8/1.8.22/kotlin-stdlib-jdk8-1.8.22.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-jdk8/1.8.22/kotlin-stdlib-jdk8-1.8.22.pom",
+        "sha256": "928f2187217476313cb816d48070bc7654aa3b9a5ae81d3fc5f8c279cc8f8d9e",
+        "bytes": 1581
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.2.20",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.2.20/kotlin-stdlib-2.2.20.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.2.20/kotlin-stdlib-2.2.20.pom",
+        "sha256": "4a8b086e6431bcf623637f52b2ff192e1adb913838742e5c0eea70a8dee429c4",
+        "bytes": 2301
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:atomicfu-jvm:0.28.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/atomicfu-jvm/0.28.0/atomicfu-jvm-0.28.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/atomicfu-jvm/0.28.0/atomicfu-jvm-0.28.0.pom",
+        "sha256": "dd7fad5d5d4b21ca9db0788750b0997ba1db6882ded86e5212f5c83fc51facec",
+        "bytes": 1611
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:atomicfu:0.28.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/atomicfu/0.28.0/atomicfu-0.28.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/atomicfu/0.28.0/atomicfu-0.28.0.pom",
+        "sha256": "c9ba01ef3e6899d42cf070d59ba39d572fc5863bf296c729a99722c0647df6ca",
+        "bytes": 1636
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-android/1.10.2/kotlinx-coroutines-android-1.10.2.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-android/1.10.2/kotlinx-coroutines-android-1.10.2.pom",
+        "sha256": "b92d3672e7f9e8f4c4e2ab187c3e31fecc506496396f4a5f27ee1c957a42b319",
+        "bytes": 2193
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-bom/1.10.2/kotlinx-coroutines-bom-1.10.2.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-bom/1.10.2/kotlinx-coroutines-bom-1.10.2.pom",
+        "sha256": "faf0c6538e53ddc0499a63664d8e763c216580b2e18e722ccbdf1b431a6afe26",
+        "bytes": 4279
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2.pom",
+        "sha256": "658f576b96c832e7382406adb197d64d8e2e97de10e96dfa3700decfa2a60def",
+        "bytes": 2167
+      }
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core/1.10.2/kotlinx-coroutines-core-1.10.2.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core/1.10.2/kotlinx-coroutines-core-1.10.2.pom",
+        "sha256": "519da5400096f3462a4dae80783ad050413d4bc81ec7ae53fae76aef0ccbed4c",
+        "bytes": 2030
+      }
+    },
+    {
+      "coordinate": "org.jetbrains:annotations:23.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/23.0.0/annotations-23.0.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/23.0.0/annotations-23.0.0.pom",
+        "sha256": "c9490f655132328df2cfbcfdf743f53fc3916d6c1d10437175a6ca6e3a67771c",
+        "bytes": 1354
+      }
+    },
+    {
+      "coordinate": "org.jspecify:jspecify:1.0.0",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/jspecify/jspecify/1.0.0/jspecify-1.0.0.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/jspecify/jspecify/1.0.0/jspecify-1.0.0.pom",
+        "sha256": "cdab929a3b95211f43d2090c5e2d0dfe8465960e378bc32b35841dab324433a6",
+        "bytes": 1511
+      }
+    },
+    {
+      "coordinate": "org.sonatype.oss:oss-parent:7",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/sonatype/oss/oss-parent/7/oss-parent-7.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/sonatype/oss/oss-parent/7/oss-parent-7.pom",
+        "sha256": "b51f8867c92b6a722499557fc3a1fdea77bdf9ef574722fe90ce436a29559454",
+        "bytes": 4824,
+        "retrieved_at": "2026-11-03T19:27:10.606291+00:00"
+      }
+    },
+    {
+      "coordinate": "org.sonatype.oss:oss-parent:9",
+      "status": "exact-pom-match",
+      "verified": {
+        "url": "https://repo.maven.apache.org/maven2/org/sonatype/oss/oss-parent/9/oss-parent-9.pom",
+        "resolved_url": "https://repo.maven.apache.org/maven2/org/sonatype/oss/oss-parent/9/oss-parent-9.pom",
+        "sha256": "fb40265f982548212ff82e362e59732b2187ec6f0d80182885c14ef1f982827a",
+        "bytes": 6569,
+        "retrieved_at": "2026-11-03T19:27:10.675912+00:00"
+      }
+    }
+  ]
+}

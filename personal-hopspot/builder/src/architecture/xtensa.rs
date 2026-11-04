@@ -25,7 +25,12 @@ pub(super) static ADAPTER: Adapter = Adapter::new(
         configure_linker,
         linker_map_argument,
     ),
-    &["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"],
+    &[
+        "-C",
+        "link-arg=-Tlinkall.x",
+        "-C",
+        "force-frame-pointers=no",
+    ],
     DisassemblerTool::new(
         DisassemblerFlavor::GnuObjdump,
         DISASSEMBLER_PROGRAM,

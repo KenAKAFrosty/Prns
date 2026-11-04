@@ -1108,6 +1108,8 @@ mod tests {
                 .map(|registered| registered.kind),
             Some(
                 crate::routing::upstream_app_destinations::UpstreamAppDestinationKind::Single {
+                    registration_generation: 1,
+                    ingress_enabled: true,
                     identity: expected_identities.target().identity_hash(),
                     proof_strategy: ProofStrategy::ProveAll,
                     link_request_policy: LinkRequestPolicy::AcceptAll,

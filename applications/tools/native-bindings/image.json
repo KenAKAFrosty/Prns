@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "appApiVersion": 3,
+  "providers": [
+    {
+      "id": "prns-chat-app",
+      "manifest": "../../Cargo.toml",
+      "package": "prns-chat-app",
+      "libraryName": "prns_chat_app",
+      "crateDirectory": "../../prns/chat-app",
+      "features": [],
+      "generationFeatures": [
+        "uniffi-bindgen"
+      ]
+    }
+  ]
+}
