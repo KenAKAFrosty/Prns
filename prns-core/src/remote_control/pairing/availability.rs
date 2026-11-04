@@ -323,6 +323,42 @@ pub struct RemoteControlPairingAvailabilityObservation<'a> {
     public_app_data: RemoteControlPairingPublicAppData<'a>,
 }
 
+/// An owned copy of authenticated availability facts. Ownership neither extends
+/// the observed deadline nor grants pairing or management authorization. Public
+/// application data retains its protocol bound without requiring an allocator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteControlPairingAvailabilitySnapshot {
+    pub endpoint: RemoteControlPairingEndpoint,
+    pub observed_at: InstantMillis,
+    pub expires_at: InstantMillis,
+    pub hops: HopCount,
+    pub source_interface: InterfaceId,
+    pub public_app_data: RemoteControlPairingPublicAppDataBytes,
+}
+
+impl TryFrom<&RemoteControlPairingAvailabilityObservation<'_>>
+    for RemoteControlPairingAvailabilitySnapshot
+{
+    type Error = RemoteControlPairingPublicAppDataError;
+
+    fn try_from(
+        value: &RemoteControlPairingAvailabilityObservation<'_>,
+    ) -> Result<Self, Self::Error> {
+        Ok(Self {
+            endpoint: value.endpoint(),
+            observed_at: value.observed_at(),
+            expires_at: value.expires_at(),
+            hops: value.hops(),
+            source_interface: value.source_interface(),
+            // Observation fields are private and only arise from the bounded
+            // authenticated protocol parser in this module.
+            public_app_data: RemoteControlPairingPublicAppDataBytes::try_from(
+                value.public_app_data().as_bytes(),
+            )?,
+        })
+    }
+}
+
 impl RemoteControlPairingAvailabilityObservation<'_> {
     #[must_use]
     pub const fn endpoint(&self) -> RemoteControlPairingEndpoint {
@@ -799,6 +835,27 @@ mod tests {
             Err(RemoteControlPairingAvailabilityParseError::InnerHeader(
                 expected
             )),
+        );
+    }
+
+    #[test]
+    fn owned_availability_retains_authenticated_bounds_and_original_deadline() {
+        let owned = {
+            let data = [42; MAX_REMOTE_CONTROL_PAIRING_PUBLIC_APP_DATA_LEN];
+            let (encoded, length) = write_availability(&data);
+            let parsed =
+                RemoteControlPairingAvailability::parse(encoded.get(..length).unwrap()).unwrap();
+            let (observation, _) =
+                parsed.into_observation(InstantMillis(5), InterfaceId::new([7; 8]), 3);
+            RemoteControlPairingAvailabilitySnapshot::try_from(&observation).unwrap()
+        };
+        assert_eq!(owned.observed_at, InstantMillis(5));
+        assert_eq!(owned.expires_at, InstantMillis(60_005));
+        assert_eq!(owned.hops, HopCount(3));
+        assert_eq!(owned.source_interface, InterfaceId::new([7; 8]));
+        assert_eq!(
+            owned.public_app_data.as_bytes(),
+            &[42; MAX_REMOTE_CONTROL_PAIRING_PUBLIC_APP_DATA_LEN]
         );
     }
 

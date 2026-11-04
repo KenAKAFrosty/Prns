@@ -158,7 +158,7 @@ fn allocated_sections(path: &Path, bytes: &[u8]) -> Result<Vec<AllocatedSection>
 fn is_allocated(flags: SectionFlags) -> bool {
     matches!(
         flags,
-        SectionFlags::Elf { sh_flags } if sh_flags & u64::from(object::elf::SHF_ALLOC) != 0
+        SectionFlags::Elf { sh_flags, .. } if sh_flags.contains(object::elf::SHF_ALLOC)
     )
 }
 
@@ -169,9 +169,9 @@ const fn section_kind(kind: object::SectionKind) -> SectionKind {
             SectionKind::ReadOnlyData
         }
         object::SectionKind::Data | object::SectionKind::Tls => SectionKind::InitializedData,
-        object::SectionKind::UninitializedData
-        | object::SectionKind::UninitializedTls
-        | object::SectionKind::Common => SectionKind::ZeroFill,
+        object::SectionKind::UninitializedData | object::SectionKind::UninitializedTls => {
+            SectionKind::ZeroFill
+        }
         _ => SectionKind::Other,
     }
 }
@@ -204,7 +204,7 @@ mod tests {
             SectionKind::ZeroFill
         );
         assert_eq!(
-            section_kind(object::SectionKind::Elf(0x7000_0000)),
+            section_kind(object::SectionKind::Unknown),
             SectionKind::Other
         );
     }
@@ -212,9 +212,13 @@ mod tests {
     #[test]
     fn only_elf_allocations_are_selected() {
         assert!(is_allocated(SectionFlags::Elf {
-            sh_flags: u64::from(object::elf::SHF_ALLOC)
+            sh_type: object::elf::SHT_PROGBITS,
+            sh_flags: object::elf::SHF_ALLOC
         }));
-        assert!(!is_allocated(SectionFlags::Elf { sh_flags: 0 }));
+        assert!(!is_allocated(SectionFlags::Elf {
+            sh_type: object::elf::SHT_PROGBITS,
+            sh_flags: object::elf::SectionFlags(0),
+        }));
         assert!(!is_allocated(SectionFlags::None));
     }
 }

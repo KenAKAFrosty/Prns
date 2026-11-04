@@ -31,6 +31,18 @@ pub use management::{
     DropRouteEffect, DropRouteOutcome, DropRoutesViaEffect, DropRoutesViaOutcome,
 };
 
+mod link_diagnostics;
+pub use link_diagnostics::{
+    LinkHandshakeEvent, LinkHandshakeIngress, LinkHandshakeObserver, LinkHandshakePhase,
+    LinkHandshakeSnapshot, LinkProofCompletion, LinkTimeoutRouteDisposition,
+    LINK_HANDSHAKE_OBSERVATION_LIMIT,
+};
+mod path_diagnostics;
+pub use path_diagnostics::{
+    PathDiscoveryEvent, PathDiscoveryPhase, PathRequestDisposition, PathRequestEgress,
+    PathResponseDisposition,
+};
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "runtime-metrics")] {
         mod metrics;

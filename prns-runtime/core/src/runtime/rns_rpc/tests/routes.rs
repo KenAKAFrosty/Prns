@@ -92,6 +92,7 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
         interfaces: std::vec![
             InterfaceInventoryEntry {
                 name: Some("Default Interface".into()),
+                endpoint: None,
                 origin: prns_core::interfaces::InterfaceOriginKind::Configured,
                 attachment_epoch: 1,
                 frame_accounting: crate::node_introspection::FrameAccountingCoverage::Unavailable,
@@ -122,6 +123,7 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
             },
             InterfaceInventoryEntry {
                 name: Some("Remote bridge".into()),
+                endpoint: None,
                 origin: prns_core::interfaces::InterfaceOriginKind::Configured,
                 attachment_epoch: 2,
                 frame_accounting: crate::node_introspection::FrameAccountingCoverage::Unavailable,

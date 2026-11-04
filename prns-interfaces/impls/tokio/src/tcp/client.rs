@@ -1,8 +1,9 @@
 use std::string::String;
 
+use super::connection::connect_classified;
 use crate::byte_stream::framing;
 use crate::reconnect::ReconnectPolicy;
-use crate::tcp::{connect, tune_for_tunnel, write_progress_timeout, TcpConnectionSettings};
+use crate::tcp::{tune_for_tunnel, write_progress_timeout, TcpConnectionSettings};
 use prns_core::interfaces::tcp::{self, TcpWireFraming};
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
@@ -231,7 +232,7 @@ impl Interface for TcpClientInterface {
         loop {
             #[cfg(feature = "tracing")]
             let connected = tracing::Instrument::instrument(
-                connect(self.target.as_str(), self.connection),
+                connect_classified(self.target.as_str(), self.connection),
                 tracing::debug_span!(
                     target: "prns.interface",
                     "prns.interface.connect",
@@ -242,81 +243,89 @@ impl Interface for TcpClientInterface {
             )
             .await;
             #[cfg(not(feature = "tracing"))]
-            let connected = connect(self.target.as_str(), self.connection).await;
-            if let Ok(stream) = connected {
-                let connected_at = tokio::time::Instant::now();
-                tune_for_tunnel(&stream, self.connection.tunnel);
-                crate::diagnostic_log::debug!(
-                    "tcp-client [{interface_origin}]: connected {}",
-                    self.target
-                );
-                self.status.set_connection(ConnectionState::Connected);
-                if self.framing == TcpWireFraming::Hdlc {
-                    seam.request_tunnel_synthesis().await;
-                }
-                let mut meters = framing::WireMeters {
-                    status: &self.status,
-                    airtime: &mut airtime,
-                    throughput: &mut throughput,
-                    bitrate: self.policy.bitrate,
-                    started,
-                };
-                let write_progress_timeout = write_progress_timeout(self.connection.tunnel);
-                match self.framing {
-                    TcpWireFraming::Hdlc => {
-                        framing::serve_with_write_progress_timeout::<
-                            framing::HdlcFraming,
-                            { tcp::READ_BUF_LEN },
-                            { tcp::FRAMED_LEN },
-                            _,
-                            _,
-                        >(
-                            stream,
-                            buffers.get_or_insert_with(framing::FramedBuffers::new),
-                            &mut seam,
-                            &mut meters,
-                            write_progress_timeout,
-                        )
-                        .await;
+            let connected = connect_classified(self.target.as_str(), self.connection).await;
+            match connected {
+                Ok(stream) => {
+                    let connected_at = tokio::time::Instant::now();
+                    tune_for_tunnel(&stream, self.connection.tunnel);
+                    crate::diagnostic_log::debug!(
+                        "tcp-client [{interface_origin}]: connected {}",
+                        self.target
+                    );
+                    self.status.set_failure_reason(None);
+                    self.status.set_endpoint(stream.peer_addr().ok());
+                    self.status.set_connection(ConnectionState::Connected);
+                    if self.framing == TcpWireFraming::Hdlc {
+                        seam.request_tunnel_synthesis().await;
                     }
-                    TcpWireFraming::Kiss => {
-                        framing::serve_with_write_progress_timeout::<
-                            framing::KissFraming,
-                            { tcp::READ_BUF_LEN },
-                            { tcp::KISS_FRAMED_LEN },
-                            _,
-                            _,
-                        >(
-                            stream,
-                            kiss_buffers.get_or_insert_with(framing::FramedBuffers::new),
-                            &mut seam,
-                            &mut meters,
-                            write_progress_timeout,
-                        )
-                        .await;
+                    let mut meters = framing::WireMeters {
+                        status: &self.status,
+                        airtime: &mut airtime,
+                        throughput: &mut throughput,
+                        bitrate: self.policy.bitrate,
+                        started,
+                    };
+                    let write_progress_timeout = write_progress_timeout(self.connection.tunnel);
+                    match self.framing {
+                        TcpWireFraming::Hdlc => {
+                            framing::serve_with_write_progress_timeout::<
+                                framing::HdlcFraming,
+                                { tcp::READ_BUF_LEN },
+                                { tcp::FRAMED_LEN },
+                                _,
+                                _,
+                            >(
+                                stream,
+                                buffers.get_or_insert_with(framing::FramedBuffers::new),
+                                &mut seam,
+                                &mut meters,
+                                write_progress_timeout,
+                            )
+                            .await;
+                        }
+                        TcpWireFraming::Kiss => {
+                            framing::serve_with_write_progress_timeout::<
+                                framing::KissFraming,
+                                { tcp::READ_BUF_LEN },
+                                { tcp::KISS_FRAMED_LEN },
+                                _,
+                                _,
+                            >(
+                                stream,
+                                kiss_buffers.get_or_insert_with(framing::FramedBuffers::new),
+                                &mut seam,
+                                &mut meters,
+                                write_progress_timeout,
+                            )
+                            .await;
+                        }
                     }
+                    crate::diagnostic_log::debug!(
+                        "tcp-client [{interface_origin}]: dropped {}, retrying",
+                        self.target
+                    );
+                    self.status
+                        .set_failure_reason(Some("The TCP connection closed"));
+                    reconnect_attempts = 0;
+                    reconnect.record_connection_lifetime(connected_at.elapsed());
                 }
-                crate::diagnostic_log::debug!(
-                    "tcp-client [{interface_origin}]: dropped {}, retrying",
-                    self.target
-                );
-                self.status.set_connection(ConnectionState::Disconnected);
-                reconnect_attempts = 0;
-                reconnect.record_connection_lifetime(connected_at.elapsed());
-            } else {
-                crate::diagnostic_log::debug!(
-                    "tcp-client [{interface_origin}]: connect failed {}, retrying",
-                    self.target
-                );
-                self.status.set_connection(ConnectionState::Disconnected);
+                Err(error) => {
+                    crate::diagnostic_log::debug!(
+                        "tcp-client [{interface_origin}]: connect failed {}, retrying",
+                        self.target
+                    );
+                    self.status.set_failure_reason(Some(error.reason));
+                }
             }
             if self
                 .connection
                 .reconnect_limit
                 .exhausted(reconnect_attempts)
             {
+                self.status.set_connection(ConnectionState::Failed);
                 return;
             }
+            self.status.set_connection(ConnectionState::Reconnecting);
             let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_random(bytes));
             reconnect_attempts = reconnect_attempts.saturating_add(1);
             tokio::time::sleep(reconnect_delay).await;
@@ -486,6 +495,50 @@ mod tests {
             .expect("the reconnected interface deframes within the window")
             .expect("the interface task is alive");
         assert_eq!(received, b"after the reconnect");
+    }
+
+    #[tokio::test]
+    async fn refused_peer_reports_retry_reason_and_clears_it_on_recovery() {
+        use prns_core::interfaces::InterfaceStatus;
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        drop(listener);
+        let (inbound, _received) = mpsc::unbounded_channel();
+        let (_outbound, outbound) = tokio_grant_lane(tcp::FRAME_CAP, 2);
+        let interface = TcpClientInterface::new(address.to_string());
+        let status = interface.status();
+        let task = tokio::spawn(interface.run(MockSeam {
+            inbound,
+            sink: vec![],
+            outbound,
+        }));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while status.connection() != ConnectionState::Reconnecting {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("unavailable peer retries");
+        assert_eq!(
+            status.failure_reason(),
+            Some("The TCP peer refused the connection")
+        );
+        let listener = TcpListener::bind(address).await.expect("peer returns");
+        let (_socket, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .expect("reconnect")
+            .expect("accept");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while status.connection() != ConnectionState::Connected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("connected status");
+        assert_eq!(status.failure_reason(), None);
+        assert_eq!(status.endpoint(), Some(address));
+        task.abort();
+        let _ = task.await;
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 pub use prns_runtime::manifold::{
-    airtime, announce_pacer, decline_all, duty_gate, grant, interface_seam, reaction_routing,
-    reconnect, throughput, timers, wake_schedule, AppDeciders, Host,
+    airtime, announce_pacer, decline_all, duty_gate, grant, interface_seam, outbound,
+    reaction_routing, reconnect, throughput, timers, wake_schedule, AppDeciders, Host,
 };
 
 #[cfg(feature = "tokio-host")]
@@ -28,10 +28,10 @@ pub mod tokio {
 #[cfg(feature = "embassy-host")]
 pub mod embassy {
     pub use prns_runtime_embassy::manifold::driver::{
-        embassy_grant_lane, run, run_with_deciders, run_with_store, EmbassyEgress,
-        EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam,
-        EmbassyInterfaceStatus, InterfaceLifecycle, ManifoldEgress, ManifoldWiring, PooledEgress,
-        PooledWiring, RNS_PATH_TABLE_RESPONSE_BYTES,
+        embassy_grant_lane, embassy_grant_lane_with_status, run, run_with_deciders, run_with_store,
+        EmbassyEgress, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
+        EmbassyInterfaceSeam, EmbassyInterfaceStatus, InterfaceLifecycle, InterfaceQueueDirection,
+        ManifoldEgress, ManifoldWiring, PooledEgress, PooledWiring, RNS_PATH_TABLE_RESPONSE_BYTES,
     };
     pub use prns_runtime_embassy::manifold::timebase::EmbassyTimebase;
 }

@@ -14,6 +14,8 @@ pub enum OwnedEvent {
     },
     LinkDelivery {
         link_id: [u8; 16],
+        local_destination: Option<[u8; 16]>,
+        arrived_at_millis: u64,
         plaintext: Vec<u8>,
         source_interface: [u8; 8],
     },
@@ -209,6 +211,10 @@ impl OwnedEvent {
             }),
             prns_host::ApplicationEvent::LinkDelivery(event) => Some(Self::LinkDelivery {
                 link_id: event.link_id.into_bytes(),
+                local_destination: event
+                    .local_destination
+                    .map(prns_host::DestinationHash::into_bytes),
+                arrived_at_millis: event.arrived_at_millis,
                 plaintext: event.plaintext,
                 source_interface: event.source_interface.into_bytes(),
             }),

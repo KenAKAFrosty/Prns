@@ -4,6 +4,16 @@ This crate is one package in the Personal RNS public Rust graph. Quick overviews
 
 All public packages use the same engine, release version, and dual MIT/Apache-2.0 license.
 
+## Curve arithmetic footprint
+
+`crypto-precomputed` enables Dalek tables for faster Ed25519 fixed-base operations
+and X25519 public-key generation at a flash cost. `std` enables it; `no_std`
+consumers can opt in explicitly. Secret-scalar operations retain constant-time
+implementations in both modes; algorithms, key/wire formats, verification policy,
+and existing zeroize features are unchanged. X25519 Diffie–Hellman uses the same
+ladder in both modes. Neither mode requires allocation. Cargo features are
+additive: another dependency can enable the tables for the same build.
+
 ## BLE receive boundary
 
 `interfaces::bluetooth_auto::receive_frame` validates a backend's reported length

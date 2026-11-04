@@ -96,10 +96,20 @@ async fn stop_gatt_merge(gatt_merge: Option<tokio::task::JoinHandle<()>>) {
     }
 }
 
+async fn gatt_merge_ended(gatt_merge: &mut Option<tokio::task::JoinHandle<()>>) {
+    match gatt_merge.as_mut() {
+        Some(task) => {
+            let _ = task.await;
+            gatt_merge.take();
+        }
+        None => core::future::pending().await,
+    }
+}
+
 fn spawn_l2cap_lane(
     pending: oneshot::Receiver<DataPlane>,
     frames: tokio_mpsc::Sender<Box<[u8]>>,
-    gatt_merge: Option<tokio::task::JoinHandle<()>>,
+    mut gatt_merge: Option<tokio::task::JoinHandle<()>>,
     failure_policy: FailurePolicy,
 ) -> PendingLane {
     let (write_tx, write_ready) = oneshot::channel::<WriteHalf>();
@@ -111,9 +121,16 @@ fn spawn_l2cap_lane(
         }
     };
     tokio::spawn(async move {
+        let end_with_gatt = matches!(failure_policy, FailurePolicy::EndInboundLink);
         let data = tokio::select! {
             biased;
             _ = frames.closed() => return,
+            _ = gatt_merge_ended(&mut gatt_merge), if end_with_gatt => {
+                if let EndAction::EndLink(end_tx) = end_action {
+                    let _ = end_tx.send(DataPlaneEnd::Terminated);
+                }
+                return;
+            },
             data = pending => match data {
                 Ok(data) => data,
                 Err(_) => return,
@@ -136,7 +153,10 @@ fn spawn_l2cap_lane(
             _pump: pump.clone(),
         });
         let _read_pump = pump;
-        receive_l2cap_frames(&mut inbound_rx, &frames).await;
+        // Explicit retirement can end the exact-peer GATT session without an OS
+        // unsubscribe or CoC-close callback; a new Hello alone cannot. The old
+        // fast lane must not keep that member alive or compete with its replacement.
+        receive_l2cap_until_end(&mut inbound_rx, &frames, &mut gatt_merge, end_with_gatt).await;
         match end_action {
             EndAction::RetainGattFloor => {
                 // The detached task continues to own the central-role GATT receive floor.
@@ -160,6 +180,19 @@ fn spawn_l2cap_lane(
     PendingLane {
         write_ready,
         link_end,
+    }
+}
+
+async fn receive_l2cap_until_end(
+    inbound_rx: &mut tokio_mpsc::Receiver<Box<[u8]>>,
+    frames: &tokio_mpsc::Sender<Box<[u8]>>,
+    gatt_merge: &mut Option<tokio::task::JoinHandle<()>>,
+    end_with_gatt: bool,
+) {
+    tokio::select! {
+        biased;
+        _ = gatt_merge_ended(gatt_merge), if end_with_gatt => {},
+        _ = receive_l2cap_frames(inbound_rx, frames) => {},
     }
 }
 
@@ -251,6 +284,75 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(1), pending_tx.closed())
             .await
             .expect("the detached lane must release its pending receiver with the link");
+    }
+
+    #[tokio::test]
+    async fn retired_inbound_gatt_session_ends_its_pending_fast_lane() {
+        let (gatt_tx, gatt_rx) = gatt_inbound_channel();
+        let (mut pending_tx, pending_rx) = oneshot::channel::<DataPlane>();
+        let (frames_tx, mut frames_rx) = tokio_mpsc::channel(1);
+        let gatt_merge = spawn_gatt_merge(gatt_rx, frames_tx.clone());
+        let mut lane = spawn_l2cap_lane(
+            pending_rx,
+            frames_tx,
+            Some(gatt_merge),
+            FailurePolicy::EndInboundLink,
+        );
+
+        // Exact-peer replacement drops the authoritative old session sender.
+        drop(gatt_tx);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            lane.link_end.take().unwrap(),
+        )
+        .await
+        .expect("retiring GATT must end the old member without an OS close callback")
+        .unwrap();
+        pending_tx.closed().await;
+        assert!(frames_rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn retired_inbound_gatt_session_ends_an_idle_delivered_fast_lane() {
+        let (gatt_tx, gatt_rx) = gatt_inbound_channel();
+        let (inbound_tx, mut inbound_rx) = tokio_mpsc::channel::<Box<[u8]>>(1);
+        let (frames_tx, _frames_rx) = tokio_mpsc::channel(1);
+        let mut gatt_merge = Some(spawn_gatt_merge(gatt_rx, frames_tx.clone()));
+        let lane = tokio::spawn(async move {
+            receive_l2cap_until_end(&mut inbound_rx, &frames_tx, &mut gatt_merge, true).await;
+        });
+
+        drop(gatt_tx);
+        tokio::time::timeout(std::time::Duration::from_secs(1), lane)
+            .await
+            .expect("the idle CoC must not retain a retired exact-peer GATT session")
+            .unwrap();
+        assert!(inbound_tx.is_closed());
+    }
+
+    #[tokio::test]
+    async fn central_fast_lane_retains_its_existing_independent_lifecycle() {
+        let (gatt_tx, gatt_rx) = gatt_inbound_channel();
+        let (inbound_tx, mut inbound_rx) = tokio_mpsc::channel::<Box<[u8]>>(1);
+        let (frames_tx, mut frames_rx) = tokio_mpsc::channel(1);
+        let mut gatt_merge = Some(spawn_gatt_merge(gatt_rx, frames_tx.clone()));
+        let lane = tokio::spawn(async move {
+            receive_l2cap_until_end(&mut inbound_rx, &frames_tx, &mut gatt_merge, false).await;
+        });
+
+        drop(gatt_tx);
+        let mut encoded = [0; 16];
+        let len = encode_stream_frame(&[1, 2, 3], &mut encoded).unwrap();
+        inbound_tx.send(Box::from(&encoded[..len])).await.unwrap();
+        assert_eq!(
+            &*tokio::time::timeout(std::time::Duration::from_secs(1), frames_rx.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            &[1, 2, 3]
+        );
+        drop(inbound_tx);
+        lane.await.unwrap();
     }
 
     #[tokio::test]

@@ -1,3 +1,7 @@
+use super::enrollment::{
+    UsbControllerEnrollmentStatus, CONTROLLER_ENROLL_STATUS_BYTES,
+    SERIAL_CONTROLLER_ENROLL_REQUEST_BYTES, SERIAL_CONTROLLER_ENROLL_STATUS_BYTES,
+};
 use crate::interfaces::framing::rns_serial_framing;
 use crate::interfaces::framing::rns_serial_framing::RnsSerialDecoder;
 use crate::interfaces::InterfaceId;
@@ -38,6 +42,9 @@ enum MessageKind {
     Hello = 0x01,
     HelloAck = 0x02,
     Data = 0x03,
+    ControllerEnroll = 0x04,
+    ControllerEnrollmentStatusQuery = 0x05,
+    ControllerEnrollmentStatus = 0x06,
 }
 
 impl MessageKind {
@@ -46,6 +53,11 @@ impl MessageKind {
             b if b == Self::Hello as u8 => Self::Hello,
             b if b == Self::HelloAck as u8 => Self::HelloAck,
             b if b == Self::Data as u8 => Self::Data,
+            b if b == Self::ControllerEnroll as u8 => Self::ControllerEnroll,
+            b if b == Self::ControllerEnrollmentStatusQuery as u8 => {
+                Self::ControllerEnrollmentStatusQuery
+            }
+            b if b == Self::ControllerEnrollmentStatus as u8 => Self::ControllerEnrollmentStatus,
             unknown => return Err(MalformedMessage::UnknownMessageKind { kind_byte: unknown }),
         })
     }
@@ -65,6 +77,7 @@ pub struct Capabilities(u8);
 
 impl Capabilities {
     const HOST_LANE: u8 = 0b0000_0001;
+    const CONTROLLER_ENROLLMENT: u8 = 0b0000_0010;
 
     pub const fn none() -> Self {
         Self(0)
@@ -76,6 +89,14 @@ impl Capabilities {
 
     pub const fn supports_host_lane(self) -> bool {
         self.0 & Self::HOST_LANE != 0
+    }
+
+    pub const fn with_controller_enrollment(self) -> Self {
+        Self(self.0 | Self::CONTROLLER_ENROLLMENT)
+    }
+
+    pub const fn supports_controller_enrollment(self) -> bool {
+        self.0 & Self::CONTROLLER_ENROLLMENT != 0
     }
 }
 
@@ -103,12 +124,25 @@ pub enum Message<'a> {
         capabilities: Capabilities,
     },
     Data(&'a [u8]),
+    /// Local, opt-in control traffic. These bytes must never enter a network seam.
+    ControllerEnroll(&'a [u8; SERIAL_CONTROLLER_ENROLL_REQUEST_BYTES]),
+    /// Nonzero nonce correlates a read-only status query with its response.
+    ControllerEnrollmentStatusQuery {
+        nonce: u32,
+    },
+    /// Nonce zero is reserved for the immediate authorization response.
+    ControllerEnrollmentStatus {
+        nonce: u32,
+        status: &'a [u8; CONTROLLER_ENROLL_STATUS_BYTES],
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WriteError {
     BufferTooSmall,
     DataTooLarge,
+    InvalidEnrollmentNonce,
+    InvalidEnrollmentStatus,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -119,6 +153,9 @@ pub enum MalformedMessage {
     WrongMagic,
     UnsupportedVersion { peer_version: u8 },
     DataTooLarge,
+    InvalidEnrollmentLength,
+    InvalidEnrollmentNonce,
+    InvalidEnrollmentStatus,
 }
 
 impl Message<'_> {
@@ -149,6 +186,33 @@ impl Message<'_> {
                 let slot = out.get_mut(..total).ok_or(WriteError::BufferTooSmall)?;
                 slot[0] = MessageKind::Data as u8;
                 slot[MESSAGE_KIND_LEN..].copy_from_slice(packet);
+                Ok(total)
+            }
+            Message::ControllerEnroll(request) => {
+                let total = MESSAGE_KIND_LEN + SERIAL_CONTROLLER_ENROLL_REQUEST_BYTES;
+                let slot = out.get_mut(..total).ok_or(WriteError::BufferTooSmall)?;
+                slot[0] = MessageKind::ControllerEnroll as u8;
+                slot[1..].copy_from_slice(*request);
+                Ok(total)
+            }
+            Message::ControllerEnrollmentStatusQuery { nonce } => {
+                if *nonce == 0 {
+                    return Err(WriteError::InvalidEnrollmentNonce);
+                }
+                let mut payload = [0; 5];
+                payload[0] = MessageKind::ControllerEnrollmentStatusQuery as u8;
+                payload[1..].copy_from_slice(&nonce.to_le_bytes());
+                copy_into(&payload, out)
+            }
+            Message::ControllerEnrollmentStatus { nonce, status } => {
+                if UsbControllerEnrollmentStatus::decode(*status).is_none() {
+                    return Err(WriteError::InvalidEnrollmentStatus);
+                }
+                let total = MESSAGE_KIND_LEN + SERIAL_CONTROLLER_ENROLL_STATUS_BYTES;
+                let slot = out.get_mut(..total).ok_or(WriteError::BufferTooSmall)?;
+                slot[0] = MessageKind::ControllerEnrollmentStatus as u8;
+                slot[1..5].copy_from_slice(&nonce.to_le_bytes());
+                slot[5..].copy_from_slice(*status);
                 Ok(total)
             }
         }
@@ -199,6 +263,33 @@ pub fn decode_message(payload: &[u8]) -> Result<Message<'_>, MalformedMessage> {
             }
             Ok(Message::Data(body))
         }
+        MessageKind::ControllerEnroll => Ok(Message::ControllerEnroll(
+            body.try_into()
+                .map_err(|_| MalformedMessage::InvalidEnrollmentLength)?,
+        )),
+        MessageKind::ControllerEnrollmentStatusQuery => {
+            let nonce = u32::from_le_bytes(
+                body.try_into()
+                    .map_err(|_| MalformedMessage::InvalidEnrollmentLength)?,
+            );
+            if nonce == 0 {
+                return Err(MalformedMessage::InvalidEnrollmentNonce);
+            }
+            Ok(Message::ControllerEnrollmentStatusQuery { nonce })
+        }
+        MessageKind::ControllerEnrollmentStatus => {
+            if body.len() != SERIAL_CONTROLLER_ENROLL_STATUS_BYTES {
+                return Err(MalformedMessage::InvalidEnrollmentLength);
+            }
+            let nonce = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
+            let status: &[u8; CONTROLLER_ENROLL_STATUS_BYTES] = body[4..]
+                .try_into()
+                .map_err(|_| MalformedMessage::InvalidEnrollmentLength)?;
+            if UsbControllerEnrollmentStatus::decode(status).is_none() {
+                return Err(MalformedMessage::InvalidEnrollmentStatus);
+            }
+            Ok(Message::ControllerEnrollmentStatus { nonce, status })
+        }
     }
 }
 
@@ -228,7 +319,13 @@ pub fn react_to(message: Result<Message<'_>, MalformedMessage>) -> InboundReacti
     match message {
         Ok(Message::Hello(_)) => InboundReaction::AnswerHandshake,
         Ok(Message::Data(packet)) => InboundReaction::Deliver(packet),
-        Ok(Message::HelloAck { .. }) | Err(_) => InboundReaction::Ignore,
+        Ok(
+            Message::HelloAck { .. }
+            | Message::ControllerEnroll(_)
+            | Message::ControllerEnrollmentStatusQuery { .. }
+            | Message::ControllerEnrollmentStatus { .. },
+        )
+        | Err(_) => InboundReaction::Ignore,
     }
 }
 
@@ -246,9 +343,18 @@ pub fn host_react(message: Result<Message<'_>, MalformedMessage>) -> HostInbound
         Ok(Message::Hello(_)) => HostInbound::AnswerHandshake,
         Ok(Message::HelloAck { tag, .. }) => HostInbound::Confirmed(tag),
         Ok(Message::Data(packet)) => HostInbound::Data(packet),
-        Err(_) => HostInbound::Ignore,
+        Ok(
+            Message::ControllerEnroll(_)
+            | Message::ControllerEnrollmentStatusQuery { .. }
+            | Message::ControllerEnrollmentStatus { .. },
+        )
+        | Err(_) => HostInbound::Ignore,
     }
 }
+
+#[cfg(test)]
+#[path = "serial_enrollment_tests.rs"]
+mod serial_enrollment_tests;
 
 #[cfg(test)]
 mod tests {
@@ -264,6 +370,9 @@ mod tests {
             capabilities: Capabilities,
         },
         Data(std::vec::Vec<u8>),
+        ControllerEnroll([u8; SERIAL_CONTROLLER_ENROLL_REQUEST_BYTES]),
+        ControllerEnrollmentStatusQuery(u32),
+        ControllerEnrollmentStatus(u32, [u8; CONTROLLER_ENROLL_STATUS_BYTES]),
     }
 
     impl OwnedMessage {
@@ -275,6 +384,16 @@ mod tests {
                     capabilities: *capabilities,
                 },
                 OwnedMessage::Data(packet) => Message::Data(packet),
+                OwnedMessage::ControllerEnroll(request) => Message::ControllerEnroll(request),
+                OwnedMessage::ControllerEnrollmentStatusQuery(nonce) => {
+                    Message::ControllerEnrollmentStatusQuery { nonce: *nonce }
+                }
+                OwnedMessage::ControllerEnrollmentStatus(nonce, status) => {
+                    Message::ControllerEnrollmentStatus {
+                        nonce: *nonce,
+                        status,
+                    }
+                }
             }
         }
 
@@ -283,6 +402,13 @@ mod tests {
                 OwnedMessage::Hello(_) => MESSAGE_KIND_LEN + HELLO_BODY_LEN,
                 OwnedMessage::HelloAck { .. } => MESSAGE_KIND_LEN + HELLO_ACK_BODY_LEN,
                 OwnedMessage::Data(packet) => MESSAGE_KIND_LEN + packet.len(),
+                OwnedMessage::ControllerEnroll(_) => {
+                    MESSAGE_KIND_LEN + SERIAL_CONTROLLER_ENROLL_REQUEST_BYTES
+                }
+                OwnedMessage::ControllerEnrollmentStatusQuery(_) => 5,
+                OwnedMessage::ControllerEnrollmentStatus(..) => {
+                    MESSAGE_KIND_LEN + SERIAL_CONTROLLER_ENROLL_STATUS_BYTES
+                }
             }
         }
     }
@@ -292,6 +418,13 @@ mod tests {
             Message::Hello(capabilities) => OwnedMessage::Hello(capabilities),
             Message::HelloAck { tag, capabilities } => OwnedMessage::HelloAck { tag, capabilities },
             Message::Data(packet) => OwnedMessage::Data(packet.to_vec()),
+            Message::ControllerEnroll(request) => OwnedMessage::ControllerEnroll(*request),
+            Message::ControllerEnrollmentStatusQuery { nonce } => {
+                OwnedMessage::ControllerEnrollmentStatusQuery(nonce)
+            }
+            Message::ControllerEnrollmentStatus { nonce, status } => {
+                OwnedMessage::ControllerEnrollmentStatus(nonce, *status)
+            }
         }
     }
 
@@ -309,6 +442,15 @@ mod tests {
             (node_tags(), capabilities())
                 .prop_map(|(tag, capabilities)| OwnedMessage::HelloAck { tag, capabilities }),
             prop::collection::vec(any::<u8>(), 0..=MAX_DATA_BYTES).prop_map(OwnedMessage::Data),
+            any::<[u8; SERIAL_CONTROLLER_ENROLL_REQUEST_BYTES]>()
+                .prop_map(OwnedMessage::ControllerEnroll),
+            (1u32..=u32::MAX).prop_map(OwnedMessage::ControllerEnrollmentStatusQuery),
+            (any::<u32>(), any::<u32>(), any::<[u8; 64]>()).prop_map(
+                |(nonce, transaction, target)| OwnedMessage::ControllerEnrollmentStatus(
+                    nonce,
+                    UsbControllerEnrollmentStatus::Saved { transaction }.encode(&target)
+                )
+            ),
         ]
     }
 
@@ -319,7 +461,7 @@ mod tests {
         match decode_message(&owned).expect("decode") {
             Message::Hello(capabilities) => Message::Hello(capabilities),
             Message::HelloAck { tag, capabilities } => Message::HelloAck { tag, capabilities },
-            Message::Data(_) => unreachable!("test helper not used for data"),
+            _ => unreachable!("test helper only used for handshakes"),
         }
     }
 

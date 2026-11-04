@@ -67,10 +67,8 @@ impl<S: StorageLayout> EngineState<S> {
         match offer.correlation() {
             ResourceCorrelation::Response(request_id) => self
                 .receipts
-                .pending_request_deadline(&offer.link_id(), request_id)
-                .map_or(InstantMillis(0), |request_deadline| {
-                    wait_deadline.min(request_deadline)
-                }),
+                .pending_response_admission_deadline(&offer.link_id(), request_id, wait_deadline)
+                .unwrap_or(InstantMillis(0)),
             ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => wait_deadline,
         }
     }
@@ -129,21 +127,28 @@ impl<S: StorageLayout> EngineState<S> {
                     let wait_deadline = offer.wait_deadline();
                     match offer.correlation() {
                         ResourceCorrelation::Response(request_id) => {
-                            let Some(request_deadline) = self
-                                .receipts
-                                .pending_request_deadline(&offer.link_id(), request_id)
+                            let Some(admission_deadline) =
+                                self.receipts.pending_response_admission_deadline(
+                                    &offer.link_id(),
+                                    request_id,
+                                    wait_deadline,
+                                )
                             else {
                                 return Some((index, PendingOfferDueAction::Reject));
                             };
-                            if !impossible && wait_deadline > now && request_deadline > now {
+                            if !impossible && admission_deadline > now {
                                 return None;
                             }
-                            let failure =
-                                if request_deadline <= now && request_deadline <= wait_deadline {
-                                    SendRequestFailure::Timeout
-                                } else {
-                                    SendRequestFailure::ResourceCapacity
-                                };
+                            let failure = if self
+                                .receipts
+                                .pending_request_deadline(&offer.link_id(), request_id)
+                                .is_some_and(|deadline| {
+                                    deadline <= now && deadline <= wait_deadline
+                                }) {
+                                SendRequestFailure::Timeout
+                            } else {
+                                SendRequestFailure::ResourceCapacity
+                            };
                             Some((
                                 index,
                                 PendingOfferDueAction::RejectResponse {

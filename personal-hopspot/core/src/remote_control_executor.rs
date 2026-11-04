@@ -70,6 +70,7 @@ pub enum HopspotWifiCredentialCommand {
 
 pub struct HopspotWifiCredentialMailbox {
     update: Signal<CriticalSectionRawMutex, HopspotWifiCredentialCommand>,
+    pending: Signal<CriticalSectionRawMutex, ()>,
 }
 
 impl HopspotWifiCredentialMailbox {
@@ -77,16 +78,19 @@ impl HopspotWifiCredentialMailbox {
     pub const fn new() -> Self {
         Self {
             update: Signal::new(),
+            pending: Signal::new(),
         }
     }
 
     pub fn replace(&self, update: HopspotWifiCredentialUpdate) {
         self.update
             .signal(HopspotWifiCredentialCommand::Replace(update));
+        self.pending.signal(());
     }
 
     pub fn clear(&self) {
         self.update.signal(HopspotWifiCredentialCommand::Clear);
+        self.pending.signal(());
     }
 
     pub async fn receive(&self) -> HopspotWifiCredentialCommand {
@@ -95,6 +99,20 @@ impl HopspotWifiCredentialMailbox {
 
     pub fn try_receive(&self) -> Option<HopspotWifiCredentialCommand> {
         self.update.try_take()
+    }
+
+    /// Wake the single station consumer without taking its pending credentials.
+    ///
+    /// Cancellation leaves the latest Replace/Clear command queued. A separate notification
+    /// avoids consuming and requeueing a command over a newer update. Notifications left by an
+    /// earlier receive are drained here, so they cannot repeatedly bypass station backoff.
+    pub async fn wait_until_pending(&self) {
+        loop {
+            if self.update.signaled() {
+                return;
+            }
+            self.pending.wait().await;
+        }
     }
 }
 
@@ -411,6 +429,105 @@ mod tests {
         let waker = Waker::noop();
         let mut context = Context::from_waker(waker);
         future.poll(&mut context)
+    }
+
+    fn wifi_update(ssid: &str, revision: u32) -> HopspotWifiCredentialUpdate {
+        HopspotWifiCredentialUpdate {
+            revision: Some(
+                RemoteControlWifiCredentialRevision::new(revision).expect("nonzero revision"),
+            ),
+            station: RemoteControlWifiStation::parse(ssid, "test-password")
+                .expect("valid credentials"),
+        }
+    }
+
+    #[test]
+    fn wifi_pending_wait_wakes_without_consuming_credentials() {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::task::Wake;
+
+        #[derive(Default)]
+        struct WakeCount(AtomicUsize);
+        impl Wake for WakeCount {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let mailbox = HopspotWifiCredentialMailbox::new();
+        let wakes = Arc::new(WakeCount::default());
+        let waker = Waker::from(Arc::clone(&wakes));
+        let mut context = Context::from_waker(&waker);
+        let mut waiting = pin!(mailbox.wait_until_pending());
+        assert!(waiting.as_mut().poll(&mut context).is_pending());
+        mailbox.replace(wifi_update("restored-network", 2));
+        assert_eq!(wakes.0.load(Ordering::SeqCst), 1);
+        assert!(waiting.as_mut().poll(&mut context).is_ready());
+        let Some(HopspotWifiCredentialCommand::Replace(update)) = mailbox.try_receive() else {
+            panic!("waking must leave the credentials queued");
+        };
+        assert_eq!(update.revision.map(|revision| revision.get()), Some(2));
+        assert_eq!(update.station.ssid(), "restored-network");
+        assert_eq!(update.station.password(), "test-password");
+        assert!(mailbox.try_receive().is_none());
+    }
+
+    #[test]
+    fn wifi_pending_wait_preserves_latest_replacement_and_clear() {
+        let mailbox = HopspotWifiCredentialMailbox::new();
+        mailbox.replace(wifi_update("old-network", 1));
+        let mut waiting = pin!(mailbox.wait_until_pending());
+        assert!(poll(waiting.as_mut()).is_ready());
+        mailbox.replace(wifi_update("new-network", 2));
+        let Some(HopspotWifiCredentialCommand::Replace(update)) = mailbox.try_receive() else {
+            panic!("latest credentials remain queued after a wake");
+        };
+        assert_eq!(update.station.ssid(), "new-network");
+        assert_eq!(update.revision.map(|revision| revision.get()), Some(2));
+
+        let mut waiting = pin!(mailbox.wait_until_pending());
+        assert!(poll(waiting.as_mut()).is_pending());
+        mailbox.replace(wifi_update("discarded-network", 3));
+        mailbox.clear();
+        assert!(poll(waiting.as_mut()).is_ready());
+        assert!(matches!(
+            mailbox.try_receive(),
+            Some(HopspotWifiCredentialCommand::Clear)
+        ));
+        assert!(mailbox.try_receive().is_none());
+    }
+
+    #[test]
+    fn wifi_pending_wait_is_cancel_safe_and_ignores_stale_notifications() {
+        let mailbox = HopspotWifiCredentialMailbox::new();
+        mailbox.replace(wifi_update("consumed-network", 1));
+        assert!(mailbox.try_receive().is_some());
+        {
+            let mut waiting = pin!(mailbox.wait_until_pending());
+            assert!(
+                poll(waiting.as_mut()).is_pending(),
+                "an old notification is not a new command"
+            );
+        }
+        mailbox.clear();
+        {
+            let mut waiting = pin!(mailbox.wait_until_pending());
+            assert!(
+                poll(waiting.as_mut()).is_ready(),
+                "a command queued before waiting is immediately visible"
+            );
+        }
+        let mut receive = pin!(mailbox.receive());
+        assert!(matches!(
+            poll(receive.as_mut()),
+            Poll::Ready(HopspotWifiCredentialCommand::Clear)
+        ));
+        let mut waiting = pin!(mailbox.wait_until_pending());
+        assert!(
+            poll(waiting.as_mut()).is_pending(),
+            "both receive paths leave no spurious retry wake"
+        );
     }
 
     #[test]

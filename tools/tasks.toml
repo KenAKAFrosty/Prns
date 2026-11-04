@@ -1246,3 +1246,135 @@ entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "rak10724"]
 requires = ["bash", "cargo", "python3", "rustc"]
 setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
 
+
+[[task]]
+id = "repo.host-uniffi.check"
+summary = "Build the default native image and verify generated UniFFI transport through persistent two-node foreign conformance."
+domain = "repo"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/repo/check-host-uniffi.py"]
+requires = ["cargo", "python3", "rustc"]
+
+
+[[internal]]
+path = "tools/repo/host_contract/connections.py"
+reason = "Canonical native connection declaration and client projection generation."
+
+
+[[internal]]
+path = "tools/repo/host_contract/remote_control.py"
+reason = "Schema-owned typed RemoteControl extension transport generation."
+
+
+[[internal]]
+path = "tools/repo/host_contract/extensions.py"
+reason = "Native extension source and target availability validation for host-contract generation."
+
+[[internal]]
+path = "tools/repo/host_contract/formatting.py"
+reason = "Shared Rust formatting for canonical host-contract generated output."
+
+[[internal]]
+path = "tools/repo/host_contract/uniffi.py"
+reason = "Shared schema-owned UniFFI transport and React Native adapter generation."
+
+[[task]]
+id = "build.groups.scale.catalog"
+summary = "Opt in to real 1,000-conversation host qualification with bounded pages and reopen."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/build/group-scale.py", "--case", "catalog"]
+requires = ["cargo", "rustc", "python3"]
+setup = "Pass a new --output directory; optional --toolchain and --offline. Requires /usr/bin/time and 5 GiB free. Runs real ignored workload, not an ordinary PR test."
+
+[[task]]
+id = "build.groups.scale.members"
+summary = "Opt in to real 256-membership host qualification with four authenticated-Link representatives."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/build/group-scale.py", "--case", "members"]
+requires = ["cargo", "rustc", "python3"]
+setup = "Pass a new --output directory; optional --toolchain and --offline. Requires /usr/bin/time and 5 GiB free. This is not 256 concurrent carriers or device/RF acceptance."
+
+[[task]]
+id = "build.groups.scale.members8"
+summary = "Opt in to the 8-member cached representative host workload."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/build/group-scale.py", "--case", "members8"]
+requires = ["cargo", "rustc", "python3"]
+setup = "Pass a fresh --output directory; optional --toolchain and --offline. Real enrollment and bounded queries; network and management use separate tasks. Isolated optimized test RSS, not mobile acceptance."
+
+[[task]]
+id = "build.groups.scale.members16"
+summary = "Opt in to the 16-member cached representative host workload."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/build/group-scale.py", "--case", "members16"]
+requires = ["cargo", "rustc", "python3"]
+setup = "Pass a fresh --output directory; optional --toolchain and --offline. Real enrollment and bounded queries; network and management use separate tasks. Isolated optimized test RSS, not mobile acceptance."
+
+[[task]]
+id = "build.groups.scale.members32"
+summary = "Opt in to the 32-member cached representative host workload."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/build/group-scale.py", "--case", "members32"]
+requires = ["cargo", "rustc", "python3"]
+setup = "Pass a fresh --output directory; optional --toolchain and --offline. Real enrollment and bounded queries; network and management use separate tasks. Isolated optimized test RSS, not mobile acceptance."
+
+[[task]]
+id = "build.groups.scale.members16-strict"
+summary = "Opt in to the 16-member strict-validation control representative host workload."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/build/group-scale.py", "--case", "members16-strict"]
+requires = ["cargo", "rustc", "python3"]
+setup = "Pass a fresh --output directory; optional --toolchain and --offline. Real enrollment and bounded queries; network and management use separate tasks. Isolated optimized test RSS, not mobile acceptance."
+
+[[task]]
+id = "build.groups.scale.network8"
+summary = "Opt in to the separate eight-member four-Link messaging and receipt journey."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/build/group-scale.py", "--case", "network8"]
+requires = ["cargo", "rustc", "python3"]
+setup = "Pass a fresh --output directory; each network stage stops after 30 seconds or an early runner exit. Host-only, no physical network acceptance."
+
+[[task]]
+id = "build.groups.scale.management8"
+summary = "Opt in to the separate eight-member Remove, Leave, Close and reopen journey."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer"]
+entrypoint = ["python3", "tools/build/group-scale.py", "--case", "management8"]
+requires = ["cargo", "rustc", "python3"]
+setup = "Pass a fresh --output directory. Functional lifecycle findings are separate from admission/query measurements and are not suppressed by them."
+
+[[task]]
+id = "build.lxmf.verify"
+summary = "Verify standalone LXMF wire, mailbox and direct exchange against the pinned Python authority."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/lxmf.sh"]
+requires = ["bash", "cargo", "rustup", "python3"]
+setup = "Install Rust 1.90.0, the thumbv7em-none-eabihf Rust target, and either uv or Python 3.13.7; uv provisions the pinned interpreter automatically."

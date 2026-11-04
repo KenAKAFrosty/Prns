@@ -30,6 +30,8 @@ struct StatusCell {
     radio: AtomicU64,
     details_tag: AtomicU8,
     details_payload: AtomicU8,
+    failure_reason: std::sync::Mutex<Option<&'static str>>,
+    endpoint: std::sync::Mutex<Option<core::net::SocketAddr>>,
 }
 
 const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
@@ -87,6 +89,8 @@ impl TokioInterfaceStatus {
                 radio: AtomicU64::new(RADIO_UNPUBLISHED),
                 details_tag: AtomicU8::new(PeerDetails::NotApplicable.wire_tag()),
                 details_payload: AtomicU8::new(0),
+                failure_reason: std::sync::Mutex::new(None),
+                endpoint: std::sync::Mutex::new(None),
             }),
         }
     }
@@ -150,6 +154,18 @@ impl TokioInterfaceStatus {
         }
         #[cfg(not(feature = "tracing"))]
         let _ = previous;
+    }
+
+    /// Bounded classified transport diagnostics, never endpoint credentials or payloads.
+    pub fn set_failure_reason(&self, reason: Option<&'static str>) {
+        if let Ok(mut current) = self.inner.failure_reason.lock() {
+            *current = reason;
+        }
+    }
+    pub fn set_endpoint(&self, endpoint: Option<core::net::SocketAddr>) {
+        if let Ok(mut current) = self.inner.endpoint.lock() {
+            *current = endpoint;
+        }
     }
 
     pub fn add_rx(&self, bytes: u64) {
@@ -225,6 +241,21 @@ impl InterfaceStatus for TokioInterfaceStatus {
             return ConnectionState::Disabled;
         }
         ConnectionState::from_u8(self.inner.connection.load(Ordering::Relaxed))
+    }
+
+    fn failure_reason(&self) -> Option<&'static str> {
+        self.inner
+            .failure_reason
+            .lock()
+            .ok()
+            .and_then(|reason| *reason)
+    }
+    fn endpoint(&self) -> Option<core::net::SocketAddr> {
+        self.inner
+            .endpoint
+            .lock()
+            .ok()
+            .and_then(|endpoint| *endpoint)
     }
 
     fn rx_bytes(&self) -> u64 {

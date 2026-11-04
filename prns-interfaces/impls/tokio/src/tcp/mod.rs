@@ -14,7 +14,9 @@ pub use connection::{
 #[cfg(feature = "tcp")]
 pub use server::{TcpServer, TcpServerConnection, TcpServerStatus};
 
+#[cfg(feature = "backbone")]
+pub(crate) use connection::connect;
 #[cfg(feature = "i2p")]
 pub(crate) use connection::tune_i2p;
 #[cfg(feature = "tcp")]
-pub(crate) use connection::{connect, tune_for_tunnel, write_progress_timeout};
+pub(crate) use connection::{tune_for_tunnel, write_progress_timeout};

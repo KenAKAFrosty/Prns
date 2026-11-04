@@ -847,13 +847,11 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                 }
             }
         }
-        if !is_esp {
-            super::enrollment::ControllerEnrollment {
-                board_slug: target.slug, busy, active: enrollment_active,
-                on_start: {
-                    let event_state = state.clone();
-                    move |_| invalidate_preparation(event_state.clone(), "Controller setup selected. Prepare a release again before installing firmware.")
-                }
+        super::enrollment::ControllerEnrollment {
+            board_slug: target.slug, busy, active: enrollment_active,
+            on_start: {
+                let event_state = state.clone();
+                move |_| invalidate_preparation(event_state.clone(), "Controller setup selected. Prepare a release again before installing firmware.")
             }
         }
         if let Some((recovery_mount_label, managed_application)) = nrf_hand_off {

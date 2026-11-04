@@ -500,3 +500,172 @@ fn a_locally_originated_announce_does_not_wait_for_rebroadcast_cooldown() {
     assert_eq!(second.frame(), b"origin");
     consumer.release();
 }
+
+#[test]
+fn administrative_off_blocks_direct_and_fleet_admission_until_retirement() {
+    use crate::interfaces::ConnectionState;
+    use crate::manifold::driver::EmbassyInterfaceStatus;
+    let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"power-fleet");
+    let child = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"member");
+    let sibling = InterfaceId::new([0x61; 8]);
+    let status = Box::leak(Box::new(EmbassyInterfaceStatus::new_unaccounted(
+        supervisor,
+        ConnectionState::Connected,
+    )));
+    let (tx, mut rx) = leaked_grant_lane::<64>(4);
+    let (sibling_tx, mut sibling_rx) = leaked_grant_lane::<64>(2);
+    let mut egress = PooledEgress::<2>::new();
+    assert!(egress.push(supervisor, Box::leak(Box::new(tx))).is_ok());
+    assert!(egress
+        .push(sibling, Box::leak(Box::new(sibling_tx)))
+        .is_ok());
+    egress.bind_status(supervisor, status);
+    status.disable();
+    for fast_resume in [false, true] {
+        if fast_resume {
+            status.enable();
+        }
+        assert_eq!(
+            egress.enqueue(child, b"stale"),
+            EgressOutcome::Unavailable { lane: supervisor }
+        );
+        assert_eq!(
+            egress.enqueue_broadcast(InterfaceKind::AutoWifi, FanTarget::All, b"stale"),
+            EgressOutcome::Unavailable { lane: supervisor }
+        );
+        assert!(rx.try_peek().is_none());
+        assert_eq!(egress.enqueue(sibling, b"live"), EgressOutcome::Enqueued);
+        assert_eq!(sibling_rx.try_peek().unwrap().frame(), b"live");
+        sibling_rx.release();
+    }
+    status.acknowledge_availability(true, status.disable_generation());
+    assert_eq!(egress.enqueue(child, b"fresh"), EgressOutcome::Enqueued);
+    assert_eq!(rx.try_peek().unwrap().frame(), b"fresh");
+}
+
+#[test]
+fn retagged_lane_keeps_its_power_binding_before_status_identity_catches_up() {
+    use crate::interfaces::ConnectionState;
+    use crate::manifold::driver::EmbassyInterfaceStatus;
+    let old_id = InterfaceId::new([0x71; 8]);
+    let new_id = InterfaceId::new([0x72; 8]);
+    let status = Box::leak(Box::new(EmbassyInterfaceStatus::new_accounted(
+        old_id,
+        ConnectionState::Connected,
+    )));
+    let (tx, mut rx) = leaked_grant_lane::<64>(1);
+    let mut egress = PooledEgress::<1>::new();
+    assert!(egress.push(old_id, Box::leak(Box::new(tx))).is_ok());
+    egress.bind_status(old_id, status);
+    egress.retag(old_id, new_id);
+    status.disable();
+    assert_eq!(
+        egress.enqueue(new_id, b"disabled"),
+        EgressOutcome::Unavailable { lane: new_id }
+    );
+    assert_eq!(egress.enqueue(old_id, b"old"), EgressOutcome::NoLane);
+    assert!(rx.try_peek().is_none());
+}
+
+#[test]
+fn a_power_cycle_discards_paced_announces_and_already_queued_frames() {
+    use super::super::availability::{Availability, LaneStatus};
+    use crate::engine::EngineState;
+    use crate::interfaces::{AttachedInterfaces, ConnectionState};
+    use crate::manifold::driver::{EmbassyInterfaceStatus, InterfaceQueueWakeSlot};
+    use crate::storage::GrowableHeap;
+    for supervised in [false, true] {
+        let id = if supervised {
+            InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"paced-supervisor")
+        } else {
+            InterfaceId::new([0x77; 8])
+        };
+        let target = if supervised {
+            InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"paced-member")
+        } else {
+            id
+        };
+        let status = Box::leak(Box::new(EmbassyInterfaceStatus::new_accounted(
+            id,
+            ConnectionState::Connected,
+        )));
+        let (mut tx, mut rx) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(1);
+        tx.set_status(status, InterfaceQueueWakeSlot::EgressProducer);
+        rx.set_status(status, InterfaceQueueWakeSlot::EgressConsumer);
+        let mut lanes: [(
+            InterfaceId,
+            &mut dyn crate::manifold::grant::ManifoldLaneWriter,
+        ); 1] = [(target, &mut tx)];
+        let statuses = [&*status];
+        let mut egress = super::EmbassyEgress::new(&mut lanes);
+        egress.set_statuses(&statuses);
+        let descriptor = paced_descriptor(target);
+        let mut pacers = [InterfacePacer::from_descriptor(target, &descriptor)];
+        for bytes in [b"first".as_slice(), b"pending"] {
+            route_reaction(
+                EngineReaction::Directive(Directive::SendAnnounce {
+                    target,
+                    bytes,
+                    hops: 0,
+                }),
+                &mut egress,
+                &[],
+                &mut pacers,
+                InstantMillis(0),
+                &mut |_| {},
+            );
+        }
+        assert!(soonest_pacer_release(&pacers).is_some());
+        let bindings = [LaneStatus { lane: id, status }];
+        let availability = Availability::bound(&bindings);
+        status.disable();
+        status.enable();
+        assert!(availability.reconcile(
+            &mut EngineState::<GrowableHeap>::default(),
+            AttachedInterfaces::new(&[descriptor]),
+            &mut egress,
+            &[],
+            &mut pacers,
+            InstantMillis(1),
+            &mut |_| {}
+        ));
+        assert!(soonest_pacer_release(&pacers).is_none());
+        flush_due_pacers(&mut pacers, InstantMillis(1_000_000), &mut egress, &[]);
+        assert!(
+            rx.try_peek().is_none(),
+            "neither pre-Off custody layer may revive on On"
+        );
+        assert_eq!(egress.enqueue(target, b"fresh"), EgressOutcome::Enqueued);
+        assert_eq!(rx.try_peek().unwrap().frame(), b"fresh");
+    }
+}
+
+#[test]
+fn an_off_racing_the_writer_is_unavailable_not_backpressure_or_success() {
+    use crate::interfaces::ConnectionState;
+    use crate::manifold::driver::EmbassyInterfaceStatus;
+    use crate::manifold::grant::{LaneWriteOutcome, ManifoldLaneWriter};
+    struct DisableAtWrite(&'static EmbassyInterfaceStatus, LaneWriteOutcome);
+    impl ManifoldLaneWriter for DisableAtWrite {
+        fn try_write(&mut self, _: FrameTarget, _: &[u8]) -> LaneWriteOutcome {
+            self.0.disable();
+            self.1
+        }
+    }
+    for result in [LaneWriteOutcome::Written, LaneWriteOutcome::Full] {
+        let id = InterfaceId::new([0x7A; 8]);
+        let status = Box::leak(Box::new(EmbassyInterfaceStatus::new_accounted(
+            id,
+            ConnectionState::Connected,
+        )));
+        let mut egress = PooledEgress::<1>::new();
+        assert!(egress
+            .push(id, Box::leak(Box::new(DisableAtWrite(status, result))))
+            .is_ok());
+        egress.bind_status(id, status);
+        assert_eq!(
+            egress.enqueue(id, b"racing"),
+            EgressOutcome::Unavailable { lane: id }
+        );
+    }
+}

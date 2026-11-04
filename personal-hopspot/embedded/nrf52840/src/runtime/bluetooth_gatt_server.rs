@@ -31,6 +31,11 @@ const DATA_UUID: [u8; 16] = [
 
 pub(super) type WriteValue = GattValue<u8, GATT_VALUE_CAPACITY>;
 
+pub(super) enum ServerEvent {
+    Write(ServerWrite),
+    NotificationComplete(u8),
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum WriteTarget {
     ColumbaRx,
@@ -243,7 +248,11 @@ impl Server {
 }
 
 impl gatt_server::Server for Server {
-    type Event = ServerWrite;
+    type Event = ServerEvent;
+
+    fn on_notify_tx_complete(&self, _conn: &Connection, count: u8) -> Option<Self::Event> {
+        Some(ServerEvent::NotificationComplete(count))
+    }
 
     fn on_write(
         &self,
@@ -254,7 +263,9 @@ impl gatt_server::Server for Server {
         data: &[u8],
     ) -> Option<Self::Event> {
         // Write-without-response arrives here on S140; deferred authorization handles requests.
-        self.rns.ingest_write(handle, op, offset, data, None)
+        self.rns
+            .ingest_write(handle, op, offset, data, None)
+            .map(ServerEvent::Write)
     }
 
     fn on_deferred_write(
@@ -265,6 +276,8 @@ impl gatt_server::Server for Server {
         data: &[u8],
         reply: DeferredWriteReply,
     ) -> Option<Self::Event> {
-        self.rns.ingest_write(handle, op, offset, data, Some(reply))
+        self.rns
+            .ingest_write(handle, op, offset, data, Some(reply))
+            .map(ServerEvent::Write)
     }
 }

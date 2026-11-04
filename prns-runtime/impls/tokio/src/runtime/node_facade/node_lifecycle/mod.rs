@@ -98,6 +98,7 @@ pub struct PrnsNode<
     remote_control_target_accesses_rx: RemoteControlTargetAccessReceiver,
     iface_build_rx: UnboundedReceiver<DriverMsg>,
     accepted_announce_observer: Option<AcceptedAnnounceObserver>,
+    handshake_egress_observer: Option<crate::runtime::EgressHandshakeObserver>,
     pub(super) crypto_pool: CryptoPoolConfig,
     scheduler_policy: SchedulerPolicy,
     interface_arbitration: InterfaceArbitration,
@@ -569,6 +570,7 @@ where
             remote_control_target_accesses_rx,
             iface_build_rx,
             accepted_announce_observer: None,
+            handshake_egress_observer: None,
             crypto_pool: CryptoPoolConfig::host_default(),
             interface_arbitration: InterfaceArbitration::TokioFair,
             scheduler_policy: SchedulerPolicy::production(),
@@ -664,6 +666,20 @@ where
         observer: impl for<'a> FnMut(AnnounceObservation<'a>) + Send + 'static,
     ) -> Self {
         self.accepted_announce_observer = Some(Box::new(observer));
+        self
+    }
+
+    /// Opt-in bounded Link diagnostics. Callbacks must not block and return
+    /// whether their independent sink admitted the event. Neither callback
+    /// proves physical transmission or application delivery.
+    #[must_use]
+    pub fn with_link_handshake_diagnostics(
+        mut self,
+        core: crate::engine::LinkHandshakeObserver,
+        egress: crate::runtime::EgressHandshakeObserver,
+    ) -> Self {
+        self.node.engine.set_link_handshake_observer(Some(core));
+        self.handshake_egress_observer = Some(egress);
         self
     }
 
@@ -853,6 +869,7 @@ where
             mut remote_control_target_accesses_rx,
             iface_build_rx,
             mut accepted_announce_observer,
+            handshake_egress_observer,
             crypto_pool,
             scheduler_policy,
             interface_arbitration,
@@ -887,7 +904,8 @@ where
             };
         let (remote_control_pairing_persistence, mut remote_control_pairing_persistence_rx) =
             remote_control_pairing_persistence_lane();
-        let egress = Egress::new(std::vec::Vec::new());
+        let mut egress = Egress::new(std::vec::Vec::new());
+        egress.set_handshake_observer(handshake_egress_observer);
         let store = handle.store.clone();
         let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
         let interface_watches = super::super::interface_watch::InterfaceWatchRegistry::default();

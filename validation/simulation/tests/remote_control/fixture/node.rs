@@ -98,7 +98,8 @@ impl Lab<'_> {
                     ControllerPolicy::Nobody => vec![],
                     ControllerPolicy::Grants(grants) => grants,
                 };
-                let persistence = match storage {
+                // Each boot retains its storage namespace through shutdown or cancellation.
+                let persistence = match storage.as_ref() {
                     Some(storage) => PersistenceSelection::Durable(
                         personal_rns::runtime::NodePersistence::custom_dir(storage.directory())
                             .expect("fixture persistence")

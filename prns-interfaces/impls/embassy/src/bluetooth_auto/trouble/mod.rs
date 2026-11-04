@@ -16,7 +16,7 @@ use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_sync::semaphore::{FairSemaphore, Semaphore, SemaphoreReleaser};
 use embassy_sync::signal::Signal;
 use embassy_sync_07::blocking_mutex::raw::NoopRawMutex;
-use embassy_time::{with_timeout, Duration, Instant, Timer};
+use embassy_time::{with_deadline, with_timeout, Duration, Instant, Timer};
 use heapless_09::Vec as GattVec;
 use portable_atomic::{AtomicBool, Ordering};
 use trouble_host::att::{AttClient, AttReq};
@@ -29,15 +29,16 @@ use prns_core::interfaces::bluetooth_auto::{
     CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
-    RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleControl, BleEvent, BleLink, BleLinkParts, BleSink, BleSource,
+    DialOutcome, Origin, RadioMode, ScanningMode,
 };
 
 use super::connection_slots::{
     ConnectionSlotDataOwners, ConnectionSlotLease, ConnectionSlotLinkLease, ConnectionSlotOwners,
-    ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
+    ConnectionSlotParts, ConnectionSlotPool, ConnectionSlotSinkLease, ConnectionSlotSourceLease,
     ConnectionSlotWorkerLease, ReadyConnectionSlot, ReadyConnectionSlotParts,
 };
+use super::control_io::{ControlCompletion, ControlIoError, ControlTicket, GattWriteArbiter};
 use super::frame_pool::{FrameLease, FramePoolError, SharedFramePool};
 use super::runtime::BluetoothAutoStatus;
 
@@ -121,7 +122,8 @@ pub type GattCharacteristic = Characteristic<GattVec<u8, GATT_VALUE_CAP>>;
 pub type ReticulumAttributeTable = AttributeTable<'static, NoopRawMutex, ATTRIBUTE_TABLE>;
 
 pub use backend::{
-    BleHub, Closed, EmbeddedBleBackend, EmbeddedBleLink, EmbeddedBleSink, EmbeddedBleSource,
+    BleHub, Closed, EmbeddedBleBackend, EmbeddedBleControl, EmbeddedBleLink, EmbeddedBleSink,
+    EmbeddedBleSource,
 };
 pub use sessions::{
     columba_identity_uuid, columba_rx_uuid, columba_tx_uuid, control_uuid, data_uuid,

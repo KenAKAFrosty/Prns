@@ -250,6 +250,8 @@ impl Esp32S3Board for HeltecBoard {
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const MEMORY_PROFILE: &'static personal_hopspot_memory::MemoryProfile =
         &personal_hopspot_memory::HELTEC_V4;
+    #[cfg(feature = "remote-control-pairing")]
+    const REMOTE_CONTROL_PAIRING: bool = true;
     type Display = ImmediateBoardDisplay<HeltecDisplay>;
     type Battery = HeltecBattery;
     type Gnss = HeltecV4Gnss;

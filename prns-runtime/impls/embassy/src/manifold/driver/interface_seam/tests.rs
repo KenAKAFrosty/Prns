@@ -10,6 +10,46 @@ use super::super::leaked_grant_lane;
 use super::EmbassyInterfaceSeam;
 
 #[test]
+fn dequeue_and_custody_transfer_preserve_original_enqueue_age() {
+    use crate::engine::InstantMillis;
+    use crate::manifold::outbound::{OutboundQueueDropReason, OutboundQueuePolicy};
+    let interface = InterfaceId::new([0xC5; 8]);
+    let (inbound, _) = leaked_grant_lane::<511>(1);
+    let (mut sender, outbound) = leaked_grant_lane::<511>(1);
+    let notify = Channel::<CriticalSectionRawMutex, InterfaceId, 1>::new();
+    let mut seam = EmbassyInterfaceSeam::new(
+        interface,
+        inbound,
+        notify.sender(),
+        outbound,
+        crate::manifold::driver::test_support::entropy_handle(),
+    );
+    let slot = sender.try_grant().unwrap();
+    slot.fill_for(interface, &[0xA5; 508]);
+    slot.enqueued_at = Some(InstantMillis(1_000));
+    sender.commit();
+    let frame = block_on(seam.next_outbound_frame());
+    assert_eq!(frame.bytes, &[0xA5; 508]);
+    assert_eq!(frame.enqueued_at, Some(InstantMillis(1_000)));
+    assert_eq!(
+        OutboundQueuePolicy::DEFAULT.check(frame.enqueued_at, InstantMillis(121_000), None),
+        Err(OutboundQueueDropReason::Expired)
+    );
+    seam.accept_outbound_custody();
+    sender
+        .try_grant()
+        .unwrap()
+        .fill_for(interface, b"new frame");
+    let before = embassy_time::Instant::now().as_millis();
+    sender.commit();
+    let frame = block_on(seam.next_outbound_frame());
+    let after = embassy_time::Instant::now().as_millis();
+    assert!(frame
+        .enqueued_at
+        .is_some_and(|at| at.0 >= before && at.0 <= after));
+}
+
+#[test]
 fn packet_phy_crosses_the_embassy_ingress_seam_with_its_frame() {
     const FRAME: usize = 64;
 
@@ -273,4 +313,45 @@ fn same_identity_publication_filters_late_stale_frames_and_releases_retained_slo
         assert_eq!(block_on(seam.next_outbound()), b"next");
         assert_eq!(seam.take_channel_change_drops(), 0);
     }
+}
+
+#[test]
+fn canceled_lane_wait_and_old_custody_disposition_preserve_fresh_frame() {
+    use core::{
+        future::Future,
+        task::{Context, Poll},
+    };
+    let id = InterfaceId::new(*b"radio000");
+    let (inbound, _) = leaked_grant_lane::<511>(1);
+    let (mut sender, outbound) = leaked_grant_lane::<511>(1);
+    let notify = Channel::<CriticalSectionRawMutex, InterfaceId, 1>::new();
+    let mut seam = EmbassyInterfaceSeam::new(
+        id,
+        inbound,
+        notify.sender(),
+        outbound,
+        crate::manifold::driver::test_support::entropy_handle(),
+    );
+    sender
+        .try_grant()
+        .unwrap()
+        .fill_for(id, b"old driver custody");
+    sender.commit();
+    assert_eq!(
+        block_on(seam.next_outbound_frame()).bytes,
+        b"old driver custody"
+    );
+    seam.accept_outbound_custody();
+    let mut pending = std::boxed::Box::pin(seam.next_outbound_frame());
+    let mut cx = Context::from_waker(std::task::Waker::noop());
+    assert!(matches!(pending.as_mut().poll(&mut cx), Poll::Pending));
+    drop(pending);
+    sender.try_grant().unwrap().fill_for(id, &[0xA5; 508]);
+    sender.commit();
+    seam.complete_outbound(OutboundDisposition::Dropped(
+        crate::manifold::interface_seam::OutboundDropReason::QueueLifetime(
+            crate::manifold::outbound::OutboundQueueDropReason::Expired,
+        ),
+    ));
+    assert_eq!(block_on(seam.next_outbound_frame()).bytes, &[0xA5; 508]);
 }

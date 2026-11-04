@@ -45,7 +45,7 @@ impl IndexRow for HeapInsufficientStamp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct HeapDiscoveryValidationCache {
     valid: Vec<HeapValidatedEnvelope>,
     valid_index: HeapLemireIndex,
@@ -53,19 +53,6 @@ pub struct HeapDiscoveryValidationCache {
     insufficient: Vec<HeapInsufficientStamp>,
     insufficient_index: HeapLemireIndex,
     insufficient_next_evict: usize,
-}
-
-impl Default for HeapDiscoveryValidationCache {
-    fn default() -> Self {
-        Self {
-            valid: Vec::new(),
-            valid_index: HeapLemireIndex::default(),
-            valid_next_evict: 0,
-            insufficient: Vec::new(),
-            insufficient_index: HeapLemireIndex::default(),
-            insufficient_next_evict: 0,
-        }
-    }
 }
 
 impl HeapDiscoveryValidationCache {

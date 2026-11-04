@@ -103,11 +103,20 @@ async fn refresh_face(
     system_awake_slot: &mut bool,
     desired_interfaces: &mut u8,
     scheduled_effect: &mut Option<ScheduledEffect>,
-    input: Option<hopspot::InputEvent>,
+    input: Option<super::heltec_v3_face::ButtonEvent>,
 ) {
+    #[cfg(feature = "remote-control-pairing")]
+    let _ = node_page_destination;
     let Ok(snapshots) = snapshots(lora_status, usb_status) else {
         return;
     };
+    #[cfg(feature = "remote-control-pairing")]
+    super::heltec_v3_pairing::transmit_ready(
+        system_awake
+            && snapshots
+                .iter()
+                .any(|snapshot| snapshot.connection.is_online()),
+    );
     let action = face.poll(
         &snapshots,
         *subg_configuration,
@@ -128,12 +137,19 @@ async fn refresh_face(
     };
     match action {
         hopspot::UiAction::Announce => {
-            use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
-            let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
-                destination: node_page_destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Registered,
-            }));
+            #[cfg(feature = "remote-control-pairing")]
+            super::heltec_v3_pairing::manual_announcements();
+            #[cfg(not(feature = "remote-control-pairing"))]
+            {
+                use personal_rns::engine::{
+                    AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand,
+                };
+                let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
+                    destination: node_page_destination,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                }));
+            }
         }
         hopspot::UiAction::Sleep => {
             let _ = schedule_effect(context.scheduled_effect, ScheduledAction::SleepSystem);
@@ -183,8 +199,20 @@ async fn refresh_face(
         hopspot::UiAction::OpenRemoteControlPairing
         | hopspot::UiAction::CloseRemoteControlPairing
         | hopspot::UiAction::ApproveRemoteControlTargetPairing(_)
-        | hopspot::UiAction::RejectRemoteControlTargetPairing(_) => {}
+        | hopspot::UiAction::RejectRemoteControlTargetPairing(_) => {
+            if !super::heltec_v3_pairing::handle_action(ui_handle, action).await {
+                face.pairing_close_failed();
+            }
+        }
     }
+}
+
+#[cfg(feature = "heltec-v3")]
+async fn wait_for_face_refresh() {
+    #[cfg(feature = "remote-control-pairing")]
+    super::heltec_v3_pairing::wait_for_refresh().await;
+    #[cfg(not(feature = "remote-control-pairing"))]
+    Timer::after(Duration::from_millis(500)).await;
 }
 
 #[cfg_attr(feature = "heltec-v3", embassy_executor::task)]
@@ -211,7 +239,7 @@ pub(super) async fn run(
         #[cfg(feature = "heltec-v3")]
         {
             enum Wake<Command> {
-                Button(hopspot::InputEvent),
+                Button(super::heltec_v3_face::ButtonEvent),
                 Tick,
                 Command(Command),
                 Scheduled,
@@ -220,7 +248,7 @@ pub(super) async fn run(
                 Some(effect) => {
                     match select4(
                         super::heltec_v3_face::BUTTON_EVENTS.receive(),
-                        Timer::after(Duration::from_millis(500)),
+                        wait_for_face_refresh(),
                         REMOTE_CONTROL_COMMANDS.receive(),
                         Timer::at(effect.deadline()),
                     )
@@ -234,7 +262,7 @@ pub(super) async fn run(
                 }
                 None => match select3(
                     super::heltec_v3_face::BUTTON_EVENTS.receive(),
-                    Timer::after(Duration::from_millis(500)),
+                    wait_for_face_refresh(),
                     REMOTE_CONTROL_COMMANDS.receive(),
                 )
                 .await

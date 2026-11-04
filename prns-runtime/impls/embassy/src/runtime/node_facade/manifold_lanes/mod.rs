@@ -15,7 +15,7 @@ use crate::interfaces::{
 };
 use crate::manifold::driver::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyInterfaceSeam,
-    EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress,
+    EmbassyInterfaceStatus, InterfaceLifecycle, InterfaceQueueWakeSlot, PooledEgress,
 };
 use crate::manifold::grant::{FrameSlot, ManifoldLaneReader, ManifoldLaneWriter};
 use crate::manifold::interface_seam::EMBEDDED_MAX_LINK_MTU;
@@ -104,6 +104,7 @@ impl<
         id: InterfaceId,
         outbound_wake: Option<&'static Signal<M, ()>>,
         external_outbound: Option<&'static mut [FrameSlot<FRAME>]>,
+        status: Option<&'static EmbassyInterfaceStatus>,
     ) -> Result<TakenManifoldLane<M, FRAME>, LaneClaimError> {
         if external_outbound
             .as_ref()
@@ -122,7 +123,7 @@ impl<
         let inbound_channel = self
             .inbound_channel
             .init(zerocopy_channel::Channel::new(self.inbound_buffer.take()));
-        let (mut interface_inbound, manifold_inbound) = embassy_grant_lane(inbound_channel);
+        let (mut interface_inbound, mut manifold_inbound) = embassy_grant_lane(inbound_channel);
         interface_inbound.set_pressure_counter(&self.ingress_pressure_events);
 
         let outbound_buffer =
@@ -130,10 +131,17 @@ impl<
         let outbound_channel = self
             .outbound_channel
             .init(zerocopy_channel::Channel::new(outbound_buffer));
-        let (mut manifold_outbound, interface_outbound) = embassy_grant_lane(outbound_channel);
+        let (mut manifold_outbound, mut interface_outbound) = embassy_grant_lane(outbound_channel);
         manifold_outbound.set_pressure_counter(&self.egress_pressure_events);
         if let Some(wake) = outbound_wake {
             manifold_outbound.set_outbound_wake(wake);
+        }
+
+        if let Some(status) = status {
+            interface_inbound.set_status(status, InterfaceQueueWakeSlot::IngressProducer);
+            manifold_inbound.set_status(status, InterfaceQueueWakeSlot::IngressConsumer);
+            manifold_outbound.set_status(status, InterfaceQueueWakeSlot::EgressProducer);
+            interface_outbound.set_status(status, InterfaceQueueWakeSlot::EgressConsumer);
         }
 
         Ok(TakenManifoldLane {
@@ -215,7 +223,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
     }
 
     /// Claims an interface lane and registers its status for engine-owned malformed-frame
-    /// accounting.
+    /// accounting, administrative route retirement, and generation-fenced frame custody.
     pub fn claim_accounted_interface<
         const FRAME: usize,
         const INBOUND_DEPTH: usize,
@@ -315,7 +323,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         }
 
         let id = descriptor.id;
-        let taken = storage.try_take(id, None, external_outbound)?;
+        let taken = storage.try_take(id, None, external_outbound, frame_accounting_status)?;
         self.register_lane::<INBOUND_DEPTH>(id, taken.manifold_inbound, taken.manifold_outbound);
         if self.initial.push(descriptor).is_err() {
             unreachable!()
@@ -326,6 +334,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
             }
         }
         if let Some(status) = frame_accounting_status {
+            self.egress.bind_status(id, status);
             if self.frame_accounting_statuses.push(status).is_err() {
                 unreachable!()
             }
@@ -343,7 +352,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         supervisor: InterfaceId,
         outbound_wake: &'static Signal<M, ()>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
-        self.claim_supervisor_configuration(storage, supervisor, None, outbound_wake, None)
+        self.claim_supervisor_configuration(storage, supervisor, None, outbound_wake, None, None)
     }
 
     /// Claims a supervisor whose outbound frame ring lives in caller-owned static storage.
@@ -368,6 +377,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
             None,
             outbound_wake,
             Some(outbound_buffer),
+            None,
         )
     }
 
@@ -382,7 +392,38 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         context: IfacContext,
         outbound_wake: &'static Signal<M, ()>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
-        self.claim_supervisor_configuration(storage, supervisor, Some(context), outbound_wake, None)
+        self.claim_supervisor_configuration(
+            storage,
+            supervisor,
+            Some(context),
+            outbound_wake,
+            None,
+            None,
+        )
+    }
+
+    /// Claims a fleet lane whose desired power state gates every member and
+    /// whose queues are fenced across administrative Off transitions.
+    pub fn claim_accounted_supervisor_with_outbound_buffer<
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    >(
+        &mut self,
+        storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
+        supervisor: InterfaceId,
+        outbound_wake: &'static Signal<M, ()>,
+        outbound_buffer: &'static mut [FrameSlot<FRAME>],
+        status: &'static EmbassyInterfaceStatus,
+    ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
+        self.claim_supervisor_configuration(
+            storage,
+            supervisor,
+            None,
+            outbound_wake,
+            Some(outbound_buffer),
+            Some(status),
+        )
     }
 
     fn claim_supervisor_configuration<
@@ -396,14 +437,26 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         context: Option<IfacContext>,
         outbound_wake: &'static Signal<M, ()>,
         external_outbound: Option<&'static mut [FrameSlot<FRAME>]>,
+        status: Option<&'static EmbassyInterfaceStatus>,
     ) -> Result<SupervisorLane<M, FRAME>, LaneClaimError> {
         self.validate_claim::<INBOUND_DEPTH>(supervisor)?;
-        let taken = storage.try_take(supervisor, Some(outbound_wake), external_outbound)?;
+        if let Some(status) = status {
+            if status.id() != supervisor {
+                return Err(LaneClaimError::FrameAccountingIdMismatch {
+                    descriptor: supervisor,
+                    status: status.id(),
+                });
+            }
+        }
+        let taken = storage.try_take(supervisor, Some(outbound_wake), external_outbound, status)?;
         self.register_lane::<INBOUND_DEPTH>(
             supervisor,
             taken.manifold_inbound,
             taken.manifold_outbound,
         );
+        if let Some(status) = status {
+            self.egress.bind_status(supervisor, status);
+        }
         if let Some(context) = context {
             if self
                 .ifacs

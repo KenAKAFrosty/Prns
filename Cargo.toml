@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "prns-contact-card",
+    "prns-storage",
     "personal-rns",
     "prns-core",
     "prns-macros",
@@ -21,6 +23,8 @@ members = [
     "personal-hopspot/flasher",
     "personal-hopspot/appliance",
     "validation/simulation",
+    "prns-lxmf/wire",
+    "prns-lxmf/service",
 ]
 default-members = [
     "personal-rns",
@@ -29,6 +33,8 @@ default-members = [
     "personal-hopspot/core",
 ]
 exclude = [
+    "prns-groups",
+    "prns-identities",
     "prnsd",
     "prns-ffi",
     "prns-napi",
@@ -41,6 +47,8 @@ exclude = [
     "prns-interfaces/impls/tokio",
     "prns-interfaces/impls/embassy",
     "validation/integration",
+    "prns-host/impls/runtime",
+    "prns-host/impls/snapshot",
 ]
 resolver = "3"
 

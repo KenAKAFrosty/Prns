@@ -74,8 +74,9 @@ pub fn x25519_diffie_hellman(
 }
 
 pub fn x25519_public_key(secret: &X25519SecretKey) -> X25519PublicKey {
-    // `PublicKey::from` rides the precomputed basepoint table: same clamping, same bytes, a third of the variable-base ladder's time.
-    // Every single's seal pays this once.
+    // `crypto-precomputed` selects the fixed-base table; compact builds use the
+    // constant-time variable-base multiplication. Both clamp the scalar identically
+    // and produce the same public-key bytes.
     X25519PublicKey(*PublicKey::from(&StaticSecret::from(secret.0)).as_bytes())
 }
 

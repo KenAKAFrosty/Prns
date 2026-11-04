@@ -1,4 +1,6 @@
 import { requestControllerEnrollment } from "./controller-enrollment.js";
+import { requestEspControllerEnrollment, espEnrollmentCleanup } from "./esp-controller-enrollment.js";
+import { createEnrollmentWait } from "./enrollment-wait.js";
 import {
   BoundedResponseError,
   esptoolFlashSizeValue,
@@ -629,6 +631,16 @@ export function continueNrfBootloaderSelection() {
   return continuePendingNrfBootloaderSelection();
 }
 
+let activeEnrollmentWait = null;
+
+export function continueControllerEnrollment() {
+  return activeEnrollmentWait?.continueChecking() ?? false;
+}
+
+export function stopControllerEnrollmentCheck() {
+  return activeEnrollmentWait?.stopChecking() ?? false;
+}
+
 export async function enrollController(request, dependencies = {}) {
   if (active) return { status: "error", message: "A device operation is already active." };
   active = true;
@@ -636,19 +648,31 @@ export async function enrollController(request, dependencies = {}) {
   discardPreparingRequest();
   discardPrepared();
   const environment = dependencies.environment ?? globalThis;
+  const enrollmentWait = createEnrollmentWait(dependencies);
+  activeEnrollmentWait = enrollmentWait;
   try {
     assertHostedEnvironment(environment);
+    if (request.transport === "esp-serial") {
+      const serial = dependencies.serial ?? environment.navigator?.serial;
+      if (!serial?.requestPort) {
+        throw new FlashBridgeError("unsupported_browser", "Serial controller setup requires desktop Chrome or Edge and a USB connection.");
+      }
+      return await requestEspControllerEnrollment(serial, request, environment, { ...dependencies, enrollmentWait });
+    }
     const usb = dependencies.usb ?? environment.navigator?.usb;
     if (!usb?.requestDevice) {
       throw new FlashBridgeError("unsupported_browser", "Controller setup requires desktop Chrome or Edge and a USB connection.");
     }
-    const targetPublicKey = await requestControllerEnrollment(usb, request, environment, dependencies);
-    return { status: "saved", targetPublicKey };
+    return await requestControllerEnrollment(usb, request, environment, { ...dependencies, enrollmentWait });
   } catch (error) {
     const failure = safeFailure(error);
     return { status: "error", message: failure.message };
   } finally {
-    active = false;
+    enrollmentWait.close();
+    activeEnrollmentWait = null;
+    const cleanup = espEnrollmentCleanup();
+    if (cleanup) cleanup.then(() => { active = false; }, () => {});
+    else active = false;
   }
 }
 

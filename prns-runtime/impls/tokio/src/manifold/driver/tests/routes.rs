@@ -25,6 +25,7 @@ async fn routing_control_drops_a_live_route_and_journals_the_explicit_removal() 
         Journaled::Delivered(_)
         | Journaled::SelfRatchetRotated { .. }
         | Journaled::AnnounceHeldDropped { .. }
+        | Journaled::PathDiscovery(_)
         | Journaled::CommandSettled { .. }
         | Journaled::RouteRemoved { .. }
         | Journaled::LinkEstablished(_)
@@ -170,6 +171,7 @@ async fn the_manifold_culls_an_expired_route_at_its_deadline() {
         Journaled::Delivered(_)
         | Journaled::SelfRatchetRotated { .. }
         | Journaled::AnnounceHeldDropped { .. }
+        | Journaled::PathDiscovery(_)
         | Journaled::RouteRemoved { .. }
         | Journaled::LinkEstablished(_)
         | Journaled::PeerIdentified { .. }

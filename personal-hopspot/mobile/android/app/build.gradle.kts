@@ -106,6 +106,13 @@ android {
         jvmTarget = "1.8"
     }
 
+    // Share only transport ownership helpers, without depending on Expo or its native image.
+    sourceSets.getByName("main").java.srcDir(
+        "../../../../prns-host/platform/android/bluetooth/src/main/java",
+    )
+    sourceSets.getByName("test").java.srcDir(
+        "../../../../prns-host/platform/android/bluetooth/src/test/java",
+    )
     sourceSets.getByName("main").assets.srcDir(releaseNoticesDirectory)
 
 }

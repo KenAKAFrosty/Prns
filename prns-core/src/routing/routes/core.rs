@@ -30,7 +30,8 @@ impl RouteEvidenceId {
         }
     }
 
-    pub(super) const fn get(self) -> u32 {
+    /// Process-local route incarnation for diagnostics and evidence matching.
+    pub const fn get(self) -> u32 {
         self.0.get()
     }
 }

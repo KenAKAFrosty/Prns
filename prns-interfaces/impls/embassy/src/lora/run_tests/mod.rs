@@ -33,7 +33,7 @@ enum Fault {
 
 struct Lab {
     events: Channel<CriticalSectionRawMutex, (RadioEvent, Vec<u8>), 4>,
-    outbound: Channel<CriticalSectionRawMutex, Vec<u8>, 4>,
+    outbound: Channel<CriticalSectionRawMutex, (Option<InstantMillis>, Vec<u8>), 4>,
     tx_started: Signal<CriticalSectionRawMutex, ()>,
     tx_release: Signal<CriticalSectionRawMutex, ()>,
     pause_tx: Cell<bool>,
@@ -42,6 +42,7 @@ struct Lab {
     transmissions: RefCell<Vec<(RadioProfile, Vec<u8>)>>,
     transmission_times: RefCell<Vec<u64>>,
     clock_ms: Cell<u64>,
+    virtual_clock: Cell<bool>,
     channel_ids: RefCell<Vec<InterfaceId>>,
     dispositions: RefCell<Vec<OutboundDisposition>>,
     delivered: RefCell<Vec<Vec<u8>>>,
@@ -68,6 +69,7 @@ impl Lab {
             transmissions: RefCell::new(Vec::new()),
             transmission_times: RefCell::new(Vec::new()),
             clock_ms: Cell::new(0),
+            virtual_clock: Cell::new(false),
             channel_ids: RefCell::new(Vec::new()),
             dispositions: RefCell::new(Vec::new()),
             delivered: RefCell::new(Vec::new()),
@@ -94,6 +96,14 @@ impl Lab {
             }
         }
         Ok(())
+    }
+    async fn send_outbound(&self, bytes: Vec<u8>) {
+        let now = if self.virtual_clock.get() {
+            self.clock_ms.get()
+        } else {
+            Instant::now().as_millis()
+        };
+        self.outbound.send((Some(InstantMillis(now)), bytes)).await;
     }
     async fn receive(&self, bytes: &[u8]) {
         self.events
@@ -238,8 +248,15 @@ impl InterfaceSeam for Seam {
         self.lab.received_phy.borrow_mut().push(phy);
     }
     async fn next_outbound(&mut self) -> &[u8] {
-        self.current = self.lab.outbound.receive().await;
-        &self.current
+        self.next_outbound_frame().await.bytes
+    }
+    async fn next_outbound_frame(&mut self) -> OutboundFrame<'_> {
+        let (enqueued_at, bytes) = self.lab.outbound.receive().await;
+        self.current = bytes;
+        OutboundFrame {
+            bytes: &self.current,
+            enqueued_at,
+        }
     }
     fn accept_outbound_custody(&mut self) {
         self.lab.accepted.set(self.lab.accepted.get() + 1);
@@ -253,3 +270,6 @@ mod configuration;
 mod traffic;
 
 mod deadlines;
+mod queue_lifetime;
+
+mod link_trace;

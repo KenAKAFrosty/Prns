@@ -353,6 +353,8 @@ pub(crate) fn fulfill_ready_work(
                     let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
                     engine.resume_proof_sign(
                         ProofSignCompleted {
+                            destination: owed.destination,
+                            destination_generation: owed.destination_generation,
                             target: owed.target,
                             packet_hash: owed.packet_hash,
                             signature,

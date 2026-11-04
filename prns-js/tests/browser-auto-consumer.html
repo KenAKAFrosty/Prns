@@ -336,6 +336,25 @@
           ) {
             return "Failed:HandshakeContract";
           }
+          for (const [tag, type] of [[4, "probe"], [5, "probeReply"]]) {
+            for (const nonce of [0n, 0x0020_0000_0000_0001n, 0xffff_ffff_ffff_ffffn]) {
+              const frame = new Uint8Array(9);
+              frame[0] = tag;
+              new DataView(frame.buffer).setBigUint64(1, nonce, false);
+              const control = wasm.bluetoothDecodeControl(frame);
+              if (control.type !== type || control.nonce !== nonce) {
+                return "Failed:LivenessControlNonce";
+              }
+              for (const invalid of [frame.slice(0, 8), new Uint8Array([...frame, 0])]) {
+                try {
+                  wasm.bluetoothDecodeControl(invalid);
+                  return "Failed:LivenessControlLength";
+                } catch {
+                  // Both controls require exactly one complete u64 nonce.
+                }
+              }
+            }
+          }
           const packet = Uint8Array.from(
             { length: 377 },
             (_, index) => index % 251,

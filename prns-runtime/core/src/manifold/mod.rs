@@ -12,6 +12,7 @@ pub mod announce_pacer;
 pub mod duty_gate;
 pub mod grant;
 pub mod interface_seam;
+pub mod outbound;
 pub mod reaction_routing;
 pub mod reconnect;
 pub mod throughput;

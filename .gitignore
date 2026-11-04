@@ -50,3 +50,7 @@ benchmarks/.benchmark-runs/
 # Reticulum runtime storage (per-node identity + state); regenerated at runtime
 **/.reticulum/
 **/.wrangler/
+
+# Retired work logs and one-off qualification captures belong in external artifacts.
+/applications/checkpoints/
+/prns-groups/security/mls-rs/evidence/

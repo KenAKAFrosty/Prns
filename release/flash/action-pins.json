@@ -121,6 +121,10 @@
     "taiki-e/install-action": {
       "resolved_ref": "v2.85.0",
       "sha": "7572810d7dd469b651bb7793945692cf78da5dd7"
+    },
+    "gradle/actions/setup-gradle": {
+      "resolved_ref": "v4.4.4",
+      "sha": "748248ddd2a24f49513d8f472f81c3a07d4d50e1"
     }
   }
 }

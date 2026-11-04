@@ -40,6 +40,7 @@ pub struct InterfaceIfacSnapshot<Label> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceInventoryEntry<Label> {
     pub name: Option<Label>,
+    pub endpoint: Option<core::net::SocketAddr>,
     pub origin: InterfaceOriginKind,
     pub attachment_epoch: u64,
     pub frame_accounting: FrameAccountingCoverage,
@@ -52,6 +53,7 @@ struct FoldedInterface<Label> {
     name: Option<Label>,
     origin: InterfaceOriginKind,
     root: Option<InterfaceSnapshot>,
+    root_endpoint: Option<core::net::SocketAddr>,
     root_attachment_epoch: Option<u64>,
     root_frame_accounting: FrameAccountingCoverage,
     ifac: Option<InterfaceIfacSnapshot<Label>>,
@@ -78,6 +80,7 @@ impl<Label> FoldedInterface<Label> {
             name: None,
             origin,
             root: None,
+            root_endpoint: None,
             root_attachment_epoch: None,
             root_frame_accounting: FrameAccountingCoverage::Unavailable,
             ifac: None,
@@ -108,6 +111,7 @@ impl<Label> FoldedInterface<Label> {
         match snapshot.membership {
             Membership::Independent => {
                 self.root = Some(snapshot);
+                self.root_endpoint = entry.endpoint;
                 self.root_attachment_epoch = Some(entry.attachment_epoch);
                 self.root_frame_accounting = entry.frame_accounting;
                 self.origin = entry.origin;
@@ -208,6 +212,7 @@ impl<Label> FoldedInterface<Label> {
         };
         InterfaceInventoryEntry {
             name: self.name,
+            endpoint: self.root_endpoint,
             origin: self.origin,
             attachment_epoch: self
                 .root_attachment_epoch
@@ -327,6 +332,7 @@ mod tests {
     ) -> InterfaceInventoryEntry<&'static str> {
         InterfaceInventoryEntry {
             name,
+            endpoint: None,
             origin: InterfaceOriginKind::Configured,
             attachment_epoch: 1,
             frame_accounting: FrameAccountingCoverage::Unavailable,

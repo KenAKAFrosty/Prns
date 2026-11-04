@@ -32,6 +32,7 @@ pub enum HostLanInterfaceError {
 #[derive(Clone, Default)]
 pub struct HostLanInventory {
     interfaces: Arc<Mutex<std::vec::Vec<HostLanInterface>>>,
+    authoritative: bool,
 }
 
 impl HostLanAddress {
@@ -118,6 +119,21 @@ impl HostLanInventory {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Use the host's current connectivity inventory as the entire eligible
+    /// network set. An empty publication removes every network, even when
+    /// native address enumeration still exposes a disconnected interface.
+    #[must_use]
+    pub fn authoritative() -> Self {
+        Self {
+            authoritative: true,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn is_authoritative(&self) -> bool {
+        self.authoritative
     }
 
     pub fn replace(
@@ -232,6 +248,25 @@ mod tests {
             allowed[0].addresses()[1].netmask(),
             "255.255.255.0".parse::<std::net::IpAddr>().unwrap()
         );
+    }
+
+    #[test]
+    fn authoritative_inventory_mode_is_preserved_by_clones() {
+        assert!(!HostLanInventory::new().is_authoritative());
+        assert!(!HostLanInventory::default().is_authoritative());
+        let inventory = HostLanInventory::authoritative();
+        assert!(inventory.is_authoritative());
+        let cloned = inventory.clone();
+        assert!(cloned.is_authoritative());
+        inventory.replace(vec![HostLanInterface::new(
+            "wlan0",
+            23,
+            vec![HostLanAddress::new("fe80::1".parse().unwrap(), 64).unwrap()],
+        )
+        .unwrap()]);
+        assert_eq!(cloned.snapshot().len(), 1);
+        cloned.replace(Vec::new());
+        assert!(inventory.snapshot().is_empty());
     }
 
     #[test]

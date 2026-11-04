@@ -30,6 +30,16 @@ use prns_runtime::runtime::{PersistedStateSnapshot, SelfRatchetSnapshot, SelfRat
 
 #[allow(clippy::large_enum_variant)]
 pub enum HostCommand {
+    CancelRemoteControlControllerPairing {
+        subject: crate::remote_control::RemoteControlControllerPairingSubject,
+        reply: oneshot::Sender<
+            Result<
+                crate::remote_control::RemoteControlControllerPairingAborted,
+                crate::runtime::CancelRemoteControlControllerPairingControlError,
+            >,
+        >,
+    },
+    ServiceLifecycle(crate::runtime::node_facade::service_lifecycle::ServiceCommand),
     Engine(IssuedCommand),
     EngineWithTiming {
         issued: IssuedCommand,
@@ -63,6 +73,10 @@ pub enum HostCommand {
     RemoveInterface {
         id: InterfaceId,
         departure: Departure,
+    },
+    /// A FIFO acknowledgement after interface lifecycle commands have landed.
+    InterfaceLifecycleBarrier {
+        reply: oneshot::Sender<()>,
     },
     DropRoute {
         destination: DestinationHash,

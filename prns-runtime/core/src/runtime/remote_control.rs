@@ -47,8 +47,9 @@ use super::{
 pub(super) const REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX: usize =
     REQUEST_WIRE_OVERHEAD.saturating_add(RemoteControlRequest::MAX_ENCODED_LEN);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteControlError {
+    UnsupportedRequestKind(RemoteControlRequestKind),
     Encode(RemoteControlMessageWriteError),
     Request(SendError<SendRequestFailure>),
     Response(RemoteControlResponseParseError),
@@ -67,6 +68,10 @@ pub enum RemoteControlError {
 impl core::fmt::Display for RemoteControlError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::UnsupportedRequestKind(kind) => write!(
+                formatter,
+                "remote control request has no response kind: {kind:?}"
+            ),
             Self::Encode(error) => write!(
                 formatter,
                 "remote control request encoding failed: {error:?}"

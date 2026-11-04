@@ -314,3 +314,154 @@ async fn radio_exchanges_preserve_configuration_status_outcomes_and_response_lim
         matches!(requesting.await, Ok(Ok((RemoteControlRadioStatus::UnknownInterface, rtt))) if rtt == RttMillis::new(13))
     );
 }
+
+#[tokio::test]
+async fn generic_exchange_uses_request_specific_bounds_and_rejects_mismatched_responses() {
+    use prns_core::remote_control::{RemoteControlRequest, RemoteControlRequestKind};
+    for kind in RemoteControlRequestKind::ALL {
+        assert!(
+            RemoteControlResponseKind::ALL
+                .into_iter()
+                .any(|response| response.wire_value() == kind.wire_value()),
+            "every request has an exact response kind"
+        );
+    }
+    let (handle, mut command_rx) = test_handle();
+    let link_id = LinkId::new([0x78; 16]);
+    let requesting = tokio::spawn(async move {
+        handle
+            .remote_control(link_id)
+            .exchange(RemoteControlRequest::DescribePower)
+            .await
+    });
+    let Some(HostCommand::RequestAny(request)) = command_rx.recv().await else {
+        panic!("generic typed request")
+    };
+    assert_eq!(
+        request.maximum_response_bytes,
+        crate::units::ByteLimit::Maximum(
+            RemoteControlRequestKind::DescribePower.maximum_response_encoded_len() as u64
+        )
+    );
+    assert_eq!(
+        RemoteControlRequest::parse(request.data.as_slice()),
+        Ok(RemoteControlRequest::DescribePower)
+    );
+    let unexpected =
+        RemoteControlResponse::AnnounceSelf(RemoteControlAnnounceSelfOutcome::Announced);
+    assert!(request
+        .completion
+        .send(Ok((encoded_response(&unexpected), RttMillis::new(8))))
+        .is_ok());
+    assert!(matches!(
+        requesting.await,
+        Ok(Err(RemoteControlError::UnexpectedResponse {
+            expected: RemoteControlResponseKind::DescribePower,
+            found: RemoteControlResponseKind::AnnounceSelf
+        }))
+    ));
+}
+
+#[tokio::test]
+async fn generic_exchange_preserves_protocol_failures_and_exact_rtt() {
+    use prns_core::remote_control::RemoteControlRequest;
+    for response in [
+        RemoteControlResponse::DescribePower(
+            prns_core::capabilities::power::PowerSnapshot::UNKNOWN,
+        ),
+        RemoteControlResponse::ProtocolError(RemoteControlProtocolError::UnknownRequestKind {
+            found: 99,
+        }),
+    ] {
+        let (handle, mut command_rx) = test_handle();
+        let requesting = tokio::spawn(async move {
+            handle
+                .remote_control(LinkId::new([0x79; 16]))
+                .exchange(RemoteControlRequest::DescribePower)
+                .await
+        });
+        let Some(HostCommand::RequestAny(request)) = command_rx.recv().await else {
+            panic!("generic typed request")
+        };
+        assert!(request
+            .completion
+            .send(Ok((encoded_response(&response), RttMillis::new(u64::MAX))))
+            .is_ok());
+        match response {
+            RemoteControlResponse::ProtocolError(error) => assert!(
+                matches!(requesting.await, Ok(Err(RemoteControlError::Remote(found))) if found == error)
+            ),
+            expected => assert!(
+                matches!(requesting.await, Ok(Ok((found,rtt))) if found == expected && rtt.millis() == u64::MAX)
+            ),
+        }
+    }
+}
+
+#[tokio::test]
+async fn begin_exchange_is_the_synchronous_submission_boundary() {
+    let (handle, mut commands) = test_handle();
+    let exchange = handle
+        .remote_control(LinkId::new([0xA1; 16]))
+        .begin_exchange(prns_core::remote_control::RemoteControlRequest::Describe)
+        .expect("begin");
+    // No future has been polled: successful begin already owns exactly one send.
+    let HostCommand::RequestAny(command) = commands.try_recv().expect("queued") else {
+        panic!("expected canonical request");
+    };
+    assert!(commands.try_recv().is_err());
+    let description = RemoteControlDescription::try_from(RemoteControlRequestSet::all()).unwrap();
+    let response = RemoteControlResponse::Describe(description);
+    command
+        .completion
+        .send(Ok((encoded_response(&response), RttMillis::new(7))))
+        .expect("observed");
+    assert_eq!(exchange.wait().await, Ok((response, RttMillis::new(7))));
+    assert!(commands.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn begin_failure_differs_from_observer_loss_after_submission() {
+    let link = LinkId::new([0xA2; 16]);
+    let (handle, commands) = test_handle();
+    drop(commands);
+    assert!(matches!(
+        handle
+            .remote_control(link)
+            .begin_exchange(prns_core::remote_control::RemoteControlRequest::Describe),
+        Err(RemoteControlError::Request(SendError::NodeStopped))
+    ));
+
+    let (handle, mut commands) = test_handle();
+    let exchange = handle
+        .remote_control(link)
+        .begin_exchange(prns_core::remote_control::RemoteControlRequest::Describe)
+        .expect("begin");
+    let HostCommand::RequestAny(command) = commands.try_recv().expect("queued") else {
+        panic!("request");
+    };
+    drop(command);
+    assert_eq!(
+        exchange.wait().await,
+        Err(RemoteControlError::Request(SendError::NodeStopped))
+    );
+    assert!(
+        commands.try_recv().is_err(),
+        "observation loss never replays"
+    );
+
+    let exchange = handle
+        .remote_control(link)
+        .begin_exchange(prns_core::remote_control::RemoteControlRequest::Describe)
+        .expect("begin");
+    drop(exchange);
+    let HostCommand::RequestAny(command) = commands.try_recv().expect("send survives observer")
+    else {
+        panic!("request");
+    };
+    assert!(command
+        .completion
+        .send(Err(SendRequestFailure::Timeout))
+        .is_err());
+    assert!(commands.try_recv().is_err());
+}
