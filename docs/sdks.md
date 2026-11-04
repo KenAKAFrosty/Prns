@@ -16,7 +16,7 @@ The implementations are at two different stages of their user journey:
 | Julia | SDK preview | Source project and registered live conformance suite |
 | C and C++ | SDK preview | Generated C ABI and registered live C and C++ conformance suite |
 
-Here, **paved** means the API, examples, and package structure form the route we expect application developers to take. **SDK preview** does not mean a mock or an unfinished protocol port. These adapters already call the same native Rust host, project the same schema-1 contract, and exercise the same persistent two-node journey in the repository. What remains young is their ecosystem fit and public delivery: idiomatic package structure, registry publication, native artifact installation, and more feedback from experienced developers in each language.
+Here, **paved** means the API, examples, and package structure form the route we expect application developers to take. **SDK preview** does not mean a mock or an unfinished protocol port. These adapters already call the same native Rust host, project the same schema-2 contract, and exercise the same persistent two-node journey in the repository. What remains young is their ecosystem fit and public delivery: idiomatic package structure, registry publication, native artifact installation, and more feedback from experienced developers in each language.
 
 Prns 0.3.4 was the first publicly announced prerelease. The current 0.3.7 immutable GitHub release artifacts and exact source commit are authoritative for its candidate bytes. Registry packages become authoritative only after their independent publication qualification completes.
 

@@ -21,6 +21,7 @@ const packageDocument = JSON.parse(
 const require = createRequire(import.meta.url);
 const esmContract = await import("personal-rns/contract");
 const commonJsContract = require("personal-rns/contract");
+const { checkBuiltContracts } = require("../scripts/check-built-contracts.cjs");
 
 test("contract subpath exposes one provider-neutral ESM and CommonJS API", () => {
   assert.deepEqual(packageDocument.exports["./contract"], {
@@ -211,3 +212,50 @@ function runNpm(arguments_, cwd = packageRoot) {
     { cwd, encoding: "utf8" },
   );
 }
+
+
+test("built public contract exports match their generated source", () => {
+  checkBuiltContracts(packageRoot);
+});
+
+test("contract preflight rejects stale or missing public exports before bundling", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "personal-rns-built-contracts-"));
+  const definitions = [
+    ["contract", "contract.generated", "HOST_SEMANTIC_FINGERPRINT"],
+    ["remote-control", "remote-control.generated", "REMOTE_CONTROL_SEMANTIC_FINGERPRINT"],
+  ];
+  try {
+    mkdirSync(resolve(root, "src"));
+    mkdirSync(resolve(root, "dist"));
+    const exports = {};
+    for (const [subpath, stem, name] of definitions) {
+      exports[`./${subpath}`] = { import: `./dist/${stem}.js` };
+      const source = `export const ${name} = "${"a".repeat(64)}";\n`;
+      writeFileSync(resolve(root, "src", `${stem}.ts`), source);
+      writeFileSync(resolve(root, "dist", `${stem}.js`), source);
+    }
+    const manifest = { name: "personal-rns", type: "module", exports };
+    const writeManifest = () => writeFileSync(resolve(root, "package.json"), JSON.stringify(manifest));
+    writeManifest();
+    assert.deepEqual(checkBuiltContracts(root), Object.fromEntries(definitions.map(([, , name]) => [name, "a".repeat(64)])));
+    for (const [subpath, stem, name] of definitions) {
+      const compiled = resolve(root, "dist", `${stem}.js`);
+      const current = readFileSync(compiled, "utf8");
+      writeFileSync(compiled, current.replace("a".repeat(64), "b".repeat(64)));
+      assert.throws(() => checkBuiltContracts(root), new RegExp(`Stale personal-rns/${subpath}.*build:code`));
+      rmSync(compiled);
+      assert.throws(() => checkBuiltContracts(root), /Cannot load personal-rns contract exports.*build:code/);
+      writeFileSync(compiled, current);
+      // Read the package's actual export target, not an assumed dist filename.
+      writeFileSync(resolve(root, "dist", "other.js"), `export const ${name} = "${"b".repeat(64)}";`);
+      manifest.exports[`./${subpath}`].import = "./dist/other.js";
+      writeManifest();
+      assert.throws(() => checkBuiltContracts(root), new RegExp(`Stale personal-rns/${subpath}`));
+      manifest.exports[`./${subpath}`].import = `./dist/${stem}.js`;
+      writeManifest();
+    }
+    checkBuiltContracts(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -34,8 +34,8 @@ use prns_core::interfaces::bluetooth_auto::{
     FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
-    RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleControl, BleEvent, BleLink, BleLinkParts, BleSink, BleSource,
+    DialOutcome, Origin, RadioMode, ScanningMode,
 };
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
@@ -161,6 +161,7 @@ pub enum BluerError {
     Bluez(bluer::Error),
     Io(std::io::Error),
     NoControlCharacteristic,
+    NoDataCharacteristic,
     NoColumbaIdentity,
     MalformedColumbaIdentity,
     ControlPduTooLarge,
@@ -1147,9 +1148,11 @@ impl BluerBackend {
         self.active_links.activate(address);
         GattAdmission::Ready(Box::new(AcceptedLink {
             peer_protocol: protocol,
-            reader,
-            writer,
-            address,
+            control: AcceptedControl {
+                reader,
+                writer,
+                address,
+            },
             l2cap,
             socket: None,
             data,
@@ -1345,72 +1348,65 @@ async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, Bl
         }
     };
     let native_control = find_characteristic(&device, uuid_of(NATIVE_CONTROL_UUID)).await?;
-    let (peer_protocol, control, notify, data, data_notify, peer_identity) = if let Some(control) =
-        native_control
-    {
-        let data = find_characteristic(&device, uuid_of(NATIVE_DATA_UUID))
-            .await
-            .ok()
-            .flatten();
-        let notify = control.notify().await?;
-        let data_notify = match &data {
-            Some(data) => match data.notify().await {
-                Ok(stream) => Some(Box::pin(stream) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>),
-                Err(error) => {
-                    crate::diagnostic_log::warn!(
-                        "bluetooth: {target} data characteristic notify failed: {error}"
-                    );
-                    None
-                }
-            },
-            None => None,
+    let (peer_protocol, control, notify, data, peer_identity) =
+        if let Some(control) = native_control {
+            // A native link needs a separate data characteristic. Reusing control for
+            // data would give the settled control and data readers the same stream.
+            let data = find_characteristic(&device, uuid_of(NATIVE_DATA_UUID))
+                .await?
+                .ok_or(BluerError::NoDataCharacteristic)?;
+            let notify = control.notify().await?;
+            let data_notify = data.notify().await?;
+            (
+                PeerProtocol::Native,
+                control,
+                Box::pin(notify) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
+                DialedData::Native {
+                    characteristic: data,
+                    notify: Box::pin(data_notify),
+                },
+                None,
+            )
+        } else {
+            let rx = find_characteristic(&device, uuid_of(COLUMBA_RX_UUID))
+                .await?
+                .ok_or(BluerError::NoControlCharacteristic)?;
+            let tx = find_characteristic(&device, uuid_of(COLUMBA_TX_UUID))
+                .await?
+                .ok_or(BluerError::NoControlCharacteristic)?;
+            let identity = find_characteristic(&device, uuid_of(COLUMBA_IDENTITY_UUID))
+                .await?
+                .ok_or(BluerError::NoColumbaIdentity)?;
+            let identity = identity.read().await?;
+            let identity: [u8; 16] = identity
+                .try_into()
+                .map_err(|_| BluerError::MalformedColumbaIdentity)?;
+            let notify = tx.notify().await?;
+            (
+                PeerProtocol::Columba,
+                rx,
+                Box::pin(notify) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
+                DialedData::Columba,
+                Some(BleIdentity::new(identity)),
+            )
         };
-        (
-            PeerProtocol::Native,
-            control,
-            Box::pin(notify) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
-            data,
-            data_notify,
-            None,
-        )
-    } else {
-        let rx = find_characteristic(&device, uuid_of(COLUMBA_RX_UUID))
-            .await?
-            .ok_or(BluerError::NoControlCharacteristic)?;
-        let tx = find_characteristic(&device, uuid_of(COLUMBA_TX_UUID))
-            .await?
-            .ok_or(BluerError::NoControlCharacteristic)?;
-        let identity = find_characteristic(&device, uuid_of(COLUMBA_IDENTITY_UUID))
-            .await?
-            .ok_or(BluerError::NoColumbaIdentity)?;
-        let identity = identity.read().await?;
-        let identity: [u8; 16] = identity
-            .try_into()
-            .map_err(|_| BluerError::MalformedColumbaIdentity)?;
-        let notify = tx.notify().await?;
-        (
-            PeerProtocol::Columba,
-            rx,
-            Box::pin(notify) as Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
-            None,
-            None,
-            Some(BleIdentity::new(identity)),
-        )
-    };
     crate::diagnostic_log::debug!(
         "bluetooth: {target} connected over LE with {peer_protocol:?}; handshaking"
     );
     Ok(BluerLink::Dialed(Box::new(DialedLink {
         peer_protocol,
         peer_identity,
-        control,
-        notify,
+        control: DialedControl {
+            characteristic: control,
+            notify,
+            peer_protocol,
+            peer_address: target,
+            _device: device,
+        },
         data,
-        data_notify,
         peer_address: target,
         peer_address_type,
         socket: None,
-        _device: device,
     })))
 }
 
@@ -1819,6 +1815,103 @@ async fn find_characteristic(
     Ok(None)
 }
 
+pub enum BluerControl {
+    Dialed(DialedControl),
+    Accepted(AcceptedControl),
+}
+
+impl BleControl for BluerControl {
+    type Error = BluerError;
+
+    async fn send(&mut self, msg: &Control) -> Result<(), BluerError> {
+        match self {
+            Self::Dialed(control) => control.send(msg).await,
+            Self::Accepted(control) => control.send(msg).await,
+        }
+    }
+
+    async fn recv(&mut self) -> Result<Control, BluerError> {
+        match self {
+            Self::Dialed(control) => control.recv().await,
+            Self::Accepted(control) => control.recv().await,
+        }
+    }
+}
+
+pub struct DialedControl {
+    characteristic: RemoteCharacteristic,
+    notify: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
+    peer_protocol: PeerProtocol,
+    peer_address: Address,
+    _device: Device,
+}
+
+impl BleControl for DialedControl {
+    type Error = BluerError;
+
+    async fn send(&mut self, msg: &Control) -> Result<(), BluerError> {
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let len = msg.encode(&mut buf).ok_or(BluerError::ControlPduTooLarge)?;
+        match self.peer_protocol {
+            PeerProtocol::Native => {
+                self.characteristic
+                    .write_ext(&buf[..len], &acknowledged_write())
+                    .await?
+            }
+            PeerProtocol::Columba => self.characteristic.write(&buf[..len]).await?,
+        }
+        crate::diagnostic_log::debug!("bluetooth: {} <- {msg:?}", self.peer_address);
+        Ok(())
+    }
+
+    async fn recv(&mut self) -> Result<Control, BluerError> {
+        let control = receive_notified_control(&mut self.notify).await?;
+        crate::diagnostic_log::debug!("bluetooth: {} -> {control:?}", self.peer_address);
+        Ok(control)
+    }
+}
+
+pub struct AcceptedControl {
+    reader: CharacteristicReader,
+    writer: CharacteristicWriter,
+    address: Address,
+}
+
+impl BleControl for AcceptedControl {
+    type Error = BluerError;
+
+    async fn send(&mut self, msg: &Control) -> Result<(), BluerError> {
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let len = msg.encode(&mut buf).ok_or(BluerError::ControlPduTooLarge)?;
+        self.writer.write_all(&buf[..len]).await?;
+        self.writer.flush().await?;
+        crate::diagnostic_log::debug!("bluetooth: {} <- {msg:?}", self.address);
+        Ok(())
+    }
+
+    async fn recv(&mut self) -> Result<Control, BluerError> {
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let read = self.reader.read(&mut buf).await?;
+        if read == 0 {
+            return Err(BluerError::Closed);
+        }
+        let control = decode_control(&buf[..read])?;
+        crate::diagnostic_log::debug!("bluetooth: {} -> {control:?}", self.address);
+        Ok(control)
+    }
+}
+
+fn decode_control(bytes: &[u8]) -> Result<Control, BluerError> {
+    Control::decode(bytes).ok_or(BluerError::MalformedControl)
+}
+
+async fn receive_notified_control<S: Stream<Item = Vec<u8>> + Unpin>(
+    notify: &mut S,
+) -> Result<Control, BluerError> {
+    let value = notify.next().await.ok_or(BluerError::Closed)?;
+    decode_control(&value)
+}
+
 pub enum BluerLink {
     Dialed(Box<DialedLink>),
     Accepted(Box<AcceptedLink>),
@@ -1828,6 +1921,7 @@ impl BleLink for BluerLink {
     type Error = BluerError;
     type Source = BluerSource;
     type Sink = BluerSink;
+    type Control = BluerControl;
 
     fn peer_protocol(&self) -> PeerProtocol {
         match self {
@@ -1878,10 +1972,10 @@ impl BleLink for BluerLink {
         }
     }
 
-    fn into_data(self) -> (BluerSource, BluerSink) {
+    fn into_parts(self) -> BleLinkParts<BluerSource, BluerSink, BluerControl> {
         match self {
-            BluerLink::Dialed(link) => link.into_data(),
-            BluerLink::Accepted(link) => link.into_data(),
+            BluerLink::Dialed(link) => link.into_parts(),
+            BluerLink::Accepted(link) => link.into_parts(),
         }
     }
 }
@@ -1889,20 +1983,26 @@ impl BleLink for BluerLink {
 pub struct DialedLink {
     peer_protocol: PeerProtocol,
     peer_identity: Option<BleIdentity>,
-    control: RemoteCharacteristic,
-    notify: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
-    data: Option<RemoteCharacteristic>,
-    data_notify: Option<Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>>,
+    control: DialedControl,
+    data: DialedData,
     peer_address: Address,
     peer_address_type: AddressType,
     socket: Option<Arc<SeqPacket>>,
-    _device: Device,
+}
+
+enum DialedData {
+    Native {
+        characteristic: RemoteCharacteristic,
+        notify: Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>,
+    },
+    Columba,
 }
 
 impl BleLink for DialedLink {
     type Error = BluerError;
     type Source = BluerSource;
     type Sink = BluerSink;
+    type Control = BluerControl;
 
     fn peer_protocol(&self) -> PeerProtocol {
         self.peer_protocol
@@ -1913,47 +2013,11 @@ impl BleLink for DialedLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), BluerError> {
-        let mut buf = [0u8; CONTROL_MAX_LEN];
-        let len = msg.encode(&mut buf).ok_or(BluerError::ControlPduTooLarge)?;
-        let written = match self.peer_protocol {
-            PeerProtocol::Native => {
-                self.control
-                    .write_ext(&buf[..len], &acknowledged_write())
-                    .await
-            }
-            PeerProtocol::Columba => self.control.write(&buf[..len]).await,
-        };
-        match written {
-            Ok(()) => {
-                crate::diagnostic_log::debug!("bluetooth: {} <- {msg:?}", self.peer_address);
-                Ok(())
-            }
-            Err(error) => {
-                crate::diagnostic_log::warn!(
-                    "bluetooth: {} control write failed: {error}",
-                    self.peer_address
-                );
-                Err(error.into())
-            }
-        }
+        self.control.send(msg).await
     }
 
     async fn control_recv(&mut self) -> Result<Control, BluerError> {
-        let value = self.notify.next().await.ok_or(BluerError::Closed)?;
-        match Control::decode(&value) {
-            Some(control) => {
-                crate::diagnostic_log::debug!("bluetooth: {} -> {control:?}", self.peer_address);
-                Ok(control)
-            }
-            None => {
-                crate::diagnostic_log::warn!(
-                    "bluetooth: {} sent an undecodable control notification ({} bytes)",
-                    self.peer_address,
-                    value.len()
-                );
-                Err(BluerError::MalformedControl)
-            }
-        }
+        self.control.recv().await
     }
 
     async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, BluerError> {
@@ -1961,7 +2025,10 @@ impl BleLink for DialedLink {
     }
 
     async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), BluerError> {
-        self.control.write(identity.as_bytes()).await?;
+        self.control
+            .characteristic
+            .write(identity.as_bytes())
+            .await?;
         Ok(())
     }
 
@@ -2024,48 +2091,56 @@ impl BleLink for DialedLink {
         }
     }
 
-    fn into_data(self) -> (BluerSource, BluerSink) {
-        match self.socket {
-            Some(socket) => (
-                BluerSource::L2cap(Box::new(L2capSource {
-                    socket: Some(socket.clone()),
-                    deframer: StreamDeframer::new(),
-                    _gatt_lifetime: L2capGattLifetime::Dialed,
+    fn into_parts(self) -> BleLinkParts<BluerSource, BluerSink, BluerControl> {
+        let (source, sink, control) = match self.data {
+            DialedData::Columba => (
+                BluerSource::Gatt(Box::new(GattSource {
+                    rx: GattRx::Notify(self.control.notify),
+                    reassembler: Reassembler::new(),
                 })),
-                BluerSink::L2cap(L2capSink(Some(socket))),
+                BluerSink::Gatt(GattSink::new(GattTx::remote(
+                    PeerProtocol::Columba,
+                    self.control.characteristic,
+                ))),
+                None,
             ),
-            None => {
-                crate::diagnostic_log::debug!(
-                    "bluetooth: {} GATT data plane up",
-                    self.peer_address
-                );
-                let (rx, tx) = match (self.data_notify, self.data) {
-                    (Some(data_notify), Some(data)) => (
-                        GattRx::Notify(data_notify),
-                        GattTx::remote(self.peer_protocol, data),
-                    ),
-                    _ => (
-                        GattRx::Notify(self.notify),
-                        GattTx::remote(self.peer_protocol, self.control),
-                    ),
-                };
-                (
-                    BluerSource::Gatt(Box::new(GattSource {
-                        rx,
-                        reassembler: Reassembler::new(),
-                    })),
-                    BluerSink::Gatt(GattSink::new(tx)),
-                )
-            }
+            data @ DialedData::Native { .. } if self.socket.is_some() => (
+                BluerSource::L2cap(Box::new(L2capSource {
+                    socket: self.socket.clone(),
+                    deframer: StreamDeframer::new(),
+                    _gatt_lifetime: L2capGattLifetime::Dialed {
+                        _data: Box::new(data),
+                    },
+                })),
+                BluerSink::L2cap(L2capSink(self.socket)),
+                Some(BluerControl::Dialed(self.control)),
+            ),
+            DialedData::Native {
+                characteristic,
+                notify,
+            } => (
+                BluerSource::Gatt(Box::new(GattSource {
+                    rx: GattRx::Notify(notify),
+                    reassembler: Reassembler::new(),
+                })),
+                BluerSink::Gatt(GattSink::new(GattTx::remote(
+                    PeerProtocol::Native,
+                    characteristic,
+                ))),
+                Some(BluerControl::Dialed(self.control)),
+            ),
+        };
+        BleLinkParts {
+            source,
+            sink,
+            control,
         }
     }
 }
 
 pub struct AcceptedLink {
     peer_protocol: PeerProtocol,
-    reader: CharacteristicReader,
-    writer: CharacteristicWriter,
-    address: Address,
+    control: AcceptedControl,
     l2cap: Option<oneshot::Receiver<SeqPacket>>,
     socket: Option<Arc<SeqPacket>>,
     data: ServerData,
@@ -2075,54 +2150,33 @@ impl BleLink for AcceptedLink {
     type Error = BluerError;
     type Source = BluerSource;
     type Sink = BluerSink;
+    type Control = BluerControl;
 
     fn peer_protocol(&self) -> PeerProtocol {
         self.peer_protocol
     }
 
     fn address(&self) -> BleAddress {
-        BleAddress::new(self.address.0)
+        BleAddress::new(self.control.address.0)
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), BluerError> {
-        let mut buf = [0u8; CONTROL_MAX_LEN];
-        let len = msg.encode(&mut buf).ok_or(BluerError::ControlPduTooLarge)?;
-        self.writer.write_all(&buf[..len]).await?;
-        self.writer.flush().await?;
-        crate::diagnostic_log::debug!("bluetooth: {} <- {msg:?}", self.address);
-        Ok(())
+        self.control.send(msg).await
     }
 
     async fn control_recv(&mut self) -> Result<Control, BluerError> {
-        let mut buf = [0u8; CONTROL_MAX_LEN];
-        let read = self.reader.read(&mut buf).await?;
-        if read == 0 {
-            return Err(BluerError::Closed);
-        }
-        match Control::decode(&buf[..read]) {
-            Some(control) => {
-                crate::diagnostic_log::debug!("bluetooth: {} -> {control:?}", self.address);
-                Ok(control)
-            }
-            None => {
-                crate::diagnostic_log::warn!(
-                    "bluetooth: {} sent an undecodable control write ({read} bytes)",
-                    self.address
-                );
-                Err(BluerError::MalformedControl)
-            }
-        }
+        self.control.recv().await
     }
 
     async fn receive_columba_peer_identity(&mut self) -> Result<BleIdentity, BluerError> {
         let mut identity = [0u8; 16];
-        self.reader.read_exact(&mut identity).await?;
+        self.control.reader.read_exact(&mut identity).await?;
         Ok(BleIdentity::new(identity))
     }
 
     async fn send_columba_identity(&mut self, identity: BleIdentity) -> Result<(), BluerError> {
-        self.writer.write_all(identity.as_bytes()).await?;
-        self.writer.flush().await?;
+        self.control.writer.write_all(identity.as_bytes()).await?;
+        self.control.writer.flush().await?;
         Ok(())
     }
 
@@ -2135,34 +2189,34 @@ impl BleLink for AcceptedLink {
                 let Some(inbound) = self.l2cap.take() else {
                     crate::diagnostic_log::warn!(
                         "bluetooth: {} has no L2CAP listener; settling on GATT",
-                        self.address
+                        self.control.address
                     );
                     return Err(BluerError::NotUpgraded);
                 };
                 crate::diagnostic_log::debug!(
                     "bluetooth: {} handshake settled, awaiting its inbound L2CAP CoC",
-                    self.address
+                    self.control.address
                 );
                 match tokio::time::timeout(L2CAP_UPGRADE_TIMEOUT, inbound).await {
                     Ok(Ok(connected)) => {
                         self.socket = Some(Arc::new(connected));
                         crate::diagnostic_log::debug!(
                             "bluetooth: {} L2CAP data plane up",
-                            self.address
+                            self.control.address
                         );
                         Ok(())
                     }
                     Ok(Err(_)) => {
                         crate::diagnostic_log::warn!(
                             "bluetooth: {} L2CAP accept channel closed; settling on GATT",
-                            self.address
+                            self.control.address
                         );
                         Err(BluerError::Closed)
                     }
                     Err(_) => {
                         crate::diagnostic_log::warn!(
                             "bluetooth: {} L2CAP accept timed out; settling on GATT",
-                            self.address
+                            self.control.address
                         );
                         Err(BluerError::L2capTimeout)
                     }
@@ -2171,7 +2225,7 @@ impl BleLink for AcceptedLink {
             L2capPlan::Open { .. } => {
                 crate::diagnostic_log::debug!(
                     "bluetooth: {} stays on the GATT data plane (accepted link; Linux-opens-CoC-to-peer is the capability-role follow-up)",
-                    self.address
+                    self.control.address
                 );
                 Ok(())
             }
@@ -2179,43 +2233,41 @@ impl BleLink for AcceptedLink {
         }
     }
 
-    fn into_data(self) -> (BluerSource, BluerSink) {
+    fn into_parts(self) -> BleLinkParts<BluerSource, BluerSink, BluerControl> {
         let Self {
-            reader,
-            writer,
-            address,
+            control,
             socket,
             data,
             ..
         } = self;
-        match socket {
-            Some(socket) => (
+        let (source, sink, control) = match data {
+            ServerData::Columba => (
+                BluerSource::Gatt(Box::new(GattSource {
+                    rx: GattRx::Reader(control.reader),
+                    reassembler: Reassembler::new(),
+                })),
+                BluerSink::Gatt(GattSink::new(GattTx::Writer(control.writer))),
+                None,
+            ),
+            data @ ServerData::TwoChar { .. } if socket.is_some() => (
                 BluerSource::L2cap(Box::new(L2capSource {
-                    socket: Some(socket.clone()),
+                    socket: socket.clone(),
                     deframer: StreamDeframer::new(),
                     _gatt_lifetime: L2capGattLifetime::Accepted {
-                        _control_reader: reader,
-                        _control_writer: writer,
                         _data: Box::new(data),
                     },
                 })),
-                BluerSink::L2cap(L2capSink(Some(socket))),
+                BluerSink::L2cap(L2capSink(socket)),
+                Some(BluerControl::Accepted(control)),
             ),
-            None => {
-                crate::diagnostic_log::debug!("bluetooth: {address} GATT data plane up");
-                let (rx, tx) = match data {
-                    ServerData::TwoChar { writer, reader } => {
-                        let rx = match reader {
-                            DataRead::Ready(reader) => GattRx::Reader(reader),
-                            DataRead::Pending(pending) => GattRx::Pending(pending),
-                        };
-                        let tx = match writer {
-                            DataWrite::Ready(writer) => GattTx::Writer(writer),
-                            DataWrite::Pending(pending) => GattTx::Pending(pending),
-                        };
-                        (rx, tx)
-                    }
-                    ServerData::Columba => (GattRx::Reader(reader), GattTx::Writer(writer)),
+            ServerData::TwoChar { writer, reader } => {
+                let rx = match reader {
+                    DataRead::Ready(reader) => GattRx::Reader(reader),
+                    DataRead::Pending(pending) => GattRx::Pending(pending),
+                };
+                let tx = match writer {
+                    DataWrite::Ready(writer) => GattTx::Writer(writer),
+                    DataWrite::Pending(pending) => GattTx::Pending(pending),
                 };
                 (
                     BluerSource::Gatt(Box::new(GattSource {
@@ -2223,19 +2275,21 @@ impl BleLink for AcceptedLink {
                         reassembler: Reassembler::new(),
                     })),
                     BluerSink::Gatt(GattSink::new(tx)),
+                    Some(BluerControl::Accepted(control)),
                 )
             }
+        };
+        BleLinkParts {
+            source,
+            sink,
+            control,
         }
     }
 }
 
 enum L2capGattLifetime {
-    Dialed,
-    Accepted {
-        _control_reader: CharacteristicReader,
-        _control_writer: CharacteristicWriter,
-        _data: Box<ServerData>,
-    },
+    Dialed { _data: Box<DialedData> },
+    Accepted { _data: Box<ServerData> },
 }
 
 pub struct L2capSource {
@@ -2432,6 +2486,37 @@ impl BleSink for GattSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn native_control_notifications_remain_readable_until_the_stream_closes() {
+        let message = Control::Close {
+            reason: prns_core::interfaces::bluetooth_auto::CloseReason::DuplicateLink,
+        };
+        let mut bytes = [0; CONTROL_MAX_LEN];
+        let len = message.encode(&mut bytes).unwrap();
+        let mut stream = futures_util::stream::iter([bytes[..len].to_vec(), bytes[..len].to_vec()]);
+        assert_eq!(
+            receive_notified_control(&mut stream).await.unwrap(),
+            message
+        );
+        assert_eq!(
+            receive_notified_control(&mut stream).await.unwrap(),
+            message
+        );
+        assert!(matches!(
+            receive_notified_control(&mut stream).await,
+            Err(BluerError::Closed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn malformed_native_control_is_not_reinterpreted_as_packet_data() {
+        let mut stream = futures_util::stream::iter([vec![0xff]]);
+        assert!(matches!(
+            receive_notified_control(&mut stream).await,
+            Err(BluerError::MalformedControl)
+        ));
+    }
 
     #[tokio::test]
     async fn small_receive_buffers_refuse_whole_frames_and_preserve_the_next_frame() {

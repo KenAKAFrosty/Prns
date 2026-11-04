@@ -15,7 +15,7 @@ use crate::engine::test_support::{
 use crate::engine::{EngineState, InstantMillis, IssuedCommand, Journaled};
 use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::interfaces::InterfaceIfac;
-use crate::interfaces::{InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{AttachedInterfaces, InterfaceDescriptor, InterfaceId};
 use crate::manifold::grant::{GrantProducer, ManifoldLaneReader};
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use crate::routing::links::request::{response_envelope_prefix, RequestId, RESPONSE_WIRE_OVERHEAD};
@@ -42,7 +42,7 @@ fn path_table_response_materializes_inside_the_manifold() {
 
     let materialized = resource_response_data(
         &engine,
-        &[],
+        AttachedInterfaces::new(&[]),
         request_id,
         ResourceResponsePayload::Ready(ready.clone()),
     )
@@ -51,7 +51,7 @@ fn path_table_response_materializes_inside_the_manifold() {
 
     let data = resource_response_data::<_, RESPONSE_BYTES>(
         &engine,
-        &[],
+        AttachedInterfaces::new(&[]),
         request_id,
         ResourceResponsePayload::RnsPathTable(selection),
     )
@@ -64,7 +64,7 @@ fn path_table_response_materializes_inside_the_manifold() {
     assert_eq!(data.as_slice()[RESPONSE_WIRE_OVERHEAD], 0x90);
     assert!(resource_response_data::<_, 0>(
         &engine,
-        &[],
+        AttachedInterfaces::new(&[]),
         request_id,
         ResourceResponsePayload::RnsPathTable(selection),
     )
@@ -218,6 +218,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
         | Journaled::SelfRatchetRotated { .. }
         | Journaled::CommandSettled { .. }
         | Journaled::AnnounceHeldDropped { .. }
+        | Journaled::PathDiscovery(_)
         | Journaled::RouteRemoved { .. }
         | Journaled::LinkEstablished(_)
         | Journaled::PeerIdentified { .. }
@@ -365,6 +366,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         | Journaled::SelfRatchetRotated { .. }
         | Journaled::CommandSettled { .. }
         | Journaled::AnnounceHeldDropped { .. }
+        | Journaled::PathDiscovery(_)
         | Journaled::RouteRemoved { .. }
         | Journaled::LinkEstablished(_)
         | Journaled::PeerIdentified { .. }
@@ -1428,4 +1430,87 @@ fn pooled_peers_establish_a_link_and_dispatch_resource_responses() {
         }
     }
     assert!(closed.get() > 0, "a peer that stops responding must expire");
+}
+
+#[test]
+fn a_power_cycle_alone_retires_a_learned_route_before_any_new_command() {
+    use crate::interfaces::ConnectionState;
+    use crate::manifold::driver::{EmbassyInterfaceStatus, InterfaceQueueWakeSlot};
+    use crate::wire::DestinationHash;
+    let id = InterfaceId::new([0x65; 8]);
+    let status = Box::leak(Box::new(EmbassyInterfaceStatus::new_accounted(
+        id,
+        ConnectionState::Connected,
+    )));
+    let raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
+    let destination = DestinationHash::new(raw[2..18].try_into().unwrap());
+    let mut engine = EngineState::<GrowableHeap>::default();
+    let mut host = ManualHost(Rc::new(Cell::new(1_000)));
+    let notify = Channel::<CriticalSectionRawMutex, InterfaceId, 1>::new();
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let responses = Channel::<CriticalSectionRawMutex, ResourceResponse<0>, 1>::new();
+    let lifecycle = Channel::<CriticalSectionRawMutex, InterfaceLifecycle, 1>::new();
+    let mut descriptors = HeaplessVec::<InterfaceDescriptor, 1>::new();
+    descriptors.push(descriptor(id)).unwrap();
+    let (mut tx, mut rx) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
+    tx.set_status(status, InterfaceQueueWakeSlot::IngressProducer);
+    rx.set_status(status, InterfaceQueueWakeSlot::IngressConsumer);
+    let mut inbound = HeaplessVec::new();
+    assert!(inbound
+        .push((
+            id,
+            Box::leak(Box::new(rx)) as &'static mut dyn ManifoldLaneReader
+        ))
+        .is_ok());
+    let (out_tx, _out_rx) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
+    let mut egress = PooledEgress::<1>::new();
+    assert!(egress.push(id, Box::leak(Box::new(out_tx))).is_ok());
+    egress.bind_status(id, status);
+    let mut ifacs = HeaplessVec::new();
+    let mut persistence = NoManifoldPersistence;
+    let removed = Rc::new(Cell::new(0));
+    let heard = Rc::new(Cell::new(0));
+    let removed_sink = removed.clone();
+    let heard_sink = heard.clone();
+    {
+        let mut manifold = Box::pin(run_pooled(
+            &mut engine,
+            &mut host,
+            PooledWiring {
+                descriptors: &mut descriptors,
+                ifacs: &mut ifacs,
+                inbound: &mut inbound,
+                frame_accounting_statuses: &[],
+                egress: &mut egress,
+                notify: notify.receiver(),
+                commands: commands.receiver(),
+                resource_responses: responses.receiver(),
+                lifecycle: lifecycle.receiver(),
+            },
+            move |event| match event {
+                Journaled::RouteRemoved { .. } => removed_sink.set(removed_sink.get() + 1),
+                Journaled::AnnounceHeard { .. } => heard_sink.set(heard_sink.get() + 1),
+                _ => {}
+            },
+            crate::manifold::decline_all(),
+            &NoInterfaceInspectionStore,
+            &mut persistence,
+        ));
+        poll_pending(manifold.as_mut());
+        tx.try_grant().unwrap().fill_for(id, &raw);
+        tx.commit();
+        notify.try_send(id).unwrap();
+        poll_pending(manifold.as_mut());
+        assert_eq!(heard.get(), 1);
+        // No lifecycle event, packet, command, or clock advance delivers the Off transition.
+        status.disable();
+        status.enable();
+        assert!(!status.is_available());
+        poll_pending(manifold.as_mut());
+        assert!(status.is_available());
+        assert_eq!(removed.get(), 1);
+    }
+    assert!(engine
+        .route_snapshot(destination, AttachedInterfaces::new(&descriptors))
+        .is_none());
 }

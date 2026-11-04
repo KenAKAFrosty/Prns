@@ -100,6 +100,54 @@ where
     settled.await.map_err(|_| RoutingControlError::NodeStopped)
 }
 
+impl crate::runtime::RemoteControlPairingInspection for PrnsNodeHandle {
+    async fn remote_control_controller_pairing_snapshot(
+        &self,
+    ) -> Result<
+        crate::runtime::RemoteControlControllerPairingSnapshot,
+        crate::runtime::RemoteControlPairingInspectionError,
+    > {
+        self.introspect(|reply| NodeIntrospectionRequest::RemoteControlControllerPairing { reply })
+            .await
+            .ok_or(crate::runtime::RemoteControlPairingInspectionError::NodeStopped)?
+    }
+}
+
+impl crate::runtime::RemoteControlPairingStatusInspection for PrnsNodeHandle {
+    async fn remote_control_controller_pairing_status(
+        &self,
+    ) -> Result<
+        crate::runtime::RemoteControlControllerPairingStatus,
+        crate::runtime::RemoteControlPairingInspectionError,
+    > {
+        self.introspect(
+            |reply| NodeIntrospectionRequest::RemoteControlControllerPairingStatus { reply },
+        )
+        .await
+        .ok_or(crate::runtime::RemoteControlPairingInspectionError::NodeStopped)?
+    }
+}
+
+impl crate::runtime::RemoteControlControllerPairingCancellation for PrnsNodeHandle {
+    async fn cancel_remote_control_controller_pairing(
+        &self,
+        subject: crate::remote_control::RemoteControlControllerPairingSubject,
+    ) -> Result<
+        crate::remote_control::RemoteControlControllerPairingAborted,
+        crate::runtime::CancelRemoteControlControllerPairingControlError,
+    > {
+        let (reply, settled) = oneshot::channel();
+        self.commands
+            .send(HostCommand::CancelRemoteControlControllerPairing { subject, reply })
+            .map_err(|_| {
+                crate::runtime::CancelRemoteControlControllerPairingControlError::NodeStopped
+            })?;
+        settled.await.map_err(|_| {
+            crate::runtime::CancelRemoteControlControllerPairingControlError::NodeStopped
+        })?
+    }
+}
+
 impl RoutingControl for PrnsNodeHandle {
     fn drop_route(
         &self,

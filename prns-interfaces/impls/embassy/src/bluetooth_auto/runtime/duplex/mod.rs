@@ -4,6 +4,7 @@ use core::pin::pin;
 use core::task::Poll;
 
 use embassy_futures::join::join_array;
+use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::mutex::Mutex;
 use prns_core::interfaces::bluetooth_auto::{
@@ -12,7 +13,7 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::InterfaceId;
 use prns_runtime::runtime::{EmbassyFleet as Fleet, InboundDeliveryError};
 
-use super::{Active, BluetoothAutoStatus, BluetoothMemberStatus};
+use super::{settled_control_closed, Active, BluetoothAutoStatus, BluetoothMemberStatus};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SendState {
@@ -151,11 +152,21 @@ async fn send_member<
         status,
         receive: &state.receive,
     };
-    match receive_frames_during(work, &mut member.source, inbound, &mut forwarder).await {
-        BleDuplexOutcome::Finished(_) => {}
-        BleDuplexOutcome::ReceiveFailed(_)
-        | BleDuplexOutcome::InvalidReceiveLength(_)
-        | BleDuplexOutcome::ForwardFailed(_) => {
+    // Keep the entire duplex future alive across ignored control traffic. Only a terminal
+    // control event cancels it, after marking the physical member for retirement.
+    match select(
+        settled_control_closed(&mut member.control),
+        receive_frames_during(work, &mut member.source, inbound, &mut forwarder),
+    )
+    .await
+    {
+        Either::Second(BleDuplexOutcome::Finished(_)) => {}
+        Either::First(())
+        | Either::Second(
+            BleDuplexOutcome::ReceiveFailed(_)
+            | BleDuplexOutcome::InvalidReceiveLength(_)
+            | BleDuplexOutcome::ForwardFailed(_),
+        ) => {
             state.receive.set(ReceiveState::Failed);
             if state.send.get() == SendState::Pending {
                 state.send.set(SendState::Failed);

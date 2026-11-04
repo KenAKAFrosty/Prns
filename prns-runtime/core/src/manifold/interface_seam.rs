@@ -14,6 +14,7 @@ pub enum OutboundDropReason {
     Disabled,
     Disconnected,
     TimedOut,
+    QueueLifetime(super::outbound::OutboundQueueDropReason),
     ContentionTimeout,
     DutyLimited,
     TransportFailure,
@@ -65,6 +66,20 @@ pub trait InterfaceSeam {
     }
 
     async fn next_outbound(&mut self) -> &[u8];
+
+    /// Age-aware consumers must reject missing timestamps rather than treating
+    /// an old frame as newly enqueued. This additive default keeps other drivers
+    /// and seams source-compatible until they opt into bounded residence.
+    /// LoRa requires an override carrying original lane admission time in the
+    /// consumer's monotonic clock domain. Do not restamp at dequeue.
+    /// A canceled pending wait must not claim a new frame: later completion of
+    /// driver-owned work may occur before the next lane read.
+    async fn next_outbound_frame(&mut self) -> super::outbound::OutboundFrame<'_> {
+        super::outbound::OutboundFrame {
+            bytes: self.next_outbound().await,
+            enqueued_at: None,
+        }
+    }
 
     /// Accept responsibility for a frame copied into the interface's own
     /// bounded pending storage, allowing the seam-owned slot to be reused.

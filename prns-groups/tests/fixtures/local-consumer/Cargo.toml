@@ -1,0 +1,18 @@
+[package]
+name = "prns-groups-local-consumer"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Isolate this graph from the domain workspace and its network/text test features.
+[workspace]
+resolver = "3"
+
+[dependencies]
+prns-groups = { path = "../../..", default-features = false }
+prns-groups-core = { path = "../../../core" }
+prns-host = { path = "../../../../prns-host/core" }
+redb = "=4.2.0"
+tempfile = "3"

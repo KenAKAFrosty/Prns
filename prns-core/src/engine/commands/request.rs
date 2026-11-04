@@ -18,11 +18,16 @@ pub type SendRequestData = HeaplessVec<u8, MAX_SEND_REQUEST_DATA_LEN>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RequestResponseTimeout {
+    /// Reticulum's RTT-derived response wait. For request Resources, the upload
+    /// watchdog owns the transfer first; this wait starts after upload proof.
     #[default]
     LinkDefault,
-    LinkDefaultAtMost {
-        maximum: DurationMillis,
-    },
+    /// Explicit ceiling on the RTT-derived wait, measured from packet send or
+    /// Resource advertisement. Upload completion does not extend this ceiling.
+    LinkDefaultAtMost { maximum: DurationMillis },
+    /// Explicit wait measured from packet send or Resource advertisement.
+    /// Upload completion does not restart it. For every variant, an accepted
+    /// response Resource hands timeout ownership to its transfer watchdog.
     Exact(DurationMillis),
 }
 

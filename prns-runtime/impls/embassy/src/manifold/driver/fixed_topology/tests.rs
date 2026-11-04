@@ -125,6 +125,7 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
         | Journaled::SelfRatchetRotated { .. }
         | Journaled::CommandSettled { .. }
         | Journaled::AnnounceHeldDropped { .. }
+        | Journaled::PathDiscovery(_)
         | Journaled::RouteRemoved { .. }
         | Journaled::LinkEstablished(_)
         | Journaled::PeerIdentified { .. }
@@ -258,4 +259,78 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
         original_hops + 1,
         "the rebroadcast bumps the hop count"
     );
+}
+
+#[test]
+fn fixed_topology_retires_power_cycles_and_rejects_old_ingress_generations() {
+    use crate::interfaces::{ConnectionState, InterfaceStatus};
+    use crate::manifold::driver::{
+        embassy_grant_lane_with_status, EmbassyInterfaceStatus, InterfaceQueueDirection,
+    };
+    use crate::manifold::grant::FrameSlot;
+    let id = InterfaceId::new([0x58; 8]);
+    let status = EmbassyInterfaceStatus::new_accounted(id, ConnectionState::Connected);
+    let statuses = [&status];
+    let descriptors = [descriptor(id)];
+    let mut engine = EngineState::<TestStorageLayout>::default();
+    pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
+    let notify = Channel::<CriticalSectionRawMutex, InterfaceId, 2>::new();
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let mut in_buffer = [const { FrameSlot::<EMBEDDED_MAX_WIRE_FRAME_LEN>::empty() }; 2];
+    let mut out_buffer = [const { FrameSlot::<EMBEDDED_MAX_WIRE_FRAME_LEN>::empty() }; 2];
+    let mut in_channel =
+        embassy_sync::zerocopy_channel::Channel::<CriticalSectionRawMutex, _>::new(&mut in_buffer);
+    let mut out_channel =
+        embassy_sync::zerocopy_channel::Channel::<CriticalSectionRawMutex, _>::new(&mut out_buffer);
+    let (mut tx, mut rx) =
+        embassy_grant_lane_with_status(&mut in_channel, &status, InterfaceQueueDirection::Ingress);
+    let (mut out_tx, _out_rx) =
+        embassy_grant_lane_with_status(&mut out_channel, &status, InterfaceQueueDirection::Egress);
+    let mut inbound: [(InterfaceId, &mut dyn ManifoldLaneReader); 1] = [(id, &mut rx)];
+    let mut outbound: [(InterfaceId, &mut dyn ManifoldLaneWriter); 1] = [(id, &mut out_tx)];
+    let removed = Rc::new(RefCell::new(0));
+    let heard = Rc::new(RefCell::new(0));
+    let removed_sink = removed.clone();
+    let heard_sink = heard.clone();
+    let mut manifold = Box::pin(run(
+        engine,
+        EmbassyHost::new(crate::manifold::driver::test_support::entropy_handle()),
+        ManifoldWiring {
+            interfaces: AttachedInterfaces::new(&descriptors),
+            ifacs: &[],
+            notify: notify.receiver(),
+            commands: commands.receiver(),
+            inbound_lanes: &mut inbound,
+            frame_accounting_statuses: &statuses,
+            egress: EmbassyEgress::new(&mut outbound),
+        },
+        move |event| match event {
+            Journaled::RouteRemoved { .. } => *removed_sink.borrow_mut() += 1,
+            Journaled::AnnounceHeard { .. } => *heard_sink.borrow_mut() += 1,
+            _ => {}
+        },
+    ));
+    use core::future::Future;
+    use core::task::{Context, Waker};
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(manifold.as_mut().poll(&mut cx).is_pending());
+    let raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
+    tx.try_grant().unwrap().fill_for(id, &raw);
+    tx.commit();
+    notify.try_send(id).unwrap();
+    assert!(manifold.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(*heard.borrow(), 1);
+    tx.try_grant().unwrap().fill_for(id, &[0]);
+    tx.commit();
+    notify.try_send(id).unwrap();
+    status.disable();
+    status.enable();
+    assert!(manifold.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(*removed.borrow(), 1);
+    assert_eq!(
+        status.frame_accounting().unwrap().malformed,
+        0,
+        "the old ingress frame must be discarded, not parsed after resume"
+    );
+    assert!(status.is_available());
 }

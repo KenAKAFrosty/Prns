@@ -1,3 +1,4 @@
+use personal_rns::interfaces::bluetooth_auto::BleLinkParts;
 use std::num::NonZeroUsize;
 
 use personal_rns::interfaces::bluetooth_auto::{
@@ -248,8 +249,16 @@ async fn discovery_dial_control_and_data_use_the_production_traits() {
                 && established.peer_rssi == Some(-41)
     ));
 
-    let (_first_source, mut first_sink) = link.into_data();
-    let (mut second_source, _second_sink) = peer_link.into_data();
+    let BleLinkParts {
+        source: _first_source,
+        sink: mut first_sink,
+        control: _first_source_control,
+    } = link.into_parts();
+    let BleLinkParts {
+        source: mut second_source,
+        sink: _second_sink,
+        control: _second_source_control,
+    } = peer_link.into_parts();
     first_sink
         .send_frame(b"personal")
         .await

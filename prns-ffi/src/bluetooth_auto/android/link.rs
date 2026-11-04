@@ -9,26 +9,64 @@ use prns_core::interfaces::bluetooth_auto::{
     PeerProtocol, Reassembler, StreamDeframer, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
     STREAM_FRAME_PREFIX_LEN,
 };
-use prns_core::interfaces::bluetooth_auto::{BleLink, BleSink, BleSource};
+use prns_core::interfaces::bluetooth_auto::{
+    BleControl, BleLink, BleLinkParts, BleSink, BleSource,
+};
 
-use super::bridge::{LinkSignal, WorkSignal};
-use super::outbound::{BoundedByteQueue, BoundedMessageQueue, OutboundQueueError};
-use super::AndroidBleError;
+use super::bridge::{AndroidBleBridge, LinkSignal, WorkSignal};
+use super::outbound::{BoundedByteQueue, BoundedMessageQueue, ControlOutbox, OutboundQueueError};
+use super::{AndroidBleError, LivenessMode};
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const GATT_REASSEMBLY_CAP: usize = 600;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const MERGED_IN_DEPTH: usize = 16;
+const CONTROL_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Owns one physical connection through handshake and all settled link parts.
+/// The queue identity fences a delayed drop even if Kotlin later reuses a conn_id.
+pub(super) struct LinkLease {
+    bridge: AndroidBleBridge,
+    conn_id: u32,
+    owner: Arc<BoundedMessageQueue>,
+}
+
+impl LinkLease {
+    pub(super) fn new(
+        bridge: AndroidBleBridge,
+        conn_id: u32,
+        owner: Arc<BoundedMessageQueue>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            bridge,
+            conn_id,
+            owner,
+        })
+    }
+}
+
+impl Drop for LinkLease {
+    fn drop(&mut self) {
+        if !self
+            .bridge
+            .close_owned_connection(self.conn_id, &self.owner)
+        {
+            crate::diagnostic_log::error!(
+                "bluetooth: could not queue Android physical close for connection {}",
+                self.conn_id
+            );
+        }
+    }
+}
 
 pub struct AndroidBleLink {
+    pub(super) control: AndroidBleControl,
     pub(super) conn_id: u32,
     pub(super) address: BleAddress,
     pub(super) peer_protocol: PeerProtocol,
     pub(super) peer_identity: Option<BleIdentity>,
-    pub(super) control_in: Receiver<Vec<u8>>,
     pub(super) l2cap_in: Option<Receiver<Vec<u8>>>,
     pub(super) data_in: Option<Receiver<Vec<u8>>>,
-    pub(super) control_out: Arc<BoundedMessageQueue>,
     pub(super) l2cap_out: Arc<BoundedByteQueue>,
     pub(super) data_out: Arc<BoundedMessageQueue>,
     pub(super) l2cap_up: Arc<LinkSignal>,
@@ -40,6 +78,7 @@ impl BleLink for AndroidBleLink {
     type Error = AndroidBleError;
     type Source = AndroidBleSource;
     type Sink = AndroidBleSink;
+    type Control = AndroidBleControl;
 
     fn peer_protocol(&self) -> PeerProtocol {
         self.peer_protocol
@@ -66,29 +105,11 @@ impl BleLink for AndroidBleLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), AndroidBleError> {
-        let mut buf = [0u8; CONTROL_MAX_LEN];
-        let len = msg
-            .encode(&mut buf)
-            .ok_or(AndroidBleError::ControlTooLarge)?;
-        self.control_out
-            .push(vec![buf[..len].to_vec()])
-            .await
-            .map_err(queue_error)?;
-        self.work.wake();
-        Ok(())
+        self.control.send(msg).await
     }
 
     async fn control_recv(&mut self) -> Result<Control, AndroidBleError> {
-        loop {
-            let bytes = self
-                .control_in
-                .recv()
-                .await
-                .ok_or(AndroidBleError::Closed)?;
-            if let Some(control) = Control::decode(&bytes) {
-                return Ok(control);
-            }
-        }
+        self.control.recv().await
     }
 
     async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), AndroidBleError> {
@@ -112,7 +133,7 @@ impl BleLink for AndroidBleLink {
         Ok(())
     }
 
-    fn into_data(self) -> (AndroidBleSource, AndroidBleSink) {
+    fn into_parts(self) -> BleLinkParts<AndroidBleSource, AndroidBleSink, AndroidBleControl> {
         let (merged_tx, merged_rx) = channel::<Vec<u8>>(MERGED_IN_DEPTH);
 
         if let Some(mut data_in) = self.data_in {
@@ -150,20 +171,82 @@ impl BleLink for AndroidBleLink {
         }
 
         drop(merged_tx);
-        (
-            AndroidBleSource { inbound: merged_rx },
-            AndroidBleSink {
+        BleLinkParts {
+            source: AndroidBleSource {
+                inbound: merged_rx,
+                _lease: Arc::clone(&self.control.lease),
+            },
+            sink: AndroidBleSink {
+                _lease: Arc::clone(&self.control.lease),
                 l2cap_out: self.l2cap_out,
                 gatt_out: self.data_out,
                 l2cap_up: self.l2cap_up,
                 work: self.work,
             },
-        )
+            control: if self.peer_protocol == PeerProtocol::Native {
+                Some(self.control)
+            } else {
+                None
+            },
+        }
+    }
+}
+
+/// The original control receiver and exact physical owner survive GATT/L2CAP settlement.
+pub struct AndroidBleControl {
+    pub(super) lease: Arc<LinkLease>,
+    pub(super) inbound: Receiver<Vec<u8>>,
+    pub(super) outbound: Arc<ControlOutbox>,
+    pub(super) work: Arc<WorkSignal>,
+    pub(super) liveness_mode: LivenessMode,
+}
+
+impl BleControl for AndroidBleControl {
+    type Error = AndroidBleError;
+
+    fn liveness_mode(&self) -> LivenessMode {
+        self.liveness_mode
+    }
+
+    async fn send(&mut self, msg: &Control) -> Result<(), AndroidBleError> {
+        let deadline = tokio::time::Instant::now() + CONTROL_WRITE_TIMEOUT;
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let len = msg
+            .encode(&mut buf)
+            .ok_or(AndroidBleError::ControlTooLarge)?;
+        // No queue-capacity suspension: the exclusive sender has one reserved
+        // slot. Cancellation retains that slot; only the same bytes can rejoin.
+        let (ticket, _, start_watchdog) = self.outbound.begin(&buf[..len], deadline)?;
+        if start_watchdog {
+            let outbound = Arc::clone(&self.outbound);
+            let bridge = self.lease.bridge.clone();
+            let conn_id = self.lease.conn_id;
+            let owner = Arc::clone(&self.lease.owner);
+            // Do not hold LinkLease here: dropping the control/data owners must
+            // still close the physical connection and wake this watchdog.
+            tokio::spawn(async move {
+                if outbound.expired().await {
+                    bridge.close_owned_connection(conn_id, &owner);
+                }
+            });
+        }
+        self.work.wake();
+        self.outbound.result(ticket).await
+    }
+
+    async fn recv(&mut self) -> Result<Control, AndroidBleError> {
+        loop {
+            let bytes = self.inbound.recv().await.ok_or(AndroidBleError::Closed)?;
+            if let Some(control) = Control::decode(&bytes) {
+                return Ok(control);
+            }
+        }
     }
 }
 
 pub struct AndroidBleSource {
     inbound: Receiver<Vec<u8>>,
+    _lease: Arc<LinkLease>,
 }
 
 impl BleSource for AndroidBleSource {
@@ -177,6 +260,7 @@ impl BleSource for AndroidBleSource {
 }
 
 pub struct AndroidBleSink {
+    _lease: Arc<LinkLease>,
     l2cap_out: Arc<BoundedByteQueue>,
     gatt_out: Arc<BoundedMessageQueue>,
     l2cap_up: Arc<LinkSignal>,
@@ -228,7 +312,17 @@ mod receive_tests {
         let (sender, inbound) = channel(2);
         assert!(sender.send(vec![1, 2, 3]).await.is_ok());
         assert!(sender.send(vec![0x17; BLE_WIRE_FRAME_LEN]).await.is_ok());
-        let mut source = AndroidBleSource { inbound };
+        let bridge = AndroidBleBridge::new();
+        assert!(bridge.link_up(7, [1; 6], None, true));
+        let owner = bridge.shared.links.lock().unwrap()[&7]
+            .active()
+            .unwrap()
+            .data_out
+            .clone();
+        let mut source = AndroidBleSource {
+            inbound,
+            _lease: LinkLease::new(bridge, 7, owner),
+        };
         let mut small = [0xA5; 2];
         assert!(matches!(
             source.recv_frame(&mut small).await,

@@ -538,17 +538,28 @@ both nodes must report exactly those link IDs with `Timeout`. Requests on the
 expired links must promptly return `Rejected(NoSuchLink)`, including empty
 requests and a Resource-sized Tokio payload. Fresh announcements and links must
 restore encrypted request/response. Dropping the actors leaves no connections
-and detaches each radio exactly once. This regression exposed the
-[Tokio request-admission fix](../../prns-runtime/impls/tokio/README.md#request-admission):
-the shared core now distinguishes link rejection from transport size selection.
-The [local correctness evidence](measurements/mixed-runtime-ble.md) records the
-red/green regression, verification commands, and coverage limits.
+and detaches each radio exactly once. The shared core distinguishes link
+rejection from transport size selection; see [request admission](../../prns-runtime/impls/tokio/README.md#request-admission).
 
 The same scenarios send a Resource-sized request beyond the Embassy echo's
 admission limit. It must promptly return the exact typed peer rejection, then
-allow an ordinary exchange on the same link. This exposed a separate shared-core
-request settlement bug; [Resource settlement evidence](measurements/resource-request-settlement.md)
-records its regression and receipt-ownership checks.
+allow an ordinary exchange on the same link. Focused settlement tests cover
+receipt ownership, timeout ordering, link closure and response-before-proof.
+Accepting a Resource response retires its obsolete request upload. Unsupported
+segmented request uploads fail before advertisement; segmented responses remain
+supported.
+
+Run the focused checks from the repository root:
+
+```console
+cargo test --locked -p prns-core routing::links::resources::settlement
+cargo test --locked -p prns-simulation --features controlled-time --test embassy_ble
+python3 validation/run.py run --suite virtual-device-simulation --suite bluetooth-auto-embassy
+```
+
+Virtual GATT endpoints exercise shared protocol behavior, not Apple/BlueZ APIs,
+HCI controllers or RF. These host fixtures do not measure firmware memory,
+physical reconnect times or radio throughput.
 
 Its private clock bridge bounds automatic steps by Embassy's next timer deadline,
 then mirrors successful medium/Tokio steps into its test time driver before

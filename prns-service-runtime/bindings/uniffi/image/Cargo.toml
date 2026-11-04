@@ -1,0 +1,24 @@
+[package]
+name = "prns-service-runtime-uniffi-image"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+publish = false
+[lib]
+name = "prns_service_runtime_image"
+crate-type = ["cdylib", "lib"]
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+required-features = ["uniffi-bindgen"]
+[features]
+default = []
+connections = ["prns-service-runtime-uniffi/connections"]
+archive = ["prns-service-runtime-uniffi/archive"]
+text = ["prns-service-runtime-uniffi/text"]
+contact-card = ["prns-service-runtime-uniffi/contact-card"]
+uniffi-bindgen = ["uniffi/cli", "uniffi/cargo-metadata"]
+[dependencies]
+prns-service-runtime-uniffi = { path = ".." }
+uniffi = { version = "=0.31.2", default-features = false }

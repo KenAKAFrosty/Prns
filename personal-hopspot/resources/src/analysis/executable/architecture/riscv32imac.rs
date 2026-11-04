@@ -20,7 +20,7 @@ pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter {
     startup,
     decoded_instruction,
     call_target,
-    stack_reservation: StackReservation::Undeclared,
+    stack_reservation: StackReservation::RuntimeReservation("minimum-runtime-stack"),
     dwarf_cfa_registers: &[2],
 };
 

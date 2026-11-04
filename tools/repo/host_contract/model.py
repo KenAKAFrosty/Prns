@@ -169,10 +169,10 @@ class ContractModel:
                 "commandProjection",
                 "operations",
             },
-            set(),
+            {"session"},
             "host contract",
         )
-        if schema["schemaVersion"] != 1:
+        if schema["schemaVersion"] != 2:
             raise ValueError("unsupported host contract schema version")
         if not isinstance(schema["abi"], int) or schema["abi"] != 1:
             raise ValueError("unsupported host contract ABI")
@@ -184,7 +184,8 @@ class ContractModel:
         scalars = parse_scalars(schema["scalars"])
         handles = parse_handles(schema["handles"])
         validate_limits(schema["limits"])
-        validate_vocabulary(schema, scalars, handles)
+        vocabulary = session_vocabulary(schema)
+        validate_vocabulary(vocabulary, scalars, handles)
         operations = parse_operations(schema, handles)
         return cls(
             schema_version=schema["schemaVersion"],
@@ -194,6 +195,19 @@ class ContractModel:
             handles=tuple(handles),
             operations=tuple(operations),
         )
+
+
+def session_vocabulary(schema):
+    """Expand semantic session envelopes without changing the existing C ABI layouts."""
+    session = schema.get("session", {"records": [], "unions": []})
+    ensure_shape(session, {"records", "unions"}, set(), "session")
+    if not isinstance(session["records"], list) or not isinstance(session["unions"], list):
+        raise ValueError("invalid session vocabulary")
+    return {
+        **schema,
+        "records": [*schema["records"], *session["records"]],
+        "unions": [*schema["unions"], *session["unions"]],
+    }
 
 
 def parse_scalars(values):
@@ -565,7 +579,7 @@ def validate_relation(operations, owner, target_name, kind):
 
 def parse_command_projection(schema, handles, operation_names, operation_symbols):
     value = schema["commandProjection"]
-    ensure_shape(value, {"union", "receiver", "result", "cPrefix"}, set(), "command projection")
+    ensure_shape(value, {"union", "receiver", "result", "cPrefix", "outcomes"}, set(), "command projection")
     unions = {item["name"] for item in schema["unions"]}
     if value["union"] not in unions:
         raise ValueError("unknown command union")
@@ -574,6 +588,12 @@ def parse_command_projection(schema, handles, operation_names, operation_symbols
     if value["cPrefix"] != "prns_host_":
         raise ValueError("invalid command C prefix")
     union = next(item for item in schema["unions"] if item["name"] == value["union"])
+    outcomes = value["outcomes"]
+    outcome_names = {case["name"] for item in schema["unions"] if item["name"] == "CommandOutcome" for case in item["cases"]}
+    if not isinstance(outcomes, dict) or set(outcomes) != {case["name"] for case in union["cases"]}:
+        raise ValueError("command outcome projection must cover every command exactly once")
+    if any(outcome not in outcome_names for outcome in outcomes.values()):
+        raise ValueError("unknown command outcome projection")
     for case in union["cases"]:
         operation_name = f"host{case['name']}"
         symbol = f"{value['cPrefix']}{snake(case['name'])}"

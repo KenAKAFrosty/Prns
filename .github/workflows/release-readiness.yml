@@ -102,6 +102,10 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy,rustfmt
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        if: matrix.id == 'host-runtime-msrv' || matrix.id == 'service-runtime-msrv' || startsWith(matrix.id, 'native-service-bindings-msrv-')
+        with:
+          toolchain: "1.90.0"
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: release-readiness-${{ matrix.id }}
@@ -110,6 +114,9 @@ jobs:
         if: matrix.toolchain == 'node' || matrix.group == 'web' || matrix.group == 'esp' || matrix.domain == 'security' || matrix.domain == 'release'
         with:
           node-version: "24.18.0"
+      - name: Prepare portable MLS adapter targets
+        if: startsWith(matrix.id, 'group-mls-adapter-portable-')
+        run: rustup target add --toolchain 1.96.0 thumbv7em-none-eabihf riscv32imac-unknown-none-elf
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
         if: matrix.domain == 'oracles' || matrix.domain == 'interop' || matrix.domain == 'release'
       - name: Prepare nightly validation toolchain
@@ -242,6 +249,8 @@ jobs:
             target/flash-artifacts/resources/configured/work/*/linker.map
             target/flash-artifacts/resources/configured/work/*/function-boundaries.json
             target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+            target/flash-artifacts/resources/configured/work/*/frame-alignment.json
+            target/flash-artifacts/resources/configured/xtensa-frame-summary.json
 
   qualify-emulated:
     needs: [inventory, embedded-emulators]

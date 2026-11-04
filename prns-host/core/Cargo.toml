@@ -12,8 +12,18 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = []
+# Optional configuration serialization. Consumers own format/version policy;
+# these representations do not replace the host wire contract.
+serde = ["dep:serde"]
+
 [dependencies]
 prns-runtime = { path = "../../prns-runtime/core", default-features = false, features = ["alloc"] }
+serde = { version = "1", default-features = false, features = ["alloc", "derive"], optional = true }
+
+[dev-dependencies]
+serde_json = "1"
 
 [lints]
 workspace = true

@@ -9,19 +9,24 @@ use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, Message};
 use objc2_core_bluetooth::{
     CBCentralManager, CBCentralManagerDelegate, CBCentralManagerRestoredStatePeripheralsKey,
-    CBCharacteristic, CBManagerState, CBPeripheral, CBPeripheralDelegate, CBService,
+    CBCharacteristic, CBCharacteristicProperties, CBManagerState, CBPeripheral,
+    CBPeripheralDelegate, CBService,
 };
 use objc2_foundation::{
     NSArray, NSData, NSDictionary, NSError, NSNumber, NSObject, NSObjectProtocol, NSString,
 };
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
-use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, PeerProtocol};
-
-use super::discovery::{
-    advertisement_candidate_strength, discover_disposition, DiscoverDisposition, DiscoveryGuard,
-    PeripheralLinkState, SessionPresence, StaleCancellation, StaleLinkRecovery,
+use prns_core::interfaces::bluetooth_auto::{
+    supports_liveness_capability, BleAddress, BleIdentity, Control, LivenessMode, PeerProtocol,
 };
+
+use super::diagnostics::{self, Family};
+use super::discovery::{
+    advertisement_candidate_strength, discover_disposition, link_recovery, DiscoverDisposition,
+    DiscoveryGuard, PeripheralLinkState, SessionPresence, StaleCancellation, StaleLinkRecovery,
+};
+use super::gatt_arbitration::GattWriteGate;
 use super::gatt_link::{GattInboundSendError, GattInboundSender, GATT_INBOUND_BUDGET_BYTES};
 use super::gatt_write::{
     write_admission, GattWriteAdmission, GattWriteMode, GattWriteRequest, GattWriteTarget,
@@ -29,9 +34,14 @@ use super::gatt_write::{
 };
 use super::{
     cbuuid_eq, columba_identity_uuid, columba_rx_uuid, columba_tx_uuid, control_uuid,
-    core_bluetooth_peer_id, data_uuid, service_uuid, CoreBluetoothPeerId, MacosBleError,
-    ManagerSignalSender, SendCentralManager, SendCharacteristicRef, SendPeripheral, Sighting,
+    core_bluetooth_peer_id, data_uuid, liveness_uuid, service_uuid, CoreBluetoothPeerId,
+    MacosBleError, ManagerSignalSender, SendCentralManager, SendCharacteristicRef, SendPeripheral,
+    Sighting,
 };
+
+#[cfg(test)]
+#[path = "central_capability_tests.rs"]
+mod capability_tests;
 
 pub(super) fn connected_peripheral(
     central: &CBCentralManager,
@@ -85,6 +95,8 @@ pub(super) struct DialChars {
     pub(super) peer_identity: Option<BleIdentity>,
     pub(super) control: SendCharacteristicRef,
     pub(super) data: Option<GattWriteTarget>,
+    pub(super) liveness: LivenessMode,
+    pub(super) write_gate: Arc<GattWriteGate>,
 }
 
 pub(super) enum DialCompletion {
@@ -566,7 +578,10 @@ enum ColumbaReadiness {
 enum CentralProfile {
     Discovering,
     Native {
+        control: SendCharacteristicRef,
         data: Option<GattWriteTarget>,
+        capability_read: Option<SendCharacteristicRef>,
+        liveness: LivenessMode,
     },
     Columba {
         write: GattWriteTarget,
@@ -616,6 +631,9 @@ pub(super) struct CentralPeerSession {
     restoration: RestorationRecovery,
     acknowledged_write: Option<PendingAcknowledgedWrite>,
     unacknowledged_write: Option<GattWriteRequest>,
+    liveness_enabled: bool,
+    write_gate: Arc<GattWriteGate>,
+    dial_deadline: tokio::time::Instant,
 }
 
 impl CentralPeerSession {
@@ -634,7 +652,26 @@ impl CentralPeerSession {
             restoration: RestorationRecovery::NotRequired,
             acknowledged_write: None,
             unacknowledged_write: None,
+            liveness_enabled: false,
+            write_gate: Arc::new(GattWriteGate::default()),
+            dial_deadline: tokio::time::Instant::now() + super::backend::DIAL_TIMEOUT,
         }
+    }
+
+    pub(super) fn enable_liveness(&mut self, enabled: bool) {
+        self.liveness_enabled = enabled;
+    }
+
+    pub(super) fn dial_deadline(&self) -> tokio::time::Instant {
+        self.dial_deadline
+    }
+
+    pub(super) fn write_gate(&self) -> Arc<GattWriteGate> {
+        Arc::clone(&self.write_gate)
+    }
+
+    fn owns_live_write_gate(&self, owner: &Arc<GattWriteGate>) -> bool {
+        Arc::ptr_eq(&self.write_gate, owner) && !owner.is_retired()
     }
 
     pub(super) fn configure_restoration_recovery(&mut self, ios: bool, initially_connected: bool) {
@@ -672,6 +709,7 @@ impl CentralPeerSession {
                 if protocol == PeerProtocol::Native {
                     // Neither a stale Welcome nor partial old DATA belongs to the
                     // fresh protocol incarnation. Drop both, without replaying.
+                    self.profile = CentralProfile::Discovering;
                     Ok(RestorationProfileAction::Disconnect)
                 } else if self.restore_callbacks(callbacks) {
                     Ok(RestorationProfileAction::Continue)
@@ -757,7 +795,8 @@ impl CentralPeerSession {
     }
 
     fn live_dial(&self) -> bool {
-        !self.data_receiver_closed()
+        tokio::time::Instant::now() < self.dial_deadline
+            && !self.data_receiver_closed()
             && self
                 .completion_tx
                 .as_ref()
@@ -784,8 +823,88 @@ impl CentralPeerSession {
         )
     }
 
-    fn select_native(&mut self, data: Option<GattWriteTarget>) {
-        self.profile = CentralProfile::Native { data };
+    fn select_native(
+        &mut self,
+        control: SendCharacteristicRef,
+        data: Option<GattWriteTarget>,
+        capability: Option<SendCharacteristicRef>,
+    ) -> Option<SendCharacteristicRef> {
+        if !self.live_dial() || !matches!(self.profile, CentralProfile::Discovering) {
+            return None;
+        }
+        let capability_read = capability.filter(|_| self.liveness_enabled);
+        let read = capability_read
+            .as_ref()
+            .map(|characteristic| SendCharacteristicRef(characteristic.0.clone()));
+        self.profile = CentralProfile::Native {
+            control,
+            data,
+            capability_read,
+            liveness: LivenessMode::Disabled,
+        };
+        read
+    }
+
+    fn capability_read_pending(&self) -> bool {
+        matches!(
+            self.profile,
+            CentralProfile::Native {
+                capability_read: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// Only a callback for the current retained read can enable this connection. An error or
+    /// unsupported value ends the read with legacy behavior; a missing callback leaves the
+    /// original dial pending until its deadline cancels the physical connection.
+    fn finish_capability_read(&mut self, characteristic: &CBCharacteristic, value: &[u8]) -> bool {
+        if !self.live_dial() || !self.notification_state_expected() {
+            return false;
+        }
+        let CentralProfile::Native {
+            capability_read,
+            liveness,
+            ..
+        } = &mut self.profile
+        else {
+            return false;
+        };
+        if !capability_read
+            .as_ref()
+            .is_some_and(|pending| core::ptr::eq(&*pending.0, characteristic))
+        {
+            return false;
+        }
+        *capability_read = None;
+        *liveness = if supports_liveness_capability(value) {
+            LivenessMode::Initiator
+        } else {
+            LivenessMode::Disabled
+        };
+        true
+    }
+
+    fn native_subscriptions(
+        &self,
+    ) -> Option<(SendCharacteristicRef, Option<SendCharacteristicRef>)> {
+        if !self.live_dial() || !self.notification_state_expected() {
+            return None;
+        }
+        let CentralProfile::Native {
+            control,
+            data,
+            capability_read: None,
+            ..
+        } = &self.profile
+        else {
+            return None;
+        };
+        Some((
+            SendCharacteristicRef(control.0.clone()),
+            data.as_ref()
+                .map(|data| SendCharacteristicRef(data.characteristic.0.clone())),
+        ))
     }
 
     fn select_columba(&mut self, write: GattWriteTarget, notify: SendCharacteristicRef) {
@@ -797,13 +916,15 @@ impl CentralPeerSession {
     }
 
     fn native_ready(&mut self, control: SendCharacteristicRef) {
-        if !matches!(self.profile, CentralProfile::Native { .. })
+        if !matches!(&self.profile, CentralProfile::Native { control: expected, capability_read: None, .. }
+            if core::ptr::eq(&*expected.0, &*control.0))
+            || !self.live_dial()
             || !self.restoration_native_subscribed()
         {
             return;
         }
         let profile = core::mem::replace(&mut self.profile, CentralProfile::Ready);
-        let CentralProfile::Native { data } = profile else {
+        let CentralProfile::Native { data, liveness, .. } = profile else {
             self.profile = profile;
             return;
         };
@@ -812,6 +933,8 @@ impl CentralPeerSession {
             peer_identity: None,
             control,
             data,
+            liveness,
+            write_gate: self.write_gate.clone(),
         });
     }
 
@@ -931,10 +1054,15 @@ impl CentralPeerSession {
             peer_identity: Some(identity),
             data: Some(write),
             control,
+            liveness: LivenessMode::Disabled,
+            write_gate: self.write_gate.clone(),
         });
     }
 
     fn complete(&mut self, chars: DialChars) {
+        if !self.live_dial() {
+            return;
+        }
         self.profile = CentralProfile::Ready;
         if let Some(completion_tx) = self.completion_tx.take() {
             let _ = completion_tx.send(DialCompletion::Ready(chars));
@@ -962,7 +1090,7 @@ impl CentralPeerSession {
     }
 
     pub(super) fn data_receiver_closed(&self) -> bool {
-        // The control receiver is handshake-only; the data receiver lives for the attached role.
+        // The data receiver remains the authoritative owner of the attached role.
         self.data_tx.is_closed()
     }
 
@@ -970,7 +1098,7 @@ impl CentralPeerSession {
         &mut self,
         pending: PendingAcknowledgedWrite,
     ) -> Result<(), PendingAcknowledgedWrite> {
-        if self.acknowledged_write.is_some() {
+        if self.acknowledged_write.is_some() || self.capability_read_pending() {
             return Err(pending);
         }
         self.acknowledged_write = Some(pending);
@@ -998,7 +1126,7 @@ impl CentralPeerSession {
         &mut self,
         request: GattWriteRequest,
     ) -> Result<(), GattWriteRequest> {
-        if self.unacknowledged_write.is_some() {
+        if self.unacknowledged_write.is_some() || self.capability_read_pending() {
             return Err(request);
         }
         self.unacknowledged_write = Some(request);
@@ -1050,9 +1178,12 @@ define_class!(
             *self.ivars().manager.borrow_mut() = Some(SendCentralManager(central.retain()));
             // SAFETY: CoreBluetooth supplied this live manager to its delegate on the configured
             // serial dispatch queue.
-            if unsafe { central.state() } == CBManagerState::PoweredOn {
-                self.ivars().manager_signals.central_powered();
-            }
+            let state = unsafe { central.state() };
+            diagnostics::emit(
+                Family::Manager,
+                format_args!("stage=manager category=central_state state={}", state.0),
+            );
+            self.ivars().manager_signals.central_state_changed(state);
         }
 
         #[unsafe(method(centralManager:willRestoreState:))]
@@ -1066,12 +1197,27 @@ define_class!(
             // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
             let key: &NSString = unsafe { CBCentralManagerRestoredStatePeripheralsKey };
             let Some(restored) = dict.objectForKey(key) else {
+                diagnostics::emit(
+                    Family::Restoration,
+                    format_args!(
+                        "stage=restoration category=callback peripherals=0 radio_enabled={}",
+                        self.ivars().radio_enabled.load(Ordering::Acquire)
+                    ),
+                );
                 return;
             };
             // SAFETY: CoreBluetooth documents this restoration dictionary value as an NSArray of
             // CBPeripheral objects; `restored` retains the array for the duration of the borrow.
             let peripherals: &NSArray<CBPeripheral> =
                 unsafe { &*(Retained::as_ptr(&restored) as *const NSArray<CBPeripheral>) };
+            diagnostics::emit(
+                Family::Restoration,
+                format_args!(
+                    "stage=restoration category=callback peripherals={} radio_enabled={}",
+                    peripherals.len(),
+                    self.ivars().radio_enabled.load(Ordering::Acquire)
+                ),
+            );
             if !self.ivars().radio_enabled.load(Ordering::Acquire) {
                 for peripheral in peripherals.iter() {
                     let peer_id = core_bluetooth_peer_id(&peripheral);
@@ -1144,6 +1290,10 @@ define_class!(
             rssi: &NSNumber,
         ) {
             if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+                diagnostics::emit(
+                    Family::Discovery,
+                    format_args!("stage=discovery category=callback_radio_disabled"),
+                );
                 return;
             }
             self.ivars().scan_activity.store(true, Ordering::Relaxed);
@@ -1178,12 +1328,13 @@ define_class!(
             } else {
                 StaleCancellation::Idle
             };
-            let recovery = if cfg!(target_os = "macos") {
-                StaleLinkRecovery::Enabled
-            } else {
-                StaleLinkRecovery::Disabled
-            };
+            let recovery = link_recovery();
             let disposition = discover_disposition(state, session, cancellation, recovery);
+            diagnostics::emit(Family::Discovery, format_args!(
+                "stage=discovery category=decision state={} local_owner={} cancellation_pending={} recovery_enabled={} disposition={}",
+                diagnostics::state_name(state), session == SessionPresence::Present,
+                cancellation == StaleCancellation::InFlight, recovery == StaleLinkRecovery::Enabled,
+                diagnostics::disposition_name(disposition)));
             match disposition {
                 DiscoverDisposition::IgnoreOwned | DiscoverDisposition::WaitForDisconnect => {
                     return;
@@ -1216,13 +1367,22 @@ define_class!(
                 rssi,
             );
             if !observed {
+                diagnostics::emit(
+                    Family::Discovery,
+                    format_args!("stage=discovery category=registry_rejected"),
+                );
                 return;
             }
+            diagnostics::emit(
+                Family::Discovery,
+                format_args!("stage=discovery category=sighting_admitted"),
+            );
             let _ = self.ivars().sighting_wake.try_send(());
         }
 
         #[unsafe(method(centralManager:didConnectPeripheral:))]
         fn did_connect(&self, central: &CBCentralManager, peripheral: &CBPeripheral) {
+            diagnostics::emit(Family::Gatt, format_args!("stage=gatt category=connected"));
             if !self.ivars().radio_enabled.load(Ordering::Acquire) {
                 // A connect completion can race the queued logical shutdown. Remove the exact
                 // registry owner before cancelling so the later drain cannot cancel it twice; if
@@ -1254,6 +1414,13 @@ define_class!(
             peripheral: &CBPeripheral,
             error: Option<&NSError>,
         ) {
+            diagnostics::emit(
+                Family::Gatt,
+                format_args!(
+                    "stage=gatt category=connect_failed error_present={}",
+                    error.is_some()
+                ),
+            );
             crate::diagnostic_log::warn!("bluetooth: dial connect FAILED: {error:?}");
             self.disconnect_peer(core_bluetooth_peer_id(peripheral));
         }
@@ -1265,6 +1432,13 @@ define_class!(
             peripheral: &CBPeripheral,
             error: Option<&NSError>,
         ) {
+            diagnostics::emit(
+                Family::Gatt,
+                format_args!(
+                    "stage=gatt category=disconnected error_present={}",
+                    error.is_some()
+                ),
+            );
             let peer_id = core_bluetooth_peer_id(peripheral);
             self.ivars()
                 .discovery_guard
@@ -1283,6 +1457,10 @@ define_class!(
             };
             match action {
                 RestorationDisconnectAction::Reconnect => {
+                    diagnostics::emit(
+                        Family::Recovery,
+                        format_args!("stage=recovery category=local_reconnect_after_disconnect"),
+                    );
                     // Keep the exact registry owner and original dial completion. This
                     // is one continuation, not another sighting, retry timer, or dial.
                     // CoreBluetooth only guarantees a local disconnect; another app
@@ -1305,6 +1483,13 @@ define_class!(
     unsafe impl CBPeripheralDelegate for CentralDelegate {
         #[unsafe(method(peripheral:didDiscoverServices:))]
         fn did_discover_services(&self, peripheral: &CBPeripheral, error: Option<&NSError>) {
+            diagnostics::emit(
+                Family::Gatt,
+                format_args!(
+                    "stage=gatt category=services_callback error_present={}",
+                    error.is_some()
+                ),
+            );
             let peer_id = core_bluetooth_peer_id(peripheral);
             let expected = self
                 .ivars()
@@ -1355,6 +1540,13 @@ define_class!(
             service: &CBService,
             error: Option<&NSError>,
         ) {
+            diagnostics::emit(
+                Family::Gatt,
+                format_args!(
+                    "stage=gatt category=characteristics_callback error_present={}",
+                    error.is_some()
+                ),
+            );
             let peer_id = core_bluetooth_peer_id(peripheral);
             let expected = self
                 .ivars()
@@ -1383,11 +1575,13 @@ define_class!(
             };
             let control_id = control_uuid();
             let data_id = data_uuid();
+            let liveness_id = liveness_uuid();
             let columba_rx_id = columba_rx_uuid();
             let columba_tx_id = columba_tx_uuid();
             let columba_identity_id = columba_identity_uuid();
             let mut control = None;
             let mut data = None;
+            let mut capability = None;
             let mut columba_rx = None;
             let mut columba_tx = None;
             let mut columba_identity = None;
@@ -1399,6 +1593,13 @@ define_class!(
                     control = Some(characteristic);
                 } else if cbuuid_eq(&uuid, &data_id) {
                     data = Some(characteristic);
+                } else if cbuuid_eq(&uuid, &liveness_id) {
+                    // SAFETY: this immutable property belongs to the retained discovered object.
+                    if unsafe { characteristic.properties() }
+                        .contains(CBCharacteristicProperties::Read)
+                    {
+                        capability = Some(SendCharacteristicRef(characteristic));
+                    }
                 } else if cbuuid_eq(&uuid, &columba_rx_id) {
                     columba_rx = Some(characteristic);
                 } else if cbuuid_eq(&uuid, &columba_tx_id) {
@@ -1428,26 +1629,30 @@ define_class!(
                     },
                     None => None,
                 };
-                let Some(()) = self
-                    .ivars()
-                    .sessions
-                    .borrow_mut()
-                    .get_mut(&peer_id)
-                    .map(|session| session.select_native(data_target))
+                let Some(read) =
+                    self.ivars()
+                        .sessions
+                        .borrow_mut()
+                        .get_mut(&peer_id)
+                        .map(|session| {
+                            session.select_native(
+                                SendCharacteristicRef(control),
+                                data_target,
+                                capability,
+                            )
+                        })
                 else {
                     return;
                 };
-                if let Some(data) = data {
-                    // SAFETY: this characteristic was discovered on `peripheral`; both remain live
-                    // through the subscription message on the serial manager queue.
-                    unsafe { peripheral.setNotifyValue_forCharacteristic(true, &data) };
+                if let Some(read) = read {
+                    // Register the exact read before calling the platform. Subscriptions and
+                    // writes remain gated until its callback; expiry cancels the whole dial.
+                    // SAFETY: this retained optional characteristic was discovered on this
+                    // peripheral and the message runs on its serial CoreBluetooth queue.
+                    unsafe { peripheral.readValueForCharacteristic(&read.0) };
+                } else {
+                    self.subscribe_native(peripheral, peer_id);
                 }
-                crate::diagnostic_log::debug!(
-                    "bluetooth: native control characteristic found, subscribing"
-                );
-                // SAFETY: `control` was discovered on `peripheral` and both objects are retained
-                // throughout this queue-confined subscription call.
-                unsafe { peripheral.setNotifyValue_forCharacteristic(true, &control) };
                 return;
             }
             let (Some(rx), Some(tx), Some(identity)) = (columba_rx, columba_tx, columba_identity)
@@ -1498,6 +1703,13 @@ define_class!(
             characteristic: &CBCharacteristic,
             error: Option<&NSError>,
         ) {
+            diagnostics::emit(
+                Family::Gatt,
+                format_args!(
+                    "stage=gatt category=subscription_callback error_present={}",
+                    error.is_some()
+                ),
+            );
             let peer_id = core_bluetooth_peer_id(peripheral);
             let expected = self
                 .ivars()
@@ -1549,6 +1761,40 @@ define_class!(
             error: Option<&NSError>,
         ) {
             let peer_id = core_bluetooth_peer_id(peripheral);
+            // Capability reads are handled before restored-value filtering: a fresh optional
+            // read can complete while restoration is waiting to subscribe. Only its exact
+            // retained characteristic can advance that session.
+            // SAFETY: CoreBluetooth supplied this live characteristic on the serial queue.
+            let updated_uuid = unsafe { characteristic.UUID() };
+            if cbuuid_eq(&updated_uuid, &liveness_uuid()) {
+                let value = if error.is_none() {
+                    // SAFETY: the callback owns the characteristic throughout this property read.
+                    unsafe { characteristic.value() }
+                        .filter(|value| {
+                            value.len()
+                                == prns_core::interfaces::bluetooth_auto::LIVENESS_CAPABILITY_BYTES
+                                    .len()
+                        })
+                        .map(|value| value.to_vec())
+                } else {
+                    None
+                };
+                let completed = self
+                    .ivars()
+                    .sessions
+                    .borrow_mut()
+                    .get_mut(&peer_id)
+                    .is_some_and(|session| {
+                        session.finish_capability_read(
+                            characteristic,
+                            value.as_deref().unwrap_or_default(),
+                        )
+                    });
+                if completed {
+                    self.subscribe_native(peripheral, peer_id);
+                }
+                return;
+            }
             if self
                 .ivars()
                 .sessions
@@ -1693,6 +1939,95 @@ define_class!(
 );
 
 impl CentralDelegate {
+    /// A connected peripheral need not advertise and an ordinary launch need not receive
+    /// willRestoreState. Retrieving service matches is read-only: it creates advisory sightings
+    /// only. Normal host capacity/backoff and local/inbound ownership checks still precede dial.
+    pub(super) fn observe_system_connections(&self, central: &CBCentralManager) {
+        if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+            return;
+        }
+        // SAFETY: callers use the live manager on its serial queue. No query is attempted
+        // before CoreBluetooth is powered on or after logical shutdown.
+        if unsafe { central.state() } != CBManagerState::PoweredOn {
+            return;
+        }
+        self.reap_closed_sessions(central);
+        let uuid = service_uuid();
+        let services = NSArray::from_slice(&[&*uuid]);
+        // SAFETY: the service array and manager are retained for this synchronous queue-confined
+        // query. Returned objects belong to the system; this query does not acquire a connection.
+        let peripherals = unsafe { central.retrieveConnectedPeripheralsWithServices(&services) };
+        let limit = self.ivars().registry.borrow().peripheral_capacity;
+        let mut admitted = 0;
+        for peripheral in peripherals.iter().take(limit) {
+            let peer_id = core_bluetooth_peer_id(&peripheral);
+            let session = if self.has_session(peer_id) {
+                SessionPresence::Present
+            } else {
+                SessionPresence::Absent
+            };
+            let cancellation = if self
+                .ivars()
+                .discovery_guard
+                .borrow_mut()
+                .cancellation_recent(peer_id, Instant::now())
+            {
+                StaleCancellation::InFlight
+            } else {
+                StaleCancellation::Idle
+            };
+            // SAFETY: this retained query result is inspected on the manager's serial queue.
+            let state = PeripheralLinkState::from(unsafe { peripheral.state() });
+            if discover_disposition(
+                state,
+                session,
+                cancellation,
+                StaleLinkRecovery::AcquireLocal,
+            ) != DiscoverDisposition::Adopt
+            {
+                continue;
+            }
+            if self.ivars().registry.borrow_mut().observe(
+                peer_id,
+                SendPeripheral(peripheral.retain()),
+                None,
+            ) {
+                admitted += 1;
+            }
+        }
+        diagnostics::emit(
+            Family::Recovery,
+            format_args!(
+                "stage=recovery category=system_connections found={} inspected={} admitted={}",
+                peripherals.len(),
+                peripherals.len().min(limit),
+                admitted,
+            ),
+        );
+        if admitted != 0 {
+            let _ = self.ivars().sighting_wake.try_send(());
+        }
+    }
+
+    fn subscribe_native(&self, peripheral: &CBPeripheral, peer_id: CoreBluetoothPeerId) {
+        let subscriptions = self
+            .ivars()
+            .sessions
+            .borrow()
+            .get(&peer_id)
+            .and_then(CentralPeerSession::native_subscriptions);
+        let Some((control, data)) = subscriptions else {
+            return;
+        };
+        if let Some(data) = data {
+            // SAFETY: each retained characteristic belongs to this peripheral, and the optional
+            // ATT read has completed before these queue-confined subscription messages.
+            unsafe { peripheral.setNotifyValue_forCharacteristic(true, &data.0) };
+        }
+        // SAFETY: as above, this discovered control characteristic is retained on the same queue.
+        unsafe { peripheral.setNotifyValue_forCharacteristic(true, &control.0) };
+    }
+
     fn select_restoration_profile(
         &self,
         peripheral: &CBPeripheral,
@@ -1708,6 +2043,10 @@ impl CentralDelegate {
         match action {
             Some(Ok(RestorationProfileAction::Continue)) => true,
             Some(Ok(RestorationProfileAction::Disconnect)) => {
+                diagnostics::emit(
+                    Family::Recovery,
+                    format_args!("stage=recovery category=native_profile_local_disconnect"),
+                );
                 let central = self
                     .ivars()
                     .manager
@@ -1954,6 +2293,7 @@ impl CentralDelegate {
         &self,
         peripheral: &CBPeripheral,
         peer_id: CoreBluetoothPeerId,
+        owner: &Arc<GattWriteGate>,
         request: GattWriteRequest,
     ) {
         if !self.ivars().radio_enabled.load(Ordering::Acquire) {
@@ -1965,6 +2305,14 @@ impl CentralDelegate {
             request.complete(Err(MacosBleError::Closed));
             return;
         };
+        if !session.owns_live_write_gate(owner) {
+            request.complete(Err(MacosBleError::Closed));
+            return;
+        }
+        if session.capability_read_pending() {
+            request.complete(Err(MacosBleError::QueueFull));
+            return;
+        }
         let can_send_without_response = request.mode == GattWriteMode::WithoutResponse
             // SAFETY: this connection state query runs on the peripheral's CoreBluetooth queue
             // and does not mutate the retained peripheral.
@@ -2032,6 +2380,20 @@ impl CentralDelegate {
 
     pub(super) fn fail_peer(&self, peer_id: CoreBluetoothPeerId) {
         self.finish_peer(peer_id, true);
+    }
+
+    /// The retained write gate also identifies this physical startup attempt. Delayed write or
+    /// dial-timeout cleanup must not remove a newer session admitted at the same peer address.
+    pub(super) fn fail_write_owner(&self, peer_id: CoreBluetoothPeerId, gate: &Arc<GattWriteGate>) {
+        let same_owner = self
+            .ivars()
+            .sessions
+            .borrow()
+            .get(&peer_id)
+            .is_some_and(|session| Arc::ptr_eq(&session.write_gate, gate));
+        if same_owner {
+            self.fail_peer(peer_id);
+        }
     }
 }
 

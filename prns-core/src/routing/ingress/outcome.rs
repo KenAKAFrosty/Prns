@@ -36,6 +36,8 @@ use crate::wire::{DestinationHash, WirePacketHeader};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct IngestEffects<'a> {
+    #[cfg(feature = "path-diagnostics")]
+    pub path_discovery: Option<crate::engine::PathDiscoveryEvent>,
     pub destination_identity_expiry: Option<InstantMillis>,
     pub accepted_announce: Option<AcceptedAnnounceEffect<'a>>,
     pub discovered_path: Option<DiscoveredPath>,
@@ -47,6 +49,8 @@ pub(crate) struct IngestEffects<'a> {
 impl Default for IngestEffects<'_> {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "path-diagnostics")]
+            path_discovery: None,
             destination_identity_expiry: None,
             accepted_announce: None,
             discovered_path: None,

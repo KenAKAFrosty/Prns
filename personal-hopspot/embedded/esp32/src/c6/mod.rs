@@ -190,6 +190,7 @@ async fn usb_device_task(
     rx: UsbSerialJtagRx<'static, Async>,
     tx: UsbSerialJtagTx<'static, Async>,
     seam: UsbSeam,
+    enrollment: personal_rns::usb_auto::UsbAutoControllerEnrollment,
 ) {
     let mut last_sof = 0u16;
     let host_present = move || {
@@ -208,8 +209,14 @@ async fn usb_device_task(
         status: &USB_STATUS,
         bitrate: personal_rns::interfaces::usb_auto::DEVICE_USB_BITRATE_BPS,
         host_presence: PhysicalHostPresence::new(host_present),
-    });
+    })
+    .with_controller_enrollment(enrollment);
     device.run(seam).await
+}
+
+#[embassy_executor::task]
+async fn controller_enrollment_task() {
+    crate::controller_enrollment::run(PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION)).await
 }
 
 #[cfg(feature = "esp-now")]

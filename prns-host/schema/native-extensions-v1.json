@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "kind": "native-extension-availability",
+  "targets": ["native", "uniffi", "c", "napi", "cooperative"],
+  "extensions": [
+    {
+      "name": "destinationPublicKey",
+      "summary": "Look up the public identity learned from an authenticated destination announcement.",
+      "semantics": "Returns an optional 64-byte public key for a destination. It never exports local private identity material. The native UniFFI facade exposes this query to its generated bindings.",
+      "targets": {
+        "native": {"status": "supported", "declarations": [{"path": "prns-host/impls/runtime/src/owner.rs", "owner": "HostClient", "kind": "function", "name": "destination_public_key"}]},
+        "uniffi": {"status": "supported", "declarations": [{"path": "prns-host/bindings/uniffi/src/facade.rs", "owner": "HostClientHandle", "kind": "function", "name": "destination_public_key"}]},
+        "c": {"status": "unsupported", "reason": "The portable C host contract has no destination public-key query."},
+        "napi": {"status": "unsupported", "reason": "The N-API host projection has no destination public-key query."},
+        "cooperative": {"status": "unsupported", "reason": "The cooperative/browser host projection has no destination public-key query."}
+      }
+    },
+    {
+      "name": "authenticatedAnnounces",
+      "summary": "Observe accepted authenticated announce facts in a native service embedding.",
+      "semantics": "The callback borrows AuthenticatedAnnounce for its duration. Native services copy bounded facts and validate their own protocol-specific destination association. This hook is not a second foreign application-event feed or a projection of lossy announce diagnostics.",
+      "targets": {
+        "native": {"status": "supported", "declarations": [{"path": "prns-host/impls/runtime/src/embedding.rs", "owner": "HostEmbedding", "kind": "field", "name": "accepted_announces"}, {"path": "prns-host/impls/runtime/src/embedding.rs", "kind": "type", "name": "AuthenticatedAnnounce"}]},
+        "uniffi": {"status": "unsupported", "reason": "Authenticated announce observations are native-service callbacks, not a UniFFI event or callback API."},
+        "c": {"status": "unsupported", "reason": "Authenticated announce observations are not projected by the portable C host contract."},
+        "napi": {"status": "unsupported", "reason": "Authenticated announce observations are not projected by the N-API host."},
+        "cooperative": {"status": "unsupported", "reason": "Authenticated announce observations are not projected by the cooperative/browser host."}
+      }
+    },
+    {
+      "name": "preparedInterfaceAttachments",
+      "summary": "Attach prepared native transports and recreate automatic LAN attachments when enabled.",
+      "semantics": "The embedding returns prepared transports as HostPreparedAttachment and supplies auto_lan_factory for every automatic LAN attachment, including re-enable. A ManagedSupervisor retains a repeatable HostAttachmentCleanup callback. Native detach waits for owned run futures, sockets, supervised members and queued builders to retire and for a manifold barrier before joined platform cleanup; uncertain cleanup retains host ownership for retry. Host stop keeps driving the runtime until accepted retirement and provider cleanup settle. Completion does not prove physical transmission or remote receipt. OS authorization and restoration policy stay in platform integration. Canonical interface commands remain independently available where their backend capabilities permit them.",
+      "targets": {
+        "native": {"status": "supported", "declarations": [{"path": "prns-host/impls/runtime/src/embedding.rs", "owner": "HostEmbedding", "kind": "field", "name": "prepare_interfaces"}, {"path": "prns-host/impls/runtime/src/embedding.rs", "owner": "HostEmbedding", "kind": "field", "name": "auto_lan_factory"}, {"path": "prns-host/impls/runtime/src/embedding.rs", "kind": "type", "name": "HostPreparedAttachment"}, {"path": "prns-host/impls/runtime/src/embedding.rs", "kind": "type", "name": "HostAutoLanFactory"}, {"path": "prns-host/impls/runtime/src/embedding.rs", "kind": "type", "name": "HostAttachmentCleanup"}, {"path": "prns-runtime/impls/tokio/src/runtime/node_facade/interface_lifecycle/mod.rs", "owner": "PrnsNodeHandle", "kind": "function", "name": "remove_interface_and_wait"}, {"path": "prns-runtime/impls/tokio/src/runtime/node_facade/interface_lifecycle/mod.rs", "kind": "type", "name": "InterfaceDetachError"}]},
+        "uniffi": {"status": "unsupported", "reason": "Prepared native platform objects cannot be supplied through the UniFFI host factory."},
+        "c": {"status": "unsupported", "reason": "The native prepared-object hook is not a C operation; existing supplied-pipe and interface commands retain their own semantics."},
+        "napi": {"status": "unsupported", "reason": "The native prepared-object hook is not projected by the N-API host."},
+        "cooperative": {"status": "unsupported", "reason": "The native prepared-object hook is not projected by the cooperative/browser host."}
+      }
+    },
+    {
+      "name": "linkHandshakeDiagnostics",
+      "summary": "Observe bounded native Link establishment and host egress decisions.",
+      "semantics": "Explicit opt-in function callbacks receive fixed metadata only. Core and egress have independent producer limits and sink admission accounting. Exporters must bound output and redact interface identifiers. Transient public Link identifiers intentionally correlate handshake hops; these observations do not prove physical transmission or application receipt. The hook does not alter wire packets, timeouts or the portable host contract.",
+      "targets": {
+        "native": {"status": "supported", "declarations": [{"path": "prns-host/impls/runtime/src/embedding.rs", "owner": "HostEmbedding", "kind": "field", "name": "link_diagnostics"}, {"path": "prns-host/impls/runtime/src/embedding.rs", "kind": "type", "name": "HostLinkDiagnostics"}]},
+        "uniffi": {"status": "unsupported", "reason": "Controlled diagnostics are native embedding callbacks, not a foreign application event API."},
+        "c": {"status": "unsupported", "reason": "Controlled diagnostics are native embedding callbacks, not a foreign application event API."},
+        "napi": {"status": "unsupported", "reason": "Controlled diagnostics are native embedding callbacks, not a foreign application event API."},
+        "cooperative": {"status": "unsupported", "reason": "Controlled diagnostics are native embedding callbacks, not a foreign application event API."}
+      }
+    },
+    {
+      "name": "scopedServiceOperations",
+      "summary": "Bind native service work to one local identity generation.",
+      "semantics": "HostServiceScope bounds admitted operations and outgoing Links, rejects foreign local destinations and Links, and retains ownership across canceled waiters. It does not replace catalog admission, provide inbound resource quotas or authorize an untrusted API caller.",
+      "targets": {
+        "native": {"status": "supported", "declarations": [{"path": "prns-host/impls/runtime/src/service_scope.rs", "kind": "type", "name": "HostServiceScope"}]},
+        "uniffi": {"status": "unsupported", "reason": "Scoped service ownership is a native Rust integration; generated lifecycle APIs remain separate work."},
+        "c": {"status": "unsupported", "reason": "The portable C contract does not expose scoped native service ownership."},
+        "napi": {"status": "unsupported", "reason": "The N-API host does not expose scoped native service ownership."},
+        "cooperative": {"status": "unsupported", "reason": "The cooperative/browser host needs its own scoped runtime adapter."}
+      }
+    },
+    {
+      "name": "scopedServiceLifecycle",
+      "summary": "Stage and retire dynamic Reticulum service destinations on a shared native node.",
+      "semantics": "ServiceEndpoint stages closed ingress until explicit activation, snapshots receive ratchets and retires owned destinations, Links and announces. Completion measures retained interface-buffer release, not physical transmission, remote receipt or secure secret erasure. Callers must fence and drain service producers and persist receive state.",
+      "targets": {
+        "native": {"status": "supported", "declarations": [{"path": "prns-runtime/impls/tokio/src/runtime/node_facade/service_lifecycle.rs", "kind": "type", "name": "ServiceEndpoint"}, {"path": "prns-runtime/impls/tokio/src/runtime/node_facade/service_lifecycle.rs", "kind": "type", "name": "ServicePause"}]},
+        "uniffi": {"status": "unsupported", "reason": "Scoped service ownership is a native Rust integration; generated lifecycle APIs remain separate work."},
+        "c": {"status": "unsupported", "reason": "The portable C contract does not expose scoped native service ownership."},
+        "napi": {"status": "unsupported", "reason": "The N-API host does not expose scoped native service ownership."},
+        "cooperative": {"status": "unsupported", "reason": "The cooperative/browser host needs its own scoped runtime adapter."}
+      }
+    },
+    {
+      "name": "physicalInspection",
+      "summary": "Inspect physical interface peers and route clock in one native host capture.",
+      "semantics": "Logical host rows and raw physical interface associations come from one inspection operation. Physical counters must not be added to logical counters. engineTimeMillis uses the engine route clock, including restored time, rather than process uptime. Radio and peer details preserve explicit unknown and not-applicable states.",
+      "targets": {
+        "native": {
+          "status": "supported",
+          "declarations": [
+            {
+              "path": "prns-host/impls/runtime/src/owner.rs",
+              "owner": "HostClient",
+              "kind": "function",
+              "name": "inspection"
+            }
+          ]
+        },
+        "uniffi": {
+          "status": "supported",
+          "declarations": [
+            {
+              "path": "prns-host/bindings/uniffi/src/facade.rs",
+              "owner": "HostClientHandle",
+              "kind": "function",
+              "name": "inspection"
+            }
+          ]
+        },
+        "c": {
+          "status": "unsupported",
+          "reason": "Physical interface inspection is a native host extension; this projection exposes the logical host snapshot."
+        },
+        "napi": {
+          "status": "unsupported",
+          "reason": "Physical interface inspection is a native host extension; this projection exposes the logical host snapshot."
+        },
+        "cooperative": {
+          "status": "unsupported",
+          "reason": "Physical interface inspection is a native host extension; this projection exposes the logical host snapshot."
+        }
+      }
+    }
+  ]
+}

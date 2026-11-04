@@ -78,7 +78,9 @@ impl UsbAutoDecoder {
                 continue;
             }
             if let Ok(message) = usb_auto::decode_message(frame) {
-                messages.push(&usb_auto_message_to_js(message));
+                if let Some(message) = usb_auto_message_to_js(message) {
+                    messages.push(&message);
+                }
             }
         }
         messages
@@ -105,4 +107,25 @@ fn node_tag_from_vec(bytes: Vec<u8>) -> Result<usb_auto::NodeTag, JsValue> {
         return Err(JsValue::from_str("USB-auto node tag must be 8 bytes"));
     };
     Ok(usb_auto::NodeTag(tag))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_enrollment_controls_do_not_enter_browser_network_messages() {
+        let request = [0; usb_auto::SERIAL_CONTROLLER_ENROLL_REQUEST_BYTES];
+        let status = [0; usb_auto::CONTROLLER_ENROLL_STATUS_BYTES];
+        for message in [
+            usb_auto::Message::ControllerEnroll(&request),
+            usb_auto::Message::ControllerEnrollmentStatusQuery { nonce: 1 },
+            usb_auto::Message::ControllerEnrollmentStatus {
+                nonce: 1,
+                status: &status,
+            },
+        ] {
+            assert!(usb_auto_message_to_js(message).is_none());
+        }
+    }
 }

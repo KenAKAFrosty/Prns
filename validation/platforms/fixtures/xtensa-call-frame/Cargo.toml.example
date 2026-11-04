@@ -1,0 +1,13 @@
+[package]
+name = "xtensa-call-frame-repro"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = "s"
+panic = "abort"
+
+[workspace]

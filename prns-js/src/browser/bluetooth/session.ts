@@ -1,6 +1,11 @@
 import { Tag, match, match_into } from "../../casework.js";
 import type { InterfaceId } from "../../contract.js";
-import { bytesField, record, stringField } from "../decoding.js";
+import {
+  bytesField,
+  nonNegativeBigIntField,
+  record,
+  stringField,
+} from "../decoding.js";
 import { describeHostError } from "../host_errors.js";
 import type {
   BrowserBluetoothCharacteristicEvent,
@@ -48,7 +53,9 @@ import type {
 type BluetoothControl =
   | Tag<"Hello", Uint8Array>
   | Tag<"Welcome", Uint8Array>
-  | Tag<"Close", string>;
+  | Tag<"Close", string>
+  | Tag<"Probe", bigint>
+  | Tag<"ProbeReply", bigint>;
 
 type SessionWriteOutcome = Tag<"Written"> | InterfaceSessionFailure;
 type SessionHandleOutcome = Tag<"Handled"> | InterfaceSessionFailure;
@@ -292,6 +299,14 @@ export class BrowserBluetoothSession implements BluetoothSession {
       return Tag("ProtocolViolation", {
         protocol: "Bluetooth",
         detail: describeHostError(error),
+      });
+    }
+    if (control.tag === "Probe" || control.tag === "ProbeReply") {
+      // Web Bluetooth does not negotiate liveness. Decode known controls, but
+      // never reply or use them to admit a peer in place of its welcome.
+      return this.#confirmed ? Tag("Handled") : Tag("ProtocolViolation", {
+        protocol: "Bluetooth",
+        detail: "Bluetooth dialer received a liveness control before its welcome",
       });
     }
     return match_into<Promise<BluetoothHandleOutcome>>().from(control, {
@@ -563,7 +578,17 @@ function parseBluetoothControl(raw: unknown): BluetoothControl {
     hello: () => Tag("Hello", bytesField(object, "identity")),
     welcome: () => Tag("Welcome", bytesField(object, "identity")),
     close: () => Tag("Close", stringField(object, "reason")),
+    probe: () => Tag("Probe", bluetoothControlNonce(object)),
+    probeReply: () => Tag("ProbeReply", bluetoothControlNonce(object)),
   });
+}
+
+function bluetoothControlNonce(object: Record<string, unknown>): bigint {
+  const nonce = nonNegativeBigIntField(object, "nonce");
+  if (nonce > 0xffff_ffff_ffff_ffffn) {
+    throw new PrnsValidationError("invalid-component", "nonce must fit in a u64");
+  }
+  return nonce;
 }
 
 function sessionFailureToConnectFailure(
@@ -598,7 +623,7 @@ function describeBluetoothConnectFailure(
   });
 }
 
-type RawControlType = "hello" | "welcome" | "close";
+type RawControlType = "hello" | "welcome" | "close" | "probe" | "probeReply";
 
 const RAW_CONTROL_TYPES: ReadonlySet<string> =
-  new Set<RawControlType>(["hello", "welcome", "close"]);
+  new Set<RawControlType>(["hello", "welcome", "close", "probe", "probeReply"]);

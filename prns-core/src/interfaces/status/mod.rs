@@ -119,6 +119,10 @@ pub trait InterfaceStatus {
     fn failure_reason(&self) -> Option<&'static str> {
         None
     }
+    /// Last observed wire peer; runtime metadata, never a configured DNS target.
+    fn endpoint(&self) -> Option<core::net::SocketAddr> {
+        None
+    }
     fn rx_bytes(&self) -> u64;
     fn tx_bytes(&self) -> u64;
     /// `None` until the interface publishes — a link with no declared bitrate never does.
@@ -162,6 +166,7 @@ pub struct InterfaceVitals {
     pub id: InterfaceId,
     pub connection: ConnectionState,
     pub failure_reason: Option<&'static str>,
+    pub endpoint: Option<core::net::SocketAddr>,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub transfer_rates: Option<TransferRates>,
@@ -176,6 +181,7 @@ impl InterfaceVitals {
             id: status.id(),
             connection: status.connection(),
             failure_reason: status.failure_reason(),
+            endpoint: status.endpoint(),
             rx_bytes: status.rx_bytes(),
             tx_bytes: status.tx_bytes(),
             transfer_rates: status.transfer_rates(),
@@ -255,6 +261,10 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn failure_reason(&self) -> Option<&'static str> {
         (**self).failure_reason()
+    }
+
+    fn endpoint(&self) -> Option<core::net::SocketAddr> {
+        (**self).endpoint()
     }
 
     fn rx_bytes(&self) -> u64 {

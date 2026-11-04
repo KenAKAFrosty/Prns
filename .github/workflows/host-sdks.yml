@@ -105,7 +105,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           components: rustfmt
-      - run: cargo fmt --manifest-path prns-host/impls/native/Cargo.toml -- --check
+      - run: cargo fmt --manifest-path prns-host/impls/runtime/Cargo.toml -- --check
       - run: cargo fmt --manifest-path prns-host/abi/c/Cargo.toml -- --check
       - run: python3 validation/run.py verify
 
@@ -127,7 +127,7 @@ jobs:
         with:
           workspaces: |
             prns-host/abi/c
-            prns-host/impls/native
+            prns-host/impls/runtime
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
@@ -148,8 +148,8 @@ jobs:
       - uses: ./.github/actions/setup-swift
         with:
           swift-version: "6.3.3"
-      - run: cargo clippy --manifest-path prns-host/impls/native/Cargo.toml --all-targets --locked -- -D warnings
-      - run: cargo test --manifest-path prns-host/impls/native/Cargo.toml --locked
+      - run: cargo clippy --manifest-path prns-host/impls/runtime/Cargo.toml --all-targets --locked -- -D warnings
+      - run: cargo test --manifest-path prns-host/impls/runtime/Cargo.toml --locked
       - run: cargo clippy --manifest-path prns-host/abi/c/Cargo.toml --all-targets --locked -- -D warnings
       - run: cargo test --manifest-path prns-host/abi/c/Cargo.toml --locked
       - run: cargo build --manifest-path prns-host/abi/c/Cargo.toml --locked

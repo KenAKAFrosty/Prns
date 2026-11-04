@@ -35,7 +35,7 @@ pub fn host_schema_version() -> u32 {
 
 #[napi]
 pub fn backend_info() -> BackendInfo {
-    let info = prns_host_native::native_backend_info();
+    let info = prns_host_runtime::runtime_backend_info();
     BackendInfo {
         backend: info.backend().contract_name().to_string(),
         capabilities: info

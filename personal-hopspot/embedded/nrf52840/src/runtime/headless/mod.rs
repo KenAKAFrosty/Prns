@@ -433,7 +433,6 @@ pub async fn run(spawner: Spawner) -> ! {
         self_announcement,
         remote_control::capabilities(),
     );
-    let mut manifold_lanes = ManifoldLanes::new();
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
@@ -517,9 +516,6 @@ pub async fn run(spawner: Spawner) -> ! {
         host_presence: ProtocolHostPresence::new(),
     });
 
-    let lora_lane = manifold_lanes
-        .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora.descriptor(), lora_status)
-        .expect("LoRa lane is available");
     #[cfg(any(
         feature = "board-t096",
         feature = "board-wio-tracker-l1",
@@ -528,25 +524,44 @@ pub async fn run(spawner: Spawner) -> ! {
         feature = "board-muzi-base-duo",
         any(feature = "board-rak4631", feature = "board-rak10724")
     ))]
-    let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
-        manifold_lanes
-            .claim_supervisor(
-                &BLE_MANIFOLD_LANE,
-                bluetooth::BLE_SUPERVISOR_ID,
-                &bluetooth::OUTBOUND_WAKE,
-            )
-            .expect("Bluetooth supervisor lane is available")
-    });
-    let usb_lane = manifold_lanes
-        .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_device.descriptor(), usb_status)
-        .expect("USB lane is available");
-    let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
-    let manifold_wiring = manifold_lanes.into_manifold_wiring(
-        NOTIFY.receiver(),
-        COMMANDS.receiver(),
-        LIFECYCLE.receiver(),
-        handle,
-    );
+    let ble_supervisor_lane;
+    // End lane setup before awaiting so consumed bounded tables do not remain in task state.
+    let (lora_lane, usb_lane, manifold_wiring) = {
+        let mut manifold_lanes = ManifoldLanes::new();
+        let lora_lane = manifold_lanes
+            .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora.descriptor(), lora_status)
+            .expect("LoRa lane is available");
+        #[cfg(any(
+            feature = "board-t096",
+            feature = "board-wio-tracker-l1",
+            feature = "board-t114",
+            feature = "board-mesh-tower-v2",
+            feature = "board-muzi-base-duo",
+            any(feature = "board-rak4631", feature = "board-rak10724")
+        ))]
+        {
+            ble_supervisor_lane = ble_identity.as_ref().map(|_| {
+                manifold_lanes
+                    .claim_supervisor(
+                        &BLE_MANIFOLD_LANE,
+                        bluetooth::BLE_SUPERVISOR_ID,
+                        &bluetooth::OUTBOUND_WAKE,
+                    )
+                    .expect("Bluetooth supervisor lane is available")
+            });
+        }
+        let usb_lane = manifold_lanes
+            .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_device.descriptor(), usb_status)
+            .expect("USB lane is available");
+        let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
+        let manifold_wiring = manifold_lanes.into_manifold_wiring(
+            NOTIFY.receiver(),
+            COMMANDS.receiver(),
+            LIFECYCLE.receiver(),
+            handle,
+        );
+        (lora_lane, usb_lane, manifold_wiring)
+    };
     let entropy = runtime_entropy();
     let host = EmbassyHost::new(entropy);
     static NODE: StaticCell<Node> = StaticCell::new();

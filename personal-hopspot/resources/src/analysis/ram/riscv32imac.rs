@@ -1,7 +1,8 @@
 use personal_hopspot_memory::{AddressRange, AddressSpaceKind, MemoryProfile};
 
 use super::{
-    arena_allocation, required_section_kind, required_space, BackingAllocation, RamAnalysisError,
+    arena_allocation, fixed_space_allocation, optional_section_kind, required_section_kind,
+    required_space, BackingAllocation, RamAnalysisError,
 };
 use crate::analysis::{AllocatedSection, SectionKind};
 
@@ -51,11 +52,35 @@ pub(super) fn allocations(
     .map_err(|_| RamAnalysisError::InvalidArena {
         architecture: profile.architecture,
     })?;
-    Ok(vec![arena_allocation(
+    let reclaimed = required_space(profile, AddressSpaceKind::ReclaimedRam)?;
+    let reclaimed_section = optional_section_kind(
         profile.architecture,
-        instruction.backing_store,
-        static_range,
-        capacity_range.byte_len(),
         sections,
-    )?])
+        ".dram2_uninit",
+        SectionKind::ZeroFill,
+    )?;
+    let personal_hopspot_memory::AddressSpaceGeometry::Fixed(reclaimed_range) = reclaimed.geometry
+    else {
+        return Err(RamAnalysisError::InvalidAddressSpaceTopology {
+            profile: profile.id.as_str(),
+            kind: reclaimed.kind,
+        });
+    };
+    if reclaimed_section.is_some_and(|section| !reclaimed_range.contains(section.run_range()))
+        || reclaimed_range.overlaps(capacity_range)
+    {
+        return Err(RamAnalysisError::InvalidArena {
+            architecture: profile.architecture,
+        });
+    }
+    Ok(vec![
+        arena_allocation(
+            profile.architecture,
+            instruction.backing_store,
+            static_range,
+            capacity_range.byte_len(),
+            sections,
+        )?,
+        fixed_space_allocation(profile.architecture, profile, reclaimed, sections)?,
+    ])
 }

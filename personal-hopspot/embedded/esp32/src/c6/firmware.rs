@@ -72,6 +72,8 @@ pub async fn run(spawner: Spawner) {
         .node_page;
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
         remote_control_bootstrap.into_parts();
+    let enrollment =
+        crate::controller_enrollment::serial_enrollment(&remote_control_identity_secrets);
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
@@ -112,7 +114,6 @@ pub async fn run(spawner: Spawner) {
     );
 
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), entropy);
-    spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("usb device task fits"));
 
     #[cfg(feature = "esp-now")]
     let espnow_seam = espnow_lane.into_seam(NOTIFY.sender(), entropy);
@@ -148,6 +149,10 @@ pub async fn run(spawner: Spawner) {
     static PERSISTENCE: StaticCell<crate::persistence::C6Persistence> = StaticCell::new();
     let persistence = PERSISTENCE.init(persistence);
     spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
+    spawner.spawn(controller_enrollment_task().expect("controller enrollment task fits"));
+    spawner.spawn(
+        usb_device_task(usb_rx, usb_tx, usb_seam, enrollment).expect("usb device task fits"),
+    );
     #[cfg(feature = "bluetooth-auto")]
     {
         if let Some(groups) =

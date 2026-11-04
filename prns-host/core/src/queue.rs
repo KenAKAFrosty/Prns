@@ -26,8 +26,8 @@ pub struct ConsumerUnavailable {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ApplicationEventPushError {
-    pub event: Box<ApplicationEvent>,
+pub struct ApplicationEventPushError<E = ApplicationEvent> {
+    pub event: Box<E>,
     pub failure: HostFailure,
 }
 
@@ -46,10 +46,22 @@ pub struct QueueDepths {
     pub dropped_diagnostics: u128,
 }
 
-pub struct BoundedHostQueue<C> {
+/// Dynamic payload size used by the shared bounded application lane. Extension
+/// events use the same owner and admission bounds as canonical host events.
+pub trait RetainedApplicationEvent {
+    fn retained_bytes(&self) -> usize;
+}
+
+impl RetainedApplicationEvent for ApplicationEvent {
+    fn retained_bytes(&self) -> usize {
+        ApplicationEvent::retained_bytes(self)
+    }
+}
+
+pub struct BoundedHostQueue<C, E = ApplicationEvent> {
     limits: PrnsLimits,
     commands: VecDeque<C>,
-    application_events: VecDeque<ApplicationEvent>,
+    application_events: VecDeque<E>,
     retained_event_bytes: usize,
     diagnostics: VecDeque<DiagnosticEvent>,
     dropped_diagnostics: u128,
@@ -58,7 +70,7 @@ pub struct BoundedHostQueue<C> {
     lifecycle: LifecycleSnapshot,
 }
 
-impl<C> BoundedHostQueue<C> {
+impl<C, E: RetainedApplicationEvent> BoundedHostQueue<C, E> {
     #[must_use]
     pub fn new(limits: PrnsLimits) -> Self {
         Self {
@@ -118,10 +130,7 @@ impl<C> BoundedHostQueue<C> {
         self.commands.pop_front()
     }
 
-    pub fn push_application_event(
-        &mut self,
-        event: ApplicationEvent,
-    ) -> Result<(), ApplicationEventPushError> {
+    pub fn push_application_event(&mut self, event: E) -> Result<(), ApplicationEventPushError<E>> {
         let event_bytes = event.retained_bytes();
         let count_exceeded = self.application_events.len() == self.limits.application_events();
         let byte_exceeded = self
@@ -147,7 +156,7 @@ impl<C> BoundedHostQueue<C> {
         Ok(())
     }
 
-    pub fn pop_application_event(&mut self) -> Option<ApplicationEvent> {
+    pub fn pop_application_event(&mut self) -> Option<E> {
         let event = self.application_events.pop_front()?;
         self.retained_event_bytes = self
             .retained_event_bytes

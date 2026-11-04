@@ -59,6 +59,12 @@ pub type PersistenceIoCompletion<'a> =
 pub trait PersistenceIo: Send + Sync {
     fn execute(&self, task: PersistenceIoTask) -> PersistenceIoCompletion<'_>;
 
+    /// Preserve `FileStore::store` publication semantics: an error other than
+    /// `PublishedDurabilityUnconfirmed` must leave the previously published value
+    /// unchanged. Once replacement has happened, return `PublishedDurabilityUnconfirmed`
+    /// if durability cannot be confirmed; the transaction retains ownership and
+    /// retries confirmation before activation. Hosts must not report a definitive
+    /// failure after publishing a snapshot.
     fn store_authorization(
         &self,
         store: &mut FileStore,

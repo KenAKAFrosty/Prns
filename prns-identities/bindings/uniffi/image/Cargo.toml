@@ -1,0 +1,26 @@
+[package]
+name = "prns-identities-uniffi-image"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "prns_identity_keys"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+required-features = ["uniffi-bindgen"]
+
+[features]
+default = []
+contact-card = ["prns-identities-uniffi/contact-card"]
+catalog = ["prns-identities-uniffi/catalog"]
+uniffi-bindgen = ["uniffi/cli", "uniffi/cargo-metadata"]
+
+[dependencies]
+prns-identities-uniffi = { path = ".." }
+uniffi = { version = "=0.31.2", default-features = false }

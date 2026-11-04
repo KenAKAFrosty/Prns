@@ -299,7 +299,7 @@ fn apply_controller_grant_change(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TargetAccessSpec {
+pub(super) struct TargetAccessSpec {
     target_public_keys: IdentityPublicKeys,
     authority: RemoteControlControllerAuthority,
     permitted_requests: RemoteControlRequestSet,
@@ -325,7 +325,7 @@ impl TargetAccessSpec {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TargetAccessMutation {
+pub(super) enum TargetAccessMutation {
     Added {
         desired: TargetAccessSpec,
     },
@@ -334,6 +334,60 @@ enum TargetAccessMutation {
         desired: TargetAccessSpec,
         previous: TargetAccessSpec,
     },
+}
+
+pub(super) struct PreparedTargetAccessChange {
+    outcome: SetRemoteControlTargetAccessOutcome,
+    mutation: TargetAccessMutation,
+    projected: Vec<u8>,
+}
+
+impl PreparedTargetAccessChange {
+    pub(super) fn is_replacement(&self) -> bool {
+        matches!(
+            self.outcome,
+            SetRemoteControlTargetAccessOutcome::Updated { .. }
+        )
+    }
+
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        SetRemoteControlTargetAccessOutcome,
+        TargetAccessMutation,
+        Vec<u8>,
+    ) {
+        (self.outcome, self.mutation, self.projected)
+    }
+}
+
+/// Project a target-access update without leaving it active while storage is pending.
+pub(super) fn prepare_target_access_set(
+    remote_control: &mut AssembledRemoteControl,
+    access: RemoteControlTargetAccess,
+) -> Result<PreparedTargetAccessChange, super::SetRemoteControlTargetAccessServiceError> {
+    let desired = TargetAccessSpec::from_access(&access);
+    let outcome = remote_control.set_target_access(access)?;
+    let mutation = match &outcome {
+        SetRemoteControlTargetAccessOutcome::Added => TargetAccessMutation::Added { desired },
+        SetRemoteControlTargetAccessOutcome::Unchanged => TargetAccessMutation::Unchanged,
+        SetRemoteControlTargetAccessOutcome::Updated { previous } => {
+            TargetAccessMutation::Updated {
+                desired,
+                previous: TargetAccessSpec::from_access(previous),
+            }
+        }
+    };
+    let projected = target_accesses_snapshot(remote_control);
+    rollback_target_access(remote_control, mutation)
+        .map_err(|_| super::SetRemoteControlTargetAccessServiceError::Unavailable)?;
+    let projected =
+        projected.map_err(|_| super::SetRemoteControlTargetAccessServiceError::Unavailable)?;
+    Ok(PreparedTargetAccessChange {
+        outcome,
+        mutation,
+        projected,
+    })
 }
 
 pub(super) fn remote_control_pairing_persistence_lane() -> (
@@ -365,6 +419,7 @@ impl RemoteControlPairingPersistenceSender {
                 }
             }
             Journaled::AnnounceHeldDropped { .. }
+            | Journaled::PathDiscovery(_)
             | Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
             | Journaled::PersistenceFlushed { .. }
@@ -750,7 +805,7 @@ fn rollback_controller_grant(
     }
 }
 
-fn activate_target_access(
+pub(super) fn activate_target_access(
     remote_control: &mut AssembledRemoteControl,
     mutation: &TargetAccessMutation,
 ) -> Result<(), RemoteControlAuthorizationPersistenceFailure> {

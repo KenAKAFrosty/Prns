@@ -32,6 +32,12 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: reusable application dependency boundary
+        run: >-
+          python3 validation/run.py run
+          --suite application-boundary
+          --suite application-boundary-tests
+          --expected-sha "${{ github.sha }}"
       - name: registry, format, and documentation gate
         run: bash validation/hygiene/fmt-docs.sh
 
@@ -62,6 +68,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - run: cargo test --workspace --locked
+      - name: Storage owner and optional redb backend
+        run: python3 validation/run.py run --suite native-storage-tests --expected-sha "$GITHUB_SHA"
 
   cargo-check:
     name: Cargo check (${{ matrix.name }})
@@ -116,6 +124,71 @@ jobs:
         run: brew install sdl2
       - name: Compile-check every host-compatible Cargo workspace
         run: ${{ matrix.command }}
+
+  host-runtime:
+    name: Host runtime (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: macos
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.90.0"
+      - name: Install Linux native development packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: host-runtime-v1
+          workspaces: |
+            .
+            prns-host/impls/runtime
+            prns-host/bindings/uniffi
+            prns-host/bindings/uniffi/image
+      - name: Check host ownership and management
+        run: >-
+          python3 validation/run.py run
+          --suite host-contract-generated
+          --suite host-contract-generator-tests
+          --suite host-native-session
+          --suite host-native-connections
+          --suite host-native-connections-clippy
+          --suite host-uniffi-session
+          --suite host-runtime-msrv
+          --expected-sha "$GITHUB_SHA"
+      - name: Check canonical Swift consumers
+        if: runner.os == 'macOS'
+        run: >-
+          python3 validation/run.py run
+          --suite native-host-swift
+          --suite native-host-connections-swift
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: host-runtime-${{ matrix.platform }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
 
   feature-core:
     # Core allocation and metrics features.
@@ -446,10 +519,240 @@ jobs:
       - name: Release critical-path preflight
         run: python3 validation/run.py run --suite release-contracts --expected-sha "$GITHUB_SHA"
 
+  named-identities:
+    name: Identity and group libraries (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+            native-suite: identity-native-tests-linux
+          - platform: macos
+            runner: macos-latest
+            native-suite: identity-native-tests-macos
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: named-identities-v1
+          workspaces: |
+            .
+            prns-identities
+            prns-identities/bindings/uniffi
+            prns-groups/bindings/uniffi
+      - name: Run registered validation suites
+        run: >-
+          python3 validation/run.py run
+          --suite uniffi-tooling-contracts
+          --suite group-native-bindings
+          --suite identity-portable-tests
+          --suite identity-key-owner-tests
+          --suite identity-key-bindings
+          --suite identity-catalog-bindings
+          --suite identity-key-card-bindings
+          --suite identity-catalog-card-bindings
+          --suite ${{ matrix.native-suite }}
+          --expected-sha "$GITHUB_SHA"
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        if: runner.os == 'macOS'
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+        if: runner.os == 'macOS'
+        with:
+          gradle-version: "9.3.1"
+      - name: Qualify standalone Swift and Kotlin bindings
+        if: runner.os == 'macOS'
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: >-
+          python3 validation/run.py run
+          --suite group-native-bindings-swift
+          --suite group-native-bindings-kotlin
+          --suite identity-key-bindings-swift
+          --suite identity-catalog-bindings-swift
+          --suite identity-key-card-bindings-swift
+          --suite identity-catalog-card-bindings-swift
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: named-identities-${{ matrix.platform }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
+  standalone-libraries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: standalone-libraries-v1
+          workspaces: |
+            .
+      - name: Run registered validation suites
+        run: >-
+          python3 validation/run.py run
+          --suite contact-card-tests
+          --suite contact-card-clippy
+          --suite contact-card-example
+          --suite native-storage-tests
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: standalone-libraries
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
+  group-libraries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+          targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: group-libraries-v1
+          workspaces: |
+            prns-groups
+            prns-groups/security/mls-rs
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Run registered validation suites
+        run: >-
+          python3 validation/run.py run
+          --suite group-communication-tests
+          --suite group-headless-process
+          --suite group-local-consumer
+          --suite group-communication-clippy
+          --suite group-mls-adapter-tests
+          --suite group-mls-adapter-clippy
+          --suite group-mls-adapter-portable-thumb
+          --suite group-mls-adapter-portable-riscv
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: group-libraries
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
+  service-runtime:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: macos
+            runner: macos-15
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.96.0"
+          components: clippy,rustfmt
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        if: runner.os == 'Linux'
+        with:
+          toolchain: "1.90.0"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: service-runtime-${{ matrix.platform }}
+          workspaces: |
+            .
+            prns-service-runtime/bindings/uniffi
+      - name: Install Linux native development packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Check service runtime and selected binding profiles
+        if: runner.os == 'Linux'
+        run: >-
+          python3 validation/run.py run
+          --suite service-runtime-minimal
+          --suite service-runtime-identities
+          --suite service-runtime-without-connections
+          --suite service-runtime-tests
+          --suite service-runtime-clippy
+          --suite native-service-bindings
+          --suite native-service-bindings-selected
+          --suite native-service-bindings-clippy
+          --suite service-runtime-msrv
+          --suite native-service-bindings-msrv-default
+          --suite native-service-bindings-msrv-selected
+          --expected-sha "$GITHUB_SHA"
+      - name: Check both Swift consumers
+        if: runner.os == 'macOS'
+        run: >-
+          python3 validation/run.py run
+          --suite native-service-bindings-swift
+          --suite native-connections-bindings-swift
+          --expected-sha "$GITHUB_SHA"
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: service-runtime-${{ matrix.platform }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/
+
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
-    # declared workspace floor (1.90); catches a feature or a dependency bump that
-    # quietly requires a newer compiler than we advertise.
+    # core workspace floor (1.90), with firmware host tools checked at their
+    # separately declared 1.95 floor.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -474,7 +777,16 @@ jobs:
       - name: Prove and check the advertised MSRV
         run: |
           rustc --version | grep -E '^rustc 1\.90\.0 '
-          cargo check --workspace --locked
+          cargo check --workspace --locked \
+            --exclude personal-hopspot-builder --exclude hopspot-flash \
+            --exclude personal-hopspot-resources --exclude personal-hopspot-assurance
+          cargo check --locked --manifest-path prns-groups/Cargo.toml --workspace --all-targets --all-features
+          cargo check --locked --manifest-path prns-groups/security/mls-rs/Cargo.toml --all-targets
+          cargo check --locked --manifest-path prns-groups/bindings/uniffi/Cargo.toml --workspace --all-targets
+          cargo check --locked -p prns-storage --all-targets --all-features
+          cargo check --locked -p prns-contact-card --all-targets --all-features
+          cargo check --locked --manifest-path prns-identities/Cargo.toml --workspace --all-targets --all-features
+          cargo check --locked --manifest-path prns-identities/bindings/uniffi/Cargo.toml --workspace --all-targets --all-features
       # The root-excluded workspaces declare the same 1.90 floor; hold them to it too.
       - run: cargo check --locked
         working-directory: prns-config
@@ -482,6 +794,14 @@ jobs:
         working-directory: prns-napi
       - run: cargo check --workspace --locked
         working-directory: prnsd
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.95.0
+      - name: Check firmware host tools at their advertised MSRV
+        run: >-
+          cargo +1.95.0 check --locked --all-targets
+          -p personal-hopspot-builder -p hopspot-flash
+          -p personal-hopspot-resources -p personal-hopspot-assurance
 
   embedded-resource-selection:
     runs-on: ubuntu-24.04
@@ -549,6 +869,8 @@ jobs:
             target/flash-artifacts/resources/configured/work/*/linker.map
             target/flash-artifacts/resources/configured/work/*/function-boundaries.json
             target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+            target/flash-artifacts/resources/configured/work/*/frame-alignment.json
+            target/flash-artifacts/resources/configured/xtensa-frame-summary.json
 
   esp32-firmware:
     needs: embedded-resource-selection
@@ -587,6 +909,8 @@ jobs:
             target/flash-artifacts/resources/configured/work/*/linker.map
             target/flash-artifacts/resources/configured/work/*/function-boundaries.json
             target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+            target/flash-artifacts/resources/configured/work/*/frame-alignment.json
+            target/flash-artifacts/resources/configured/xtensa-frame-summary.json
 
   embedded-miri:
     needs: embedded-resource-selection
@@ -1014,11 +1338,16 @@ jobs:
       - clippy
       - test
       - cargo-check
+      - host-runtime
       - feature-configs
       - integration-capstones
       - flasher-contracts
       - release-workflow-contracts
+      - named-identities
+      - standalone-libraries
       - msrv
+      - group-libraries
+      - service-runtime
       - embedded-resource-selection
       - no-std-embedded
       - esp32-firmware
@@ -1038,10 +1367,15 @@ jobs:
       CLIPPY_RESULT: ${{ needs.clippy.result }}
       TEST_RESULT: ${{ needs.test.result }}
       CARGO_CHECK_RESULT: ${{ needs.cargo-check.result }}
+      HOST_RUNTIME_RESULT: ${{ needs.host-runtime.result }}
       FEATURES_RESULT: ${{ needs.feature-configs.result }}
       INTEGRATION_CAPSTONES_RESULT: ${{ needs.integration-capstones.result }}
       FLASHER_RESULT: ${{ needs.flasher-contracts.result }}
       WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
+      NAMED_IDENTITIES_RESULT: ${{ needs.named-identities.result }}
+      STANDALONE_LIBRARIES_RESULT: ${{ needs.standalone-libraries.result }}
+      GROUP_LIBRARIES_RESULT: ${{ needs.group-libraries.result }}
+      SERVICE_RUNTIME_RESULT: ${{ needs.service-runtime.result }}
       MSRV_RESULT: ${{ needs.msrv.result }}
       EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}
       EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}
@@ -1068,11 +1402,16 @@ jobs:
             "$CLIPPY_RESULT" \
             "$TEST_RESULT" \
             "$CARGO_CHECK_RESULT" \
+            "$HOST_RUNTIME_RESULT" \
             "$FEATURES_RESULT" \
             "$INTEGRATION_CAPSTONES_RESULT" \
             "$FLASHER_RESULT" \
             "$WORKFLOWS_RESULT" \
+            "$NAMED_IDENTITIES_RESULT" \
+            "$STANDALONE_LIBRARIES_RESULT" \
             "$MSRV_RESULT" \
+            "$GROUP_LIBRARIES_RESULT" \
+            "$SERVICE_RUNTIME_RESULT" \
             "$EMBEDDED_SELECTION_RESULT" \
             "$ANDROID_RESULT" \
             "$APPLE_RESULT" \

@@ -324,6 +324,8 @@ impl Esp32S3Board for TBeamSupremeBoard {
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const MEMORY_PROFILE: &'static personal_hopspot_memory::MemoryProfile =
         &personal_hopspot_memory::T_BEAM_SUPREME;
+    #[cfg(feature = "remote-control-pairing")]
+    const REMOTE_CONTROL_PAIRING: bool = true;
     type Display = ImmediateBoardDisplay<Sh1106I2c<TBeamI2c>>;
     type Battery = Axp2101Battery;
     type Gnss = TBeamSupremeGnss;

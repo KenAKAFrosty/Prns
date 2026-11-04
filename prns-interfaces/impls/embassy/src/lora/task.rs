@@ -17,11 +17,18 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
             status,
             spectrum,
             lifecycle,
+            outbound_queue_policy,
+            queue_observer,
+            link_trace,
         } = self;
         let mut current_id = id;
         let started = clock.now();
         let mut radio_state = LoRaRadioState::Unknown;
         let mut backlog = TransmitBacklog::new(tx_queue);
+        backlog.policy = outbound_queue_policy;
+        backlog.observer = queue_observer;
+        backlog.link_trace = link_trace;
+        let mut disable_generation = 0;
         let mut rx_buf = [0u8; LORA_SINGLE_FRAME_MAX];
         let mut tx_frame = [0u8; LORA_SINGLE_FRAME_MAX];
         let mut seq: u8 = 0;
@@ -156,7 +163,15 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                     control.complete(request.id, LoRaApplyOutcome::Applied);
                                 }
                             },
-                            Either3::Second(_) => {
+                            Either3::Second(packet) => {
+                                backlog.trace_frame(
+                                    packet,
+                                    LoRaLinkPhase::ActiveDropped(LoRaTraceDrop::Unconfigured),
+                                    &link_trace::EventTime {
+                                        at_ms: Some(clock.now().as_millis()),
+                                        enqueued_at: None,
+                                    },
+                                );
                                 seam.complete_outbound(OutboundDisposition::Dropped(
                                     OutboundDropReason::NotConfigured,
                                 ));
@@ -181,7 +196,7 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
             let mut service_age = ServiceAge::new(profile);
             let mut continuation = false;
             backlog.active.recompute_airtime(&profile);
-            let now = InstantMillis(clock.now().duration_since(started).as_millis());
+            let now = InstantMillis(clock.elapsed_millis(started));
             let priority = take_contention_priority(&mut continuation, &mut airtime, now);
             let mut access = backlog.active.channel_access(profile, now.0, priority);
             let mut access_suspended = true;
@@ -196,6 +211,15 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
             }
 
             'serving: loop {
+                if backlog.observe_disable_transition(
+                    status,
+                    &mut disable_generation,
+                    clock.now().as_millis(),
+                    &mut seam,
+                ) || backlog.expire(clock.now().as_millis(), &mut seam)
+                {
+                    access = None;
+                }
                 let channel_change_drops = seam.take_channel_change_drops();
                 if channel_change_drops != 0 {
                     spectrum
@@ -233,7 +257,12 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                             Either3::First(request)
                                 if matches!(request.command, LoRaConfigurationCommand::Quiesce) =>
                             {
-                                reset_reassembly(&mut reassembler, status);
+                                reset_reassembly_observed(
+                                    &mut reassembler,
+                                    status,
+                                    link_trace,
+                                    clock.now().as_millis(),
+                                );
                                 configuration = configuration::transact(
                                     &mut radio,
                                     &control,
@@ -263,6 +292,14 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                     radio_state = LoRaRadioState::Receiving;
                     status.set_connection(ConnectionState::Connected);
                 }
+                if backlog.observe_disable_transition(
+                    status,
+                    &mut disable_generation,
+                    clock.now().as_millis(),
+                    &mut seam,
+                ) {
+                    access = None;
+                }
                 if !status.is_enabled() {
                     if !matches!(radio_state, LoRaRadioState::Idle) {
                         if let Err(error) = radio.idle().await {
@@ -278,31 +315,45 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                     } else {
                         ConnectionState::Failed
                     });
-                    reset_reassembly(&mut reassembler, status);
+                    reset_reassembly_observed(
+                        &mut reassembler,
+                        status,
+                        link_trace,
+                        clock.now().as_millis(),
+                    );
                     activity.frame_finished();
                     noise = NoiseFloor::new();
                     service_age.reset(profile);
                     continuation = false;
-                    if backlog.active.clear() {
-                        access = None;
-                        seam.complete_outbound(OutboundDisposition::Dropped(
-                            OutboundDropReason::Disabled,
-                        ));
-                    }
+                    backlog.disable(clock.now().as_millis(), &mut seam);
+                    access = None;
                     loop {
-                        match select3(status.wait_until_enabled(), control.wait(), async {
-                            if matches!(radio_state, LoRaRadioState::Unknown) {
-                                clock.wait(IDLE_TICK).await;
-                            } else {
-                                core::future::pending::<()>().await;
-                            }
-                        })
+                        match select4(
+                            status.wait_until_enabled(),
+                            control.wait(),
+                            async {
+                                if matches!(radio_state, LoRaRadioState::Unknown) {
+                                    clock.wait(IDLE_TICK).await;
+                                } else {
+                                    core::future::pending::<()>().await;
+                                }
+                            },
+                            seam.next_outbound_frame(),
+                        )
                         .await
                         {
-                            Either3::First(()) => continue 'serving,
-                            Either3::Second(request) => {
+                            Either4::First(()) => {
+                                backlog.resume_after = Some(InstantMillis(clock.now().as_millis()));
+                                continue 'serving;
+                            }
+                            Either4::Second(request) => {
                                 if matches!(request.command, LoRaConfigurationCommand::Quiesce) {
-                                    reset_reassembly(&mut reassembler, status);
+                                    reset_reassembly_observed(
+                                        &mut reassembler,
+                                        status,
+                                        link_trace,
+                                        clock.now().as_millis(),
+                                    );
                                     configuration = configuration::transact(
                                         &mut radio,
                                         &control,
@@ -364,7 +415,12 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                                 seam.set_channel_id(current_id);
                                             }
                                             control.complete(request.id, LoRaApplyOutcome::Applied);
-                                            reset_reassembly(&mut reassembler, status);
+                                            reset_reassembly_observed(
+                                                &mut reassembler,
+                                                status,
+                                                link_trace,
+                                                clock.now().as_millis(),
+                                            );
                                             configuration = LoRaRuntimeConfiguration::Unconfigured;
                                             continue 'configuration;
                                         }
@@ -382,7 +438,26 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                 }
                                 control.complete(request.id, outcome);
                             }
-                            Either3::Third(()) => {
+                            Either4::Fourth(frame) => {
+                                backlog.trace_frame(
+                                    frame.bytes,
+                                    LoRaLinkPhase::QueueDropped(OutboundQueueDropReason::Disabled),
+                                    &link_trace::EventTime {
+                                        at_ms: Some(clock.now().as_millis()),
+                                        enqueued_at: frame.enqueued_at.map(|at| at.0),
+                                    },
+                                );
+                                backlog.observe_drop(
+                                    LoRaQueueSource::RuntimeLane,
+                                    OutboundQueueDropReason::Disabled,
+                                    frame.enqueued_at,
+                                    clock.now().as_millis(),
+                                );
+                                seam.complete_outbound(OutboundDisposition::Dropped(
+                                    OutboundDropReason::Disabled,
+                                ));
+                            }
+                            Either4::Third(()) => {
                                 if let Err(error) = radio.idle().await {
                                     crate::diagnostic_log::warn!(
                                         "RNS_LORA disabled idle retry failed: {error:?}"
@@ -397,9 +472,8 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                     }
                 }
 
-                let activation_time =
-                    InstantMillis(clock.now().duration_since(started).as_millis());
-                if backlog.activate_next(&profile, activation_time.0) {
+                let activation_time = InstantMillis(clock.elapsed_millis(started));
+                if backlog.activate_next_at(&profile, activation_time.0, clock.now().as_millis()) {
                     let priority =
                         take_contention_priority(&mut continuation, &mut airtime, activation_time);
                     access = backlog
@@ -411,8 +485,7 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                 }
 
                 if backlog.active.len.is_some() {
-                    let before_wait =
-                        InstantMillis(clock.now().duration_since(started).as_millis());
+                    let before_wait = InstantMillis(clock.elapsed_millis(started));
                     let projected =
                         airtime.projected_utilization(before_wait, backlog.active.airtime_us);
                     let duty_permits = duty_cycle.is_none_or(|duty| duty.permits(projected));
@@ -439,6 +512,14 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                             spectrum.add_duty_timeout();
                             OutboundDropReason::DutyLimited
                         };
+                        backlog.trace_active(
+                            LoRaLinkPhase::ActiveDropped(if duty_permits {
+                                LoRaTraceDrop::Contention
+                            } else {
+                                LoRaTraceDrop::Duty
+                            }),
+                            Some(clock.now().as_millis()),
+                        );
                         backlog.active.clear();
                         access = None;
                         seam.complete_outbound(OutboundDisposition::Dropped(reason));
@@ -467,16 +548,21 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                         clock.wait(Duration::from_millis(tick_ms)),
                         async {
                             if can_accept_outbound {
-                                return seam.next_outbound().await;
+                                return seam.next_outbound_frame().await;
                             }
-                            core::future::pending::<&[u8]>().await
+                            core::future::pending::<OutboundFrame<'_>>().await
                         },
                     )
                     .await
                     {
                         Either5::First(request) => {
                             if matches!(request.command, LoRaConfigurationCommand::Quiesce) {
-                                reset_reassembly(&mut reassembler, status);
+                                reset_reassembly_observed(
+                                    &mut reassembler,
+                                    status,
+                                    link_trace,
+                                    clock.now().as_millis(),
+                                );
                                 configuration = configuration::transact(
                                     &mut radio,
                                     &control,
@@ -538,7 +624,12 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                             seam.set_channel_id(current_id);
                                         }
                                         control.complete(request.id, LoRaApplyOutcome::Applied);
-                                        reset_reassembly(&mut reassembler, status);
+                                        reset_reassembly_observed(
+                                            &mut reassembler,
+                                            status,
+                                            link_trace,
+                                            clock.now().as_millis(),
+                                        );
                                         configuration = LoRaRuntimeConfiguration::Unconfigured;
                                         continue 'configuration;
                                     }
@@ -554,9 +645,13 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                     }
                                     seam.set_channel_id(current_id);
                                 }
-                                let now =
-                                    InstantMillis(clock.now().duration_since(started).as_millis());
-                                reset_reassembly(&mut reassembler, status);
+                                let now = InstantMillis(clock.elapsed_millis(started));
+                                reset_reassembly_observed(
+                                    &mut reassembler,
+                                    status,
+                                    link_trace,
+                                    clock.now().as_millis(),
+                                );
                                 activity.frame_finished();
                                 noise = NoiseFloor::new();
                                 service_age.reset(profile);
@@ -573,12 +668,13 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                         }
                         Either5::Second(()) => continue,
                         Either5::Third(Ok(event)) => {
-                            let now =
-                                InstantMillis(clock.now().duration_since(started).as_millis());
+                            let now = InstantMillis(clock.elapsed_millis(started));
                             let evidence = observe_radio_event(
                                 event,
                                 now,
                                 ReceivePath {
+                                    trace: link_trace,
+                                    trace_at_ms: clock.now().as_millis(),
                                     profile: &profile,
                                     activity: &mut activity,
                                     spectrum,
@@ -614,6 +710,11 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                             }
                         }
                         Either5::Third(Err(error)) => {
+                            link_trace::observe(
+                                link_trace,
+                                LoRaLinkPhase::RxRadioError,
+                                Some(clock.now().as_millis()),
+                            );
                             crate::diagnostic_log::debug!("RNS_LORA rx event error: {error:?}");
                             activity.frame_finished();
                             if matches!(R::recovery(&error), RadioRecovery::Reinitialize) {
@@ -622,11 +723,15 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                     status,
                                     &mut radio_state,
                                 );
-                                reset_reassembly(&mut reassembler, status);
+                                reset_reassembly_observed(
+                                    &mut reassembler,
+                                    status,
+                                    link_trace,
+                                    clock.now().as_millis(),
+                                );
                             }
                             if !access_suspended {
-                                let now =
-                                    InstantMillis(clock.now().duration_since(started).as_millis());
+                                let now = InstantMillis(clock.elapsed_millis(started));
                                 if let Some(access) = access.as_mut() {
                                     next_action = Some(access.observe(
                                         now.0,
@@ -637,8 +742,7 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                             }
                         }
                         Either5::Fourth(()) => {
-                            let now =
-                                InstantMillis(clock.now().duration_since(started).as_millis());
+                            let now = InstantMillis(clock.elapsed_millis(started));
                             let observation = match sample_channel(
                                 &mut radio,
                                 now,
@@ -660,7 +764,12 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                             status,
                                             &mut radio_state,
                                         );
-                                        reset_reassembly(&mut reassembler, status);
+                                        reset_reassembly_observed(
+                                            &mut reassembler,
+                                            status,
+                                            link_trace,
+                                            clock.now().as_millis(),
+                                        );
                                     }
                                     noise.fail_closed()
                                 }
@@ -683,24 +792,45 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                 }
                             }
                         }
-                        Either5::Fifth(outbound) => match backlog.queue.push(outbound) {
-                            Ok(()) => seam.accept_outbound_custody(),
-                            Err(TransmitQueueError::Full | TransmitQueueError::PacketTooLarge) => {
+                        Either5::Fifth(outbound) => {
+                            if let Some(reason) =
+                                backlog.reject_frame(outbound, clock.now().as_millis())
+                            {
                                 seam.complete_outbound(OutboundDisposition::Dropped(
-                                    OutboundDropReason::Rejected,
+                                    OutboundDropReason::QueueLifetime(reason),
                                 ));
+                            } else {
+                                let now = clock.elapsed_millis(started);
+                                match backlog.accept_frame(
+                                    outbound,
+                                    &profile,
+                                    now,
+                                    clock.now().as_millis(),
+                                ) {
+                                    Ok(_) => seam.accept_outbound_custody(),
+                                    Err(
+                                        TransmitQueueError::Full
+                                        | TransmitQueueError::PacketTooLarge,
+                                    ) => {
+                                        seam.complete_outbound(OutboundDisposition::Dropped(
+                                            OutboundDropReason::Rejected,
+                                        ));
+                                    }
+                                }
                             }
-                        },
+                        }
                     }
 
                     if matches!(next_action, Some(ChannelAccessAction::ReadyForFinalCheck)) {
-                        let now = InstantMillis(clock.now().duration_since(started).as_millis());
+                        let now = InstantMillis(clock.elapsed_millis(started));
                         let evidence = match radio.poll_event(&mut rx_buf).await {
                             Ok(Some(event)) => {
                                 observe_radio_event(
                                     event,
                                     now,
                                     ReceivePath {
+                                        trace: link_trace,
+                                        trace_at_ms: clock.now().as_millis(),
                                         profile: &profile,
                                         activity: &mut activity,
                                         spectrum,
@@ -737,7 +867,12 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                             status,
                                             &mut radio_state,
                                         );
-                                        reset_reassembly(&mut reassembler, status);
+                                        reset_reassembly_observed(
+                                            &mut reassembler,
+                                            status,
+                                            link_trace,
+                                            clock.now().as_millis(),
+                                        );
                                     }
                                     ChannelEvidence {
                                         observation: noise.fail_closed(),
@@ -746,6 +881,11 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                 }
                             },
                             Err(error) => {
+                                link_trace::observe(
+                                    link_trace,
+                                    LoRaLinkPhase::RxRadioError,
+                                    Some(clock.now().as_millis()),
+                                );
                                 crate::diagnostic_log::debug!(
                                     "RNS_LORA final IRQ check failed: {error:?}"
                                 );
@@ -756,7 +896,12 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                         status,
                                         &mut radio_state,
                                     );
-                                    reset_reassembly(&mut reassembler, status);
+                                    reset_reassembly_observed(
+                                        &mut reassembler,
+                                        status,
+                                        link_trace,
+                                        clock.now().as_millis(),
+                                    );
                                 }
                                 ChannelEvidence {
                                     observation: noise.fail_closed(),
@@ -788,7 +933,20 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                             let mut quantum_limited = false;
                             let mut transmission_failed = false;
 
-                            while let Some(active_len) = backlog.active.len {
+                            while backlog.active.len.is_some() {
+                                if backlog.observe_disable_transition(
+                                    status,
+                                    &mut disable_generation,
+                                    clock.now().as_millis(),
+                                    &mut seam,
+                                ) || !status.is_enabled()
+                                {
+                                    break;
+                                }
+                                backlog.expire(clock.now().as_millis(), &mut seam);
+                                let Some(active_len) = backlog.active.len else {
+                                    break;
+                                };
                                 // Finish an in-flight logical packet, then yield the radio
                                 // before starting another packet from this opportunity.
                                 if control.has_pending() {
@@ -800,8 +958,7 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                     break;
                                 }
 
-                                let packet_start =
-                                    InstantMillis(clock.now().duration_since(started).as_millis());
+                                let packet_start = InstantMillis(clock.elapsed_millis(started));
                                 let projected =
                                     airtime.projected_utilization(packet_start, packet_airtime_us);
                                 if duty_cycle.is_some_and(|duty| !duty.permits(projected)) {
@@ -823,6 +980,11 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                     &started,
                                     &clock,
                                     &mut tx_frame,
+                                    link_trace.map(|trace| TxTrace {
+                                        trace,
+                                        enqueued_at: backlog.active.enqueued_at_ms,
+                                        queue_bytes: backlog.queue.used_bytes(),
+                                    }),
                                 )
                                 .await;
                                 let disposition = match tx {
@@ -842,7 +1004,12 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                                 status,
                                                 &mut radio_state,
                                             );
-                                            reset_reassembly(&mut reassembler, status);
+                                            reset_reassembly_observed(
+                                                &mut reassembler,
+                                                status,
+                                                link_trace,
+                                                clock.now().as_millis(),
+                                            );
                                         }
                                         OutboundDisposition::Dropped(
                                             OutboundDropReason::TransportFailure,
@@ -861,9 +1028,13 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                 if transmission_failed {
                                     break;
                                 }
-                                let activated_at =
-                                    InstantMillis(clock.now().duration_since(started).as_millis());
-                                if !backlog.activate_next(&profile, activated_at.0) {
+                                let activated_at = InstantMillis(clock.elapsed_millis(started));
+                                backlog.expire(clock.now().as_millis(), &mut seam);
+                                if !backlog.activate_next_at(
+                                    &profile,
+                                    activated_at.0,
+                                    clock.now().as_millis(),
+                                ) {
                                     break;
                                 }
                             }
@@ -880,7 +1051,12 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                         status,
                                         &mut radio_state,
                                     );
-                                    reset_reassembly(&mut reassembler, status);
+                                    reset_reassembly_observed(
+                                        &mut reassembler,
+                                        status,
+                                        link_trace,
+                                        clock.now().as_millis(),
+                                    );
                                 }
                             }
                             activity.frame_finished();
@@ -889,17 +1065,20 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                             reported_deferrals = 0;
 
                             if backlog.active.len.is_none() {
-                                let activated_at =
-                                    InstantMillis(clock.now().duration_since(started).as_millis());
-                                let _ = backlog.activate_next(&profile, activated_at.0);
+                                let activated_at = InstantMillis(clock.elapsed_millis(started));
+                                backlog.expire(clock.now().as_millis(), &mut seam);
+                                let _ = backlog.activate_next_at(
+                                    &profile,
+                                    activated_at.0,
+                                    clock.now().as_millis(),
+                                );
                             }
                             if backlog.active.len.is_some() {
                                 if quantum_limited {
                                     service_age.seed_continuation();
                                     continuation = true;
                                 }
-                                let now =
-                                    InstantMillis(clock.now().duration_since(started).as_millis());
+                                let now = InstantMillis(clock.elapsed_millis(started));
                                 let priority =
                                     take_contention_priority(&mut continuation, &mut airtime, now);
                                 access = backlog.active.channel_access(profile, now.0, priority);
@@ -911,6 +1090,10 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                         }
                         Some(ChannelAccessAction::Expired) => {
                             spectrum.add_contention_timeout();
+                            backlog.trace_active(
+                                LoRaLinkPhase::ActiveDropped(LoRaTraceDrop::Contention),
+                                Some(clock.now().as_millis()),
+                            );
                             backlog.active.clear();
                             access = None;
                             seam.complete_outbound(OutboundDisposition::Dropped(
@@ -934,20 +1117,25 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                     } else {
                         ChannelTiming::for_profile(profile).sample_ms()
                     };
-                    let now_ms = clock.now().duration_since(started).as_millis();
+                    let now_ms = clock.elapsed_millis(started);
                     let idle_tick =
                         Duration::from_millis(activity.next_poll_ms(now_ms, ordinary_idle_tick_ms));
                     match select4(
                         control.wait(),
                         status.wait_until_disabled(),
                         radio.read_event(&mut rx_buf),
-                        select(seam.next_outbound(), clock.wait(idle_tick)),
+                        select(seam.next_outbound_frame(), clock.wait(idle_tick)),
                     )
                     .await
                     {
                         Either4::First(request) => {
                             if matches!(request.command, LoRaConfigurationCommand::Quiesce) {
-                                reset_reassembly(&mut reassembler, status);
+                                reset_reassembly_observed(
+                                    &mut reassembler,
+                                    status,
+                                    link_trace,
+                                    clock.now().as_millis(),
+                                );
                                 configuration = configuration::transact(
                                     &mut radio,
                                     &control,
@@ -1009,7 +1197,12 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                             seam.set_channel_id(current_id);
                                         }
                                         control.complete(request.id, LoRaApplyOutcome::Applied);
-                                        reset_reassembly(&mut reassembler, status);
+                                        reset_reassembly_observed(
+                                            &mut reassembler,
+                                            status,
+                                            link_trace,
+                                            clock.now().as_millis(),
+                                        );
                                         configuration = LoRaRuntimeConfiguration::Unconfigured;
                                         continue 'configuration;
                                     }
@@ -1025,7 +1218,12 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                     }
                                     seam.set_channel_id(current_id);
                                 }
-                                reset_reassembly(&mut reassembler, status);
+                                reset_reassembly_observed(
+                                    &mut reassembler,
+                                    status,
+                                    link_trace,
+                                    clock.now().as_millis(),
+                                );
                                 activity.frame_finished();
                                 noise = NoiseFloor::new();
                                 service_age.reset(profile);
@@ -1035,12 +1233,13 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                         }
                         Either4::Second(()) => continue,
                         Either4::Third(Ok(event)) => {
-                            let now =
-                                InstantMillis(clock.now().duration_since(started).as_millis());
+                            let now = InstantMillis(clock.elapsed_millis(started));
                             let _ = observe_radio_event(
                                 event,
                                 now,
                                 ReceivePath {
+                                    trace: link_trace,
+                                    trace_at_ms: clock.now().as_millis(),
                                     profile: &profile,
                                     activity: &mut activity,
                                     spectrum,
@@ -1054,6 +1253,11 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                             .await;
                         }
                         Either4::Third(Err(e)) => {
+                            link_trace::observe(
+                                link_trace,
+                                LoRaLinkPhase::RxRadioError,
+                                Some(clock.now().as_millis()),
+                            );
                             crate::diagnostic_log::debug!("RNS_LORA rx event error: {e:?}");
                             activity.frame_finished();
                             if matches!(R::recovery(&e), RadioRecovery::Reinitialize) {
@@ -1062,13 +1266,30 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                     status,
                                     &mut radio_state,
                                 );
-                                reset_reassembly(&mut reassembler, status);
+                                reset_reassembly_observed(
+                                    &mut reassembler,
+                                    status,
+                                    link_trace,
+                                    clock.now().as_millis(),
+                                );
                             }
                         }
                         Either4::Fourth(Either::First(outbound)) => {
-                            let now =
-                                InstantMillis(clock.now().duration_since(started).as_millis());
-                            match backlog.accept(outbound, &profile, now.0) {
+                            let now = InstantMillis(clock.elapsed_millis(started));
+                            if let Some(reason) =
+                                backlog.reject_frame(outbound, clock.now().as_millis())
+                            {
+                                seam.complete_outbound(OutboundDisposition::Dropped(
+                                    OutboundDropReason::QueueLifetime(reason),
+                                ));
+                                continue 'serving;
+                            }
+                            match backlog.accept_frame(
+                                outbound,
+                                &profile,
+                                now.0,
+                                clock.now().as_millis(),
+                            ) {
                                 Ok(PacketPlacement::Active) => {
                                     seam.accept_outbound_custody();
                                     let priority = take_contention_priority(
@@ -1093,8 +1314,7 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                             }
                         }
                         Either4::Fourth(Either::Second(())) => {
-                            let now =
-                                InstantMillis(clock.now().duration_since(started).as_millis());
+                            let now = InstantMillis(clock.elapsed_millis(started));
                             if let Err(error) =
                                 sample_channel(&mut radio, now, &mut activity, spectrum, &mut noise)
                                     .await
@@ -1109,7 +1329,12 @@ impl<R: LoRaRadio> LoRaInterface<'_, '_, R> {
                                         status,
                                         &mut radio_state,
                                     );
-                                    reset_reassembly(&mut reassembler, status);
+                                    reset_reassembly_observed(
+                                        &mut reassembler,
+                                        status,
+                                        link_trace,
+                                        clock.now().as_millis(),
+                                    );
                                 }
                             }
                         }

@@ -39,6 +39,9 @@ RESOURCE_FILES = COMMON_FILES | frozenset(
         "tools/release/verify-release-esp-toolchain.sh",
         "validation/platforms/embedded.sh",
         "validation/platforms/esp32-firmware-check.sh",
+        "validation/platforms/xtensa-frame-check.py",
+        "validation/platforms/xtensa-frame-audit.py",
+        "tools/tests/test_xtensa_frame_policy.py",
         "validation/platforms/no-std-esp-build.sh",
         "validation/hardening/embedded_architectures.py",
     }
@@ -92,6 +95,7 @@ RESOURCE_TREES = (
     "prns-macros/",
     "prns-runtime/core/",
     "prns-runtime/impls/embassy/",
+    "validation/platforms/fixtures/xtensa-call-frame/",
 )
 MIRI_TREES = (
     "personal-hopspot/assurance/",

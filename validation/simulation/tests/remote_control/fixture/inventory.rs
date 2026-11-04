@@ -59,6 +59,7 @@ impl ReportsStatus for PeerFleet {
     fn status_view(&self) -> Option<StatusView> {
         Some(Arc::new(|| {
             vec![InterfaceVitals {
+                endpoint: None,
                 id: Self::id(),
                 connection: ConnectionState::Connected,
                 failure_reason: None,
@@ -119,6 +120,7 @@ impl Interface for IdlePeer {
 
 fn vitals(id: InterfaceId, radio: RadioIndication) -> InterfaceVitals {
     InterfaceVitals {
+        endpoint: None,
         id,
         connection: ConnectionState::Disabled,
         failure_reason: None,

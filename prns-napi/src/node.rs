@@ -61,8 +61,8 @@ use prns_host::{
     SerialLineConfig, SerialParity, SerialStopBits, SingleDestinationConfig,
     WebSocketFramingSelection,
 };
-use prns_host_native::{
-    CommandWait, NativeHost, NativeSnapshotError, NativeStartError, NativeSubmitError,
+use prns_host_runtime::{
+    CommandWait, HostRuntime, HostSnapshotError, HostStartError, HostSubmitError,
 };
 
 use crate::errors::{code_err, send_error, CodeResult, ErrorCode, Fallible};
@@ -235,6 +235,7 @@ pub struct MultiRNodeMemberSpec {
 #[napi(object)]
 pub struct InterfaceConfigSpec {
     pub kind: String,
+    pub discovery_groups: Option<Vec<String>>,
     pub group_id: Option<String>,
     pub discovery_scope: Option<String>,
     pub discovery_port: Option<u32>,
@@ -1215,6 +1216,9 @@ fn stable_interface_config(spec: InterfaceConfigSpec) -> CodeResult<StableInterf
         },
         "AutomaticUsb" => StableInterfaceConfig::AutomaticUsb,
         "AutomaticBluetoothLe" => StableInterfaceConfig::AutomaticBluetoothLe,
+        "ConfiguredBluetoothLe" => StableInterfaceConfig::ConfiguredBluetoothLe {
+            discovery_groups: required_interface_field(spec.discovery_groups, "discoveryGroups")?,
+        },
         "WebSocketClient" => StableInterfaceConfig::WebSocketClient {
             target: required_interface_field(spec.target, "target")?,
             framing: websocket_framing_selection(spec.framing)?,
@@ -1399,7 +1403,7 @@ enum Attachment {
     Interface(AttachedInterface),
     Supervisor(AttachedSupervisor),
     Host {
-        host: Arc<NativeHost>,
+        host: Arc<HostRuntime>,
         id: prns_host::InterfaceId,
     },
     Ble {
@@ -1416,7 +1420,7 @@ pub struct InterfaceHandle {
 }
 
 impl InterfaceHandle {
-    fn from_host(host: Arc<NativeHost>, id: prns_host::InterfaceId, kind: &str) -> Self {
+    fn from_host(host: Arc<HostRuntime>, id: prns_host::InterfaceId, kind: &str) -> Self {
         Self {
             id_bytes: id.into_bytes(),
             kind_name: Some(kind.to_string()),
@@ -1499,7 +1503,7 @@ impl InterfaceHandle {
 
 #[napi]
 pub struct PrnsNode {
-    host: Arc<NativeHost>,
+    host: Arc<HostRuntime>,
     sink: Mutex<Option<EventSink>>,
     plan_attachments: Mutex<Vec<PlanAttachments>>,
     hashes: Vec<[u8; 16]>,
@@ -1548,7 +1552,7 @@ pub fn start_node(
         })
         .map_err(|error| code_err(ErrorCode::Internal, format!("{error}")))?;
     let sink = EventSink::new(tsfn, queue);
-    let host = NativeHost::start(config, Arc::new(sink.clone())).map_err(native_start_error)?;
+    let host = HostRuntime::start(config, Arc::new(sink.clone())).map_err(native_start_error)?;
     let hashes = host
         .destination_hashes()
         .iter()
@@ -1573,42 +1577,40 @@ fn event_limit(configured: Option<u32>, default: usize, name: &str) -> CodeResul
     }
 }
 
-fn native_start_error(error: NativeStartError) -> crate::errors::CodeError {
+fn native_start_error(error: HostStartError) -> crate::errors::CodeError {
     let detail = format!("{error:?}");
     let code = match error {
-        NativeStartError::Identity(prns_host_native::IdentityStartError::EntropyUnavailable) => {
+        HostStartError::Identity(prns_host_runtime::IdentityStartError::EntropyUnavailable) => {
             ErrorCode::EntropyUnavailable
         }
-        NativeStartError::Identity(prns_host_native::IdentityStartError::PermissionDenied {
+        HostStartError::Identity(prns_host_runtime::IdentityStartError::PermissionDenied {
             ..
         })
-        | NativeStartError::Persistence(
-            prns_host_native::PersistenceStartError::PermissionDenied { .. },
+        | HostStartError::Persistence(
+            prns_host_runtime::PersistenceStartError::PermissionDenied { .. },
         ) => ErrorCode::PermissionDenied,
-        NativeStartError::Identity(
-            prns_host_native::IdentityStartError::Malformed { .. }
-            | prns_host_native::IdentityStartError::InvalidMaterial,
+        HostStartError::Identity(
+            prns_host_runtime::IdentityStartError::Malformed { .. }
+            | prns_host_runtime::IdentityStartError::InvalidMaterial,
         ) => ErrorCode::InvalidIdentityFile,
-        NativeStartError::Identity(prns_host_native::IdentityStartError::Unavailable {
-            ..
-        })
-        | NativeStartError::Persistence(
-            prns_host_native::PersistenceStartError::NotDirectory { .. }
-            | prns_host_native::PersistenceStartError::Unavailable { .. },
+        HostStartError::Identity(prns_host_runtime::IdentityStartError::Unavailable { .. })
+        | HostStartError::Persistence(
+            prns_host_runtime::PersistenceStartError::NotDirectory { .. }
+            | prns_host_runtime::PersistenceStartError::Unavailable { .. },
         ) => ErrorCode::Unavailable,
-        NativeStartError::TimedOut => ErrorCode::StartTimeout,
-        NativeStartError::MissingCapabilities(_)
-        | NativeStartError::Destination(_)
-        | NativeStartError::Runtime(_)
-        | NativeStartError::Thread(_) => ErrorCode::StartFailed,
+        HostStartError::TimedOut => ErrorCode::StartTimeout,
+        HostStartError::MissingCapabilities(_)
+        | HostStartError::Destination(_)
+        | HostStartError::Runtime(_)
+        | HostStartError::Thread(_) => ErrorCode::StartFailed,
     };
     code_err(code, detail)
 }
 
-fn native_submit_error(error: NativeSubmitError) -> crate::errors::CodeError {
+fn native_submit_error(error: HostSubmitError) -> crate::errors::CodeError {
     match error {
-        NativeSubmitError::Busy => code_err(ErrorCode::Busy, "engine busy"),
-        NativeSubmitError::Stopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        HostSubmitError::Busy => code_err(ErrorCode::Busy, "engine busy"),
+        HostSubmitError::Stopped => code_err(ErrorCode::NodeStopped, "node stopped"),
     }
 }
 
@@ -3117,12 +3119,12 @@ fn host_snapshot_info(snapshot: prns_host::HostSnapshot) -> HostSnapshotInfo {
     }
 }
 
-fn native_snapshot_error(error: NativeSnapshotError) -> crate::errors::CodeError {
+fn native_snapshot_error(error: HostSnapshotError) -> crate::errors::CodeError {
     match error {
-        NativeSnapshotError::Busy => code_err(ErrorCode::Busy, "snapshot queue is busy"),
-        NativeSnapshotError::Stopped => code_err(ErrorCode::NodeStopped, "node stopped"),
-        NativeSnapshotError::TimedOut => code_err(ErrorCode::Unavailable, "snapshot timed out"),
-        NativeSnapshotError::Unavailable => {
+        HostSnapshotError::Busy => code_err(ErrorCode::Busy, "snapshot queue is busy"),
+        HostSnapshotError::Stopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        HostSnapshotError::TimedOut => code_err(ErrorCode::Unavailable, "snapshot timed out"),
+        HostSnapshotError::Unavailable => {
             code_err(ErrorCode::Unavailable, "snapshot state is unavailable")
         }
     }

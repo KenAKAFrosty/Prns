@@ -154,6 +154,28 @@ impl<S: StorageLayout> EngineState<S> {
         Ok(identities)
     }
 
+    /// Release a service-owned held key only after its destinations are gone.
+    /// The caller must also have fenced/drained every use outside engine registrations.
+    /// Returns false for shared infrastructure or another registered destination.
+    pub fn release_unregistered_service_identity(&mut self, identity: &IdentityHash) -> bool {
+        use crate::routing::upstream_app_destinations::UpstreamAppDestinationKind;
+        if self
+            .transport_id()
+            .is_some_and(|id| id.as_bytes() == identity.as_bytes())
+            || matches!(self.remote_control_controller_identity,
+                RemoteControlControllerIdentityConfiguration::Configured(controller)
+                if controller.identity_hash() == *identity)
+            || self.upstream_app_destinations().any(|row| {
+                matches!(row.kind,
+                UpstreamAppDestinationKind::Single { identity: held, .. } if held == *identity)
+            })
+        {
+            return false;
+        }
+        let _ = self.held_identities.release(identity);
+        true
+    }
+
     pub fn held_identity_hashes(&self) -> &[IdentityHash] {
         self.held_identities.hashes()
     }
@@ -258,6 +280,25 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.4.2 apps set `Link.resource_strategy` in the link-established callback, a de facto per-destination default; stamping at activation outraces a sender's instant advertise.
+    /// Stage a newly registered SINGLE or activate its ingress. Existing responder
+    /// Links must be retired before disabling an already active service.
+    pub fn set_single_ingress_enabled(
+        &mut self,
+        destination: &DestinationHash,
+        enabled: bool,
+    ) -> bool {
+        if !enabled
+            && self
+                .responder_links_for_destination(destination)
+                .next()
+                .is_some()
+        {
+            return false;
+        }
+        self.upstream_app_destinations
+            .set_single_ingress_enabled(destination, enabled)
+    }
+
     pub fn set_default_resource_strategy(
         &mut self,
         destination: &DestinationHash,
@@ -886,6 +927,7 @@ mod tests {
         state
             .links
             .track_responding(RespondingLink {
+                attached_interface: crate::interfaces::InterfaceId::new([0xEE; 8]),
                 link_id,
                 key: LinkKey::derive(&link_id, &shared),
                 requested_at: InstantMillis(1_000),

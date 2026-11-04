@@ -1,0 +1,5 @@
+[bindings.swift]
+module_name = "PrnsContactCard"
+
+[bindings.kotlin]
+package_name = "rs.reticulum.prns.contactcard"

@@ -346,12 +346,11 @@ fn remote_control_pairing_is_capability_gated_and_opens_then_cancels_from_the_sc
 
 #[test]
 #[cfg(feature = "remote-control-pairing")]
-fn remote_control_pairing_menu_label_fits_the_display() {
+fn remote_control_pairing_menu_label_fits_the_display_at_normal_size() {
     let state = test_ui_state_with_remote_control_pairing();
     let label = state.global_menu_item_label(GlobalMenuItem::PairRemoteControl);
 
-    assert_eq!(label, "Pair remote");
-    assert_eq!(menu_item_char_width(label), FONT_4X6_CHAR_W);
+    assert_eq!(menu_item_char_width(label), FONT_5X8_CHAR_W);
     assert!(
         menu_item_text_right(label) <= WIDTH,
         "{label:?} ends at x={} beyond the {WIDTH}px display",

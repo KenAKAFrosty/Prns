@@ -24,6 +24,45 @@ pub(crate) fn resource_failure_settlement(
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    /// Match Python RequestReceipt.request_resource_concluded: the default
+    /// response wait begins after a successful upload, not its advertisement.
+    /// Explicit caller deadlines retain their original send-time ceiling.
+    pub(crate) fn complete_request_resource_upload(
+        &mut self,
+        command: CommandId,
+        link: &LinkId,
+        correlation: ResourceCorrelation,
+        now: crate::engine::InstantMillis,
+    ) {
+        let ResourceCorrelation::Request {
+            id,
+            response_timeout: crate::engine::RequestResponseTimeout::LinkDefault,
+            ..
+        } = correlation
+        else {
+            return;
+        };
+        let Some(crate::routing::links::table::LinkPhase::Active { rtt, .. }) =
+            self.links.phase_for(link)
+        else {
+            return;
+        };
+        let deadline =
+            now.0
+                .saturating_add(crate::routing::links::request::request_response_timeout_ms(
+                    *rtt,
+                ));
+        self.receipts.transition_request_deadline_for_command(
+            link,
+            command,
+            id,
+            crate::routing::delivery::receipts::ReceiptDeadline::AwaitingRequestUpload,
+            crate::routing::delivery::receipts::ReceiptDeadline::Due(crate::engine::InstantMillis(
+                deadline,
+            )),
+        );
+    }
+
     /// An authenticated response demonstrates upload completion even if its proof
     /// was lost. The response transfer now owns the request's failure deadline.
     pub(crate) fn claim_resource_response(&mut self, link: &LinkId, request: RequestId) {
