@@ -5,6 +5,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use personal_rns::i2p::{I2pPeerAddress, I2pPeerAddressError, SamBridgeAddress};
 
 use crate::interfaces::InterfacesArgs;
+use crate::utilities::board::BoardArgs;
 use crate::utilities::rncp::RncpArgs;
 use crate::utilities::rnid::RnidArgs;
 use crate::utilities::rnpath::RnpathArgs;
@@ -224,6 +225,8 @@ pub enum Command {
     I2p(I2pArgs),
     #[command(about = "Inspect and safely edit Reticulum interfaces")]
     Interfaces(Box<InterfacesArgs>),
+    #[command(about = "Enrol and configure Prns boards attached to this machine")]
+    Board(BoardArgs),
     #[command(name = "nnpages", about = "Manage hosted NomadNet pages")]
     NnPages(NnPagesArgs),
     #[command(about = "Show Reticulum interface and transport status")]
@@ -261,6 +264,7 @@ pub fn parse_from(args: impl IntoIterator<Item = OsString>) -> Result<Command, c
                     | "run"
                     | "i2p"
                     | "interfaces"
+                    | "board"
                     | "nnpages"
                     | "status"
                     | "path"

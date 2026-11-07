@@ -111,6 +111,13 @@ async fn run_command(command: cli::Command) -> ExitCode {
         }
         cli::Command::I2p(args) => i2p::run(args).await,
         cli::Command::Interfaces(args) => interfaces::run(*args),
+        cli::Command::Board(args) => match utilities::board::run(args).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("prnsd board: {error}");
+                ExitCode::FAILURE
+            }
+        },
         cli::Command::NnPages(args) => match nnpages::run_cli(args).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {

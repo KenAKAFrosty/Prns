@@ -11,6 +11,10 @@ use personal_rns::identity::vault::IdentitySecretKey;
 use personal_rns::node_introspection::{
     DestinationIdentityQuery, DestinationIdentitySnapshot, NodeIntrospection,
 };
+use personal_rns::remote_control::{
+    RemoteControlInitialControllerGrants, RemoteControlNodeIdentitySecrets,
+    RemoteControlSelfAnnouncement, RemoteControlService,
+};
 use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
@@ -63,13 +67,33 @@ pub struct UtilityBusClient {
     handle: PrnsNodeHandle,
 }
 
+pub enum UtilityRemoteControlIdentity {
+    Transient,
+    Persistent(Box<RemoteControlNodeIdentitySecrets>),
+}
+
 impl UtilityNodeSession {
     pub async fn connect(
         configuration: &LoadedConfiguration,
         identity: UtilityNodeIdentity,
         rpc_timeout: Duration,
     ) -> Result<Self, UtilityNodeSessionError> {
-        let node = utility_node()?;
+        Self::connect_with_remote_control(
+            configuration,
+            identity,
+            UtilityRemoteControlIdentity::Transient,
+            rpc_timeout,
+        )
+        .await
+    }
+
+    pub async fn connect_with_remote_control(
+        configuration: &LoadedConfiguration,
+        identity: UtilityNodeIdentity,
+        remote_control: UtilityRemoteControlIdentity,
+        rpc_timeout: Duration,
+    ) -> Result<Self, UtilityNodeSessionError> {
+        let node = utility_node(remote_control)?;
         let node = match identity {
             UtilityNodeIdentity::Anonymous => node,
             UtilityNodeIdentity::Private(identity) => node
@@ -155,7 +179,7 @@ impl UtilityBusSession {
         configuration: &LoadedConfiguration,
         identity: UtilityNodeIdentity,
     ) -> Result<Self, UtilityNodeSessionError> {
-        let node = utility_node()?;
+        let node = utility_node(UtilityRemoteControlIdentity::Transient)?;
         let node = match identity {
             UtilityNodeIdentity::Anonymous => node,
             UtilityNodeIdentity::Private(identity) => node
@@ -171,7 +195,7 @@ impl UtilityBusSession {
         app_name: &str,
         aspects: &[&str],
     ) -> Result<(Self, DestinationHash), UtilityNodeSessionError> {
-        let mut node = utility_node()?;
+        let mut node = utility_node(UtilityRemoteControlIdentity::Transient)?;
         let destination = node
             .register_preconfigured_destination(PreConfiguredDestination::Single {
                 app_name,
@@ -243,8 +267,17 @@ impl UtilityBusClient {
     }
 }
 
-fn utility_node() -> Result<UtilityNode, TransientRemoteControlIdentityError> {
-    let remote_control = transient_remote_control_service()?;
+fn utility_node(
+    remote_control_identity: UtilityRemoteControlIdentity,
+) -> Result<UtilityNode, TransientRemoteControlIdentityError> {
+    let remote_control = match remote_control_identity {
+        UtilityRemoteControlIdentity::Transient => transient_remote_control_service()?,
+        UtilityRemoteControlIdentity::Persistent(secrets) => RemoteControlService::new(
+            *secrets,
+            RemoteControlInitialControllerGrants::Nobody,
+            RemoteControlSelfAnnouncement::Unavailable,
+        ),
+    };
     Ok(PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         remote_control: remote_control.into(),

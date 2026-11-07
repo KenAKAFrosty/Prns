@@ -1,4 +1,5 @@
 mod arguments;
+pub(crate) mod board;
 mod configuration;
 mod remote_control;
 mod remote_management;
