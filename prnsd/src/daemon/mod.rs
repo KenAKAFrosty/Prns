@@ -1,7 +1,7 @@
 mod background;
 pub(crate) mod configuration;
 mod configured_interfaces;
-mod identity;
+pub(crate) mod identity;
 mod interface_failure;
 mod interface_ownership;
 

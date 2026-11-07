@@ -6,8 +6,8 @@ pub use prns_interfaces_tokio::usb_auto::{UsbAutoCandidate, UsbAutoHost, UsbAuto
     any(target_os = "linux", target_os = "macos", target_os = "windows")
 ))]
 pub use prns_interfaces_tokio::usb_auto::{
-    open_native_usb_auto_target, scan_native_usb_auto_targets, AutoUsb, NativeUsbAutoStream,
-    DEFAULT_USB_AUTO_ID, DEFAULT_USB_BAUD,
+    enrol_webusb_board, open_native_usb_auto_target, scan_native_usb_auto_targets, AutoUsb,
+    NativeUsbAutoStream, DEFAULT_USB_AUTO_ID, DEFAULT_USB_BAUD, WebUsbEnrolmentError,
 };
 
 #[cfg(feature = "embassy-host")]

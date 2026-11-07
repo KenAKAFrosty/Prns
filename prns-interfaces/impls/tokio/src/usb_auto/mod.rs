@@ -1,10 +1,14 @@
 mod candidate;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+mod controller_enrolment;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod host;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod native;
 
 pub use candidate::{UsbAutoCandidate, UsbAutoIncarnation};
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+pub use controller_enrolment::{enrol_webusb_board, WebUsbEnrolmentError};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub use host::{AutoUsb, DEFAULT_USB_AUTO_ID, DEFAULT_USB_BAUD};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

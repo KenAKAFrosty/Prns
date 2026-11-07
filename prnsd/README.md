@@ -38,6 +38,8 @@ On a desktop the daemon also sits in the system tray with a live status readout 
 
 The daemon binary is also the utility toolkit. `prnsd status`, `path`, `probe`, `id`, `cp`, and `x` are the equivalents of the stock `rn*` utilities, with secure defaults: `cp --listen` and `x --listen` permit nobody until an identity is allowed, and remote management stays off until you enable it. [Prnsd utilities](../docs/prnsd-utilities.md) documents each role.
 
+`prnsd board` enrols the daemon's controller identity on a USB-attached Prns board and writes its LoRa profile over the daemon's own link to the board. A headless board keeps its radio off until a controller writes a profile, so this is the host-side path for a screenless board. [Prns boards](../docs/prnsd-utilities.md#prns-boards) covers enrolment, the target key, and the readback.
+
 Every log line is a structured event: human-readable by default, the same events as JSON with `--log-format json`, and a rotated pair of log files either way. The official cloud container and canonical `cargo prnsd build` artifact also carry an OTLP exporter for metrics and traces. [Observability](../docs/observability.md) goes from log filters to the shipped Grafana dashboard.
 
 For I2P interfaces, `prnsd i2p doctor` checks your SAM bridge and `prnsd i2p setup` walks the setup.

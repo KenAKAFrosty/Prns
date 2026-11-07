@@ -76,6 +76,29 @@ a Windows listener, for example, `prnsd x DESTINATION_HASH "cmd /c ver"`.)
 
 `--noid` suppresses client identification and is distinct from the listener's `--noauth` policy.
 
+## Prns boards
+
+A headless Prns board keeps its radio off until an authorized controller writes a profile, and
+`prnsd` owns the board's USB interface, so the profile write goes through the running daemon. `board` is
+the verb for that. It is a shared-instance client, like `status` and `path`, so the daemon keeps the
+USB claim and the board link.
+
+```sh
+prnsd board identity            # the controller identity this daemon enrols
+prnsd board enrol              # grant that identity on the attached board, over USB
+prnsd board status              # interfaces the board reports
+prnsd board lora us915          # apply a region's auto LoRa profile
+```
+
+Enrolment is a WebUSB vendor control transfer, so `enrol` runs while the daemon carries the board and
+needs no browser. `enrol` records the board's target key under the daemon's storage directory as the
+last enrolled board, which `status` and `lora` address by default; pass `--target-key` to address
+another board. Applying a profile restarts the board's LoRa interface, so the verb re-reads the
+profile after a short delay and prints what the board reports.
+
+Only regions with an auto LoRa profile are accepted. Prns 0.3.8 declares one for US915; other regions
+answer `region EU868 has no auto LoRa profile` rather than sending a hand-built profile.
+
 ## RNS 1.5.4 compatibility
 
 The suite tracks stock RNS 1.5.4 behavior at the CLI and protocol boundaries through Python oracles
